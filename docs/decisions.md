@@ -9327,3 +9327,55 @@ designed. The feared KWin focus problem did not occur: on Plasma the host spawns
 (GTK4) routes through the XDG FileChooser portal, so the window is `xdg-desktop-portal-kde`'s KDE dialog,
 which KWin raises. kdialog is therefore optional on Plasma; the host's `picker` field names the spawned
 command, not the dialog.
+
+## Layer cursors step through marks, and draw at the mark (2026-09-30, Max)
+
+The expression, pedal and tempo layer cursors are one design (`cursor/expressionCursor.ts`,
+`cursor/cursor.ts` `layerBarRect`), and it is now the one Max always intended — he believed it was
+already built. It was not: since the first implementation (2026-05-17, `bbda25c`) the cursor stepped a
+MOMENT list, "selected" everything at or spanning the moment, and drew a band from staff geometry —
+the gap between a grand staff's staves, a fixed 28 px box ABOVE a single staff (the tempo band's math,
+copied in by the 2026-06-02 multi-instrument scaffold; `@place` was never consulted, though the
+`Ctrl+↑/↓` toggle predates that branch) — at the centre of whatever note began at the moment. No entry
+recorded that geometry; "between voices 2 and 3 matches `@place="between"`" (the fifth-voice entry) was
+the only placement rationale, and it described the stop list, not the bar.
+
+**Picked**:
+- **Stops, not moments.** One stop per mark — a hairpin contributes two, its start and its end — plus a
+  placeholder at every note onset that carries no mark. Marks sharing a moment are visited one at a
+  time, **top to bottom as rendered** (level tops left to right); type order until they render. A stop
+  selects exactly its own mark: a placeholder selects nothing, even inside a hairpin's span (Max: "this
+  prevents cluttering the stop list if there are any concurrent expressions within the hairpin").
+  Delete and the `Ctrl+↑/↓` placement act on the selected mark only — otherwise "there's no way to edit
+  individual marks without deleting all". Voice-mode commands keep their moment semantics.
+- **`Ctrl+←/→` visits hairpin ends.** They were skipped because, with moment stops and range-based
+  selection, the end selected the same hairpin as the start and drew the bar the same way; with the bar
+  at the wedge's end that reason is gone. Layer entry snaps to ends too.
+- **Geometry.** A mark stop: a bar flush right of the mark's rendered box, at its height (a hairpin start
+  flush LEFT of the wedge, its end flush right of the last piece — across a system break if the wedge
+  continues there). A placeholder: a fixed 28 px bar (the old band constant) at the onset's notehead,
+  centred on the previous mark — whether or not one exists the height is the same — and with no
+  previous mark, centred between a grand staff's staves or below a single staff (pedal: below the
+  bottom staff; tempo: above the top staff). The previous mark's offset is taken from its staff LINES
+  and reapplied to that staff where the placeholder is, so alignment survives a system or page break.
+- **Marks need an xml:id** — the stop identifies its mark, and the bar finds its glyph, by id. The
+  new-document template's head `<tempo>` had none (`packages/notation/src/mei-build.ts`), so every
+  document carried an id-less mark; the template now writes one, and `replaceDocument` assigns ids to
+  id-less `dynam/dir/hairpin/pedal/tempo` (the same migration `<staff>` already had).
+
+**Folded in** (both made the bar vanish or misplace): the renderer located a moment's note with its own
+layer walk that skipped `<tuplet>`/`<beam>` children, while the moment list descended into them — so
+every tuplet onset was a stop the renderer could not place (the "cursor disappears" Max saw). Stops now
+carry their onset's xml:id from the one walk. And onset tstamps were computed with the HEAD meter's
+beat unit — the per-measure fix of the "moment→tick mapping is per-measure" entry missed this site — so
+after a 4/4 → 6/8 change the stops sat at 1, 1.5, 2… against marks at 1, 2, 3….
+
+**Open** (asked, not decided): the document's head tempo (`setTempo`'s text-less `@mm` marking, which
+renders nothing) is a tempo-layer stop like any other mark; with no glyph its bar falls back to the
+placeholder geometry, and an "Allegro" on m. 1 beat 1 is a second stop beside it.
+
+**Where**: `cursor/expressionCursor.ts` (`buildLayerStops`, `relocate`, `stepToMark`,
+`orderStopsByRender`), `cursor/cursor.ts` (`layerBarRect`, `layerMarkRect`, `updateLayerHighlight`),
+`input.ts` (layer commands; `InputHooks.layerMarkRect`), `expressions.ts` `beatTicksByMeasure`.
+Fixtures: the `lc_*` group (22) and `kbd_p1_ctrlRight_visitsHairpinEnd` (was `…skipsHairpinEnd`),
+written first and run red against the moment cursor.

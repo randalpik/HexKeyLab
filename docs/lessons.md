@@ -4927,3 +4927,47 @@ insertion code still treated it as nothing. Rules:
 - **Patching a symptom by making one more module tolerate a foreign element spreads the inconsistency.**
   Count how many modules disagree about the element before adding another special case — here it was five.
 Resolved 2026-09-28 by scrubbing stored `<mRest>` in `normalizePlaceholders` (decisions.md).
+
+## A hairpin broken across systems: only the first piece carries the id (2026-09-30)
+
+Verovio draws a `<hairpin>` that crosses a system break as `<g class="hairpin" id="<xml:id>">` (under
+its start measure) plus one id-less piece per later system: `<g class="hairpin id-<xml:id> spanning">`,
+a child of that system's `<g class="system">`, not of any measure. `#id` finds only the first piece, so
+anything that wants the END of a wedge — the layer cursor's end stop, a highlight, a click target —
+must take the LAST of `#id, g.id-<xml:id>` in document order. Both pieces carry `data-staff` /
+`data-place`. Probed in page view (24 measures, a `tstamp2="1m+2"` wedge from the last bar of system
+1); fixture `lc_hairpinEndAcrossSystems`. Presumably the same for any spanner (slur, octave, pedal
+line); only the hairpin was probed.
+
+## Two walks over one structure drift apart — derive the second from the first (2026-09-30)
+
+The expression layer's moment list walked each layer through `<beam>` and `<tuplet>` children; the
+cursor renderer found "the note at this moment" with its own walk over the layer's DIRECT children,
+which skipped both wrappers without even counting their duration. Every tuplet onset was therefore a
+stop the renderer could not place: the cursor vanished there (Max: "sometimes pressing an arrow key
+causes the cursor to disappear entirely"), and every onset after a wrapper in that layer was looked up
+at the wrong tick. The same duplication hid a second drift — the list computed tstamps from the head
+meter's beat unit long after `absoluteTickForMoment`/`momentForCursor` went per-measure. Fix shape: the
+one walk records what the consumer needs (each stop carries its onset's xml:id), and the second walk is
+deleted. When a fix to one site of a shared computation lands ("the mapping is now per-measure"), grep
+for every other site of that computation, not just its callers.
+
+## `cycleVoice` skips an expression layer with nothing in the cursor's measure (2026-09-30)
+
+`↑`/`↓` into a layer is skipped when `measureHasExpression(doc, cursorMeasure)` is false — a fixture
+that parks the voice cursor in m. 1 and puts its only mark in m. 2 never enters the layer, and fails
+with "never selected" for a reason unrelated to what it tests. An empty voice (V2 with nothing entered)
+can report a different cursor measure than V1 after `setVoicePreservingMeasure`. Park the cursor in the
+mark's measure, in the voice adjacent to the layer stop (`setVoice(2); setCursor(getMeasureStartCursor
+(mi, 2), 2)` + one `↓`), and assert `cursorMode` in the failure detail.
+
+## The line-break owner's signature window warns on a spanner leaving it (2026-09-30, not fixed)
+
+`PageLineBreaks.measureAllSigCtx` renders a two-measure window at each signature context's first
+measure (m. 1–2 for a one-meter piece) to measure the leading clef+key width. A hairpin hosted in the
+window's second measure that ends beyond it cannot be matched, and Verovio logs "1 time spanning
+element(s) with timestamps could not be matched" — a console WARNING, which the composer-test CONSOLE
+invariant counts. Harmless to that measurement (only the signature width is read), but any page-view
+document with a wedge leaving m. 2 logs it on load. Not the splice path's version of the same warning
+(`expandForSpanners`, fixed 2026-08-30): this window is built by `serializeRangeForRender` directly.
+The `lc_hairpinEndAcrossSystems` fixture keeps its wedges from m. 3 on for this reason.

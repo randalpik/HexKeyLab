@@ -7,13 +7,14 @@ import type {
 import { ticksOf } from './model/index.js';
 import { realTicks } from './model/ticks.js';
 import {
-  type ExpressionCursor, rebuildCursor, rebuildPedalCursor, rebuildTempoCursor,
-  currentMoment, step, moveToStart, moveToEnd, stepToElement, snapToNearestElement,
+  type ExpressionCursor, type LayerMode, type MarkRef, EMPTY_LAYER_CURSOR,
+  buildLayerStops, cursorAtMoment, relocate, currentMoment, currentMark, markElement,
+  step, moveToStart, moveToEnd, stepToMark, snapToNearestMark, snapToMark, orderStopsByRender,
 } from './cursor/expressionCursor.js';
 import {
   addDynam, addHairpin, removeExpression, dynamAt, setDynamText,
   hairpinsAt, momentCompare, measureHasExpression,
-  addDir, dirAt, dirText, dirIsItalic, setDirText, tempoAt,
+  addDir, dirAt, dirText, dirIsItalic, setDirText,
   addOctave, octaveAt,
   type Moment,
 } from './expressions.js';
@@ -23,7 +24,7 @@ import { openSignatureModal } from './sigDialog.js';
 import { openClefModal } from './clefDialog.js';
 import { openPickupModal } from './pickupDialog.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
-import { togglePedal, pedalMoments, removePedalsAt, type PedalDir } from './pedal.js';
+import { togglePedal, pedalMoments, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
 import { tempoCopySource } from './notation/parts.js';
 import type { ArticKind } from './articulations.js';
@@ -190,6 +191,10 @@ export interface InputHooks {
    *  staff hidden on that system (hide-empty staves, render/hiddenstaves.ts);
    *  absent or true otherwise. Navigation steps over unrendered cells. */
   isCellRendered?: (measureIdx: number, staffN: number) => boolean;
+  /** Rendered box (top/left, any consistent frame) of a layer mark, or null
+   *  when it isn't drawn. Orders coincident marks top to bottom before each
+   *  layer navigation step; absent = type order. */
+  layerMarkRect?: (mark: MarkRef) => { top: number; left: number } | null;
   /** Run `cb` once the render the current edit triggers has completed. */
   afterRender?: (cb: () => void) => void;
   /* Manual line breaks (2026-09-11; linebreakCommands.ts) — the renderer's
@@ -245,11 +250,11 @@ const state: InputState = {
   duration: '4',
   mode: 'insert',
   cursorMode: 'voice',
-  exprCursor: { index: 0, moments: [] },
+  exprCursor: EMPTY_LAYER_CURSOR,
   exprInstrIdx: 0,
-  pedalCursor: { index: 0, moments: [] },
+  pedalCursor: EMPTY_LAYER_CURSOR,
   pedalInstrIdx: 0,
-  tempoCursor: { index: 0, moments: [] },
+  tempoCursor: EMPTY_LAYER_CURSOR,
   viewInstrIdx: null,
   pendingHairpin: null,
   pendingTuplet: null,
@@ -358,19 +363,49 @@ function activePedalStaff(model: ComposerModel): number {
   return staffNs ? staffNs[staffNs.length - 1] : 2;
 }
 
-function refreshExprCursor(model: ComposerModel): void {
-  const prev = currentMoment(state.exprCursor);
-  state.exprCursor = rebuildCursor(model.getDoc(), prev, instrStaves(model, state.exprInstrIdx));
+/** Staves a layer is scoped to: its instrument's (expr / pedal); tempo is
+ *  score-global. */
+function layerStaves(model: ComposerModel, mode: LayerMode): number[] | undefined {
+  if (mode === 'tempo') return undefined;
+  return instrStaves(model, mode === 'expr' ? state.exprInstrIdx : state.pedalInstrIdx);
 }
 
-function refreshPedalCursor(model: ComposerModel): void {
-  const prev = currentMoment(state.pedalCursor);
-  state.pedalCursor = rebuildPedalCursor(model.getDoc(), prev, instrStaves(model, state.pedalInstrIdx));
+function layerCursor(mode: LayerMode): ExpressionCursor {
+  return mode === 'expr' ? state.exprCursor : mode === 'pedal' ? state.pedalCursor : state.tempoCursor;
 }
 
-function refreshTempoCursor(model: ComposerModel): void {
-  const prev = currentMoment(state.tempoCursor);
-  state.tempoCursor = rebuildTempoCursor(model.getDoc(), prev);
+function setLayerCursor(mode: LayerMode, c: ExpressionCursor): void {
+  if (mode === 'expr') state.exprCursor = c;
+  else if (mode === 'pedal') state.pedalCursor = c;
+  else state.tempoCursor = c;
+}
+
+/** Rebuild a layer's stops after a doc change, keeping the cursor on the same
+ *  mark (else the same moment). */
+function refreshLayerCursor(model: ComposerModel, mode: LayerMode): void {
+  setLayerCursor(mode, relocate(layerCursor(mode), buildLayerStops(model.getDoc(), mode, layerStaves(model, mode))));
+}
+
+function refreshExprCursor(model: ComposerModel): void { refreshLayerCursor(model, 'expr'); }
+function refreshPedalCursor(model: ComposerModel): void { refreshLayerCursor(model, 'pedal'); }
+function refreshTempoCursor(model: ComposerModel): void { refreshLayerCursor(model, 'tempo'); }
+
+/** Coincident marks top to bottom as currently rendered (see InputHooks). */
+function byRender(c: ExpressionCursor, hooks: InputHooks): ExpressionCursor {
+  return hooks.layerMarkRect ? orderStopsByRender(c, hooks.layerMarkRect) : c;
+}
+
+/** In a layer, put the cursor on mark `id` once the doc change that made or
+ *  kept it has been folded in. */
+function selectLayerMark(model: ComposerModel, mode: LayerMode, id: string | null, edge?: 'start' | 'end'): void {
+  refreshLayerCursor(model, mode);
+  if (id) setLayerCursor(mode, snapToMark(layerCursor(mode), id, edge));
+}
+
+/** The selected mark's element in `mode`'s layer, or null. */
+function selectedMarkElement(model: ComposerModel, mode: LayerMode): Element | null {
+  const mark = currentMark(layerCursor(mode));
+  return mark ? markElement(model.getDoc(), mark) : null;
 }
 
 function momentAtVoiceAnchor(model: ComposerModel): Moment | null {
@@ -412,15 +447,15 @@ function commitDynamic(model: ComposerModel, hooks: InputHooks, name: string): v
     return;
   }
   const doc = model.getDoc();
-  const existing = dynamAt(doc, m, activeExprStaves(model));
-  if (existing) {
-    setDynamText(existing, name);
+  let el = dynamAt(doc, m, activeExprStaves(model));
+  if (el) {
+    setDynamText(el, name);
     hooks.setStatus?.('Replaced dynamic with "' + name + '".', 'action');
   } else {
-    addDynam(doc, m, { text: name, staff: activeExprStaff(model) });
+    el = addDynam(doc, m, { text: name, staff: activeExprStaff(model) });
     hooks.setStatus?.('Dynamic "' + name + '" at m' + (m.measureIdx + 1) + ' beat ' + formatBeat(m.tstamp) + '.', 'action');
   }
-  if (state.cursorMode === 'expr') refreshExprCursor(model);
+  if (state.cursorMode === 'expr') selectLayerMark(model, 'expr', el?.getAttribute('xml:id') ?? null);
   hooks.onChange();
   hooks.onStateChange();
 }
@@ -464,7 +499,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
   } else {
     hooks.setStatus?.('Failed to add hairpin.', 'error');
   }
-  if (state.cursorMode === 'expr') refreshExprCursor(model);
+  if (state.cursorMode === 'expr') selectLayerMark(model, 'expr', created?.getAttribute('xml:id') ?? null, 'end');
   hooks.onChange();
   hooks.onStateChange();
 }
@@ -511,15 +546,13 @@ function commitPedal(model: ComposerModel, hooks: InputHooks, dir: PedalDir): vo
 /* Delete the <pedal> mark(s) at the pedal-layer cursor's moment. Mirrors
    deleteSelectedExpression. */
 function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
-  const m = currentMoment(state.pedalCursor);
-  if (!m) return false;
-  const staves = instrStaves(model, state.pedalInstrIdx);
-  const pedalStaff = staves ? staves[staves.length - 1] : 2;
-  const n = removePedalsAt(model.getDoc(), m, pedalStaff);
-  if (n === 0) {
-    hooks.setStatus?.('No pedal mark at this moment.', 'error');
+  const el = selectedMarkElement(model, 'pedal');
+  if (!el) {
+    hooks.setStatus?.('No pedal mark selected.', 'error');
     return false;
   }
+  const staves = instrStaves(model, state.pedalInstrIdx);
+  removeExpression(el);
   refreshPedalCursor(model);
   /* An empty pedal layer is a dead end (you place marks in voice mode), so
      drop back to the instrument's last voice when its last mark is gone. */
@@ -527,7 +560,7 @@ function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
     const vs = model.voicesForInstrument(state.pedalInstrIdx);
     return vs.length ? vs[vs.length - 1] : 4;
   })();
-  if (state.pedalCursor.moments.length === 0
+  if (state.pedalCursor.stops.length === 0
       || pedalMoments(model.getDoc(), staves).length === 0) {
     state.cursorMode = 'voice';
     model.setVoicePreservingMeasure(lastVoice);
@@ -545,11 +578,9 @@ function deleteSelectedPedal(model: ComposerModel, hooks: InputHooks): boolean {
    tempo layer is NOT exited when empty — a tempo conceptually always exists
    (playback falls back to 120bpm), so the layer stays navigable to add one. */
 function deleteSelectedTempo(model: ComposerModel, hooks: InputHooks): boolean {
-  const m = currentMoment(state.tempoCursor);
-  if (!m) return false;
-  const el = tempoAt(model.getDoc(), m);
+  const el = selectedMarkElement(model, 'tempo');
   if (!el) {
-    hooks.setStatus?.('No tempo mark at this moment.', 'error');
+    hooks.setStatus?.('No tempo mark selected.', 'error');
     return false;
   }
   removeExpression(el);
@@ -584,47 +615,28 @@ function findSlurCovering(model: ComposerModel, voice: Voice, index: number): El
   return null;
 }
 
+/* Delete the selected mark only — each coincident mark is its own stop, and a
+   placeholder (including one inside a hairpin's span) selects nothing. */
 function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): boolean {
-  const m = currentMoment(state.exprCursor);
-  if (!m) return false;
-  const doc = model.getDoc();
-  const staves = activeExprStaves(model);
-  const dynam = dynamAt(doc, m, staves);
-  if (dynam) {
-    removeExpression(dynam);
-    refreshExprCursor(model);
-    hooks.setStatus?.('Deleted dynamic.', 'action');
-    hooks.onChange();
-    hooks.onStateChange();
-    return true;
+  const el = selectedMarkElement(model, 'expr');
+  if (!el) {
+    hooks.setStatus?.('No expression mark selected.', 'error');
+    return false;
   }
-  const dir = dirAt(doc, m, staves);
-  if (dir) {
-    removeExpression(dir);
-    refreshExprCursor(model);
-    hooks.setStatus?.('Deleted expressive text.', 'action');
-    hooks.onChange();
-    hooks.onStateChange();
-    return true;
-  }
-  const hairpins = hairpinsAt(doc, m, staves);
-  if (hairpins.length > 0) {
-    removeExpression(hairpins[0]);
-    refreshExprCursor(model);
-    hooks.setStatus?.('Deleted hairpin.', 'action');
-    hooks.onChange();
-    hooks.onStateChange();
-    return true;
-  }
-  hooks.setStatus?.('No expression element at this moment.', 'error');
-  return false;
+  const what = el.localName === 'dynam' ? 'dynamic' : el.localName === 'dir' ? 'expressive text' : 'hairpin';
+  removeExpression(el);
+  refreshExprCursor(model);
+  hooks.setStatus?.('Deleted ' + what + '.', 'action');
+  hooks.onChange();
+  hooks.onStateChange();
+  return true;
 }
 
-/* Ctrl+↑ / Ctrl+↓ in the expression layer: move the expression mark(s) at the
-   cursor moment above / below the staff (@place). Applies to every expression
-   element sharing the moment (dynamic, expressive text, hairpins). Tempo and
-   pedal have fixed placement and live in their own layers, so they're excluded
-   by virtue of this being expression-mode only. */
+/* Ctrl+↑ / Ctrl+↓: move expression marks above / below the staff (@place). In
+   the expression layer, the selected mark only; in voice mode, every
+   expression element at the voice anchor (dynamic, expressive text, hairpins
+   spanning it). Tempo and pedal have fixed placement and live in their own
+   layers, so they're excluded by virtue of this being expression-mode only. */
 function commitExpressionPlace(
   model: ComposerModel, hooks: InputHooks, place: 'above' | 'below',
 ): boolean {
@@ -634,12 +646,17 @@ function commitExpressionPlace(
   if (!m) { hooks.setStatus?.('No expression at cursor.', 'error'); return false; }
   const doc = model.getDoc();
   const els: Element[] = [];
-  const staves = activeExprStaves(model);
-  const d = dynamAt(doc, m, staves); if (d) els.push(d);
-  const dir = dirAt(doc, m, staves); if (dir) els.push(dir);
-  for (const h of hairpinsAt(doc, m, staves)) els.push(h);
+  if (state.cursorMode === 'expr') {
+    const sel = selectedMarkElement(model, 'expr');
+    if (sel) els.push(sel);
+  } else {
+    const staves = activeExprStaves(model);
+    const d = dynamAt(doc, m, staves); if (d) els.push(d);
+    const dir = dirAt(doc, m, staves); if (dir) els.push(dir);
+    for (const h of hairpinsAt(doc, m, staves)) els.push(h);
+  }
   if (els.length === 0) {
-    hooks.setStatus?.('No expression at this moment to place.', 'error');
+    hooks.setStatus?.(state.cursorMode === 'expr' ? 'No expression mark selected.' : 'No expression at this moment to place.', 'error');
     return false;
   }
   for (const el of els) el.setAttribute('place', place);
@@ -680,16 +697,18 @@ function openExpressiveText(model: ComposerModel, hooks: InputHooks): void {
       const before = model.snapshotState();
       const cur = dirAt(model.getDoc(), m, activeExprStaves(model)); /* re-resolve: doc may have changed */
       let changed = true;
+      let target: Element | null = null;
       if (text === '') {
         if (cur) removeExpression(cur);
         else changed = false;
       } else if (cur) {
         setDirText(cur, text, italic);
+        target = cur;
       } else {
-        addDir(model.getDoc(), m, { text, italic, staff: activeExprStaff(model) });
+        target = addDir(model.getDoc(), m, { text, italic, staff: activeExprStaff(model) });
       }
       if (changed) hooks.history.push(before, model.snapshotState(), 'expr-text');
-      if (state.cursorMode === 'expr') refreshExprCursor(model);
+      if (state.cursorMode === 'expr') selectLayerMark(model, 'expr', target?.getAttribute('xml:id') ?? null);
       hooks.setStatus?.(text === ''
         ? (changed ? 'Removed expressive text.' : 'No expressive text here.')
         : 'Expressive text: "' + text + '".', 'action');
@@ -782,28 +801,26 @@ function enterExprLayer(model: ComposerModel, instr: number, hooks: InputHooks):
   /* Snap to the nearest existing mark in the layer, biased by where we were in
      the voice we just left, so arrowing into the layer lands on something
      editable instead of moment 0. */
-  const staves = instrStaves(model, instr);
   const anchor = momentAtVoiceAnchor(model);
-  state.exprCursor = rebuildCursor(model.getDoc(), anchor, staves);
-  state.exprCursor = snapToNearestElement(state.exprCursor, model.getDoc(), 'expr', anchor, staves);
+  const stops = buildLayerStops(model.getDoc(), 'expr', instrStaves(model, instr));
+  state.exprCursor = snapToNearestMark(byRender(cursorAtMoment(stops, anchor), hooks), anchor);
   hooks.setStatus?.('Expression layer.', 'info');
 }
 
 function enterPedalLayer(model: ComposerModel, instr: number, hooks: InputHooks): void {
   state.cursorMode = 'pedal';
   state.pedalInstrIdx = instr;
-  const staves = instrStaves(model, instr);
   const anchor = momentAtVoiceAnchor(model);
-  state.pedalCursor = rebuildPedalCursor(model.getDoc(), anchor, staves);
-  state.pedalCursor = snapToNearestElement(state.pedalCursor, model.getDoc(), 'pedal', anchor, staves);
+  const stops = buildLayerStops(model.getDoc(), 'pedal', instrStaves(model, instr));
+  state.pedalCursor = snapToNearestMark(byRender(cursorAtMoment(stops, anchor), hooks), anchor);
   hooks.setStatus?.('Pedal layer.', 'info');
 }
 
 function enterTempoLayer(model: ComposerModel, hooks: InputHooks): void {
   state.cursorMode = 'tempo';
   const anchor = momentAtVoiceAnchor(model);
-  state.tempoCursor = rebuildTempoCursor(model.getDoc(), anchor);
-  state.tempoCursor = snapToNearestElement(state.tempoCursor, model.getDoc(), 'tempo', anchor);
+  const stops = buildLayerStops(model.getDoc(), 'tempo');
+  state.tempoCursor = snapToNearestMark(byRender(cursorAtMoment(stops, anchor), hooks), anchor);
   hooks.setStatus?.('Tempo layer.', 'info');
 }
 
@@ -818,8 +835,8 @@ function instrIdxForStaff(model: ComposerModel, staffN: number): number {
 
 /** Select a clicked expression-family control (`<dynam>`/`<dir>`/`<hairpin>`/
  *  `<pedal>`/`<tempo>`) by its xml:id: switch into the matching virtual layer
- *  and snap that layer's cursor to the element's (start) moment, so the next
- *  Backspace/Delete removes it. Returns false when the id resolves to nothing
+ *  and snap that layer's cursor to the element's own stop (a hairpin's start),
+ *  so the next Backspace/Delete removes it. Returns false when the id resolves to nothing
  *  selectable. Called from the score click handler. */
 export function selectLayerElementById(
   model: ComposerModel,
@@ -846,23 +863,14 @@ export function selectLayerElementById(
   const tstamp = parseFloat(el.getAttribute('tstamp') ?? '1');
   const moment: Moment = { measureIdx: mi, tstamp: isFinite(tstamp) ? tstamp : 1 };
   const ln = el.localName;
-  if (ln === 'tempo') {
-    state.cursorMode = 'tempo';
-    state.tempoCursor = rebuildTempoCursor(doc, moment);
-    setStatus?.('Tempo layer.', 'info');
-  } else if (ln === 'pedal') {
-    const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
-    state.cursorMode = 'pedal';
-    state.pedalInstrIdx = instr;
-    state.pedalCursor = rebuildPedalCursor(doc, moment, instrStaves(model, instr));
-    setStatus?.('Pedal layer.', 'info');
-  } else {
-    const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
-    state.cursorMode = 'expr';
-    state.exprInstrIdx = instr;
-    state.exprCursor = rebuildCursor(doc, moment, instrStaves(model, instr));
-    setStatus?.('Expression layer.', 'info');
-  }
+  const mode: LayerMode = ln === 'tempo' ? 'tempo' : ln === 'pedal' ? 'pedal' : 'expr';
+  const instr = instrIdxForStaff(model, parseInt(el.getAttribute('staff') ?? '0', 10));
+  state.cursorMode = mode;
+  if (mode === 'pedal') state.pedalInstrIdx = instr;
+  if (mode === 'expr') state.exprInstrIdx = instr;
+  const stops = buildLayerStops(doc, mode, layerStaves(model, mode));
+  setLayerCursor(mode, snapToMark(cursorAtMoment(stops, moment), el.getAttribute('xml:id') ?? ''));
+  setStatus?.(mode === 'tempo' ? 'Tempo layer.' : mode === 'pedal' ? 'Pedal layer.' : 'Expression layer.', 'info');
   return true;
 }
 
@@ -2533,23 +2541,18 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
       /* In an expr/pedal/tempo layer, Ctrl+←/→ jumps mark-to-mark (skipping
-         bare note onsets) instead of the no-op it used to be. */
+         placeholders; coincident marks and hairpin ends are each a stop). */
       if (state.cursorMode === 'expr' || state.cursorMode === 'pedal' || state.cursorMode === 'tempo') {
         if (hooks.isPlaybackActive()) return;
         const dir: -1 | 1 = e.key === 'ArrowRight' ? 1 : -1;
         const mode = state.cursorMode;
-        const staves = mode === 'tempo' ? undefined
-          : instrStaves(model, mode === 'expr' ? state.exprInstrIdx : state.pedalInstrIdx);
-        const cursor = mode === 'expr' ? state.exprCursor
-          : mode === 'pedal' ? state.pedalCursor : state.tempoCursor;
-        const moved = stepToElement(cursor, model.getDoc(), mode, dir, staves);
+        const cursor = byRender(layerCursor(mode), hooks);
+        const moved = stepToMark(cursor, dir);
+        setLayerCursor(mode, moved);
         if (moved === cursor) {
           hooks.setStatus?.('No ' + (dir > 0 ? 'next' : 'previous') + ' mark in layer.', 'info');
           return;
         }
-        if (mode === 'expr') state.exprCursor = moved;
-        else if (mode === 'pedal') state.pedalCursor = moved;
-        else state.tempoCursor = moved;
         /* Pure navigation — no content change. Use the cheap cursor-move path
            (no reRender); a full reRender here froze large scores. */
         hooks.onCursorMove();
@@ -3142,21 +3145,18 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
          only dropped on Escape, select-mode entry, or undo. */
       if (e.key === 'ArrowUp')   { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'up', hooks);   hooks.onCursorMove(); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); state.chordInternalSel = null; cycleVoice(model, 'down', hooks); hooks.onCursorMove(); return; }
-      if (state.cursorMode === 'expr') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.exprCursor = step(state.exprCursor, -1); hooks.onCursorMove(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.exprCursor = step(state.exprCursor, +1); hooks.onCursorMove(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.exprCursor = moveToStart(state.exprCursor); hooks.onCursorMove(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.exprCursor = moveToEnd(state.exprCursor); hooks.onCursorMove(); return; }
-      } else if (state.cursorMode === 'pedal') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, -1); hooks.onCursorMove(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.pedalCursor = step(state.pedalCursor, +1); hooks.onCursorMove(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.pedalCursor = moveToStart(state.pedalCursor); hooks.onCursorMove(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.pedalCursor = moveToEnd(state.pedalCursor); hooks.onCursorMove(); return; }
-      } else if (state.cursorMode === 'tempo') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, -1); hooks.onCursorMove(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); state.tempoCursor = step(state.tempoCursor, +1); hooks.onCursorMove(); return; }
-        if (e.key === 'Home')       { e.preventDefault(); state.tempoCursor = moveToStart(state.tempoCursor); hooks.onCursorMove(); return; }
-        if (e.key === 'End')        { e.preventDefault(); state.tempoCursor = moveToEnd(state.tempoCursor); hooks.onCursorMove(); return; }
+      if (state.cursorMode === 'expr' || state.cursorMode === 'pedal' || state.cursorMode === 'tempo') {
+        const nav = e.key === 'ArrowLeft' ? (c: ExpressionCursor) => step(c, -1)
+          : e.key === 'ArrowRight' ? (c: ExpressionCursor) => step(c, +1)
+          : e.key === 'Home' ? moveToStart
+          : e.key === 'End' ? moveToEnd : null;
+        if (nav) {
+          e.preventDefault();
+          const mode = state.cursorMode;
+          setLayerCursor(mode, nav(byRender(layerCursor(mode), hooks)));
+          hooks.onCursorMove();
+          return;
+        }
       } else {
         if (e.key === 'ArrowLeft')  { e.preventDefault(); state.chordInternalSel = null; moveCursorOverUnrendered('left');  hooks.onCursorMove(); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); state.chordInternalSel = null; moveCursorOverUnrendered('right'); hooks.onCursorMove(); return; }

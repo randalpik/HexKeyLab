@@ -16,7 +16,7 @@ import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
 import { RUNNING_HEADER_FONT_PX, pageFrameOf, UNSCALED_MARGIN, type PageFrame } from './render/pageheader.js';
-import { cursor, resolveVoiceCursorAnchor } from './cursor/cursor.js';
+import { cursor, resolveVoiceCursorAnchor, layerMarkRect } from './cursor/cursor.js';
 import { initInput, getInputState, setViewInstr, installSCTransposeImpl, clearChordInternalSel, resetToVoiceMode, selectLayerElementById, momentAtCurrentCursor } from './input.js';
 import { scTransposeChordNote, type FootprintColorMap } from './notation/scTranspose.js';
 import { HistoryManager } from './history.js';
@@ -1251,6 +1251,7 @@ initInput(model, {
   getHklTuningMode: () => hklTuningMode,
   requestApplyLayout: () => requestApplyLayout(),
   isCellRendered: (mi, staffN) => renderer.isCellRendered(mi, staffN),
+  layerMarkRect: (mark) => layerMarkRect(mark),
   afterRender: (cb) => afterRender(cb),
   /* Manual line breaks (linebreakCommands.ts): the renderer's owned partition. */
   isPageView: () => renderer.getViewMode() === 'page',

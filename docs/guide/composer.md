@@ -51,7 +51,7 @@ Composer is keyboard-first. The cursor sits in one **voice** at a time; most key
 |---|---|
 | `←` / `→` | Move the cursor within the current voice. |
 | `↑` / `↓` | Switch voice / layer (and into the dynamics, pedal, and tempo layers; see [Pedal, tempo & expressive text](#pedal-tempo-expressive-text)). Lands on the note sounding at the same moment, not the bar start. |
-| `Ctrl+←` / `Ctrl+→` | In a dynamics/pedal/tempo layer, jump mark-to-mark. |
+| `Ctrl+←` / `Ctrl+→` | In a dynamics/pedal/tempo layer, jump mark to mark — skipping notes without marks. Each mark sharing a beat, and each hairpin's end, is a stop of its own. |
 | `Home` / `End` | Jump to the start / end of the voice. |
 | Click | Click anywhere in the score to place the cursor there. |
 
@@ -106,6 +106,8 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 - `<` / `>` → start / end a crescendo or diminuendo hairpin (two steps: mark the start, navigate, mark the end).
 
 Dynamics and hairpins affect playback loudness. **Above/below placement**: `Ctrl+↑` / `Ctrl+↓`.
+
+**Moving around a layer** (dynamics, pedal and tempo alike): `←`/`→` step through every mark and every note in between. Each mark is its own stop — marks sharing a beat are visited one at a time, top to bottom as engraved, and a hairpin has two, its start and its end. The cursor is a bar just to the right of the selected mark and as tall as it (a hairpin's start puts it at the wedge's left edge, its end at the right edge, on the next system if the wedge continues there). On a note without a mark the bar is short and sits at the note, level with the previous mark — or, before the first one, between the staves of a grand staff, below a single staff, below the staves for pedal, above them for tempo. Such a stop selects nothing, even inside a hairpin. `Backspace`/`Delete` remove only the selected mark, and `Ctrl+↑`/`Ctrl+↓` move only the selected mark (from voice mode, they move every mark at the note).
 
 **Slurs** (`Ctrl+L`): press once to mark the start note, navigate, press again to close the slur. `Ctrl+L` on a note already under a slur removes it. In playback, slurs become legato: overlapping releases on plucked/struck instruments, smooth pitch glides on sustained ones.
 

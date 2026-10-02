@@ -20,6 +20,7 @@ Or call the runner directly:
 node test/composer-test/run.mjs fast
 node test/composer-test/run.mjs full
 node test/composer-test/run.mjs scenario <name>   # single fixture, debug
+node test/composer-test/run.mjs full --only lc_,kbd_p1_   # tier filtered by name prefix(es)
 node test/composer-test/run.mjs full --keep-open   # leave browser open at end
 node test/composer-test/run.mjs full --update-baselines  # accept new visuals
 ```

@@ -153,27 +153,3 @@ export function pedalMoments(doc: Document, staffFilter?: ReadonlyArray<number>)
   out.sort(momentCompare);
   return out;
 }
-
-/** Every <pedal> element at the given moment (usually one; a coincident
- *  down+up is possible). */
-export function pedalsAt(doc: Document, m: Moment, staff?: number): Element[] {
-  const measure = getMeasures(doc)[m.measureIdx];
-  if (!measure) return [];
-  const out: Element[] = [];
-  for (const child of Array.from(measure.children)) {
-    if (child.localName !== 'pedal') continue;
-    const t = readTstamp(child);
-    if (t === null || Math.abs(t - m.tstamp) > TS_EPSILON) continue;
-    if (staff !== undefined && parseInt(child.getAttribute('staff') ?? '0', 10) !== staff) continue;
-    out.push(child);
-  }
-  return out;
-}
-
-/** Remove every <pedal> at the moment (optionally scoped to one staff). Returns
- *  the count removed. */
-export function removePedalsAt(doc: Document, m: Moment, staff?: number): number {
-  const els = pedalsAt(doc, m, staff);
-  for (const el of els) el.parentNode?.removeChild(el);
-  return els.length;
-}

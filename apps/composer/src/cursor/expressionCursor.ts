@@ -1,73 +1,93 @@
-// Expression-layer cursor. A virtual "fifth voice" that navigates a sorted
-// moment list and supports selection of dynam/hairpin elements anchored to
-// the current moment.
+// Layer cursor for the expression / pedal / tempo layers. A virtual layer that
+// steps through a sorted list of STOPS:
+//   - one per mark: every <dynam>, <dir>, <pedal>, <tempo>; a <hairpin>
+//     contributes two, its start and its end (`edge`).
+//   - one PLACEHOLDER at every note/chord ONSET (tie-initial only; tied
+//     continuations are not new onsets) whose moment carries no mark.
+// Sorted by moment. Marks sharing a moment are ordered top to bottom as
+// rendered (`orderStopsByRender`, applied before each navigation step); until
+// they have rendered they keep type order: hairpin ends, dynamic, expressive
+// text, hairpin starts (pedal: up, then down).
 //
-// Moment list = union of:
-//   - Every note/chord ONSET across all four voices (tie-initial only; tied
-//     continuations are not new moments).
-//   - Every <dynam>'s tstamp.
-//   - Every <hairpin>'s tstamp AND endpoint moment (so existing hairpin
-//     endpoints are always reachable, even when they don't coincide with a
-//     note onset).
-// Deduplicated by (measureIdx, tstamp) with float epsilon.
+// A stop selects exactly its own mark — a placeholder inside a hairpin's span
+// selects nothing, so concurrent marks inside a wedge don't multiply the stops.
+// Onset tstamps use each measure's own beat unit (mid-piece meter changes).
 //
-// The cursor is stateless w.r.t. the doc: callers build a fresh moment list
-// after any structural change and either snap to the previous moment or
-// reset to 0.
+// The cursor is stateless w.r.t. the doc: callers rebuild after any structural
+// change and `relocate` the previous stop (same mark, else same moment).
 
 import {
-  type Moment, momentCompare, momentEqual, dynamAt, dirAt, hairpinsAt, readMeter,
-  tempoMoments, parseTstamp2,
+  type Moment, momentCompare, momentEqual, parseTstamp2, beatTicksByMeasure,
 } from '../expressions.js';
-import { pedalMoments } from '../pedal.js';
 import { realTicks } from '../model/ticks.js';
+
+export type LayerMode = 'expr' | 'pedal' | 'tempo';
+export type MarkKind = 'dynam' | 'dir' | 'hairpin' | 'pedal' | 'tempo';
+
+export interface MarkRef {
+  /** The mark's xml:id (its rendered `<g>` id). */
+  id: string;
+  kind: MarkKind;
+  /** Hairpins only: which end of the wedge this stop is. */
+  edge?: 'start' | 'end';
+  /** The mark's @staff. */
+  staff: number;
+}
+
+export interface LayerStop {
+  moment: Moment;
+  /** The mark this stop selects; null for a placeholder. */
+  mark: MarkRef | null;
+  /** xml:id of the first note/chord with an onset at this moment (top staff,
+   *  top layer first), or null — a placeholder's x anchor. */
+  onsetId: string | null;
+}
 
 export interface ExpressionCursor {
   index: number;
-  moments: ReadonlyArray<Moment>;
+  stops: ReadonlyArray<LayerStop>;
 }
 
-export interface ExpressionSelection {
-  dynam: Element | null;
-  dir: Element | null;
-  hairpins: Element[];
-}
+export const EMPTY_LAYER_CURSOR: ExpressionCursor = { index: 0, stops: [] };
 
-/* ── moment list construction ────────────────────────────────────────────── */
+/* ── stop list construction ──────────────────────────────────────────────── */
 
-function noteOnsetMoments(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
-  const out: Moment[] = [];
+interface Onset { moment: Moment; id: string }
+
+/** Every note/chord onset (sorted, one per moment — the first in staff/layer
+ *  order keeps its id). `staffFilter` restricts to one instrument's staves. */
+function noteOnsets(doc: Document, staffFilter?: ReadonlyArray<number>): Onset[] {
+  const out: Onset[] = [];
   const measures = Array.from(doc.querySelectorAll('measure'));
-  const { unit } = readMeter(doc);
-  const ticksPerBeat = 64 / unit;
-
+  const beatTicks = beatTicksByMeasure(doc);
   for (let mi = 0; mi < measures.length; mi++) {
-    const measure = measures[mi];
+    const ticksPerBeat = beatTicks[mi] ?? 16;
     /* Scan staves directly (not by voice number) so the walk is instrument-
-       agnostic. `staffFilter` (when given) restricts onsets to one
-       instrument's staves — used by the per-instrument expression/pedal
-       layers; undefined = all staves (score-global tempo + the historic
-       single-instrument behavior). */
-    for (const staff of Array.from(measure.querySelectorAll('staff'))) {
+       agnostic. */
+    for (const staff of Array.from(measures[mi].querySelectorAll('staff'))) {
       const sn = parseInt(staff.getAttribute('n') ?? '0', 10);
       if (staffFilter && !staffFilter.includes(sn)) continue;
       for (const layer of Array.from(staff.querySelectorAll('layer'))) {
         let cumTicks = 0;
         for (const child of flatLayerChildren(layer)) {
           const local = child.localName;
-          const ticks = elementDurationTicks(child);
-          if (local === 'note' || local === 'chord') {
-            /* Skip tie-terminal continuations — they are not new onsets. */
-            if (!isTieTerminalOnly(child)) {
-              out.push({ measureIdx: mi, tstamp: 1 + cumTicks / ticksPerBeat });
-            }
+          const id = child.getAttribute('xml:id');
+          if ((local === 'note' || local === 'chord') && id && !isTieTerminalOnly(child)) {
+            out.push({ moment: { measureIdx: mi, tstamp: 1 + cumTicks / ticksPerBeat }, id });
           }
-          cumTicks += ticks;
+          cumTicks += realTicks(child);
         }
       }
     }
   }
-  return out;
+  /* Stable sort: within a moment the first-pushed (top staff, top layer) wins. */
+  out.sort((a, b) => momentCompare(a.moment, b.moment));
+  const dedup: Onset[] = [];
+  for (const o of out) {
+    if (dedup.length > 0 && momentEqual(dedup[dedup.length - 1].moment, o.moment)) continue;
+    dedup.push(o);
+  }
+  return dedup;
 }
 
 function flatLayerChildren(layer: Element): Element[] {
@@ -76,15 +96,9 @@ function flatLayerChildren(layer: Element): Element[] {
     const ln = c.localName;
     if (ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'space') {
       out.push(c);
-    } else if (ln === 'beam') {
-      for (const cc of Array.from(c.children)) {
-        const ln2 = cc.localName;
-        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
-      }
-    } else if (ln === 'tuplet') {
-      /* Descend into tuplets so tuplet-internal notes contribute onset
-         moments at fractional tstamps. realTicks() scales each child's
-         duration by numbase/num automatically. */
+    } else if (ln === 'beam' || ln === 'tuplet') {
+      /* Descend one level: beamed notes, and tuplet-internal notes at
+         fractional tstamps (realTicks scales each child by numbase/num). */
       for (const cc of Array.from(c.children)) {
         const ln2 = cc.localName;
         if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
@@ -92,10 +106,6 @@ function flatLayerChildren(layer: Element): Element[] {
     }
   }
   return out;
-}
-
-function elementDurationTicks(el: Element): number {
-  return realTicks(el);
 }
 
 /** True when this element is a tied continuation (terminal-only or medial)
@@ -115,233 +125,197 @@ function isTieTerminalOnly(el: Element): boolean {
   return true;
 }
 
-/* ── public API ──────────────────────────────────────────────────────────── */
+const MARK_SELECTOR: Record<LayerMode, string> = { expr: 'dynam, dir, hairpin', pedal: 'pedal', tempo: 'tempo' };
 
-const TS_EPSILON = 1e-6;
-
-function approxEqMoment(a: Moment, b: Moment): boolean {
-  return a.measureIdx === b.measureIdx && Math.abs(a.tstamp - b.tstamp) < TS_EPSILON;
-}
-
-/** Build the sorted, deduplicated moment list. `staffFilter` (when given)
- *  restricts onsets + dynam/dir/hairpin marks to one instrument's staves (the
- *  per-instrument expression layer); undefined = all staves. */
-export function buildMomentList(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
-  const onsets = noteOnsetMoments(doc, staffFilter);
-  const measures = Array.from(doc.querySelectorAll('measure'));
-  const inFilter = (el: Element): boolean =>
-    !staffFilter || staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10));
-
-  /* Dynam/dir/hairpin marks (point + span expression marks). Tempo is its own
-     top-level layer (above V1), not part of the expression layer. */
-  onsets.push(...layerElementMoments(doc, 'expr', staffFilter));
-  return dedupSorted(onsets);
-}
-
-/** Element-anchor moments for ONE virtual layer — the moments at which a real
- *  mark exists (skipping bare note onsets). For `'expr'`: every <dynam>/<dir>
- *  tstamp plus every <hairpin> start AND end. For `'pedal'`/`'tempo'`: the
- *  corresponding mark moments. `staffFilter` scopes expr/pedal to one
- *  instrument's staves (tempo is score-global). Sorted ascending, deduped.
- *
- *  Used by Ctrl+←/→ to jump mark-to-mark and by layer entry to snap to the
- *  nearest existing mark. */
-export function layerElementMoments(
-  doc: Document,
-  mode: 'expr' | 'pedal' | 'tempo',
-  staffFilter?: ReadonlyArray<number>,
-  includeHairpinEnd = true,
-): Moment[] {
-  if (mode === 'pedal') return dedupSorted(pedalMoments(doc, staffFilter));
-  if (mode === 'tempo') return dedupSorted(tempoMoments(doc));
-  const measures = Array.from(doc.querySelectorAll('measure'));
-  const inFilter = (el: Element): boolean =>
-    !staffFilter || staffFilter.includes(parseInt(el.getAttribute('staff') ?? '0', 10));
-  const out: Moment[] = [];
-  for (const d of Array.from(doc.querySelectorAll('dynam, dir'))) {
-    if (!inFilter(d)) continue;
-    const m = d.closest('measure');
-    if (!m) continue;
-    const idx = measures.indexOf(m);
-    if (idx < 0) continue;
-    const t = parseFloat(d.getAttribute('tstamp') ?? '');
-    if (isFinite(t)) out.push({ measureIdx: idx, tstamp: t });
+/** Type order of marks sharing a moment, used until they have rendered: a
+ *  wedge closing into the dynamic, the text, then the next wedge opening;
+ *  a pedal change releases before it re-depresses. */
+function typeRank(el: Element, edge?: 'start' | 'end'): number {
+  switch (el.localName) {
+    case 'hairpin': return edge === 'end' ? 0 : 3;
+    case 'dynam': return 1;
+    case 'dir': return 2;
+    case 'pedal': return el.getAttribute('dir') === 'up' ? 0 : 1;
+    default: return 0;
   }
-  for (const h of Array.from(doc.querySelectorAll('hairpin'))) {
-    if (!inFilter(h)) continue;
-    const m = h.closest('measure');
-    if (!m) continue;
-    const idx = measures.indexOf(m);
-    if (idx < 0) continue;
-    const t = parseFloat(h.getAttribute('tstamp') ?? '');
-    if (isFinite(t)) out.push({ measureIdx: idx, tstamp: t });
-    /* The hairpin END is a navigable moment (plain ←/→) but NOT a distinct
-       selectable item — Ctrl-jump and entry-snap exclude it so each stop lands
-       on a real mark (the hairpin is reached via its start). */
-    if (includeHairpinEnd) {
-      const end = parseTstamp2(h.getAttribute('tstamp2') ?? '', idx);
-      if (end) out.push(end);
+}
+
+/** Mark stops of one layer, sorted by moment then type order. `staffFilter`
+ *  scopes expr/pedal to one instrument's staves; tempo is score-global. */
+function markStops(doc: Document, mode: LayerMode, staffFilter?: ReadonlyArray<number>): LayerStop[] {
+  const measureIdx = new Map<Element, number>();
+  Array.from(doc.querySelectorAll('measure')).forEach((m, i) => measureIdx.set(m, i));
+  const ranked: { stop: LayerStop; rank: number }[] = [];
+  for (const el of Array.from(doc.querySelectorAll(MARK_SELECTOR[mode]))) {
+    const staff = parseInt(el.getAttribute('staff') ?? '0', 10);
+    if (mode !== 'tempo' && staffFilter && !staffFilter.includes(staff)) continue;
+    const id = el.getAttribute('xml:id');
+    const measure = el.closest('measure');
+    const mi = measure ? measureIdx.get(measure) : undefined;
+    const t = parseFloat(el.getAttribute('tstamp') ?? '');
+    if (!id || mi === undefined || !isFinite(t)) continue;
+    const kind = el.localName as MarkKind;
+    const at: Moment = { measureIdx: mi, tstamp: t };
+    if (kind === 'hairpin') {
+      ranked.push({ stop: { moment: at, mark: { id, kind, edge: 'start', staff }, onsetId: null }, rank: typeRank(el, 'start') });
+      const end = parseTstamp2(el.getAttribute('tstamp2') ?? '', mi);
+      if (end) ranked.push({ stop: { moment: end, mark: { id, kind, edge: 'end', staff }, onsetId: null }, rank: typeRank(el, 'end') });
+    } else {
+      ranked.push({ stop: { moment: at, mark: { id, kind, staff }, onsetId: null }, rank: typeRank(el) });
     }
   }
-  return dedupSorted(out);
+  ranked.sort((a, b) => momentCompare(a.stop.moment, b.stop.moment) || a.rank - b.rank);
+  return ranked.map((r) => r.stop);
 }
 
-/** Step to the next (`dir=1`) or previous (`dir=-1`) EXISTING mark in the
- *  layer, relative to the cursor's current moment. Returns the snapped cursor,
- *  or the cursor unchanged when there is no mark in that direction. */
-export function stepToElement(
-  c: ExpressionCursor,
-  doc: Document,
-  mode: 'expr' | 'pedal' | 'tempo',
-  dir: -1 | 1,
-  staffFilter?: ReadonlyArray<number>,
-): ExpressionCursor {
-  const cur = currentMoment(c);
-  const elems = layerElementMoments(doc, mode, staffFilter, false /* item anchors only */);
-  if (elems.length === 0) return c;
-  if (!cur) return snapTo(c, dir > 0 ? elems[0] : elems[elems.length - 1]);
-  let target: Moment | null = null;
-  if (dir > 0) {
-    for (const m of elems) { if (momentCompare(m, cur) > 0) { target = m; break; } }
-  } else {
-    for (let i = elems.length - 1; i >= 0; i--) {
-      if (momentCompare(elems[i], cur) < 0) { target = elems[i]; break; }
+/** The layer's stops: its marks, plus a placeholder at every onset moment that
+ *  carries no mark. A mark stop records the onset at its moment too (the
+ *  placeholder geometry's fallback when the mark itself isn't rendered). */
+export function buildLayerStops(doc: Document, mode: LayerMode, staffFilter?: ReadonlyArray<number>): LayerStop[] {
+  const onsets = noteOnsets(doc, mode === 'tempo' ? undefined : staffFilter);
+  const marks = markStops(doc, mode, staffFilter);
+  const out: LayerStop[] = [];
+  let i = 0, j = 0;
+  while (i < onsets.length || j < marks.length) {
+    const o = onsets[i];
+    const mk = marks[j];
+    const c = !o ? 1 : !mk ? -1 : momentCompare(o.moment, mk.moment);
+    if (c < 0) {
+      out.push({ moment: o.moment, mark: null, onsetId: o.id });
+      i++;
+    } else if (c > 0) {
+      out.push(mk);
+      j++;
+    } else {
+      while (j < marks.length && momentCompare(marks[j].moment, o.moment) === 0) {
+        out.push({ ...marks[j], onsetId: o.id });
+        j++;
+      }
+      i++;
     }
-  }
-  if (!target) return c;
-  return snapTo(c, target);
-}
-
-/** Snap a freshly-built cursor to the nearest existing mark in the layer (used
- *  on layer entry). If the layer has no marks, snaps to `prefer` (the
- *  carried-over moment) instead, falling back to the cursor as built. */
-export function snapToNearestElement(
-  c: ExpressionCursor,
-  doc: Document,
-  mode: 'expr' | 'pedal' | 'tempo',
-  prefer: Moment | null,
-  staffFilter?: ReadonlyArray<number>,
-): ExpressionCursor {
-  const elems = layerElementMoments(doc, mode, staffFilter, false /* item anchors only */);
-  if (elems.length === 0) return prefer ? snapTo(c, prefer) : c;
-  const anchor = prefer ?? currentMoment(c);
-  if (!anchor) return snapTo(c, elems[0]);
-  /* Closest mark to the anchor moment. */
-  let best = elems[0];
-  let bestD = absDistance(best, anchor);
-  for (const m of elems) {
-    const d = absDistance(m, anchor);
-    if (d < bestD) { best = m; bestD = d; }
-  }
-  return snapTo(c, best);
-}
-
-/** Sort ascending and drop adjacent duplicates (by measure+tstamp epsilon). */
-function dedupSorted(moments: Moment[]): Moment[] {
-  moments.sort(momentCompare);
-  const out: Moment[] = [];
-  for (const m of moments) {
-    if (out.length > 0 && approxEqMoment(out[out.length - 1], m)) continue;
-    out.push(m);
   }
   return out;
 }
 
-/** Pedal-layer moment list: note onsets ∪ <pedal> mark moments. Constructed
- *  exactly like buildMomentList (the expression layer), substituting pedal
- *  marks for dynam/hairpin moments. */
-export function buildPedalMomentList(doc: Document, staffFilter?: ReadonlyArray<number>): Moment[] {
-  return dedupSorted([...noteOnsetMoments(doc, staffFilter), ...pedalMoments(doc, staffFilter)]);
-}
+/* ── cursor construction ─────────────────────────────────────────────────── */
 
-/** Build a cursor over an explicit moment list, snapping to the moment closest
- *  to `prevMoment` (lower-bound binary search). Shared by the expression and
- *  pedal layers. */
-function cursorFromMoments(moments: Moment[], prevMoment?: Moment | null): ExpressionCursor {
-  if (moments.length === 0) return { index: 0, moments };
-  if (!prevMoment) return { index: 0, moments };
-  /* Lower-bound binary search. */
-  let lo = 0, hi = moments.length;
+const sameMark = (a: MarkRef | null, b: MarkRef | null): boolean =>
+  !!a && !!b && a.id === b.id && a.edge === b.edge;
+
+/** Lower bound: the first stop at or after `m`, clamped to the last. */
+function lowerBound(stops: ReadonlyArray<LayerStop>, m: Moment): number {
+  let lo = 0, hi = stops.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (momentCompare(moments[mid], prevMoment) < 0) lo = mid + 1;
+    if (momentCompare(stops[mid].moment, m) < 0) lo = mid + 1;
     else hi = mid;
   }
-  /* Clamp to the last index if past end. */
-  const index = Math.min(lo, moments.length - 1);
-  return { index, moments };
+  return Math.min(lo, Math.max(0, stops.length - 1));
 }
 
-/** Build a fresh expression cursor. If `prevMoment` is given, the cursor snaps
- *  to the closest surviving moment. */
-export function rebuildCursor(doc: Document, prevMoment?: Moment | null, staffFilter?: ReadonlyArray<number>): ExpressionCursor {
-  return cursorFromMoments(buildMomentList(doc, staffFilter), prevMoment);
+/** A cursor over `stops` at the first stop at (or after) `at`; index 0 when
+ *  `at` is null. */
+export function cursorAtMoment(stops: ReadonlyArray<LayerStop>, at: Moment | null): ExpressionCursor {
+  if (stops.length === 0 || !at) return { index: 0, stops };
+  return { index: lowerBound(stops, at), stops };
 }
 
-/** Build a fresh pedal-layer cursor (same snapping as rebuildCursor). */
-export function rebuildPedalCursor(doc: Document, prevMoment?: Moment | null, staffFilter?: ReadonlyArray<number>): ExpressionCursor {
-  return cursorFromMoments(buildPedalMomentList(doc, staffFilter), prevMoment);
+/** Re-find `prev`'s current stop in a freshly built list: the same mark (id +
+ *  edge) if it survived; else the stop at the same moment holding the same
+ *  position among that moment's stops (so deleting one of three coincident
+ *  marks lands on its neighbour, not back at the first); else the first stop
+ *  at or after the moment. */
+export function relocate(prev: ExpressionCursor, stops: ReadonlyArray<LayerStop>): ExpressionCursor {
+  const cur = currentStop(prev);
+  if (!cur || stops.length === 0) return { index: 0, stops };
+  if (cur.mark) {
+    const same = stops.findIndex((s) => sameMark(s.mark, cur.mark));
+    if (same >= 0) return { index: same, stops };
+  }
+  let first = prev.index;
+  while (first > 0 && momentEqual(prev.stops[first - 1].moment, cur.moment)) first--;
+  const ordinal = prev.index - first;
+  const lo = lowerBound(stops, cur.moment);
+  if (momentEqual(stops[lo].moment, cur.moment)) {
+    let hi = lo;
+    while (hi + 1 < stops.length && momentEqual(stops[hi + 1].moment, cur.moment)) hi++;
+    return { index: Math.min(lo + ordinal, hi), stops };
+  }
+  return { index: lo, stops };
 }
 
-/** Tempo-layer moment list: note onsets ∪ <tempo> mark moments. Same
- *  construction as the expression/pedal layers; tempo is a top-level layer
- *  above V1 because it applies to all instruments, not one staff. */
-export function buildTempoMomentList(doc: Document): Moment[] {
-  return dedupSorted([...noteOnsetMoments(doc), ...tempoMoments(doc)]);
-}
+/* ── accessors ───────────────────────────────────────────────────────────── */
 
-/** Build a fresh tempo-layer cursor (same snapping as rebuildCursor). */
-export function rebuildTempoCursor(doc: Document, prevMoment?: Moment | null): ExpressionCursor {
-  return cursorFromMoments(buildTempoMomentList(doc), prevMoment);
+export function currentStop(c: ExpressionCursor): LayerStop | null {
+  if (c.index < 0 || c.index >= c.stops.length) return null;
+  return c.stops[c.index];
 }
 
 export function currentMoment(c: ExpressionCursor): Moment | null {
-  if (c.moments.length === 0) return null;
-  if (c.index < 0 || c.index >= c.moments.length) return null;
-  return c.moments[c.index];
+  return currentStop(c)?.moment ?? null;
 }
 
+export function currentMark(c: ExpressionCursor): MarkRef | null {
+  return currentStop(c)?.mark ?? null;
+}
+
+/** The live MEI element a stop's mark refers to, or null once it's gone. */
+export function markElement(doc: Document, mark: MarkRef): Element | null {
+  for (const el of Array.from(doc.querySelectorAll(mark.kind))) {
+    if (el.getAttribute('xml:id') === mark.id) return el;
+  }
+  return null;
+}
+
+/* ── navigation ──────────────────────────────────────────────────────────── */
+
 export function step(c: ExpressionCursor, dir: -1 | 1): ExpressionCursor {
-  if (c.moments.length === 0) return c;
-  const next = Math.max(0, Math.min(c.moments.length - 1, c.index + dir));
+  if (c.stops.length === 0) return c;
+  const next = Math.max(0, Math.min(c.stops.length - 1, c.index + dir));
   if (next === c.index) return c;
-  return { index: next, moments: c.moments };
+  return { index: next, stops: c.stops };
 }
 
 export function moveToStart(c: ExpressionCursor): ExpressionCursor {
-  if (c.moments.length === 0) return c;
-  if (c.index === 0) return c;
-  return { index: 0, moments: c.moments };
+  if (c.stops.length === 0 || c.index === 0) return c;
+  return { index: 0, stops: c.stops };
 }
 
 export function moveToEnd(c: ExpressionCursor): ExpressionCursor {
-  if (c.moments.length === 0) return c;
-  const last = c.moments.length - 1;
-  if (c.index === last) return c;
-  return { index: last, moments: c.moments };
+  const last = c.stops.length - 1;
+  if (last < 0 || c.index === last) return c;
+  return { index: last, stops: c.stops };
 }
 
-/** Snap the cursor to a specific moment (closest by binary search). */
-export function snapTo(c: ExpressionCursor, target: Moment): ExpressionCursor {
-  if (c.moments.length === 0) return c;
-  let lo = 0, hi = c.moments.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (momentCompare(c.moments[mid], target) < 0) lo = mid + 1;
-    else hi = mid;
+/** Ctrl+←/→: the next (`dir=1`) or previous (`dir=-1`) MARK stop — skipping
+ *  placeholders; each coincident mark and each hairpin end is its own stop.
+ *  Returns the cursor unchanged when there is no mark in that direction. */
+export function stepToMark(c: ExpressionCursor, dir: -1 | 1): ExpressionCursor {
+  for (let i = c.index + dir; i >= 0 && i < c.stops.length; i += dir) {
+    if (c.stops[i].mark) return { index: i, stops: c.stops };
   }
-  /* Prefer the EXACT match if present; else the closer of [lo-1, lo]. */
-  if (lo < c.moments.length && momentEqual(c.moments[lo], target)) {
-    return { index: lo, moments: c.moments };
+  return c;
+}
+
+/** Layer entry: the mark stop nearest `anchor` (the first of a moment's marks
+ *  on a tie). With no marks, the cursor as given. */
+export function snapToNearestMark(c: ExpressionCursor, anchor: Moment | null): ExpressionCursor {
+  let best = -1;
+  let bestD = Infinity;
+  for (let i = 0; i < c.stops.length; i++) {
+    if (!c.stops[i].mark) continue;
+    const d = anchor ? absDistance(c.stops[i].moment, anchor) : i;
+    if (d < bestD) { best = i; bestD = d; }
   }
-  /* Otherwise lo points to the first moment > target. Compare with lo-1. */
-  if (lo === 0) return { index: 0, moments: c.moments };
-  if (lo >= c.moments.length) return { index: c.moments.length - 1, moments: c.moments };
-  const before = c.moments[lo - 1];
-  const after = c.moments[lo];
-  const dBefore = absDistance(before, target);
-  const dAfter = absDistance(after, target);
-  return { index: dBefore <= dAfter ? lo - 1 : lo, moments: c.moments };
+  return best < 0 ? c : { index: best, stops: c.stops };
+}
+
+/** The stop selecting mark `id` (a hairpin's `edge`, start by default), or the
+ *  cursor unchanged when no stop holds it. */
+export function snapToMark(c: ExpressionCursor, id: string, edge?: 'start' | 'end'): ExpressionCursor {
+  const want = edge ?? 'start';
+  const i = c.stops.findIndex((s) => s.mark?.id === id && (s.mark.kind !== 'hairpin' || s.mark.edge === want));
+  return i < 0 ? c : { index: i, stops: c.stops };
 }
 
 function absDistance(a: Moment, b: Moment): number {
@@ -350,12 +324,44 @@ function absDistance(a: Moment, b: Moment): number {
   return Math.abs((a.measureIdx - b.measureIdx) * 1000 + (a.tstamp - b.tstamp));
 }
 
-/* ── selection ───────────────────────────────────────────────────────────── */
+/* ── render order ────────────────────────────────────────────────────────── */
 
-export function selectionAt(doc: Document, m: Moment, staffFilter?: ReadonlyArray<number>): ExpressionSelection {
-  return {
-    dynam: dynamAt(doc, m, staffFilter),
-    dir: dirAt(doc, m, staffFilter),
-    hairpins: hairpinsAt(doc, m, staffFilter),
-  };
+/** Tops within this many px count as level; those order left to right. */
+const ORDER_TOP_TOL = 2;
+
+/** Re-sort each moment's run of marks top to bottom as rendered (level tops
+ *  left to right, then type order), keeping the cursor on the same stop. A run
+ *  with any unrendered mark keeps its type order. `rectOf` returns the mark's
+ *  rendered box in any consistent frame. */
+export function orderStopsByRender(
+  c: ExpressionCursor,
+  rectOf: (mark: MarkRef) => { top: number; left: number } | null,
+): ExpressionCursor {
+  let stops: LayerStop[] | null = null;
+  for (let i = 0; i < c.stops.length;) {
+    let j = i + 1;
+    if (c.stops[i].mark) {
+      while (j < c.stops.length && c.stops[j].mark && momentEqual(c.stops[j].moment, c.stops[i].moment)) j++;
+    }
+    if (j - i > 1) {
+      const run = c.stops.slice(i, j);
+      const geo = run.map((s) => rectOf(s.mark!));
+      if (geo.every((g) => g !== null)) {
+        const order = run.map((_, k) => k).sort((a, b) => {
+          const ga = geo[a]!, gb = geo[b]!;
+          if (Math.abs(ga.top - gb.top) > ORDER_TOP_TOL) return ga.top - gb.top;
+          if (Math.abs(ga.left - gb.left) > 0.5) return ga.left - gb.left;
+          return a - b;
+        });
+        if (order.some((v, k) => v !== k)) {
+          stops ??= c.stops.slice();
+          for (let k = 0; k < order.length; k++) stops[i + k] = run[order[k]];
+        }
+      }
+    }
+    i = j;
+  }
+  if (!stops) return c;
+  const cur = c.stops[c.index];
+  return { index: Math.max(0, stops.indexOf(cur)), stops };
 }

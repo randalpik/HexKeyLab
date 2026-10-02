@@ -219,7 +219,7 @@ export function buildScoreSkeletonXml(setup: ScoreSkeletonSetup = {}): string {
     </scoreDef>
     <section>
       <measure n="1" right="end" xml:id="${newId('m')}">
-        <tempo tstamp="1" staff="1" mm="${bpm}" mm.unit="${tempoUnit}"${tempoDotsAttr} midi.bpm="${bpm}">${tempoTextSpan}</tempo>
+        <tempo xml:id="${newId('tempo')}" tstamp="1" staff="1" mm="${bpm}" mm.unit="${tempoUnit}"${tempoDotsAttr} midi.bpm="${bpm}">${tempoTextSpan}</tempo>
         <staff n="1" xml:id="${newId('s')}">
           <layer n="1" xml:id="${newId('l')}"/>
           <layer n="2" xml:id="${newId('l')}"/>

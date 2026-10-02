@@ -3532,14 +3532,25 @@ class Renderer {
   rectForId(meiId: string): DOMRect | null {
     if (!this.container) return null;
     const node = this.container.querySelector('#' + CSS.escape(meiId));
-    if (!node) return null;
+    return node ? this.rectForElement(node) : null;
+  }
+
+  /** Bounding rect of a rendered element, relative to the container (the
+   *  frame rectForId reports). */
+  rectForElement(el: Element): DOMRect | null {
+    if (!this.container) return null;
     const containerRect = this.container.getBoundingClientRect();
-    const r = (node as Element).getBoundingClientRect();
+    const r = el.getBoundingClientRect();
     return new DOMRect(
       r.left - containerRect.left + this.container.scrollLeft,
       r.top - containerRect.top + this.container.scrollTop,
       r.width, r.height,
     );
+  }
+
+  /** Rendered elements matching `selector` (in document order). */
+  queryRendered(selector: string): Element[] {
+    return this.container ? Array.from(this.container.querySelectorAll(selector)) : [];
   }
 
   /** Find the right-edge x (in container-local coords) of the rightmost

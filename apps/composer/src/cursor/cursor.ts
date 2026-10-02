@@ -1,9 +1,11 @@
 // Cursor overlay. Three modes:
 //   - Voice editing (default): single bar (insert) or selection box
 //     (overwrite) at the model's current-element position.
-//   - Expression editing: a vertical tick between staves 1 and 2 at the
-//     current expression-cursor moment. Selected dynam/hairpin SVG elements
-//     get a `.expr-selected` CSS class.
+//   - Layer editing (expression / pedal / tempo): one bar per layer at the
+//     layer cursor's stop — flush right of the selected mark at its rendered
+//     height, or a fixed-height bar at a placeholder's onset (see
+//     layerBarRect). The selected mark gets `.expr-selected` /
+//     `.pedal-selected` / `.tempo-selected`.
 //   - Playback: per-voice bars, one for each voice currently sounding.
 //
 // Cursor index convention (post-refactor): cursor `c` means "past flat[c]".
@@ -19,11 +21,11 @@ import {
   computeVoiceCursorRect, computePlaybackBarRect,
   type VoiceCursorAnchor, type CursorRectQuery, type PlaybackBarEdge,
 } from '@hkl/shared/cursor-geom.js';
-import { type Moment, dynamAt, hairpinsAt, tempoAt } from '../expressions.js';
 import { tempoCopySource } from '../notation/parts.js';
-import { pedalsAt } from '../pedal.js';
-import { currentMoment, selectionAt, type ExpressionCursor } from './expressionCursor.js';
-import { realTicks } from '../model/ticks.js';
+import {
+  currentStop, EMPTY_LAYER_CURSOR,
+  type ExpressionCursor, type LayerMode, type LayerStop, type MarkRef,
+} from './expressionCursor.js';
 
 /* Edit/playback cursor color. Driven by the shared --cursor-color theme var
    (set on the themed score container in dark mode by notation-theme.ts) with
@@ -47,6 +49,16 @@ const DEBUG = typeof location !== 'undefined' &&
 const EXPR_SELECTED_CLASS = 'expr-selected';
 const PEDAL_SELECTED_CLASS = 'pedal-selected';
 const TEMPO_SELECTED_CLASS = 'tempo-selected';
+const LAYER_SELECTED_CLASS: Record<LayerMode, string> = {
+  expr: EXPR_SELECTED_CLASS, pedal: PEDAL_SELECTED_CLASS, tempo: TEMPO_SELECTED_CLASS,
+};
+const LAYER_LABEL: Record<LayerMode, string> = { expr: 'EXPR', pedal: 'PED', tempo: 'TEMPO' };
+const LAYERS: readonly LayerMode[] = ['expr', 'pedal', 'tempo'];
+/** Layer bar width, and its gap from the mark it selects. */
+const LAYER_BAR_W = CURSOR_WIDTH + 1;
+const MARK_GAP = 1;
+/** Height of a placeholder stop's bar (an onset that carries no mark). */
+const PLACEHOLDER_H = 28;
 
 export interface CursorUpdateOpts {
   entryMode: 'insert' | 'overwrite';
@@ -171,6 +183,117 @@ export function resolveVoiceCursorAnchor(
   return staffStart();
 }
 
+/* ── layer-cursor geometry (expression / pedal / tempo) ──────────────────── */
+
+const cssId = (id: string): string => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id);
+
+/** Every rendered piece of a mark: its `<g id>` plus, for a spanner broken
+ *  across systems, Verovio's id-less continuation pieces — `class="hairpin
+ *  id-<xml:id> spanning"`, children of the later system's `<g>`. */
+function markPieces(mark: MarkRef): Element[] {
+  const esc = cssId(mark.id);
+  return renderer.queryRendered('#' + esc + ', g.id-' + esc);
+}
+
+/** Rendered box of a mark (container px), or null when it isn't drawn. A
+ *  hairpin's END is its last piece; everything else is the `<g id>` itself
+ *  (a tempo's original, not its per-part copies). */
+export function layerMarkRect(mark: MarkRef): DOMRect | null {
+  const el = mark.kind === 'hairpin' && mark.edge === 'end'
+    ? markPieces(mark).pop()
+    : renderer.queryRendered('#' + cssId(mark.id))[0];
+  const r = el ? renderer.rectForElement(el) : null;
+  return r && (r.width > 0 || r.height > 0) ? r : null;
+}
+
+/** Top/bottom of staff `staffN`'s five lines in measure `measureIdx`
+ *  (container px) — the staff's frame, unlike its bbox, which grows with
+ *  ledger-line notes. Null when that staff isn't drawn there. */
+function staffLines(model: ComposerModel, measureIdx: number, staffN: number): { top: number; bottom: number } | null {
+  const staff = model.allMeasures()[measureIdx]?.querySelector(`staff[n="${staffN}"]`);
+  const id = staff?.getAttribute('xml:id');
+  const g = id ? renderer.queryRendered('#' + cssId(id))[0] : undefined;
+  if (!g) return null;
+  let top = Infinity, bottom = -Infinity;
+  for (const line of Array.from(g.querySelectorAll(':scope > path'))) {
+    const r = renderer.rectForElement(line);
+    if (!r) continue;
+    top = Math.min(top, r.top);
+    bottom = Math.max(bottom, r.bottom);
+  }
+  return isFinite(top) ? { top, bottom } : null;
+}
+
+/** x of a stop's onset notehead centre (container px). */
+function onsetX(stop: LayerStop): number | null {
+  const g = stop.onsetId ? renderer.queryRendered('#' + cssId(stop.onsetId))[0] : undefined;
+  const r = g ? renderer.rectForElement(g.querySelector('.notehead') ?? g) : null;
+  return r ? r.left + r.width / 2 : null;
+}
+
+/** Placeholder bar top with no previous mark to align to: centred between a
+ *  grand staff's staves or below a single staff (expr), below the bottom staff
+ *  (pedal), above the score's top drawn staff (tempo). */
+function defaultPlaceholderTop(model: ComposerModel, mode: LayerMode, measureIdx: number, instrIdx: number): number | null {
+  if (mode === 'tempo') {
+    for (const inst of model.instruments()) {
+      for (const n of inst.staffNs) {
+        const l = staffLines(model, measureIdx, n);
+        if (l) return l.top - CURSOR_VPAD - PLACEHOLDER_H;
+      }
+    }
+    return null;
+  }
+  const staffNs = model.instruments()[instrIdx]?.staffNs ?? [1, 2];
+  if (mode === 'expr' && staffNs.length >= 2) {
+    const a = staffLines(model, measureIdx, staffNs[0]);
+    const b = staffLines(model, measureIdx, staffNs[1]);
+    return a && b ? (a.bottom + b.top) / 2 - PLACEHOLDER_H / 2 : null;
+  }
+  const l = staffLines(model, measureIdx, staffNs[staffNs.length - 1]);
+  return l ? l.bottom + CURSOR_VPAD : null;
+}
+
+/** Placeholder bar top: centred on the previous mark in the layer — its offset
+ *  from its staff's lines reapplied to that staff where the placeholder is, so
+ *  the alignment survives a system or page break — else the default band. */
+function placeholderTop(model: ComposerModel, mode: LayerMode, c: ExpressionCursor, instrIdx: number): number | null {
+  const stop = c.stops[c.index];
+  for (let i = c.index - 1; i >= 0; i--) {
+    const prev = c.stops[i];
+    if (!prev.mark) continue;
+    const r = layerMarkRect(prev.mark);
+    const from = r ? staffLines(model, prev.moment.measureIdx, prev.mark.staff) : null;
+    const to = from ? staffLines(model, stop.moment.measureIdx, prev.mark.staff) : null;
+    if (r && from && to) return r.top + r.height / 2 - from.top + to.top - PLACEHOLDER_H / 2;
+    break;
+  }
+  return defaultPlaceholderTop(model, mode, stop.moment.measureIdx, instrIdx);
+}
+
+/** The layer bar (container px) at the cursor's stop. A mark stop: flush right
+ *  of the mark at its rendered height — a hairpin START flush left of the
+ *  wedge, its END flush right of the last piece. A placeholder (or a mark that
+ *  isn't drawn): a PLACEHOLDER_H bar at the onset's notehead, placed by
+ *  placeholderTop. Null only when neither can be located. */
+function layerBarRect(model: ComposerModel, mode: LayerMode, c: ExpressionCursor, instrIdx: number): { x: number; y: number; w: number; h: number } | null {
+  const stop = currentStop(c);
+  if (!stop) return null;
+  if (stop.mark) {
+    const r = layerMarkRect(stop.mark);
+    if (r) {
+      const x = stop.mark.kind === 'hairpin' && stop.mark.edge === 'start'
+        ? r.left - MARK_GAP - LAYER_BAR_W
+        : r.right + MARK_GAP;
+      return { x, y: r.top, w: LAYER_BAR_W, h: r.height };
+    }
+  }
+  const x = onsetX(stop);
+  const top = x === null ? null : placeholderTop(model, mode, c, instrIdx);
+  if (x === null || top === null) return null;
+  return { x: x - LAYER_BAR_W / 2, y: top, w: LAYER_BAR_W, h: PLACEHOLDER_H };
+}
+
 class CursorOverlay {
   private svg: SVGSVGElement | null = null;
   private barRect: SVGRectElement | null = null;
@@ -182,9 +305,8 @@ class CursorOverlay {
   private tempoBar: SVGRectElement | null = null;
   private tempoLabel: SVGTextElement | null = null;
   private chordIntLine: SVGLineElement | null = null;
-  private lastSelectedIds: string[] = [];
-  private lastPedalSelectedIds: string[] = [];
-  private lastTempoSelectedIds: string[] = [];
+  /** Rendered pieces carrying the active layer's selected-mark class. */
+  private layerSelected: Element[] = [];
 
   /* Playback-mode state. Per-voice bars layered over the editing cursor;
      editing cursor itself is hidden while playbackMode is true. */
@@ -234,6 +356,7 @@ class CursorOverlay {
       this.exprBar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       this.exprBar.setAttribute('fill', EXPR_CURSOR_COLOR);
       this.exprBar.setAttribute('opacity', '0');
+      this.exprBar.setAttribute('data-cursor-role', 'expr');
       this.svg.appendChild(this.exprBar);
     }
     if (!this.exprLabel) {
@@ -248,6 +371,7 @@ class CursorOverlay {
       this.pedalBar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       this.pedalBar.setAttribute('fill', PEDAL_CURSOR_COLOR);
       this.pedalBar.setAttribute('opacity', '0');
+      this.pedalBar.setAttribute('data-cursor-role', 'pedal');
       this.svg.appendChild(this.pedalBar);
     }
     if (!this.pedalLabel) {
@@ -262,6 +386,7 @@ class CursorOverlay {
       this.tempoBar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       this.tempoBar.setAttribute('fill', TEMPO_CURSOR_COLOR);
       this.tempoBar.setAttribute('opacity', '0');
+      this.tempoBar.setAttribute('data-cursor-role', 'tempo');
       this.svg.appendChild(this.tempoBar);
     }
     if (!this.tempoLabel) {
@@ -293,18 +418,14 @@ class CursorOverlay {
     this.ensureNodes();
 
     const resolved: CursorUpdateOpts = typeof opts === 'string'
-      ? { entryMode: opts, cursorMode: 'voice', exprCursor: { index: 0, moments: [] }, pedalCursor: { index: 0, moments: [] }, tempoCursor: { index: 0, moments: [] } }
+      ? { entryMode: opts, cursorMode: 'voice', exprCursor: EMPTY_LAYER_CURSOR, pedalCursor: EMPTY_LAYER_CURSOR, tempoCursor: EMPTY_LAYER_CURSOR }
       : opts;
 
     if (this.playbackMode) {
       this.barRect!.setAttribute('opacity', '0');
       this.voiceLabel!.textContent = '';
-      this.exprBar!.setAttribute('opacity', '0');
-      this.exprLabel!.textContent = '';
       this.chordIntLine?.setAttribute('opacity', '0');
-      this.clearExpressionHighlights();
-      this.hidePedal();
-      this.hideTempo();
+      this.hideLayers();
       for (const [voice, pos] of this.playbackPositions) {
         this.positionPlaybackBar(voice, pos.meiId, pos.edge);
       }
@@ -316,72 +437,45 @@ class CursorOverlay {
          renders the visible region. */
       this.barRect!.setAttribute('opacity', '0');
       this.voiceLabel!.textContent = '';
-      this.exprBar!.setAttribute('opacity', '0');
-      this.exprLabel!.textContent = '';
       this.chordIntLine?.setAttribute('opacity', '0');
-      this.clearExpressionHighlights();
-      this.hidePedal();
-      this.hideTempo();
+      this.hideLayers();
       return;
     }
 
-    if (resolved.cursorMode === 'expr') {
+    if (resolved.cursorMode === 'expr' || resolved.cursorMode === 'pedal' || resolved.cursorMode === 'tempo') {
+      const mode = resolved.cursorMode;
       this.barRect!.setAttribute('opacity', '0');
       this.voiceLabel!.textContent = '';
       this.chordIntLine?.setAttribute('opacity', '0');
-      this.hidePedal();
-      this.hideTempo();
-      this.renderExpressionCursor(model, resolved.exprCursor, resolved.exprInstrIdx ?? 0);
-      this.updateExpressionHighlights(model, resolved.exprCursor, resolved.exprInstrIdx ?? 0);
+      for (const other of LAYERS) if (other !== mode) this.hideLayerBar(other);
+      const c = mode === 'expr' ? resolved.exprCursor : mode === 'pedal' ? resolved.pedalCursor : resolved.tempoCursor;
+      const instrIdx = mode === 'expr' ? resolved.exprInstrIdx ?? 0 : mode === 'pedal' ? resolved.pedalInstrIdx ?? 0 : 0;
+      this.renderLayerCursor(model, mode, c, instrIdx);
+      this.updateLayerHighlight(mode, c);
       return;
     }
 
-    if (resolved.cursorMode === 'pedal') {
-      this.barRect!.setAttribute('opacity', '0');
-      this.voiceLabel!.textContent = '';
-      this.exprBar!.setAttribute('opacity', '0');
-      this.exprLabel!.textContent = '';
-      this.chordIntLine?.setAttribute('opacity', '0');
-      this.clearExpressionHighlights();
-      this.hideTempo();
-      this.renderPedalCursor(model, resolved.pedalCursor, resolved.pedalInstrIdx ?? 0);
-      this.updatePedalHighlights(model, resolved.pedalCursor, resolved.pedalInstrIdx ?? 0);
-      return;
-    }
-
-    if (resolved.cursorMode === 'tempo') {
-      this.barRect!.setAttribute('opacity', '0');
-      this.voiceLabel!.textContent = '';
-      this.exprBar!.setAttribute('opacity', '0');
-      this.exprLabel!.textContent = '';
-      this.chordIntLine?.setAttribute('opacity', '0');
-      this.clearExpressionHighlights();
-      this.hidePedal();
-      this.renderTempoCursor(model, resolved.tempoCursor);
-      this.updateTempoHighlights(model, resolved.tempoCursor);
-      return;
-    }
-
-    /* Voice mode: hide expression + pedal + tempo overlays and highlights. */
-    this.exprBar!.setAttribute('opacity', '0');
-    this.exprLabel!.textContent = '';
-    this.clearExpressionHighlights();
-    this.hidePedal();
-    this.hideTempo();
+    /* Voice mode: hide the layer bars and highlights. */
+    this.hideLayers();
     this.renderVoiceCursor(model, resolved.entryMode);
     this.renderChordInternalLine(resolved.chordInternalSel ?? null);
   }
 
-  private hidePedal(): void {
-    this.pedalBar?.setAttribute('opacity', '0');
-    if (this.pedalLabel) this.pedalLabel.textContent = '';
-    this.clearPedalHighlights();
+  private layerNodes(mode: LayerMode): { bar: SVGRectElement; label: SVGTextElement } {
+    if (mode === 'expr') return { bar: this.exprBar!, label: this.exprLabel! };
+    if (mode === 'pedal') return { bar: this.pedalBar!, label: this.pedalLabel! };
+    return { bar: this.tempoBar!, label: this.tempoLabel! };
   }
 
-  private hideTempo(): void {
-    this.tempoBar?.setAttribute('opacity', '0');
-    if (this.tempoLabel) this.tempoLabel.textContent = '';
-    this.clearTempoHighlights();
+  private hideLayerBar(mode: LayerMode): void {
+    const { bar, label } = this.layerNodes(mode);
+    bar?.setAttribute('opacity', '0');
+    if (label) label.textContent = '';
+  }
+
+  private hideLayers(): void {
+    for (const mode of LAYERS) this.hideLayerBar(mode);
+    this.clearLayerHighlights();
   }
 
   /** Draw a horizontal purple line from the voice cursor's bar to the
@@ -476,388 +570,63 @@ class CursorOverlay {
     if (DEBUG) console.log('[cursor]', { voice, mode, anchor, x, y, w, h, isSelectionBox });
   }
 
-  /* ── expression-cursor rendering ───────────────────────────────────────── */
+  /* ── layer-cursor rendering (expression / pedal / tempo) ──────────────── */
 
-  private renderExpressionCursor(model: ComposerModel, exprCursor: ExpressionCursor, instrIdx: number): void {
-    const m = currentMoment(exprCursor);
-    const bar = this.exprBar!;
-    const label = this.exprLabel!;
-    if (!m) {
+  private renderLayerCursor(model: ComposerModel, mode: LayerMode, c: ExpressionCursor, instrIdx: number): void {
+    const { bar, label } = this.layerNodes(mode);
+    const name = LAYER_LABEL[mode];
+    const stop = currentStop(c);
+    const g = stop ? layerBarRect(model, mode, c, instrIdx) : null;
+    if (!g) {
       bar.setAttribute('opacity', '0');
-      label.textContent = 'EXPR (empty)';
-      label.setAttribute('x', '80');
-      label.setAttribute('y', String(20));
-      return;
-    }
-    /* Find a coincident note (any voice) for x; prefer staff-1 voices (1, 2)
-       so the cursor sits between the staves. Fall back to the moment's
-       expression element if no note is co-located. */
-    const noteRect = this.findNoteRectAtMoment(model, m, model.voicesForInstrument(instrIdx));
-    let staff1BottomGuess = noteRect?.bottom;
-    let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
-
-    if (cursorX === null) {
-      const exprId = this.findExprIdAtMoment(model, m, model.instruments()[instrIdx]?.staffNs);
-      if (exprId) {
-        const r = renderer.rectForId(exprId);
-        if (r) {
-          cursorX = r.left + r.width / 2;
-          if (staff1BottomGuess === undefined) staff1BottomGuess = r.top;
-        }
-      }
-    }
-
-    /* Determine the vertical band for this instrument at this moment: between
-       its two staves (grand staff) or just above its single staff. */
-    const yBand = this.computeBetweenStavesY(model, m, instrIdx);
-
-    if (cursorX === null || !yBand) {
-      bar.setAttribute('opacity', '0');
-      label.textContent = 'EXPR m' + (m.measureIdx + 1) + ' β' + m.tstamp.toFixed(2).replace(/\.?0+$/, '');
+      label.textContent = stop
+        ? name + ' m' + (stop.moment.measureIdx + 1) + ' β' + stop.moment.tstamp.toFixed(2).replace(/\.?0+$/, '')
+        : name + ' (empty)';
       label.setAttribute('x', '80');
       label.setAttribute('y', '20');
       return;
     }
-
-    const x = cursorX - CURSOR_WIDTH / 2;
-    bar.setAttribute('x', String(x));
-    bar.setAttribute('y', String(yBand.top));
-    bar.setAttribute('width', String(CURSOR_WIDTH + 1));
-    bar.setAttribute('height', String(yBand.bottom - yBand.top));
+    bar.setAttribute('x', String(g.x));
+    bar.setAttribute('y', String(g.y));
+    bar.setAttribute('width', String(g.w));
+    bar.setAttribute('height', String(g.h));
     bar.setAttribute('opacity', '0.85');
-
-    label.textContent = 'EXPR';
-    label.setAttribute('x', String(x + 4));
-    label.setAttribute('y', String(yBand.top - 2));
+    label.textContent = name;
+    label.setAttribute('x', String(g.x + 4));
+    label.setAttribute('y', String(mode === 'pedal' ? g.y + g.h + 12 : g.y - 2));
   }
 
-  /** Find a note/chord at exactly the given moment. Prefer voice 1/2 (staff 1)
-   *  so the cursor naturally lands between the staves. */
-  private findNoteRectAtMoment(model: ComposerModel, m: Moment, voices?: ReadonlyArray<number>): { left: number; bottom: number; width: number; right: number } | null {
-    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
-    const measure = measures[m.measureIdx];
-    if (!measure) return null;
-    const { unit } = model.getTimeSig();
-    const ticksPerBeat = 64 / unit;
-    const targetTicks = (m.tstamp - 1) * ticksPerBeat;
-
-    /* Default: scan all voices (used by the score-global tempo cursor).
-       The expr/pedal cursors pass their instrument's voices so the X anchor
-       prefers that instrument's notes. */
-    const voiceOrder: ReadonlyArray<number> =
-      voices ?? Array.from({ length: model.totalVoices() }, (_, i) => i + 1);
-    for (const v of voiceOrder) {
-      const staffN = model.staffForVoice(v);
-      const layerN = model.layerForVoice(v);
-      const layer = Array.from(measure.querySelectorAll(`staff[n="${staffN}"] layer[n="${layerN}"]`))[0];
-      if (!layer) continue;
-      let cum = 0;
-      for (const child of Array.from(layer.children)) {
-        const ln = child.localName;
-        if (ln !== 'note' && ln !== 'chord' && ln !== 'rest' && ln !== 'space') continue;
-        if (Math.abs(cum - targetTicks) < 1e-6 && (ln === 'note' || ln === 'chord')) {
-          const id = child.getAttribute('xml:id');
-          if (id) {
-            const r = renderer.rectForId(id);
-            if (r) return { left: r.left, bottom: r.bottom, width: r.width, right: r.right };
-          }
-        }
-        cum += elementDurationTicks(child);
-      }
-    }
-    return null;
-  }
-
-  /** Returns the xml:id of the dynam-at-moment or first hairpin-at-moment, if
-   *  any. Used as a fallback x-anchor for orphan moments. */
-  private findExprIdAtMoment(model: ComposerModel, m: Moment, staffFilter?: ReadonlyArray<number>): string | null {
-    const doc = model.getDoc();
-    const d = dynamAt(doc, m, staffFilter);
-    if (d) return d.getAttribute('xml:id');
-    const hairpins = hairpinsAt(doc, m, staffFilter);
-    if (hairpins.length > 0) return hairpins[0].getAttribute('xml:id');
-    return null;
-  }
-
-  /** Compute the vertical band between staff 1 and staff 2 at the moment's
-   *  measure. Falls back to a small region below the cursor x if the staff
-   *  ids can't be resolved. */
-  private computeBetweenStavesY(model: ComposerModel, m: Moment, instrIdx: number): { top: number; bottom: number } | null {
-    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
-    const measure = measures[m.measureIdx];
-    if (!measure) return null;
-    const inst = model.instruments()[instrIdx];
-    const staffNs = inst?.staffNs ?? [1, 2];
-    const staffs = Array.from(measure.querySelectorAll('staff'));
-    const rectFor = (n: number) => {
-      const s = staffs.find((st) => st.getAttribute('n') === String(n));
-      const id = s?.getAttribute('xml:id');
-      return id ? renderer.rectForId(id) : null;
-    };
-    if (staffNs.length < 2) {
-      /* Single-staff instrument: band just above its one staff (same math as
-         the tempo band, but anchored to this instrument's staff). */
-      const r = rectFor(staffNs[0]);
-      if (!r) return null;
-      const bottom = r.top - CURSOR_VPAD;
-      return { top: bottom - 28, bottom };
-    }
-    const r1 = rectFor(staffNs[0]);
-    const r2 = rectFor(staffNs[1]);
-    if (!r1 || !r2) return null;
-    /* Use the smaller-on-screen staff as top, the larger as bottom. */
-    const top = Math.min(r1.bottom, r2.bottom);
-    const bottom = Math.max(r1.top, r2.top);
-    if (bottom <= top) {
-      /* The staves overlap (rare; shouldn't happen for a grand staff). Fall
-         back to a thin band right below the top staff. */
-      return { top: r1.bottom, bottom: r1.bottom + 24 };
-    }
-    return { top: top - CURSOR_VPAD, bottom: bottom + CURSOR_VPAD };
-  }
-
-  /** Tag the selected dynam / hairpin SVG elements with `.expr-selected`. */
-  private updateExpressionHighlights(model: ComposerModel, exprCursor: ExpressionCursor, instrIdx: number): void {
-    this.clearExpressionHighlights();
-    const m = currentMoment(exprCursor);
-    if (!m) return;
-    const sel = selectionAt(model.getDoc(), m, model.instruments()[instrIdx]?.staffNs);
-    const ids: string[] = [];
-    if (sel.dynam) {
-      const id = sel.dynam.getAttribute('xml:id');
-      if (id) ids.push(id);
-    }
-    if (sel.dir) {
-      const id = sel.dir.getAttribute('xml:id');
-      if (id) ids.push(id);
-    }
-    for (const h of sel.hairpins) {
-      const id = h.getAttribute('xml:id');
-      if (id) ids.push(id);
-    }
-    const container = this.scoreContainer();
-    if (!container) return;
-    for (const id of ids) {
-      const node = container.querySelector('#' + CSS.escape(id));
-      if (node) node.classList.add(EXPR_SELECTED_CLASS);
-    }
-    this.lastSelectedIds = ids;
-  }
-
-  private clearExpressionHighlights(): void {
-    const container = this.scoreContainer();
-    if (!container) {
-      this.lastSelectedIds = [];
-      return;
-    }
-    /* Remove from the snapshot we recorded last time. */
-    for (const id of this.lastSelectedIds) {
-      const node = container.querySelector('#' + CSS.escape(id));
-      if (node) node.classList.remove(EXPR_SELECTED_CLASS);
-    }
-    /* Defensive: also clear any leftover .expr-selected nodes (e.g., after
-       re-render the snapshot ids may have lost their classes already but
-       new render could carry stale ones if id stayed the same). */
-    for (const node of Array.from(container.querySelectorAll('.' + EXPR_SELECTED_CLASS))) {
-      node.classList.remove(EXPR_SELECTED_CLASS);
-    }
-    this.lastSelectedIds = [];
-  }
-
-  /* ── pedal-cursor rendering (mirrors expression, but below staff 2) ────── */
-
-  private renderPedalCursor(model: ComposerModel, pedalCursor: ExpressionCursor, instrIdx: number): void {
-    const m = currentMoment(pedalCursor);
-    const bar = this.pedalBar!;
-    const label = this.pedalLabel!;
-    if (!m) {
-      bar.setAttribute('opacity', '0');
-      label.textContent = 'PED (empty)';
-      label.setAttribute('x', '80');
-      label.setAttribute('y', '20');
-      return;
-    }
-    /* x: center on a coincident note if any; else the pedal glyph itself. */
-    const noteRect = this.findNoteRectAtMoment(model, m, model.voicesForInstrument(instrIdx));
-    let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
-    if (cursorX === null) {
-      const pid = this.findPedalIdAtMoment(model, m, instrIdx);
-      if (pid) {
-        const r = renderer.rectForId(pid);
-        if (r) cursorX = r.left + r.width / 2;
-      }
-    }
-    const yBand = this.computeBelowInstrumentY(model, m, instrIdx);
-    if (cursorX === null || !yBand) {
-      bar.setAttribute('opacity', '0');
-      label.textContent = 'PED m' + (m.measureIdx + 1) + ' β' + m.tstamp.toFixed(2).replace(/\.?0+$/, '');
-      label.setAttribute('x', '80');
-      label.setAttribute('y', '20');
-      return;
-    }
-    const x = cursorX - CURSOR_WIDTH / 2;
-    bar.setAttribute('x', String(x));
-    bar.setAttribute('y', String(yBand.top));
-    bar.setAttribute('width', String(CURSOR_WIDTH + 1));
-    bar.setAttribute('height', String(yBand.bottom - yBand.top));
-    bar.setAttribute('opacity', '0.85');
-    label.textContent = 'PED';
-    label.setAttribute('x', String(x + 4));
-    label.setAttribute('y', String(yBand.bottom + 12));
-  }
-
-  /** A band just below the instrument's LAST staff (where Verovio renders the
-   *  pedal lane). Per-instrument: the pedal belongs to one grand-staff
-   *  instrument and sits below its bottom staff. */
-  private computeBelowInstrumentY(model: ComposerModel, m: Moment, instrIdx: number): { top: number; bottom: number } | null {
-    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
-    const measure = measures[m.measureIdx];
-    if (!measure) return null;
-    const inst = model.instruments()[instrIdx];
-    const lastStaffN = inst ? inst.staffNs[inst.staffNs.length - 1] : 2;
-    const sLast = Array.from(measure.querySelectorAll('staff')).find((s) => s.getAttribute('n') === String(lastStaffN));
-    const sId = sLast?.getAttribute('xml:id');
-    const r = sId ? renderer.rectForId(sId) : null;
-    if (!r) return null;
-    const top = r.bottom + CURSOR_VPAD;
-    return { top, bottom: top + 28 };
-  }
-
-  private findPedalIdAtMoment(model: ComposerModel, m: Moment, instrIdx = 0): string | null {
-    const ps = pedalsAt(model.getDoc(), m, this.pedalStaffOf(model, instrIdx));
-    return ps.length > 0 ? ps[0].getAttribute('xml:id') : null;
-  }
-
-  /** Bottom staff of the instrument the pedal layer is scoped to. */
-  private pedalStaffOf(model: ComposerModel, instrIdx: number): number | undefined {
-    const ns = model.instruments()[instrIdx]?.staffNs;
-    return ns ? ns[ns.length - 1] : undefined;
-  }
-
-  private updatePedalHighlights(model: ComposerModel, pedalCursor: ExpressionCursor, instrIdx: number): void {
-    this.clearPedalHighlights();
-    const m = currentMoment(pedalCursor);
-    if (!m) return;
-    const ids: string[] = [];
-    for (const el of pedalsAt(model.getDoc(), m, this.pedalStaffOf(model, instrIdx))) {
-      const id = el.getAttribute('xml:id');
-      if (id) ids.push(id);
-    }
-    const container = this.scoreContainer();
-    if (!container) return;
-    for (const id of ids) {
-      const node = container.querySelector('#' + CSS.escape(id));
-      if (node) node.classList.add(PEDAL_SELECTED_CLASS);
-    }
-    this.lastPedalSelectedIds = ids;
-  }
-
-  private clearPedalHighlights(): void {
-    const container = this.scoreContainer();
-    if (!container) { this.lastPedalSelectedIds = []; return; }
-    for (const id of this.lastPedalSelectedIds) {
-      const node = container.querySelector('#' + CSS.escape(id));
-      if (node) node.classList.remove(PEDAL_SELECTED_CLASS);
-    }
-    for (const node of Array.from(container.querySelectorAll('.' + PEDAL_SELECTED_CLASS))) {
-      node.classList.remove(PEDAL_SELECTED_CLASS);
-    }
-    this.lastPedalSelectedIds = [];
-  }
-
-  /* ── tempo-cursor rendering (mirrors pedal, but above staff 1) ─────────── */
-
-  private renderTempoCursor(model: ComposerModel, tempoCursor: ExpressionCursor): void {
-    const m = currentMoment(tempoCursor);
-    const bar = this.tempoBar!;
-    const label = this.tempoLabel!;
-    if (!m) {
-      bar.setAttribute('opacity', '0');
-      label.textContent = 'TEMPO (empty)';
-      label.setAttribute('x', '80');
-      label.setAttribute('y', '20');
-      return;
-    }
-    const noteRect = this.findNoteRectAtMoment(model, m);
-    let cursorX = noteRect ? noteRect.left + noteRect.width / 2 : null;
-    if (cursorX === null) {
-      const tid = this.findTempoIdAtMoment(model, m);
-      if (tid) {
-        const r = renderer.rectForId(tid);
-        if (r) cursorX = r.left + r.width / 2;
-      }
-    }
-    const yBand = this.computeAboveStaff1Y(model, m);
-    if (cursorX === null || !yBand) {
-      bar.setAttribute('opacity', '0');
-      label.textContent = 'TEMPO m' + (m.measureIdx + 1) + ' β' + m.tstamp.toFixed(2).replace(/\.?0+$/, '');
-      label.setAttribute('x', '80');
-      label.setAttribute('y', '20');
-      return;
-    }
-    const x = cursorX - CURSOR_WIDTH / 2;
-    bar.setAttribute('x', String(x));
-    bar.setAttribute('y', String(yBand.top));
-    bar.setAttribute('width', String(CURSOR_WIDTH + 1));
-    bar.setAttribute('height', String(yBand.bottom - yBand.top));
-    bar.setAttribute('opacity', '0.85');
-    label.textContent = 'TEMPO';
-    label.setAttribute('x', String(x + 4));
-    label.setAttribute('y', String(yBand.top - 2));
-  }
-
-  /** A band just above staff 1 (where Verovio renders tempo marks). */
-  private computeAboveStaff1Y(model: ComposerModel, m: Moment): { top: number; bottom: number } | null {
-    const measures = Array.from(model.getDoc().querySelectorAll('measure'));
-    const measure = measures[m.measureIdx];
-    if (!measure) return null;
-    const s1 = Array.from(measure.querySelectorAll('staff')).find((s) => s.getAttribute('n') === '1');
-    const s1Id = s1?.getAttribute('xml:id');
-    const r1 = s1Id ? renderer.rectForId(s1Id) : null;
-    if (!r1) return null;
-    const bottom = r1.top - CURSOR_VPAD;
-    return { top: bottom - 28, bottom };
-  }
-
-  private findTempoIdAtMoment(model: ComposerModel, m: Moment): string | null {
-    const t = tempoAt(model.getDoc(), m);
-    return t ? t.getAttribute('xml:id') : null;
-  }
-
-  private updateTempoHighlights(model: ComposerModel, tempoCursor: ExpressionCursor): void {
-    this.clearTempoHighlights();
-    const m = currentMoment(tempoCursor);
-    if (!m) return;
-    const t = tempoAt(model.getDoc(), m);
-    const id = t?.getAttribute('xml:id');
-    const container = this.scoreContainer();
-    if (!id || !container) return;
+  /** Tag the selected mark's rendered pieces with the layer's class. */
+  private updateLayerHighlight(mode: LayerMode, c: ExpressionCursor): void {
+    this.clearLayerHighlights();
+    const mark = currentStop(c)?.mark;
+    if (!mark) return;
+    const els = markPieces(mark);
     /* The render clone restates a tempo above every part
        (`duplicateTempiAcrossParts`), so the selection lights up the original
        AND its `-p<staffN>` copies — one highlighted mark out of several
        identical ones reads as a different mark. */
-    const ids = [id];
-    for (const g of Array.from(container.querySelectorAll('g.tempo'))) {
-      if (g.id && g.id !== id && tempoCopySource(g.id) === id) ids.push(g.id);
+    if (mark.kind === 'tempo') {
+      for (const g of renderer.queryRendered('g.tempo')) {
+        if (g.id && g.id !== mark.id && tempoCopySource(g.id) === mark.id) els.push(g);
+      }
     }
-    for (const gid of ids) {
-      const node = container.querySelector('#' + CSS.escape(gid));
-      if (node) node.classList.add(TEMPO_SELECTED_CLASS);
-    }
-    this.lastTempoSelectedIds = ids;
+    for (const el of els) el.classList.add(LAYER_SELECTED_CLASS[mode]);
+    this.layerSelected = els;
   }
 
-  private clearTempoHighlights(): void {
+  private clearLayerHighlights(): void {
+    const classes = Object.values(LAYER_SELECTED_CLASS);
+    for (const el of this.layerSelected) el.classList.remove(...classes);
+    /* Defensive: a re-render can carry a stale class on an element whose id
+       survived. */
     const container = this.scoreContainer();
-    if (!container) { this.lastTempoSelectedIds = []; return; }
-    for (const id of this.lastTempoSelectedIds) {
-      const node = container.querySelector('#' + CSS.escape(id));
-      if (node) node.classList.remove(TEMPO_SELECTED_CLASS);
+    if (container) {
+      for (const cls of classes) {
+        for (const node of Array.from(container.querySelectorAll('.' + cls))) node.classList.remove(cls);
+      }
     }
-    for (const node of Array.from(container.querySelectorAll('.' + TEMPO_SELECTED_CLASS))) {
-      node.classList.remove(TEMPO_SELECTED_CLASS);
-    }
-    this.lastTempoSelectedIds = [];
+    this.layerSelected = [];
   }
 
   private scoreContainer(): HTMLElement | null {
@@ -948,14 +717,8 @@ class CursorOverlay {
     if (this.tempoBar) this.tempoBar.setAttribute('opacity', '0');
     if (this.tempoLabel) this.tempoLabel.textContent = '';
     for (const bar of this.playbackBars.values()) bar.setAttribute('opacity', '0');
-    this.clearExpressionHighlights();
-    this.clearPedalHighlights();
-    this.clearTempoHighlights();
+    this.clearLayerHighlights();
   }
-}
-
-function elementDurationTicks(el: Element): number {
-  return realTicks(el);
 }
 
 export const cursor = new CursorOverlay();

@@ -809,6 +809,12 @@ export class ComposerModel {
         staff.setAttributeNS(XML_NS, "xml:id", newId("s"));
       }
     }
+    /* Likewise control events: the expression / pedal / tempo layer cursors
+       select and locate a mark by its xml:id. The new-document template's
+       tempo carried none until 2026-09-30, so most older files have one. */
+    for (const el of Array.from(this.doc.querySelectorAll("dynam, dir, hairpin, pedal, tempo"))) {
+      if (!el.getAttribute("xml:id")) el.setAttributeNS(XML_NS, "xml:id", newId(el.localName));
+    }
     /* Migrate older .hkc files that used @accid="ss" for double sharps —
        Verovio renders that as a precomposed "##" glyph, not the canonical
        × (which is @accid="x"). Rewrite for visual consistency. */

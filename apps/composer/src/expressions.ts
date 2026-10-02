@@ -127,6 +127,27 @@ function measureTickInfo(doc: Document, measureIdx: number): { startTick: number
   return { startTick: tick, ticksPerBeat: 64 / unit };
 }
 
+/** Beat length in ticks (64 / the meter unit in effect) of every measure, in
+ *  document order — measureTickInfo's `<scoreDef>` walk in one pass, for
+ *  callers that visit every measure. */
+export function beatTicksByMeasure(doc: Document): number[] {
+  let unit = readMeter(doc).unit;
+  const section = doc.querySelector('section');
+  const nodes = section
+    ? Array.from(section.querySelectorAll('scoreDef, measure'))
+    : Array.from(doc.querySelectorAll('measure'));
+  const out: number[] = [];
+  for (const node of nodes) {
+    if (node.localName === 'scoreDef') {
+      const u = node.getAttribute('meter.unit');
+      if (u) unit = parseInt(u, 10);
+    } else {
+      out.push(64 / unit);
+    }
+  }
+  return out;
+}
+
 /** Absolute 64th-note tick offset for a Moment. Per-measure-meter aware: the
  *  measure's cumulative start plus `(tstamp-1)` beats of THAT measure's meter. */
 export function absoluteTickForMoment(doc: Document, m: Moment): number {

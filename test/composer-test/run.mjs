@@ -36,18 +36,20 @@ function parseArgs() {
   let scenarioName = null;
   let keepOpen = false;
   let updateBaselines = false;
+  let only = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--keep-open') keepOpen = true;
+    else if (a === '--only') only = (args[++i] ?? '').split(',').filter(Boolean);
     else if (a === '--update-baselines') updateBaselines = true;
     else if (a === 'scenario') { mode = 'scenario'; scenarioName = args[++i]; }
     else if (['fast', 'full', 'visual'].includes(a)) mode = a;
     else if (!scenarioName && mode === 'scenario') scenarioName = a;
   }
-  return { mode, scenarioName, keepOpen, updateBaselines };
+  return { mode, scenarioName, keepOpen, updateBaselines, only };
 }
 
-function selectFixtures(mode, scenarioName) {
+function selectFixtures(mode, scenarioName, only) {
   if (mode === 'scenario') {
     if (!scenarioName || !FIXTURES[scenarioName]) {
       throw new Error('Unknown scenario: ' + scenarioName +
@@ -56,7 +58,9 @@ function selectFixtures(mode, scenarioName) {
     return [[scenarioName, FIXTURES[scenarioName]]];
   }
   const wanted = mode === 'full' ? ['fast', 'full'] : ['fast'];
-  return Object.entries(FIXTURES).filter(([_, f]) => wanted.includes(f.tier));
+  /* `--only a,b`: keep fixtures whose name starts with any listed prefix. */
+  return Object.entries(FIXTURES).filter(([name, f]) => wanted.includes(f.tier)
+    && (!only || only.some((p) => name.startsWith(p))));
 }
 
 async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
@@ -292,8 +296,8 @@ function fmtResult(r) {
 }
 
 async function main() {
-  const { mode, scenarioName, keepOpen, updateBaselines } = parseArgs();
-  const fixtures = selectFixtures(mode, scenarioName);
+  const { mode, scenarioName, keepOpen, updateBaselines, only } = parseArgs();
+  const fixtures = selectFixtures(mode, scenarioName, only);
   const outDir = join(__dirname, 'out');
   mkdirSync(outDir, { recursive: true });
 
