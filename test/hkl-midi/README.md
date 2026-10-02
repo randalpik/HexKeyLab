@@ -25,10 +25,11 @@ the AudioParam, so it holds whether or not headless Chromium runs the
 AudioContext. **Run it before declaring any change to `setDamperDepth`,
 `sostenutoOn/Off`, or the note-off sustain path done.**
 
-## Device departure and power-off guard
+## Device departure and liveness heartbeat
 
 Behavioral gate for HKL's **Lumatone MIDI input path** — device-departure
-handling and the opt-in power-off note guard.
+handling, the liveness heartbeat that detects a power-off, and confirmed
+re-adoption of a port that reappears.
 
 Requires `pnpm dev` running (the umbrella proxy at `:5170`).
 
@@ -37,8 +38,8 @@ node test/hkl-midi/departure.mjs     # exits non-zero on any failed check
 ```
 
 Unlike `test/hkl-inspect/` (console *inspection*, always exits 0), this is a
-pass/fail gate. **Run it before declaring any change to `midi/handler.ts` or
-`midi/engine.ts` done.**
+pass/fail gate. **Run it before declaring any change to `midi/handler.ts`,
+`midi/heartbeat.ts` or `midi/engine.ts` done.**
 
 ## Why it is shaped this way
 
@@ -50,10 +51,18 @@ reconstruction. Messages are delivered through a **simulated `MIDIInput`'s
 port's handler is null, so a replayed burst genuinely cannot reach the app.
 
 Web MIDI is denied in headless Chromium (the console line about it is
-expected); the fake ports are what the test installs instead.
+expected); the fake ports are what the test installs instead. The fake output
+answers heartbeat pings (CMD 33h) on the fake input when "alive" and swallows
+them when "dead", which is how a powered-off Lumatone behaves.
+
+`engine.ts` and `heartbeat.ts` are imported by the exact URL `handler.ts`
+imports them by (read from its transformed source). Once a module has been
+hot-reloaded, Vite serves its importers a `?t=<stamp>` URL, so a bare
+`/src/midi/engine.ts` import would be a *second* instance with no release
+handler registered, and the departure checks would test the wrong object.
 
 ## Adding cases
 
 `check(name, got, want)` inside the in-page script; scenarios are grouped by
-letter with a comment banner. Timing-sensitive guard cases `await sleep(80)`
-to clear the 25 ms window with margin.
+letter with a comment banner. Timing-sensitive heartbeat cases derive their
+waits from the exported `HEARTBEAT_*` constants rather than hardcoding them.

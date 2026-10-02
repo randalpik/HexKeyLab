@@ -217,6 +217,7 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 | Message | Handling |
 |---|---|
 | SysEx CMD 0x3E | calibration packet handler |
+| SysEx CMD 0x33 reply | heartbeat ping reply — consumed (proof of life already recorded); never reaches the queue |
 | Other SysEx | `sysexHandleResponse` (ACK matching) |
 | CC 4 (expression) | `pedal.cc4Depth = d2/127`; `setDamperDepth()`. Verbose during cal; else endpoints (0/127) only. **The damper never raises a voice**: each sustained voice's `damperGain` follows `Voice.damperLevel = min(damperLevel, depth)` (`applyDamperToVoice`), a one-way ratchet reset only by a fresh voice (re-strike). Re-pressing after a partial lift holds the level; `sostenutoOn` holds locked voices where they are (it no longer pins them to 1.0). Gate: `test/hkl-midi/damper.mjs`. |
 | CC 64 (sustain) | role per `pedal.mode`: `'sustain'` → binary damper (`cc64Depth = d2≥64?1:0` + `setDamperDepth()`); `'sostenuto'` → `sostenutoOn/Off()`, no damper touch. |
@@ -226,53 +227,69 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 
 Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time — channels 0–4 = the five board groups, notes 0–55 = key index within board.
 
-#### Departure detection and the power-off note guard
+#### Departure detection: the liveness heartbeat
 
 Powering the Lumatone off emits a burst of spurious note-ons that never receive note-offs. They are
-*protocol-valid* frames from a browning-out key scanner, byte-for-byte identical to real playing, so they
-cannot be recognised by content (lessons.md). Every signal that looked like a tell was ruled out
-empirically — the wheel-ADC pitch bend (intermittent), board spread (random), and any SysEx liveness probe
-(its round trip is timestamped on HKL's own main thread, so under load it measures our jank, not the
-device). See decisions.md, 2026-09-21, for the full list and why each died.
+*protocol-valid* frames from a browning-out key scanner, byte-for-byte identical to real playing (lessons.md),
+and nothing at runtime separates them from a dense, loud chord — velocity included (the burst is mostly but
+not only velocity 127, and real fortissimo reaches 127 routinely). So the burst is **not filtered**: it
+sounds, and is cleared once HKL notices the device is gone. On Firefox nothing else notices: `MIDIAccess` is
+a snapshot that never reports the port vanishing. History of what was tried: decisions.md, 2026-09-21 and
+2026-10-02.
 
-**The guard** (`midi/handler.ts`, opt-in via *Calibrate Keys → Power-off note guard*, pref
-`powerOffNoteGuard`, default off) keys off the burst's one consistent signature: several notes at velocity
-127 within a few milliseconds.
+**The heartbeat** (`midi/heartbeat.ts`, always on, no pref) pings the Lumatone (CMD 0x33 `LUMA_PING`) only
+while the Lumatone is **holding something** — keys down (`heldLumatonePhys`), or `sustainPedalDown` /
+`sostenutoActive` from its pedal jacks — **and** has sent nothing for `HEARTBEAT_QUIET_MS` (200).
 
-- A velocity-127 note-on opens a **quarantine**: it is buffered, not routed, and a `GUARD_WINDOW_MS` (25)
-  timer starts. Once open, **every** channel-voice message is buffered — not just note-ons — so replay
-  preserves arrival order exactly. SysEx is never held.
-- A **second** velocity-127 note-on inside the window condemns immediately (no need to wait the window out,
-  since nothing held has sounded): the buffer is discarded unplayed and `markLumatoneGone()` runs.
-- Otherwise the window expires and the buffer **replays in order** through `routeChannelMessage()`.
-
-Velocity 127 is reachable by real playing on keys whose per-key `KeyData_N` thresholds are compressed, which
-is why a lone v127 note is *delayed* rather than dropped — and why the guard is opt-in: the 25ms hold is real
-latency on genuine fortissimo strikes, consistently on the same keys.
+- **Any inbound message on the port is proof of life** (`heartbeatInbound()` at the top of
+  `handleMidiMessage`), so active playing sends no pings at all; it is the silence after the burst that
+  triggers one. Ping replies stop there and never reach the SysEx queue.
+- A reply within `HEARTBEAT_REPLY_TIMEOUT_MS` (250) clears the miss count; a held, motionless chord on a live
+  device is pinged about every 200ms. Nothing held = no pings (nothing could be left stuck).
+- **Jank is inconclusive, never a miss.** The reply is dispatched on our main thread, so a blocked thread
+  looks like a silent device. The wait is ticked every 50ms; if any tick runs >75ms late the wait doesn't
+  count and the ping is re-sent. `HEARTBEAT_MISSES_TO_DEPART` (2) clean misses in a row call
+  `markLumatoneGone()`. Typical time from burst to release: ~0.7s.
+- **Cost to the device**: the firmware runs one single-threaded loop (MIDI intake → PIC scan → pedals → wheel)
+  with the MIDI port non-blocking; `sysexResponsePing` is a preamble fill + one `write()`, no PIC traffic — a
+  strict subset of an LED update, which color sync sends at ~300/s. Verified on hardware at 50 pings/s with
+  no effect on playing.
 
 **`markLumatoneGone()`** (`midi/engine.ts`) then:
 
-1. **nulls `midiIn.onmidimessage`** — the load-bearing step. Anything still in flight cannot be latched.
+1. **nulls `midiIn.onmidimessage`** so nothing still in flight can latch.
 2. nulls `midiOut`/`midiIn`, clears `activeMidiNotes`, cancels the SysEx queue, forgets `deviceColors` /
-   `fixedLayoutSent`, and updates the status indicator. This happens **before** step 3, so a failure there
-   cannot leave the badge claiming the device is still connected.
+   `fixedLayoutSent`, sets `pendingReconnect`, and updates the status indicator. This happens **before**
+   step 3, so a failure there cannot leave the badge claiming the device is still connected.
 3. calls `releaseLumatoneInput()` (registered via `setLumatoneLostHandler` to avoid an import cycle), wrapped
-   so a throw is logged rather than swallowed. It discards any open quarantine, drops every
-   `heldLumatonePhys` key from `selectedKeys` / `sustainedKeys` / `keyVelocity` / `aftertouchSnapshot` /
-   `paFilter`, **and forces the pedal released** (`cc4Depth = cc64Depth = 0`, `setDamperDepth()`,
-   `sostenutoOff()`) — CC 4 / CC 64 come from the Lumatone's own jacks, so a damper that was down would
-   otherwise hold notes forever. Mouse/computer-keyboard voices are untouched.
+   so a throw is logged rather than swallowed. It stops the heartbeat, drops every `heldLumatonePhys` key
+   from `selectedKeys` / `sustainedKeys` / `keyVelocity` / `aftertouchSnapshot` / `paFilter`, **and forces
+   the pedal released** (`cc4Depth = cc64Depth = 0`, `setDamperDepth()`, `sostenutoOff()`) — CC 4 / CC 64
+   come from the Lumatone's own jacks, so a damper that was down would otherwise hold notes forever.
+   Mouse/computer-keyboard voices are untouched.
 
 The same `releaseLumatoneInput()` runs from `findLumatone`'s port-loss branch, which is how Chromium reaches
 it via `statechange`. Nulling `midiOut` re-arms the hotplug poll (whose "skip while the Lumatone toolbar is
-hidden" gate is bypassed while a self-declared departure is pending), so a false positive re-attaches within
-~1.5s rather than leaving the input dead.
+hidden" gate is bypassed while a self-declared departure is pending).
 
-**Gate**: `test/hkl-midi/departure.mjs` — 42 checks over departure, pedal release, badge state, and all seven
-guard behaviours. Run it before declaring any change to `midi/handler.ts` or `midi/engine.ts` done.
+**Re-adoption is confirmed, not assumed.** Firefox's fresh `MIDIAccess` keeps listing a powered-off Lumatone
+as connected while its USB link lingers, so while `pendingReconnect` is set a port that (re)appears is only a
+**candidate** (`confirmCandidate`): HKL pings it and adopts it only on a ping reply (a straggling note does
+not count), otherwise drops it after 500ms and the next poll tick asks again. A false departure therefore
+costs a brief dropout, and a dead device can't be re-adopted as "connected".
 
-**Instrument**: `apps/hkl/src/lumatone/probe.ts` exposes `lumaprobe.latency()` / `watchGuard()` / `dump()`
-for Lumatone round-trip and teardown timing. It attaches its MIDI monitor only while a run is active.
+**Re-checks swap port objects cleanly.** A re-check while connected (status-badge click) yields a fresh
+`MIDIInput` object for the same port id; `findLumatone` detaches the old object before wiring the new one,
+since both stay open and the browser delivers to every object with a handler.
+
+**Gate**: `test/hkl-midi/departure.mjs` — 56 checks over departure, pedal release, badge state, the heartbeat
+(idle / live / active-traffic / dead burst / dead pedal / jank), stale port objects, and confirmed
+re-adoption. Run it before declaring any change to `midi/handler.ts`, `midi/heartbeat.ts` or
+`midi/engine.ts` done.
+
+**Instrument**: `apps/hkl/src/lumatone/probe.ts` exposes `lumaprobe.latency()` / `watch()` / `dump()` for
+Lumatone round-trip and teardown timing (`watch()` is how the ~100ms BBB-death figure was measured). It
+attaches its MIDI monitor only while a run is active.
 
 ### Piano output (external-synth JI playback)
 

@@ -26,6 +26,11 @@
 // The instrument is kept because it is the only Lumatone timing/teardown
 // probe we have, and it attaches its MIDI monitor only while a run is active.
 //
+// OUTCOME (2026-10-02): what WAS abandoned is a probe as a 25ms verdict. As a
+// departure detector it works: watch() showed the BBB stops answering within
+// ~100ms of the power-off burst, which is what the liveness heartbeat
+// (midi/heartbeat.ts) relies on, with its waits jank-gated rather than timed.
+//
 //   lumaprobe.latency()            — round-trip stats per board
 //   lumaprobe.watch()              — start the power-off watch, then cut power
 //   lumaprobe.dump()               — print the correlated timeline
@@ -195,9 +200,9 @@ export function watch(intervalMs = 50, autoStopMs = 120000): void {
   console.log(`[lumaprobe] watching every ${intervalMs}ms. Power the Lumatone OFF now, then run lumaprobe.dump()`);
 }
 
-/** The decisive experiment. Probes on EVERY note-on (exactly as the guard
- *  would), plus a slow background tick for context. Start it, play a few real
- *  notes as a control, then cut power. */
+/** Probes on EVERY note-on (as the abandoned probe-confirmed guard design
+ *  would have), plus a slow background tick for context. Start it, play a few
+ *  real notes as a control, then cut power. */
 export function watchGuard(backgroundMs = 100, autoStopMs = 120000): void {
   probeOnNote = true;
   watch(backgroundMs, autoStopMs);

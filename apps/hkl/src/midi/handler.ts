@@ -11,9 +11,8 @@
 //     'sustain' mode, or sostenutoOn/Off in 'sostenuto' mode (per pedal.mode).
 //   • Polyphonic aftertouch (0xA0) → handleAftertouch, also stashed in
 //     audio.aftertouchSnapshot for debug polling.
-//   • Power-off note guard (opt-in) → intercepts velocity-127 note-ons ahead
-//     of all of the above and holds them briefly; see the block comment at
-//     GUARD_WINDOW_MS.
+//   • Every inbound message is reported to the liveness heartbeat
+//     (midi/heartbeat.ts) as proof of life; ping replies (CMD 33h) stop there.
 //   • Note-on/off → mutate selection.selectedKeys + audio.sustainedKeys +
 //     audio.keyVelocity, fire re-articulation flash if striking a sustaining
 //     voice, then onSelectionChanged() to drive audio + MIDI + redraw.
@@ -22,8 +21,9 @@ import { audio } from '../state/audio.js';
 import { pedal, pushPedalEvent } from '../state/pedal.js';
 import { selection } from '../state/selection.js';
 import {
-  SYSEX_MANU, SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA,
+  SYSEX_MANU, SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA, isPingReply,
 } from '../lumatone/protocol.js';
+import { heartbeatInbound, setHeartbeatHoldingProbe, stopHeartbeat } from './heartbeat.js';
 import { sysex } from '../lumatone/sysex.js';
 import { handleCalibrationPacket } from '../lumatone/calibration.js';
 import {
@@ -32,7 +32,7 @@ import {
 } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
-import { fixedMidiToKey, fixedMidiToKeyAt, markLumatoneGone, setLumatoneLostHandler } from './engine.js';
+import { fixedMidiToKey, fixedMidiToKeyAt, setLumatoneLostHandler } from './engine.js';
 import { restrikePianoOut } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { broadcastPlayerNote } from '../bridge/hkl-side.js';
@@ -62,7 +62,7 @@ export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
    forcing the damper to released does drop anything IT was sustaining, which
    is correct: the pedal is a Lumatone peripheral. */
 export function releaseLumatoneInput(): void {
-  cancelQuarantine(); /* anything held is unplayed garbage — never flush it */
+  stopHeartbeat();
   const keys: KeyId[] = [];
   heldLumatonePhys.forEach((id) => {
     const ci = id.indexOf(',');
@@ -85,6 +85,10 @@ export function releaseLumatoneInput(): void {
   if (keys.length) console.warn('Lumatone: released ' + keys.length + ' held key(s) on departure');
 }
 setLumatoneLostHandler(releaseLumatoneInput);
+/* The heartbeat only runs while the Lumatone holds something that a dead port
+   would leave stuck: keys down, or a damper / sostenuto from its pedal jacks. */
+setHeartbeatHoldingProbe(() =>
+  heldLumatonePhys.size > 0 || audio.sustainPedalDown || audio.sostenutoActive);
 
 export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
   if (heldLumatonePhys.size === 0) return;
@@ -163,110 +167,15 @@ export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
 let midiMonitor: ((data: Uint8Array) => void) | null = null;
 export function setMidiMonitor(fn: ((data: Uint8Array) => void) | null): void { midiMonitor = fn; }
 
-/* ── Power-off note guard ───────────────────────────────────────────────────
-   A Lumatone losing power emits a burst of spurious note-ons. They are
-   protocol-valid frames from a browning-out key scanner and are byte-for-byte
-   indistinguishable from real playing (lessons.md), so they cannot be
-   recognised by content. Every other candidate signal was ruled out
-   empirically:
-
-     • the pitch bend the wheel's I2C ADC emits as it collapses is real, and
-       structurally precedes the burst, but only fires when the ADC browns out
-       instead of failing outright — it is absent from most power-offs;
-     • board spread is random, and real clusters can be too;
-     • a SysEx liveness probe cannot work at all: its round trip is timestamped
-       on HKL's own main thread, so under load it measures our jank rather than
-       the device (and Web MIDI is unavailable in workers, so the clock cannot
-       be moved off that thread).
-
-   What survives is the burst's one consistent signature: several notes at
-   velocity 127 within a few milliseconds. Velocity 127 needs the firmware's
-   12-bit travel value to reach the top of the per-key threshold table, so it
-   is rare in real playing but NOT unreachable — which is why the guard HOLDS
-   a velocity-127 note rather than dropping it, and condemns only once a
-   second one lands inside the window.
-
-   The cost is real and falls on genuine velocity-127 strikes: they are
-   delayed by GUARD_WINDOW_MS. On a unit where certain keys reach 127 under
-   normal playing, those keys are consistently late. That is why this is
-   opt-in and off by default, and why recalibrating such keys is the better
-   fix where it is available. */
-const GUARD_WINDOW_MS = 25;
-const GUARD_VELOCITY = 127;
-/* velocity-127 note-ons inside one window that together mean "burst" */
-const GUARD_CONDEMN_COUNT = 2;
-
-let guardEnabled = false;
-export function setPowerOffNoteGuard(on: boolean): void {
-  guardEnabled = on;
-  /* Turning it off must not strand whatever is being held. */
-  if (!on) flushQuarantine();
-}
-
-interface Quarantine {
-  /** every channel-voice message since the hold began, in arrival order */
-  events: Uint8Array[];
-  v127: number;
-  timer: number;
-}
-let quarantine: Quarantine | null = null;
-
-function isGuardVelocityNoteOn(data: Uint8Array): boolean {
-  return (data[0] & 0xf0) === 0x90 && data.length > 2 && data[2] === GUARD_VELOCITY;
-}
-
-/** Replay everything held, in order, and resume normal routing. */
-function flushQuarantine(): void {
-  if (!quarantine) return;
-  const q = quarantine;
-  quarantine = null;            /* clear first: routing re-enters the handler */
-  clearTimeout(q.timer);
-  for (const ev of q.events) routeChannelMessage(ev);
-}
-
-/** Drop everything held without sounding it. Used when the device departs. */
-export function cancelQuarantine(): void {
-  if (!quarantine) return;
-  clearTimeout(quarantine.timer);
-  quarantine = null;
-}
-
-/** True when the guard took the message; the caller must not route it. */
-function interceptForGuard(data: Uint8Array): boolean {
-  if (quarantine) {
-    /* Copy: the event's buffer belongs to the caller and we outlive the call. */
-    quarantine.events.push(data.slice());
-    if (isGuardVelocityNoteOn(data) && ++quarantine.v127 >= GUARD_CONDEMN_COUNT) {
-      /* Condemn as soon as the count is met rather than waiting the window
-         out — nothing held has sounded, so deciding early only shortens how
-         much of the burst we carry. */
-      const held = quarantine.events.length;
-      cancelQuarantine();
-      markLumatoneGone(burstReason(held));
-    }
-    return true;
-  }
-  if (!isGuardVelocityNoteOn(data)) return false;
-  quarantine = {
-    events: [data.slice()],
-    v127: 1,
-    timer: window.setTimeout(flushQuarantine, GUARD_WINDOW_MS),
-  };
-  return true;
-}
-
-function burstReason(held: number): string {
-  return GUARD_CONDEMN_COUNT + '+ notes at velocity ' + GUARD_VELOCITY
-    + ' within ' + GUARD_WINDOW_MS + 'ms (' + held + ' messages discarded unplayed)';
-}
-
 export function handleMidiMessage(e: MIDIMessageEvent): void {
   const data = e.data;
   if (!data) return;
   if (midiMonitor) { try { midiMonitor(data); } catch { /* a diagnostic must never break input */ } }
+  heartbeatInbound();
   /* route SysEx responses to push-color ACK handler, except spontaneous
      calibration packets (CMD 3Eh) which are not ACKs to a sent message
-     but periodic firmware status emissions during calibration mode. */
+     but periodic firmware status emissions during calibration mode, and
+     heartbeat ping replies, whose whole job was done by heartbeatInbound. */
   if (data[0] === 0xF0) {
     if (data.length >= 6
       && data[1] === SYSEX_MANU[0] && data[2] === SYSEX_MANU[1] && data[3] === SYSEX_MANU[2]
@@ -274,13 +183,10 @@ export function handleMidiMessage(e: MIDIMessageEvent): void {
       handleCalibrationPacket(data);
       return;
     }
+    if (isPingReply(data)) return;
     sysex.handleResponse(data);
     return;
   }
-  /* The guard sits ahead of all channel-voice routing: once a hold is open,
-     EVERY channel message is buffered, not just note-ons, so that replay
-     preserves arrival order exactly. SysEx above is never held. */
-  if (guardEnabled && interceptForGuard(data)) return;
   routeChannelMessage(data);
 }
 

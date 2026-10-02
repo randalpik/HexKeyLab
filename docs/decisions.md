@@ -9406,3 +9406,64 @@ recordings replay through the same `setDamperDepth`, so they now play back witho
 **Gate:** `test/hkl-midi/damper.mjs` (partial lift → re-press, deeper lift, re-strike, sostenuto
 on/off over an attenuated note, a 400-step seeded pedal walk asserting no scheduled rise on the voice's
 `damperGain`, full-lift release).
+
+## A Lumatone power-off is cleared by a ping heartbeat, not filtered (2026-10-02, Max)
+
+**Supersedes** "The power-off note guard is a 25ms hold on velocity 127, opt-in" (2026-09-21). The guard,
+its quarantine and the `powerOffNoteGuard` pref are deleted.
+
+**Why the guard died:** in production use, v127 pairs within 25ms turned out to be routine in real playing.
+Any loud dyad on keys that saturate trips it, so it disconnected the Lumatone every few seconds. The 25ms hold
+on every v127 strike also wasn't worth it for something that happens once per power cycle. Velocity can't be
+rescued either. With the 0x08 output LUT capped at 126, the burst arrived at 126 (hardware test), so the burst
+goes through the normal keystroke path and lands in the same fastest bin as real fortissimo. The burst isn't
+even all v127: a `lumaprobe.watch()` capture showed 122/117/109 inside it. Max's rulings: recalibrating 280
+keys is out of scope; burst size is unreliable; nothing at runtime separates the burst from a dense, loud
+chord with full accuracy; and the fix must work in standalone HKL, with no overlay-host or OS-specific
+dependency.
+
+**Decision:** don't try to recognise the burst. Let it sound, then notice the device has gone and release.
+Firefox never reports the port vanishing, so HKL asks: `midi/heartbeat.ts` sends `LUMA_PING` (CMD 0x33,
+board 0) only while the Lumatone is holding something (keys, damper or sostenuto) and has sent nothing for
+200ms. Any inbound message counts as proof of life, so active playing sends no pings. Two unanswered 250ms
+waits call `markLumatoneGone()`, which releases everything. Burst to release takes about 0.7s.
+
+**Why this probe is acceptable when the 2026-09-21 entry ruled probes out:** that entry rejected a probe as a
+25ms *verdict*. It is used here as a *departure detector*, and both of the old objections fall away:
+- **Main-thread jank:** the wait is ticked every 50ms, and any wait during which a tick ran >75ms late is
+  inconclusive (re-asked, not counted). Only a wait the main thread was demonstrably free for can count
+  as a miss.
+- **"The BBB answers from its own memory, so it can't vouch for the keybed":** irrelevant, because the BBB
+  itself goes silent. Measured: the last ACK came 45ms before the burst, and every probe from ~100ms after
+  it timed out.
+
+**Max's condition, that the pings must not disturb the Lumatone's output, was verified two ways:**
+- **Firmware (local mirror):** `main` is one single-threaded loop (`readFromMidi` → `readFromPic` /
+  `writeToPic` → pedals → wheel), with no pthreads and the MIDI port opened `O_NONBLOCK` (flags 0x902).
+  `sysexResponsePing` is a preamble fill plus one 12-byte `write()`, with no PIC traffic. That is a strict
+  subset of an LED update (`setOneLight` + a later `writeToPic`), which colour sync already sends at
+  ~300/s while Max plays.
+- **Hardware:** Max played through `lumaprobe.watch(20)` (50 probes/s, more than 10× the heartbeat's
+  worst-case rate) with no effect.
+
+**Rejected alternatives:**
+- **`requestMIDIAccess()` polling while connected:** it glitches playback audibly, including during
+  held chords.
+- **An overlay-host / OS USB-remove hook:** Max ruled it out (dependency and platform-specific).
+- **An idle heartbeat to correct the badge when nothing is held:** not built. Nothing can be stuck
+  then, so only the badge is wrong.
+
+**Also landed with it:**
+- **Confirmed re-adoption.** Firefox's fresh `MIDIAccess` kept listing the dead Lumatone; the hotplug poll
+  re-adopted it ~100ms after the departure, and it then showed "connected" indefinitely. While
+  `pendingReconnect` is set, a reappearing port is now a candidate that must answer a ping (only a ping
+  reply counts) before `findLumatone` adopts it.
+- **Stale port objects detached.** A re-check that yields a fresh `MIDIInput` object for the same port id
+  now detaches the old object (lessons.md, Firefox snapshot entry).
+
+**Files:** `apps/hkl/src/midi/heartbeat.ts` (new), `midi/handler.ts`, `midi/engine.ts`,
+`lumatone/protocol.ts` (`SYSEX_CMD_PING`, `buildPingSysEx`, `isPingReply`), `lumatone/lumadiag.ts`,
+`state/persistence.ts`, `ui/init.ts`. Gate: `test/hkl-midi/departure.mjs` (56 checks). A negative control
+with the heartbeat and candidate gate disabled fails 14 of them.
+
+---

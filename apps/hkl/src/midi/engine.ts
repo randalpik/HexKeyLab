@@ -22,6 +22,7 @@ import { syncAudio } from '../audio/engine.js';
 import { syncPianoOut } from './piano-out.js';
 import { sysex } from '../lumatone/sysex.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
+import { buildPingSysEx, isPingReply } from '../lumatone/protocol.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
@@ -136,8 +137,42 @@ export function setLumatoneLostHandler(fn: () => void): void { deviceLostHandler
 /* Set when WE declared the device gone (rather than observing the port
    vanish). The hotplug poll normally skips work while the Lumatone toolbar is
    hidden; after a self-declared departure we still need it to run, or a
-   false positive would leave the device deaf until a manual re-check. */
+   false positive would leave the device deaf until a manual re-check.
+
+   While set, a Lumatone port that (re)appears is only a CANDIDATE: Firefox's
+   fresh MIDIAccess keeps listing a powered-off Lumatone as connected for as
+   long as its USB link lingers (observed: re-attached ~100ms after the
+   device stopped answering, then showed "connected" indefinitely). So the
+   candidate must answer a ping before it is adopted (confirmCandidate). */
 let pendingReconnect = false;
+const CONFIRM_TIMEOUT_MS = 500;
+let candidate: { inPort: MIDIInput; timer: number } | null = null;
+
+function dropCandidate(): void {
+  if (!candidate) return;
+  clearTimeout(candidate.timer);
+  candidate.inPort.onmidimessage = null;
+  candidate = null;
+}
+
+/* Ping a candidate port pair; adopt it (by re-running findLumatone with the
+   pending flag cleared) only on a reply. No reply: drop it and let the next
+   poll tick try again. Only a ping reply counts here — a straggling note from
+   a dying device must not confirm it. */
+function confirmCandidate(out: MIDIOutput, inp: MIDIInput, handleMidiMessage: MidiMessageHandler): void {
+  if (candidate && candidate.inPort === inp) return; /* already asking this one */
+  dropCandidate();
+  const timer = window.setTimeout(dropCandidate, CONFIRM_TIMEOUT_MS);
+  candidate = { inPort: inp, timer };
+  inp.onmidimessage = function (e: MIDIMessageEvent) {
+    if (!e.data || !isPingReply(e.data)) return;
+    dropCandidate();
+    pendingReconnect = false;
+    findLumatone(handleMidiMessage);
+  };
+  try { out.send(buildPingSysEx(0)); }
+  catch { /* dead port: the timer drops the candidate */ }
+}
 
 function updateLumatoneStatusUI(): void {
   const statusEl = document.getElementById('lumaStatus');
@@ -155,15 +190,15 @@ function updateLumatoneStatusUI(): void {
 }
 
 /* Declare the Lumatone gone on evidence other than the port vanishing.
-   The live trigger is an inbound pitch bend (midi/handler.ts) — the device's
-   power-off tell, which arrives BEFORE the spurious keystrokes it precedes.
+   The live trigger is the liveness heartbeat (midi/heartbeat.ts): the device
+   stopped answering pings while holding notes, which on Firefox is the only
+   way a power-off is ever noticed.
 
-   Detaching onmidimessage is the load-bearing step, not a tidy-up: the
-   garbage note-ons are still in flight when this runs, and an unhooked port
-   is what stops them being latched as held voices. Nulling midiOut also
-   re-arms the hotplug poll, which re-attaches within ~1.5s if the device is
-   in fact still there — so a false positive costs a brief dropout, not a
-   dead input. */
+   Detaching onmidimessage stops anything still in flight from latching, and
+   the release handler clears what the burst already latched. Nulling midiOut
+   also re-arms the hotplug poll; a port that reappears must answer a ping
+   before it is re-adopted (confirmCandidate), so a false positive costs a
+   brief dropout and a dead device can't be re-adopted as "connected". */
 export function markLumatoneGone(reason: string): void {
   if (!midi.midiOut && !midi.midiIn) return; /* already gone */
   console.warn('Lumatone: treating as disconnected \u2014 ' + reason);
@@ -203,6 +238,13 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     if (port.name && port.name.indexOf('Lumatone') !== -1 && port.state === 'connected') {
       foundIn = port; break;
     }
+  }
+  /* After a self-declared departure, a reappearing port is only a candidate
+     until it answers a ping. Nothing below applies meanwhile: markLumatoneGone
+     already tore the device state down and set the badge. */
+  if (pendingReconnect && !midi.midiOut) {
+    if (foundOut && foundIn) confirmCandidate(foundOut, foundIn, handleMidiMessage);
+    return;
   }
   /* Compare by port.id rather than JS object identity. Firefox's MIDIAccess
      is a snapshot — to detect hotplug we re-request access on a poll
@@ -244,7 +286,12 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     if (foundIn) foundIn.onmidimessage = handleMidiMessage;
   } else if (foundIn && foundIn !== oldIn) {
     /* Same id, fresh JS object (Firefox re-request case) — keep the new
-       reference so subsequent sends/queries target a non-stale port. */
+       reference so subsequent sends/queries target a non-stale port. The old
+       object must be detached: both stay open on the same physical port, so
+       leaving it wired delivers every message twice, and markLumatoneGone
+       (which detaches only midi.midiIn) would leave the old one feeding the
+       rest of a power-off burst into the handler. */
+    if (oldIn) oldIn.onmidimessage = null;
     midi.midiIn = foundIn;
     foundIn.onmidimessage = handleMidiMessage;
   }

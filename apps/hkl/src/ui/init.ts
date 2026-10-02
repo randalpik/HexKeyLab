@@ -40,7 +40,7 @@ import {
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
 import { requestMidi } from '../midi/engine.js';
-import { handleMidiMessage, setPowerOffNoteGuard } from '../midi/handler.js';
+import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
 import {
@@ -144,7 +144,6 @@ tuning.hejiEnabled = prefs.hejiEnabled;
    in the Calibrate Keys overlay, but the routing must be correct even if it's
    never opened. */
 setBoards34Swapped(prefs.swapBoards34);
-setPowerOffNoteGuard(prefs.powerOffNoteGuard);
 
 initAudio();
 /* Load the persisted instrument. Fires regardless of audioEnabled so the

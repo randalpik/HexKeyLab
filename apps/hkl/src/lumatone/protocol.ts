@@ -17,6 +17,11 @@ export const SYSEX_CMD_SET_COLOUR = 0x01;
 export const SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES = 0x07;
 export const SYSEX_CMD_SET_AFTERTOUCH_FLAG = 0x0E;
 export const SYSEX_CMD_GET_FIRMWARE_REVISION = 0x31;
+/* LUMA_PING. Board byte must be 0 (anything else gets an error reply). The
+   firmware's sysexResponsePing fills the preamble and makes one write() — it
+   never touches the PICs or key state — and echoes the 4 data bytes back:
+   F0 00 21 50 00 33 01 <d1 d2 d3 d4> F7. Used as the liveness heartbeat. */
+export const SYSEX_CMD_PING = 0x33;
 
 /* v0.9 pedal calibration commands (Terpstra firmware reference) */
 export const SYSEX_CMD_SET_FOOT_CONTROLLER_SENSITIVITY = 0x03;
@@ -123,6 +128,23 @@ export function buildRequestSysEx(cmd: number): SysexMessage {
     0x00, cmd, 0x00, 0x00, 0x00, 0x00,
     0xF7,
   ]) as SysexMessage;
+}
+
+/* Ping: F0 00 21 50 00 33 'H' 'K' 'L' <seq> F7. The echoed payload marks the
+   reply as HKL's; seq is informational (only one ping is ever outstanding). */
+export function buildPingSysEx(seq: number): SysexMessage {
+  return new Uint8Array([
+    0xF0,
+    SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
+    0x00, SYSEX_CMD_PING, 0x48, 0x4B, 0x4C, seq & 0x7F,
+    0xF7,
+  ]) as SysexMessage;
+}
+
+export function isPingReply(data: Uint8Array): boolean {
+  return data.length >= 7 && data[0] === 0xF0
+    && data[1] === SYSEX_MANU[0] && data[2] === SYSEX_MANU[1] && data[3] === SYSEX_MANU[2]
+    && data[4] === 0x00 && data[5] === SYSEX_CMD_PING;
 }
 
 /* Board-addressed request: F0 00 21 50 <board> <cmd> 00 00 00 00 F7.

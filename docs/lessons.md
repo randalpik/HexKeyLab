@@ -60,6 +60,10 @@ Firefox does not dispatch `MIDIAccess.onstatechange` on hotplug, AND the existin
 
 The only way to see a newly-plugged device in Firefox is to **re-call `navigator.requestMIDIAccess({sysex:true})`** and replace `midi.midiAccess`. Subsequent calls don't re-prompt for permission once granted. A fresh access yields fresh port state — and possibly fresh port *objects* with the same `id` — so identity checks in `findLumatone` must compare `port.id`, not JS object identity, or every refresh falsely fires the new-connection path.
 
+**Swapping to the fresh object means detaching the old one.** Both objects stay open on the same physical port, and the browser delivers each message to every object with a handler. `findLumatone`'s same-id branch once wired the new object without nulling the old, so after any re-check every message was handled twice — and `markLumatoneGone`, which detaches only `midi.midiIn`, left the stale object feeding the rest of a power-off burst into the guard, where a trailing note opened a fresh hold that flushed and latched (2026-10-01). Gate: `test/hkl-midi/departure.mjs` section H.
+
+**A fresh access can still list a dead device.** After a self-declared departure, the hotplug poll's fresh `MIDIAccess` listed the powered-off Lumatone as `connected` (its USB link outlives the firmware's ability to answer) and re-adopted it ~100ms after it went silent; the badge then read "connected" indefinitely, because the poll stops once `midiOut` is set. So port presence is not liveness: after a self-declared departure `findLumatone` treats a reappearing port as a candidate that must answer a ping before adoption (decisions.md 2026-10-02).
+
 **Don't refresh while connected.** A `requestMIDIAccess` call is heavy enough in Firefox to audibly glitch playback and disrupt outbound SysEx. We therefore poll-refresh ONLY while `midi.midiOut === null` (looking for connection). Once connected, the poll suspends; the user manually re-checks via a click on the `lumaStatus` indicator (`cursor: pointer`, tooltip wired in `requestMidi`) — or just refreshes the page — if they unplug. Chromium gets unplug-while-connected for free via `statechange`.
 
 Poll cadence is `HOTPLUG_POLL_MS` in `src/midi/engine.ts`.
@@ -4793,6 +4797,19 @@ from a browning-out scanner, byte-for-byte indistinguishable from real playing. 
 recognise them by content is guessing. See decisions.md "Pitch bend is the Lumatone's departure tell" for what
 is used instead, and why the wheel's I2C read is structurally guaranteed to come out first.
 
+**Confirmed on hardware (2026-10-02): the burst goes through the CMD 0x08 velocity LUT like any real strike.**
+With an identity LUT capped at 126 (bins 126 and 127 → 126), the power-off burst arrived at 126, not 127. So
+the burst notes come out of the normal keystroke path and land in the fastest interval bin, and 0x08 can't
+reserve a velocity for them. That also kills the velocity-127 guard on its own terms: in normal play, v127 pairs
+are common enough that the guard disconnected the Lumatone every few seconds. Velocity was then abandoned
+entirely as a signal — see decisions.md 2026-10-02 (the burst is cleared by a ping heartbeat instead).
+
+**Measured power-off timeline (2026-10-02, `lumaprobe.watch()` at 50ms):** last ACK 45ms before the burst;
+the burst itself was 5 note-ons within 1ms, at velocities **127, 122, 117, 109, 127** — so it is *not* all
+v127, contrary to the earlier captures' summary; and every probe from ~100ms after the burst onward timed
+out. The BBB goes silent almost immediately, which is what makes "stopped answering pings" a usable
+departure signal.
+
 ## A device-loss path must release the pedal, not just the notes (2026-09-21)
 
 The obvious half of "the Lumatone vanished" is releasing its held notes. The half that is easy to miss: **CC 4 and
@@ -4835,6 +4852,12 @@ Two corollaries found alongside it:
 Consequence for the power-off guard: confirmation-by-probe was abandoned entirely in favour of a pure timing
 rule (decisions.md, "The power-off note guard is a 25ms hold on velocity 127"). The instrument that produced
 these numbers is kept at `apps/hkl/src/lumatone/probe.ts` (`lumaprobe.latency()`, `lumaprobe.watchGuard()`).
+
+**What a round trip CAN still tell you (2026-10-02): total silence.** The jank problem is that a *slow* reply
+is ambiguous. A *missing* reply is not, provided you can show the main thread was free for the whole wait:
+tick the wait in short steps, and treat a wait where any tick ran late as inconclusive rather than a miss.
+That is what the Lumatone heartbeat does (`midi/heartbeat.ts`): useless as a 25ms verdict, sound as a
+~250ms departure detector. Measured: the BBB stops answering within ~100ms of a power-off burst.
 
 ## `readFromPic` spins on a GPIO with no timeout, so a dying PIC stalls the whole BBB loop (2026-09-21)
 
@@ -4971,3 +4994,18 @@ invariant counts. Harmless to that measurement (only the signature width is read
 document with a wedge leaving m. 2 logs it on load. Not the splice path's version of the same warning
 (`expandForSpanners`, fixed 2026-08-30): this window is built by `serializeRangeForRender` directly.
 The `lc_hairpinEndAcrossSystems` fixture keeps its wedges from m. 3 on for this reason.
+
+## A test that imports app modules by bare path can get a second instance after HMR (2026-10-02)
+
+In-page gates such as `test/hkl-midi/*.mjs` import app modules straight from the dev server
+(`import('/src/midi/engine.ts')`) to drive the same singletons the app uses. That only holds until the module
+is hot-reloaded. From then on, Vite serves its *importers* a `?t=<stamp>` URL (`/src/midi/engine.ts?t=1790…`),
+and keeps doing so on fresh page loads until the dev server restarts. A bare-path import then evaluates a
+**second module instance** with its own private state. Here, the test's `markLumatoneGone` ran on an engine
+with no release handler registered, so B/D "held voices released" failed. The same release passed when the
+heartbeat triggered it via the app's own engine instance.
+
+The failure looks like a real regression, and it only appears after you have edited the module, which is
+exactly when you're running the gate. Fix: import the dependency by the URL its importer uses, read from the
+importer's transformed source (`departure.mjs` has a `depUrl(from, dep)` helper for this). Shared state
+modules that haven't been edited are unaffected, which is why the split can look partial.
