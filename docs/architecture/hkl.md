@@ -249,7 +249,10 @@ while the Lumatone is **holding something** — keys down (`heldLumatonePhys`), 
 - **Jank is inconclusive, never a miss.** The reply is dispatched on our main thread, so a blocked thread
   looks like a silent device. The wait is ticked every 50ms; if any tick runs >75ms late the wait doesn't
   count and the ping is re-sent. `HEARTBEAT_MISSES_TO_DEPART` (2) clean misses in a row call
-  `markLumatoneGone()`. Typical time from burst to release: ~0.7s.
+  `markLumatoneGone()`. Typical time from burst to release: ~0.7s. Verified on hardware for both a held
+  chord and the burst itself.
+- **Known, accepted gap:** powered off with nothing held, the heartbeat isn't running, so the badge keeps
+  reading "connected" until a re-check (status-badge click). Nothing can be stuck in that case.
 - **Cost to the device**: the firmware runs one single-threaded loop (MIDI intake → PIC scan → pedals → wheel)
   with the MIDI port non-blocking; `sysexResponsePing` is a preamble fill + one `write()`, no PIC traffic — a
   strict subset of an LED update, which color sync sends at ~300/s. Verified on hardware at 50 pings/s with

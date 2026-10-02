@@ -52,7 +52,7 @@ export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
 
 /* Release everything the Lumatone was holding, because the device is gone.
    Registered with midi/engine.ts, which calls this from both departure paths
-   (observed port loss, and the pitch-bend tell below).
+   (observed port loss, and the liveness heartbeat in midi/heartbeat.ts).
 
    A dead port can never deliver the note-offs or the pedal release, so every
    voice it was holding would otherwise ring indefinitely. That includes the

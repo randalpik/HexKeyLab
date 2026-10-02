@@ -9451,7 +9451,10 @@ waits call `markLumatoneGone()`, which releases everything. Burst to release tak
   held chords.
 - **An overlay-host / OS USB-remove hook:** Max ruled it out (dependency and platform-specific).
 - **An idle heartbeat to correct the badge when nothing is held:** not built. Nothing can be stuck
-  then, so only the badge is wrong.
+  then, so only the badge is wrong. Max accepted this behaviour after hardware verification.
+
+**Verified on hardware (2026-10-02, Max):** powering off while holding a chord, and the power-off burst
+itself, are both released automatically, and the device reconnects when powered back on.
 
 **Also landed with it:**
 - **Confirmed re-adoption.** Firefox's fresh `MIDIAccess` kept listing the dead Lumatone; the hotplug poll

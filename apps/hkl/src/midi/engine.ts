@@ -264,8 +264,8 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     /* Lost connection: cancel any in-flight work and forget device state.
        Also release everything the device was holding — note-offs and pedal
        CCs can never arrive from a port that's gone, so held voices would
-       otherwise hang forever (Chromium reaches here via statechange; on
-       Firefox the pitch-bend tell in handler.ts is what gets us here). */
+       otherwise hang forever (Chromium reaches here via statechange; Firefox
+       never does — it departs via the heartbeat's markLumatoneGone instead). */
     stopAllMidi();
     midi.activeMidiNotes = {};
     sysex.cancel();
