@@ -18,7 +18,8 @@ import type { KeyId, Voice } from '../types.js';
 // depth band where a released key is added to sustainedKeys but the release
 // loop would never claim it. sostenutoLockedKeys is the
 // snapshot of selectedKeys at sostenuto-on; locked keys ride through damper
-// changes (their per-voice damperGain stays pinned at 1.0).
+// changes (their per-voice damperGain holds where it was). The damper never
+// raises a voice: each voice's damperLevel ratchets down only (applyDamperToVoice).
 //
 // aftertouchSnapshot is "q,r" → latest pressure value, for debug polling.
 // (The re-articulation blink used to live here as rearticulateFlashUntil; it is

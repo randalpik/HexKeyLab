@@ -218,7 +218,7 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 |---|---|
 | SysEx CMD 0x3E | calibration packet handler |
 | Other SysEx | `sysexHandleResponse` (ACK matching) |
-| CC 4 (expression) | `pedal.cc4Depth = d2/127`; `setDamperDepth()`. Verbose during cal; else endpoints (0/127) only. |
+| CC 4 (expression) | `pedal.cc4Depth = d2/127`; `setDamperDepth()`. Verbose during cal; else endpoints (0/127) only. **The damper never raises a voice**: each sustained voice's `damperGain` follows `Voice.damperLevel = min(damperLevel, depth)` (`applyDamperToVoice`), a one-way ratchet reset only by a fresh voice (re-strike). Re-pressing after a partial lift holds the level; `sostenutoOn` holds locked voices where they are (it no longer pins them to 1.0). Gate: `test/hkl-midi/damper.mjs`. |
 | CC 64 (sustain) | role per `pedal.mode`: `'sustain'` → binary damper (`cc64Depth = d2≥64?1:0` + `setDamperDepth()`); `'sostenuto'` → `sostenutoOn/Off()`, no damper touch. |
 | Note on/off | audio + selection. Note-off branches on `sustainPedalDown ‖ sostenutoLockedKeys.has(key)`: keep or release. `sustainPedalDown` is `damperDepth > DAMPER_RELEASE_FLOOR`, the same threshold the release loop uses — so there is no depth band that defers a note-off the release loop would never claim. |
 | Poly aftertouch (0xA0) | per-voice volume modulation. |

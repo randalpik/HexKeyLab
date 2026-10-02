@@ -516,33 +516,29 @@ export function setActiveWaveform(wf: string): void {
   reflect();
 }
 
-/* Set a voice's damperGain target (with smoothing). Sample voices delegate to
-   SampleEngine since their damperGain lives inside the engine's voice closure. */
-function applyDamperToVoice(key: KeyId, target: number): void {
-  if (!audio.audioCtx) return;
-  const v = audio.activeOscs[key];
-  if (!v) return;
-  if (v.type === 'sample') {
-    SampleEngine.setVoiceDamperDepth(key, target, DAMPER_SMOOTH_TAU);
-  } else {
-    const now = audio.audioCtx.currentTime;
-    v.damperGain.gain.cancelScheduledValues(now);
-    v.damperGain.gain.setTargetAtTime(target, now, DAMPER_SMOOTH_TAU);
-  }
-}
+/* Lower a sustained voice's damperGain toward `depth` (with smoothing). Sample
+   voices delegate to SampleEngine since their damperGain lives inside the
+   engine's voice closure.
 
-/* Pin damperGain to 1.0 immediately (no smoothing) — used when a key enters
-   sostenutoLockedKeys so locked notes ring at full volume regardless of damper. */
-function pinDamperToOne(key: KeyId): void {
+   INVARIANT: the damper never raises a voice's level. `damperLevel` is a
+   per-voice one-way ratchet — min(previous level, depth) — so a partial lift
+   followed by re-pressing the pedal holds the note where the lift left it
+   instead of swelling it back up. A real damper that has touched the string
+   has already taken that energy; pressing the pedal again cannot return it.
+   The ratchet lives on the Voice record, so it resets only when a fresh voice
+   is created (a re-strike), never through pedal motion. */
+function applyDamperToVoice(key: KeyId, depth: number): void {
   if (!audio.audioCtx) return;
   const v = audio.activeOscs[key];
   if (!v) return;
+  if (depth >= (v.damperLevel ?? 1)) return;
+  v.damperLevel = depth;
   if (v.type === 'sample') {
-    SampleEngine.setVoiceDamperDepth(key, 1.0, 0); /* tau=0 → instant */
+    SampleEngine.setVoiceDamperDepth(key, depth, DAMPER_SMOOTH_TAU);
   } else {
     const now = audio.audioCtx.currentTime;
     v.damperGain.gain.cancelScheduledValues(now);
-    v.damperGain.gain.setValueAtTime(1.0, now);
+    v.damperGain.gain.setTargetAtTime(depth, now, DAMPER_SMOOTH_TAU);
   }
 }
 
@@ -590,19 +586,20 @@ export function setDamperDepth(): void {
   onSelectionChanged();
 }
 
-/* Sostenuto-on: snapshot currently selected keys into the locked set and pin
-   their damperGain to 1.0 (in case damper depth was non-zero at this moment).
-   New strikes after this point are NOT locked. */
+/* Sostenuto-on: snapshot currently selected keys into the locked set. Locked
+   keys hold whatever damper level they already have — setDamperDepth skips
+   them, so they ride through damper changes — but are never restored upward:
+   a sustained note the damper had already attenuated stays attenuated (see
+   applyDamperToVoice). New strikes after this point are NOT locked. */
 export function sostenutoOn(): void {
   audio.sostenutoLockedKeys = new Set(selection.selectedKeys);
   audio.sostenutoActive = true;
-  audio.sostenutoLockedKeys.forEach(pinDamperToOne);
   recordSostenuto(true);
 }
 
 /* Sostenuto-off: clear the locked set. Previously-locked keys currently in
-   sustainedKeys are now subject to damper — apply current depth, or release
-   them if the damper is also up. */
+   sustainedKeys are now subject to damper — apply current depth (ratcheted:
+   only ever lowers), or release them if the damper is also up. */
 export function sostenutoOff(): void {
   if (!audio.sostenutoActive) { recordSostenuto(false); return; }
   const wasLocked = audio.sostenutoLockedKeys;

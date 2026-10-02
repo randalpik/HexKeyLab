@@ -9379,3 +9379,30 @@ placeholder geometry, and an "Allegro" on m. 1 beat 1 is a second stop beside it
 `input.ts` (layer commands; `InputHooks.layerMarkRect`), `expressions.ts` `beatTicksByMeasure`.
 Fixtures: the `lc_*` group (22) and `kbd_p1_ctrlRight_visitsHairpinEnd` (was `…skipsHairpinEnd`),
 written first and run red against the moment cursor.
+
+## The damper only ever lowers a voice: a per-voice one-way ratchet (2026-10-01, Max)
+
+**Invariant (Max):** the sustain pedal only holds a note's volume or lowers it, depending on depth. It
+must never raise it. Before this, `setDamperDepth` set every sustained voice's `damperGain` straight to
+the current depth. A pedal change that didn't come all the way up (depth stays above
+`DAMPER_RELEASE_FLOOR`, so the notes attenuate but don't release) followed by re-pressing the pedal
+brought the attenuated notes back to full level. The result was an unphysical swell and unwanted
+sustain, and it had ruined recordings. `sostenutoOn` had the same problem in another place: it pinned
+locked keys to 1.0, which restored a sustained note the damper had already attenuated (held keys were
+always at 1.0 anyway, so the pin only ever raised a level).
+
+**Decision:** `Voice.damperLevel` (on the HKL-side `activeOscs` record) is a one-way ratchet.
+`applyDamperToVoice` schedules `min(damperLevel, depth)` and does nothing when depth ≥ the current
+level. It lives on the Voice record, so it resets only when a fresh voice is created (a re-strike, which
+already makes a new voice), never through pedal motion. `pinDamperToOne` is deleted: sostenuto-locked
+voices keep whatever level they have, and setDamperDepth already skips them. Physical model: a damper
+that has touched the string has taken that energy, and pressing the pedal again cannot return it.
+
+**Rejected:** implementing the ratchet inside `@hkl/engine`'s `sSetVoiceDamperDepth`. That would change
+a published API's semantics, and osc voices don't go through it. The ratchet is a sustain-semantics
+policy, like `DAMPER_RELEASE_FLOOR`, so it lives in `apps/hkl/src/audio/engine.ts`. Old `.hkr`
+recordings replay through the same `setDamperDepth`, so they now play back without the swell.
+
+**Gate:** `test/hkl-midi/damper.mjs` (partial lift → re-press, deeper lift, re-strike, sostenuto
+on/off over an attenuated note, a 400-step seeded pedal walk asserting no scheduled rise on the voice's
+`damperGain`, full-lift release).

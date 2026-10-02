@@ -11,6 +11,20 @@ both board maps, and physical top-to-bottom ordering independent of canvas
 rotation. Full sweeps must have zero same-board transitions. No dev server or
 MIDI device is needed.
 
+## Damper never raises a voice
+
+```sh
+node test/hkl-midi/damper.mjs        # requires `pnpm dev`; exits non-zero on failure
+```
+
+Invariant gate for the per-voice damper ratchet (`applyDamperToVoice`): a
+partial lift lowers a sustained voice, and nothing after it (re-press,
+sostenuto on/off, a seeded random pedal walk) schedules a rise on its
+`damperGain`. Uses an oscillator voice and records every value scheduled on
+the AudioParam, so it holds whether or not headless Chromium runs the
+AudioContext. **Run it before declaring any change to `setDamperDepth`,
+`sostenutoOn/Off`, or the note-off sustain path done.**
+
 ## Device departure and power-off guard
 
 Behavioral gate for HKL's **Lumatone MIDI input path** — device-departure
