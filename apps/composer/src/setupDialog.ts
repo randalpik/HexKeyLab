@@ -79,7 +79,7 @@ function readForm(): {
   const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
   const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
   const layoutReq: LayoutReq = { tuningMode };
-  const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? false;
+  const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? true;
   const ignoreColor = $<HTMLInputElement>('setupIgnoreColor')?.checked ?? false;
   const pageScaleRaw = parseInt($<HTMLInputElement>('setupPageScale')?.value ?? '', 10);
   const pageScale = Number.isFinite(pageScaleRaw) ? Math.max(60, Math.min(160, pageScaleRaw)) : 100;

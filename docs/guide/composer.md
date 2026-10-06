@@ -227,7 +227,7 @@ The **Setup…** button opens a dialog for the whole-document settings:
   the Pythagorean spine nearest C4, so a piece in B minor centers on B3. It follows you across a mid-piece key change, and during
   playback or Performance mode it follows the music rather than the parked editing cursor.
 - **Page size** (%): how big the page is relative to the notation. A *larger* page fits more bars per line and makes the score look smaller on the page; a *smaller* page does the reverse. This changes the paper, not the note size — use **zoom** (`Shift`+`=` / `Shift`+`-`) to change how big the notation itself appears. Saved with the document (and reflected in PDF export). Page view only.
-- **HEJI accidentals**: show comma arrows & septimal hooks.
+- **HEJI accidentals**: show comma arrows & septimal hooks. On by default; untick it for a plain conventional score. The choice is saved in the document, and a MusicXML import starts with it off.
 - **Ignore color**: render noteheads plain black instead of in lattice colors.
 - **Dynamics → velocity**: the loudness each dynamic (fff…ppp) plays at, plus the gradual-dynamic step sizes (poco / plain / molto) that hairpins use.
 - **Fill incomplete measures with rests**: pads every short measure across the score in one action.

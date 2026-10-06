@@ -917,6 +917,75 @@ const HEJI = {
     `,
     visualBaseline: 'heji_keysig_bravura',
   },
+
+  /* Two voices sounding the SAME written pitch at one tick, each needing a
+     HEJI placeholder row (mode 7, F# at (-10,7) = sharp + septimal hook).
+     The carry-state pass used to hide the second voice's accidental as
+     redundant (@accid.ges), leaving voice 1 with placeholder <accid>
+     children and voice 2 with a gestural sharp. Verovio derives each note's
+     MIDI pitch from its FIRST <accid> child, so the 'su' placeholder on one
+     side and 's' on the other read as two different pitches and the unison
+     was drawn as a false relation — two offset noteheads, one accidental.
+     Both notes must now carry the row; Verovio superimposes identical
+     accidentals at one Y across layers, so the noteheads merge and the
+     chain draws once. (Max, 2026-10-05.) */
+  heji_unison_two_voices_hook: {
+    setup: `
+      m.setLayoutReq({ tuningMode: '7' });
+      m.setHejiEnabled(true);
+      const N = { q: -10, r: 7, pname: 'f', accid: 's', oct: 4, midi: 66, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(2);
+      m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+    `,
+    visualBaseline: 'heji_unison_two_voices_hook',
+  },
+
+  /* Same, with a single combined glyph whose placeholder token flips the
+     sign: a flat with an arrow (mode 5, Bb3 at (-1,-1) = Bb↑) is reserved
+     with the 's' token (first pool entry wide enough), so the one-sided
+     encoding read as sharp vs flat. */
+  heji_unison_two_voices_flat_arrow: {
+    setup: `
+      m.setLayoutReq({ tuningMode: '5' });
+      m.setHejiEnabled(true);
+      const N = { q: -1, r: -1, pname: 'b', accid: 'f', oct: 3, midi: 58, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(2);
+      m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* HEJI off: the same unison rule applies to a plain accidental — both
+     voices carry @accid="s" and Verovio draws one superimposed sharp on a
+     merged notehead (it already merged by pitch here since the gestural and
+     written tokens agreed; this pins the symmetric encoding). */
+  accid_unison_two_voices_plain: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'D' });
+      m.setHejiEnabled(false);
+      const N = { q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+      m.setVoice(2);
+      m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+    `,
+  },
+
+  /* HEJI accidentals are ON by default in a fresh document (a missing
+     <hkl:config @heji> reads as on; only an explicit "false" turns it off).
+     The suite's reset pins HEJI off on the shared document so the older
+     baselines keep their meaning, so this probes a fresh model instance. */
+  heji_default_on: {
+    setup: `
+      /* fresh document: the assertion constructs its own model instance */
+    `,
+  },
 };
 
 /* ── New: scroll-into-view ────────────────────────────────────────────── */
@@ -9887,6 +9956,34 @@ function tupletShapeExpr(num, numbase, atomic) {
   })()`;
 }
 
+/** Two voices sounding one written pitch at one tick: Verovio must merge the
+ *  noteheads (one x) and BOTH notes must carry the same accidental glyph row,
+ *  superimposed (same x per glyph). `glyphs` = expected BravuraText
+ *  codepoints (hex), visual left → right. */
+function unisonMergeExpr(glyphs) {
+  return `(() => {
+    const notes = [...document.querySelectorAll('#score svg g.note')];
+    if (notes.length !== 2) return { ok: false, detail: 'notes=' + notes.length };
+    const info = notes.map((g) => {
+      const nh = g.querySelector('g.notehead');
+      const x = Math.round(nh.getBoundingClientRect().x);
+      const gl = [...g.querySelectorAll('g.accid text')]
+        .map((t) => ({ cp: t.textContent.codePointAt(0).toString(16), x: Math.round(t.getBoundingClientRect().x) }))
+        .sort((a, b) => a.x - b.x);
+      return { x, gl };
+    });
+    const want = ${JSON.stringify(glyphs)};
+    if (info[0].x !== info[1].x) return { ok: false, detail: 'noteheads not merged: x=' + info[0].x + '/' + info[1].x + ' glyphs=' + JSON.stringify(info.map((n) => n.gl)) };
+    for (const n of info) {
+      if (n.gl.map((g) => g.cp).join(',') !== want.join(',')) return { ok: false, detail: 'glyphs=' + JSON.stringify(info.map((k) => k.gl)) + ' want=' + want.join(',') };
+    }
+    for (let i = 0; i < want.length; i++) {
+      if (Math.abs(info[0].gl[i].x - info[1].gl[i].x) > 1) return { ok: false, detail: 'glyph ' + want[i] + ' not superimposed: x=' + info[0].gl[i].x + '/' + info[1].gl[i].x };
+    }
+    return { ok: true };
+  })()`;
+}
+
 export const FIXTURE_ASSERTIONS = {
   /* Page-size factor scales the page rectangle, not the content: at a fixed
    * zoom, the page SVG grows ~linearly with pageScale while a notehead's device
@@ -12228,6 +12325,32 @@ export const FIXTURE_ASSERTIONS = {
         const g2 = [...notes[1].querySelectorAll('g.accid text')].map(t => t.textContent.codePointAt(0).toString(16));
         return g2.length === 1 && g2[0] === 'e2c3'
           ? { ok: true } : { ok: false, detail: 'second-note glyphs=' + JSON.stringify(g2) };
+      })()` },
+  ],
+  heji_unison_two_voices_hook: [
+    { name: 'noteheads merged; both notes carry sharp + septimal hook, superimposed',
+      expr: unisonMergeExpr(['e262', 'e2de']) },
+  ],
+  heji_unison_two_voices_flat_arrow: [
+    { name: 'noteheads merged; both notes carry the flat-arrow glyph, superimposed',
+      expr: unisonMergeExpr(['e2c6']) },
+  ],
+  accid_unison_two_voices_plain: [
+    { name: 'noteheads merged; both notes carry the sharp, superimposed',
+      expr: unisonMergeExpr(['e262']) },
+  ],
+  heji_default_on: [
+    { name: 'a fresh document has HEJI on; an explicit off survives a reload',
+      expr: `(() => {
+        const cls = window.__hkl_composer.model.constructor;
+        const fresh = new cls();
+        if (fresh.getHejiEnabled() !== true) return { ok: false, detail: 'fresh getHejiEnabled=' + fresh.getHejiEnabled() };
+        fresh.setHejiEnabled(false);
+        if (fresh.getHejiEnabled() !== false) return { ok: false, detail: 'explicit off not honored' };
+        const again = new cls(fresh.serialize());
+        if (again.getHejiEnabled() !== false) return { ok: false, detail: 'explicit off lost on reload' };
+        again.setHejiEnabled(true);
+        return new cls(again.serialize()).getHejiEnabled() === true ? { ok: true } : { ok: false, detail: 'explicit on lost on reload' };
       })()` },
   ],
 

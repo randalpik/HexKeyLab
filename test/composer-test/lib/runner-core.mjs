@@ -41,6 +41,13 @@ export const RESET_SNIPPET = `
   const cls = old.constructor;
   const fresh = new cls();
   old.replaceDocument(fresh.serialize());
+  /* HEJI accidentals are ON by default in a fresh document (2026-10-05). The
+   * fixtures and their visual baselines were authored when the default was
+   * off — a note at a comma-bearing cell in the default Ptolemaic mode would
+   * otherwise grow an arrow in ~45 baselines that are not about HEJI. Pin
+   * the shared document off; HEJI fixtures opt in with setHejiEnabled(true),
+   * and heji_default_on probes the real default on a fresh instance. */
+  old.setHejiEnabled(false);
   old.setVoice(1);
   old.setCursor(0);
 

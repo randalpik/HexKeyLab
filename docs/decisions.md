@@ -9509,3 +9509,38 @@ select can be rebuilt from other fields.
 `tupletModal_*` ×6 + `undo_tupletModal`.
 
 ---
+
+## Composer HEJI: on by default, and cross-voice unisons draw the accidental on both notes (2026-10-05, Max)
+
+**Default on.** `getHejiEnabled` now reads `<hkl:config @heji> !== 'false'`: a missing attribute is on.
+Max kept forgetting to tick the Setup checkbox and ruled that a JI-centred app should show commas unless
+told otherwise. Explicit off (`heji="false"`) is what the Setup checkbox and MusicXML import write, so
+those paths are unchanged; a document that never touched the checkbox now comes up with HEJI on. The
+suite's reset (`test/composer-test/lib/runner-core.mjs`) pins the shared fixture document OFF so the
+~45 visual baselines authored under the old default keep their meaning — HEJI fixtures opt in with
+`setHejiEnabled(true)`, and `heji_default_on` probes a fresh model instance. **Rejected**: re-seeding
+those baselines (any unrelated drift would be accepted in the same pass), and a renderer-level default
+(the flag is document state and must round-trip).
+
+**Unison rule.** In `computeAccidentalDisplay`, a note whose identity equals the carry entry set by a
+note at the SAME tick that DREW its accidental also draws it (entries now record `{id, tick, shown}`).
+Before, the second voice of a cross-voice unison was hidden as redundant (`@accid.ges`). That is
+harmless for a native accidental — Verovio merges the noteheads by MIDI pitch and draws the one
+accidental — but it broke every HEJI note: `transformDocForHeji` replaces `@accid` with placeholder
+`<accid>` children, Verovio derives a note's MIDI pitch from its FIRST `<accid>` child
+(`Note::GetChromaticAlteration`), and the placeholder token (`su` for a septimal hook, `s` for any
+flat-family glyph — the first pool token wide enough) disagreed with the other voice's gestural token,
+so `IsUnisonWith(…, false)` failed and the noteheads were offset like a false relation (Max's report:
+"treated as if one has the accidental and one doesn't"). With both notes carrying identical rows the
+pitches agree, and Verovio's "identical accidentals remain superimposed" rule (`accid.cpp` AdjustX,
+aligned in `AdjustAccidXFunctor`) draws the chain once. **Rejected**: carrying `@accid.ges` on the
+placeholders to repair Verovio's pitch — a comma-apart pair (F♯ vs F♯↑ in two voices) would then read
+as a unison and merge the noteheads under two different chains; those ARE different pitches. Today that
+pair lands on whichever side the token luck falls (open edge, lessons.md).
+
+**Files**: `apps/composer/src/notation/accidentals.ts`, `expressions.ts` (`getHejiEnabled`),
+`setupDialog.ts`, `index.html` (checkbox `checked`), `test/composer-test/lib/runner-core.mjs`.
+Fixtures: `heji_unison_two_voices_hook` (visual), `heji_unison_two_voices_flat_arrow`,
+`accid_unison_two_voices_plain`, `heji_default_on`.
+
+---

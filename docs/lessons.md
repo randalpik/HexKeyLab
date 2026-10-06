@@ -5029,3 +5029,25 @@ inside, and that misled a fixture assertion into expecting one stop later. When 
 cursor assertion for a model mutation, probe the existing path first
 (`test/composer-inspect/inspect.mjs`) instead of trusting the comment — see the probe in the
 tuplet-modal session: flat `[measure, tuplet, rest[ph]]`, cursor `1`, `isCursorInTuplet()` true.
+
+## Verovio reads a note's pitch from its FIRST `<accid>` child — HEJI placeholders can change it (2026-10-05)
+
+`Note::GetMIDIPitch` → `GetChromaticAlteration` →
+`TransPitch::GetChromaticAlteration(accid->GetAccidGes(), accid->GetAccid())` on
+`FindDescendantByType(ACCID)`, i.e. the first `<accid>` child (a `@accid` / `@accid.ges` attribute
+becomes one at load). `transformDocForHeji` replaces `@accid` with a row of placeholder `<accid>`
+children whose tokens are chosen by WIDTH (`TOKEN_POOL`), so the first child can carry `su` (a
+septimal hook), `s` (ANY flat-family glyph — `s` precedes `f` in the pool at equal width) or `n`.
+Nothing we draw depends on that pitch (`injectHejiGlyphs` swaps the glyphs), but Verovio's
+cross-layer unison test does (`LayerElement::CalcElementHorizontalOverlap`: `IsUnisonWith(prev,
+false)` compares MIDI pitch), as does its tie "enharmonic partner" detection. Two voices on one
+written pitch therefore merged or split by token luck whenever only one of them carried the row
+(the carry-state pass hid the other as redundant); the fix was symmetric encoding — both notes carry
+the row — not repairing the pitch. Verovio facts worth keeping: identical accidentals (same
+`GetSymbolStr`, same drawing Y) across layers are superimposed via `SetDrawingUnisonAccid`
+(`accid.cpp` AdjustX) and the second is aligned to the first's X in `AdjustAccidXFunctor`; a
+quarter-against-quarter unison merges only when the dot counts match, and half-against-half /
+whole-against-whole each have their own branch. Open edge: two voices a COMMA apart (F♯ / F♯↑) are
+different pitches that Verovio sees as unison or not by the same token luck; if it ever matters, give
+their rows deliberately distinct first tokens rather than `@accid.ges`. Sources read at `develop`
+(6.x): `layerelement.cpp`, `accid.cpp`, `adjustaccidxfunctor.cpp`, `note.cpp`.

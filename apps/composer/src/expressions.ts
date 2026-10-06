@@ -928,10 +928,14 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
 }
 
 /** Document-level "show HEJI accidentals" flag, stored on <hkl:config>.
- *  Independent of HKL's own hejiEnabled. Defaults false. */
+ *  Independent of HKL's own hejiEnabled. Defaults TRUE: a missing attribute
+ *  reads as on (a JI-centred app — Max, 2026-10-05); only an explicit
+ *  heji="false" (Setup checkbox unticked, or MusicXML import) turns it off.
+ *  Older documents that never touched the checkbox therefore come up with
+ *  HEJI on. */
 export function getHejiEnabled(doc: Document): boolean {
   const cfg = findHklConfig(doc);
-  return cfg?.getAttribute('heji') === 'true';
+  return cfg?.getAttribute('heji') !== 'false';
 }
 
 export function setHejiEnabled(doc: Document, on: boolean): void {

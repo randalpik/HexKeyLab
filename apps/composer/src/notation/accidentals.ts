@@ -17,6 +17,10 @@
 //   2. At a bar line, state resets to the key signature.
 //   3. Tie destinations (@tie="t" or "m") are always hidden, but they DO
 //      update carry state.
+//   4. Two layers sounding one written pitch at one tick (a cross-voice
+//      unison) BOTH draw the accidental. Verovio superimposes identical
+//      accidentals at one Y, so it reads once; hiding one side instead
+//      desynchronises the pair (see the unison-partner branch below).
 
 import { realTicks } from '../model/ticks.js';
 import { hejiCommasFor } from '@hkl/shared/heji.js';
@@ -180,6 +184,9 @@ interface AccidIdentity { alter: number; syn5: number; sept7: number; }
 function identityEq(a: AccidIdentity, b: AccidIdentity): boolean {
   return a.alter === b.alter && a.syn5 === b.syn5 && a.sept7 === b.sept7;
 }
+/** Carry-state entry: the identity implied at (pname:oct), the layer-relative
+ *  tick of the note that established it, and whether that note DREW it. */
+interface CarryEntry { id: AccidIdentity; tick: number; shown: boolean; }
 
 export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji?: HejiDisplayCtx): void {
   /* Per-measure key signature: walk the section's in-order <scoreDef>/<measure>
@@ -223,9 +230,10 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
         a.startTick !== b.startTick ? a.startTick - b.startTick : a.layerN - b.layerN);
 
       /* (pname:oct) → currently-implied accidental identity for this
-         measure-staff. With HEJI off, syn5/sept7 stay 0 and this reduces to
-         the conventional integer-alteration carry. */
-      const local: Record<string, AccidIdentity> = {};
+         measure-staff (+ the tick that set it and whether it was drawn). With
+         HEJI off, syn5/sept7 stay 0 and this reduces to the conventional
+         integer-alteration carry. */
+      const local: Record<string, CarryEntry> = {};
 
       const commasOf = (note: Element): { syn5: number; sept7: number } => {
         if (!heji?.enabled) return { syn5: 0, sept7: 0 };
@@ -237,7 +245,7 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
         return hejiCommasFor(heji.mode, q, r);
       };
 
-      for (const { note } of allNotes) {
+      for (const { note, startTick } of allNotes) {
         const pname = note.getAttribute('pname');
         const oct = note.getAttribute('oct');
         if (!pname || !oct) continue;
@@ -245,8 +253,9 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
         const alter = heji ? noteAlter(note) : getNoteAlter(note);
         const { syn5, sept7 } = commasOf(note);
         const id: AccidIdentity = { alter, syn5, sept7 };
-        const expected: AccidIdentity = (key in local)
-          ? local[key]
+        const cur: CarryEntry | undefined = local[key];
+        const expected: AccidIdentity = cur
+          ? cur.id
           : { alter: keyAlters[pname] ?? 0, syn5: 0, sept7: 0 };
         const tie = note.getAttribute('tie');
         const isTieDestination = tie === 't' || tie === 'm';
@@ -265,22 +274,37 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
              sharp/flat, breaking serialize→load→serialize equality. */
           const parenAlter = noteAlter(note);
           showAlterAsParenChild(note, parenAlter);
-          local[key] = id;
+          local[key] = { id, tick: startTick, shown: true };
           continue;
         }
 
         if (isTieDestination) {
           /* Hide (chain initiator already showed it); update carry. */
           hideAlter(note, alter);
-          local[key] = id;
+          local[key] = { id, tick: startTick, shown: false };
           continue;
         }
 
         if (identityEq(id, expected)) {
-          hideAlter(note, alter);
+          /* Unison partner: another layer DREW this very identity at this
+             tick (two voices sounding one written pitch). Draw it here too.
+             Verovio superimposes identical accidentals at one Y across
+             layers (accid.cpp: "identical accidentals that need to remain
+             superimposed"), so the chain still reads once — but its unison
+             test compares the two notes' MIDI pitch, derived from each note's
+             FIRST <accid> child. A HEJI placeholder row (transformDocForHeji)
+             on one note against @accid.ges on the other read as two pitches
+             ('su' vs 's' for sharp + septimal hook; 's' vs 'f' for a flat
+             with an arrow), and the noteheads were offset like a false
+             relation. The symmetric encoding keeps them merged. */
+          if (cur && cur.shown && cur.tick === startTick) {
+            showAlter(note, alter);
+          } else {
+            hideAlter(note, alter);
+          }
         } else {
           showAlter(note, alter);
-          local[key] = id;
+          local[key] = { id, tick: startTick, shown: true };
         }
       }
     }
