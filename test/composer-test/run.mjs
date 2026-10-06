@@ -6,8 +6,9 @@
 //   node tools/composer-test/run.mjs scenario <name> [--keep-open]
 //
 // Tiers:
-//   fast    — MODEL + CURSOR + CONSOLE on all fixtures (~10 s, every iter)
-//   full    — fast + ROUNDTRIP + RENDER + INPUT (~90 s, pre-merge gate)
+//   fast    — MODEL + CURSOR + CONSOLE on the fast-tier fixtures (~25 s wall-clock for 60, 2026-10-05)
+//   full    — fast + ROUNDTRIP + RENDER + INPUT on every fixture (~5 min for 581, 2026-10-05; the gate)
+//   --only a,b — restrict either tier to fixtures whose names start with a listed prefix (seconds)
 //   visual  — pixelmatch only (planned; not yet implemented)
 //
 // Requires: Vite dev server running (`npm run dev`) at

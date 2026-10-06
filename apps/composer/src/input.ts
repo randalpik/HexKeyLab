@@ -23,6 +23,7 @@ import { openTempoModal } from './tempoDialog.js';
 import { openSignatureModal } from './sigDialog.js';
 import { openClefModal } from './clefDialog.js';
 import { openPickupModal } from './pickupDialog.js';
+import { openTupletModal } from './tupletDialog.js';
 import { addSlur, removeSlur, collectSlurs } from './slurs.js';
 import { togglePedal, pedalMoments, type PedalDir } from './pedal.js';
 import { beamGroupForElement } from './notation/beams.js';
@@ -2155,6 +2156,38 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
 
     /* Ctrl+V from voice mode is handled by the DOM `paste` event listener
        below (no preventDefault here, no async clipboard read). */
+
+    /* Ctrl+Shift+3: tuplet of ANY count — a modal asking for the count, the
+       span in eighth notes and the written value (tupletDialog.ts). Matched on
+       the physical key: Shift+3 reads as '#' in `e.key` on a US layout. Must
+       come BEFORE the Ctrl+2..7 branch (whose digit test would never see '#'
+       but could on another layout) and the bail-on-modifier check;
+       preventDefault keeps the browser's Ctrl+digit tab switch out. */
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey
+        && (e.code === 'Digit3' || e.key === '#' || e.key === '3')) {
+      e.preventDefault();
+      if (state.cursorMode !== 'voice') {
+        hooks.setStatus?.('Tuplet creation requires voice mode.', 'error');
+        return;
+      }
+      if (hooks.isPlaybackActive()) return;
+      if (model.isCursorInTuplet()) {
+        hooks.setStatus?.('Cannot nest tuplets.', 'error');
+        return;
+      }
+      state.pendingTuplet = null;
+      openTupletModal(model, {
+        history: hooks.history,
+        defaultSpanDur: state.duration,
+        onApply: (num, numbase) => {
+          hooks.setStatus?.('Tuplet ' + num + ':' + numbase + ' added.', 'action');
+          hooks.onStateChange();
+          hooks.onChange();
+        },
+        onError: (msg) => hooks.setStatus?.(msg, 'error'),
+      });
+      return;
+    }
 
     /* Ctrl+2..7 begins tuplet creation. Must come BEFORE the bail-on-modifier
        check below. preventDefault is critical: in Firefox/Chromium, Ctrl+1..8

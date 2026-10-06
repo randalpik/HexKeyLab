@@ -25,6 +25,10 @@ export interface TextEntryFieldApi {
   /** Show/hide a field's whole row (display:none) — for fields that don't apply
    *  to the current builder state. */
   setHidden(name: string, hidden: boolean): void;
+  /** Replace a select field's options (a builder whose choices depend on other
+   *  fields — the tuplet modal's written-value list). `value` selects one of
+   *  the new options; omitted, the browser picks the first. */
+  setOptions(name: string, options: ReadonlyArray<{ value: string; label: string }>, value?: string): void;
 }
 
 export interface TextEntryModalOpts {
@@ -167,6 +171,12 @@ export function openTextEntryModal(opts: TextEntryModalOpts): void {
     setHidden: (name, hidden) => {
       const row = fieldEl(name)?.closest('.row') as HTMLElement | null;
       if (row) row.style.display = hidden ? 'none' : '';
+    },
+    setOptions: (name, options, value) => {
+      const el = fieldEl(name) as unknown as HTMLSelectElement | null;
+      if (!el || el.tagName !== 'SELECT') return;
+      el.innerHTML = options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+      if (value !== undefined) el.value = value;
     },
   };
   const onFieldChange = (e: Event): void => {

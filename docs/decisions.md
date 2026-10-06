@@ -9470,3 +9470,42 @@ itself, are both released automatically, and the device reconnects when powered 
 with the heartbeat and candidate gate disabled fails 14 of them.
 
 ---
+
+## Composer tuplets of any count: a Ctrl+Shift+3 modal beside the Ctrl+N table (2026-10-05, Max)
+
+**Picked**: `Ctrl+Shift+3` opens a modal (`apps/composer/src/tupletDialog.ts`) that takes the **count**
+of notes, the **span in eighth notes** (the pickup modal's unit, seeded from the current entry duration)
+and a **written value**, and creates that tuplet at the cursor. The `Ctrl+N` table (2026-05-18) stays
+as the two-keystroke path for the common cases; it is capped at 7 and fixes one ratio per N, which the
+modal lifts without touching it.
+
+**Ratio derivation**: for a span the valid ratio bases form a doubling ladder — `spanTicks / A` for every
+undotted written value A dividing it (a quarter: 1, 2, 4, 8, 16; a dotted quarter: 3, 6, 12, 24). The
+modal lists every rung (`tupletRatioOptions`) and pre-selects the one **nearest the count, ties to the
+smaller base** (`defaultTupletRatio`). No single metric reproduces engraving convention — nearest-in-log
+gives 3:4, written-value-nearest-sounding gives 6:8 — but this rule reproduces the table's 2:3, 3:2, 5:4,
+6:4 and 7:8 and gives the standard 5:6, 7:6, 9:8, 9:6, 11:8 beyond it. Its one departure from the table
+is the compound-time quadruplet: nearest rung 4:3, where `Ctrl+4` writes 4:6 by convention. Rather than
+special-case it, the select keeps both reachable (as it does 7:4 beside 7:8) — information-theoretic
+completeness over a second opinionated table. A count that fills the span in plain notation (4 over a
+quarter) is not a tuplet and is refused; so is a cursor with no free ticks (refused before the dialog
+opens, via `tupletFreeTicksAtCursor` over the same `resolveTupletTarget` the creation uses).
+
+**Rejected**:
+- A fourth field for the ratio base, or count + base + atomic: three numbers that must agree; the
+  written value already determines the base for a given span, so one select covers it.
+- Extending `Ctrl+N` to two-digit counts (`Ctrl+1`,`Ctrl+1`): ambiguous with `Ctrl+1` tab-switch
+  suppression and the pending-digit flow; the modal is the explicit path.
+- A single fixed rule with no override: lossy — 7:4, 4:6 and 5:3 are all in use.
+
+**Model change**: `createTupletAtCursor`'s `spanDur`/`spanDots` are now optional; the span is
+`numbase × ticksOf(atomicDur)` by identity (a span of 5 eighths is no single dotted value). When passed,
+they are still checked against it. `TextEntryFieldApi.setOptions` was added to the modal shell so a
+select can be rebuilt from other fields.
+
+**Files**: `apps/composer/src/tupletDialog.ts` (new), `model/tuplet-ops.ts` (`tupletRatioOptions`,
+`defaultTupletRatio`, `tupletFitsExactly`, `tupletFreeTicksAtCursor`), `ui/textEntryModal.ts`,
+`input.ts` (matched on `e.code === 'Digit3'` — Shift+3 reads as `#`), `keybindings.ts`. Fixtures:
+`tupletModal_*` ×6 + `undo_tupletModal`.
+
+---

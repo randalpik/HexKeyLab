@@ -4233,8 +4233,10 @@ export class ComposerModel {
   createTupletAtCursor(opts: {
     num: number;
     numbase: number;
-    spanDur: Duration;
-    spanDots: Dots;
+    /** Optional: the span is `numbase × atomicDur` by identity; when given,
+     *  checked against it (see tuplet-ops.ts). */
+    spanDur?: Duration;
+    spanDots?: Dots;
     atomicDur: Duration;
   }): { ok: true; id: string } | { ok: false; reason: string } {
     return createTupletAtCursorImpl(this, opts);

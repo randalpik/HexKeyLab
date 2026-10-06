@@ -7185,6 +7185,118 @@ const PHASE1 = {
     `,
   },
 
+  /* ── Tuplet modal (Ctrl+Shift+3, 2026-10-05) ──────────────────────────────
+     A tuplet of ANY count: the modal takes the count, the span in EIGHTH
+     NOTES and a written value (every ratio the span admits, the conventional
+     one pre-selected). Driven through the dialog like the pickup fixtures so
+     the key match (Shift+3 = '#'), the field names, the ratio derivation and
+     the model call are all in the path. The Ctrl+N table stops at 7. */
+
+  /* Count 9 over a quarter (2 eighths) → 9:8 in 32nds: nine 32nd placeholders,
+     cursor on the fill anchor. The span field is seeded from the entry
+     duration (quarter → 2). */
+  tupletModal_nonuplet: {
+    setup: `
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      window.__tupletModalSeed = dlg.querySelector('[data-field="eighths"]').value;
+      const set = (n, v) => { const el = dlg.querySelector('[data-field="' + n + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('count', '9'); set('eighths', '2');
+      window.__tupletModalOptions = [...dlg.querySelectorAll('[data-field="written"] option')].map((o) => o.value + '|' + o.textContent);
+      window.__tupletModalPicked = dlg.querySelector('[data-field="written"]').value;
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+    visualBaseline: 'tuplet_modal_nonuplet',
+  },
+
+  /* Count 5 over a dotted quarter (3 eighths): the ladder is 3, 6, 12, 24 and
+     the nearest rung to 5 is 6 → 5:6 in 16ths (the compound-time quintuplet). */
+  tupletModal_dottedSpanDefault: {
+    setup: `
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const set = (n, v) => { const el = dlg.querySelector('[data-field="' + n + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('count', '5'); set('eighths', '3');
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+  },
+
+  /* Count 3 over 2 eighths through the modal = Ctrl+3 then 5: 3:2 in eighths. */
+  tupletModal_matchesCtrlDigit: {
+    setup: `
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const set = (n, v) => { const el = dlg.querySelector('[data-field="' + n + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('count', '3'); set('eighths', '2');
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+  },
+
+  /* The written-value select overrides the default: count 7 over a quarter
+     defaults to 7:8 (32nds, the Ctrl+7 ratio); picking 16ths gives 7:4. */
+  tupletModal_writtenOverride: {
+    setup: `
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const set = (n, v) => { const el = dlg.querySelector('[data-field="' + n + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('count', '7'); set('eighths', '2');
+      window.__tupletModalDefault = dlg.querySelector('[data-field="written"]').value;
+      set('written', '16');
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+  },
+
+  /* 4 notes over 2 eighths are four 16ths — not a tuplet. The select says so
+     and OK is refused; the document is untouched. */
+  tupletModal_fitsExactlyRefused: {
+    setup: `
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const set = (n, v) => { const el = dlg.querySelector('[data-field="' + n + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('count', '4'); set('eighths', '2');
+      window.__tupletModalOptions = [...dlg.querySelectorAll('[data-field="written"] option')].map((o) => o.value + '|' + o.textContent);
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+  },
+
+  /* Mid-bar in a FULL 4/4 bar there is no room for any tuplet: the modal does
+     not open at all (status error instead) and nothing changes. */
+  tupletModal_noRoomRefused: {
+    setup: `
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(2, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      window.__tupletModalOpened = document.getElementById('textEntryDialog').open;
+      r();
+    `,
+  },
+
+  /* A modal-created tuplet is one history entry: Ctrl+Z removes it whole. */
+  undo_tupletModal: {
+    setup: `
+      m.setCursor(0, 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true, bubbles: true }));
+      const dlg = document.getElementById('textEntryDialog');
+      const set = (n, v) => { const el = dlg.querySelector('[data-field="' + n + '"]'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('count', '9'); set('eighths', '2');
+      dlg.querySelector('form').requestSubmit(dlg.querySelector('.te-ok'));
+      r();
+    `,
+    setupKeys: [{ key: 'z', ctrl: true }],
+  },
+
   /* Adding a pickup displaces the downbeat tempo onto the pickup, and playback
      applies that tempo from the very start (no default-120 lead-in). */
   phase4_pickup_tempo: {
@@ -9746,6 +9858,35 @@ export const FIXTURES = {
  *  Universal invariants (cursor-trace, no-tie-orphans, placeholder
  *  invariant, no console errors) are applied to EVERY fixture by the
  *  runner — don't repeat them here. */
+/** Assertion expr: exactly one <tuplet num numbase> of `num` placeholder rests
+ *  of `atomic`, `data-tuplet-atomic-dur` recorded, the dialog closed, and the
+ *  cursor where Ctrl+N leaves it: at the wrapper's flat index, which the model
+ *  reads as inside the tuplet (isCursorInTuplet). */
+function tupletShapeExpr(num, numbase, atomic) {
+  return `(() => {
+    const m = window.__hkl_composer.model;
+    const doc = m.getDoc();
+    const ts = doc.querySelectorAll('tuplet');
+    if (ts.length !== 1) return { ok: false, detail: 'tuplets=' + ts.length + ' (expected 1)' };
+    const t = ts[0];
+    const got = t.getAttribute('num') + ':' + t.getAttribute('numbase');
+    if (got !== '${num}:${numbase}') return { ok: false, detail: 'ratio ' + got + ' (expected ${num}:${numbase})' };
+    if (t.getAttribute('data-tuplet-atomic-dur') !== '${atomic}') return { ok: false, detail: 'atomic=' + t.getAttribute('data-tuplet-atomic-dur') + ' (expected ${atomic})' };
+    const kids = [...t.children];
+    if (kids.length !== ${num}) return { ok: false, detail: 'children=' + kids.length + ' (expected ${num})' };
+    const bad = kids.find((k) => k.tagName !== 'rest' || k.getAttribute('dur') !== '${atomic}' || k.getAttribute('data-tuplet-placeholder') !== 'true');
+    if (bad) return { ok: false, detail: 'unexpected child ' + bad.outerHTML.slice(0, 80) };
+    if (document.getElementById('textEntryDialog').open) return { ok: false, detail: 'dialog still open' };
+    const v = m.getCurrentVoice();
+    const flat = m.flatChildren(v);
+    const wi = flat.indexOf(t);
+    if (wi < 0) return { ok: false, detail: 'tuplet wrapper not a cursor stop' };
+    if (m.getCursor(v) !== wi) return { ok: false, detail: 'cursor=' + m.getCursor(v) + ' (expected the wrapper stop ' + wi + ', as after Ctrl+N)' };
+    if (!m.isCursorInTuplet()) return { ok: false, detail: 'cursor not inside the new tuplet' };
+    return { ok: true };
+  })()`;
+}
+
 export const FIXTURE_ASSERTIONS = {
   /* Page-size factor scales the page rectangle, not the content: at a fixed
    * zoom, the page SVG grows ~linearly with pageScale while a notehead's device
@@ -10965,6 +11106,73 @@ export const FIXTURE_ASSERTIONS = {
         /* The body bar is untouched and still full. */
         if (m.measureTicksAt(1) !== 64) return { ok: false, detail: 'body measureTicksAt(1)=' + m.measureTicksAt(1) + ' (expected 64)' };
         return { ok: true };
+      })()` },
+  ],
+
+  /* ── Tuplet modal (Ctrl+Shift+3) ─────────────────────────────────────── */
+  tupletModal_nonuplet: [
+    { name: 'the span field is seeded from the entry duration (quarter → 2 eighths)',
+      expr: `(() => {
+        const seed = window.__tupletModalSeed;
+        return seed === '2' ? { ok: true } : { ok: false, detail: 'seed=' + JSON.stringify(seed) + ' (expected "2")' };
+      })()` },
+    { name: 'the written-value list is the quarter ladder with 9:8 pre-selected',
+      expr: `(() => {
+        const opts = window.__tupletModalOptions || [];
+        /* Longest written value first: a 16-tick quarter admits quarter (1), eighth (2),
+           16th (4), 32nd (8) and 64th (16). */
+        const want = ['4|9:1 — quarter notes', '8|9:2 — eighth notes', '16|9:4 — 16th notes', '32|9:8 — 32nd notes', '64|9:16 — 64th notes'];
+        if (JSON.stringify(opts) !== JSON.stringify(want)) return { ok: false, detail: 'options=' + JSON.stringify(opts) };
+        if (window.__tupletModalPicked !== '32') return { ok: false, detail: 'picked=' + window.__tupletModalPicked + ' (expected 32 → 9:8 in 32nds)' };
+        return { ok: true };
+      })()` },
+    { name: 'a 9:8 tuplet of nine 32nd placeholders is created and the cursor sits on its fill anchor',
+      expr: tupletShapeExpr(9, 8, '32') },
+  ],
+  tupletModal_dottedSpanDefault: [
+    { name: 'count 5 over 3 eighths defaults to 5:6 in 16ths',
+      expr: tupletShapeExpr(5, 6, '16') },
+  ],
+  tupletModal_matchesCtrlDigit: [
+    { name: 'count 3 over 2 eighths is the Ctrl+3,5 triplet: 3:2 in eighths',
+      expr: tupletShapeExpr(3, 2, '8') },
+  ],
+  tupletModal_writtenOverride: [
+    { name: 'count 7 over a quarter defaults to 32nds (7:8), and picking 16ths yields 7:4',
+      expr: `(() => {
+        if (window.__tupletModalDefault !== '32') return { ok: false, detail: 'default=' + window.__tupletModalDefault + ' (expected 32)' };
+        return (${tupletShapeExpr(7, 4, '16')});
+      })()` },
+  ],
+  tupletModal_fitsExactlyRefused: [
+    { name: '4 over 2 eighths is refused: the list says so and no tuplet is created',
+      expr: `(() => {
+        const opts = window.__tupletModalOptions || [];
+        if (opts.length !== 1 || !/no tuplet needed/.test(opts[0])) return { ok: false, detail: 'options=' + JSON.stringify(opts) };
+        const doc = window.__hkl_composer.model.getDoc();
+        const n = doc.querySelectorAll('tuplet').length;
+        if (n !== 0) return { ok: false, detail: 'tuplets=' + n + ' (expected 0)' };
+        if (document.getElementById('textEntryDialog').open) return { ok: false, detail: 'dialog still open' };
+        return { ok: true };
+      })()` },
+  ],
+  tupletModal_noRoomRefused: [
+    { name: 'no free ticks at the cursor → the modal never opens and the bar is untouched',
+      expr: `(() => {
+        if (window.__tupletModalOpened !== false) return { ok: false, detail: 'dialog open=' + window.__tupletModalOpened };
+        const m = window.__hkl_composer.model;
+        const doc = m.getDoc();
+        if (doc.querySelectorAll('tuplet').length !== 0) return { ok: false, detail: 'a tuplet was created' };
+        if (doc.querySelectorAll('note').length !== 4) return { ok: false, detail: 'notes=' + doc.querySelectorAll('note').length };
+        return { ok: true };
+      })()` },
+  ],
+  undo_tupletModal: [
+    { name: 'Ctrl+Z after the modal removes the tuplet in one step',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const n = doc.querySelectorAll('tuplet').length;
+        return n === 0 ? { ok: true } : { ok: false, detail: 'tuplets=' + n + ' after undo (expected 0)' };
       })()` },
   ],
   /* Phase 4c: pickup remove — back to a single full measure. */

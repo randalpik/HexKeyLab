@@ -96,6 +96,8 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 | `Ctrl+6` | 6:4 (sextuplet) | |
 | `Ctrl+7` | 7:8 (septuplet) | |
 
+**Any other tuplet** — larger than seven, or a ratio the table doesn't offer — comes from the tuplet modal: press `Ctrl+Shift+3` and give the **count** of notes and the **span** they fill in **eighth notes** (the same unit the pickup modal uses; it is pre-filled from the current entry duration). A third field, *Written as*, lists every ratio that span admits and pre-selects the conventional one, so in the ordinary case you type the count, Tab, the span, Enter. Count 9 over a quarter (span 2) gives 9:8 in 32nds; count 5 over a dotted quarter (span 3) gives 5:6 in 16ths; count 11 over a half (span 4) gives 11:8 in 16ths. Where two writings are both in use — a septuplet as 7:8 or 7:4, a compound-time quadruplet as 4:3 or 4:6 — pick the other one from the list. A count that already fills the span in plain notation (4 over a quarter is just four 16ths) is refused, as is a tuplet with no room at the cursor. Fit and placement rules are the same as for `Ctrl+N`.
+
 ---
 
 ## Dynamics, hairpins, slurs & articulations

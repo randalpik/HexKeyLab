@@ -5009,3 +5009,23 @@ The failure looks like a real regression, and it only appears after you have edi
 exactly when you're running the gate. Fix: import the dependency by the URL its importer uses, read from the
 importer's transformed source (`departure.mjs` has a `depUrl(from, dep)` helper for this). Shared state
 modules that haven't been edited are unaffected, which is why the split can look partial.
+
+## Ctrl+Shift+digit bindings must match on `e.code` — Shift+3 arrives as `#` (2026-10-05)
+
+The Composer's `Ctrl+Shift+3` tuplet modal matched nothing until the branch tested
+`e.code === 'Digit3'`: with Shift held, a US layout reports `e.key === '#'`, not `'3'`, so a
+digit test on `e.key` (the form the plain `Ctrl+2..7` branch uses) never fires. The same holds
+for every Ctrl+Shift+digit (`!@#$%^&*`), and the character varies by layout, so match the
+physical key and keep `e.key` as a fallback: `e.code === 'Digit3' || e.key === '#' || e.key === '3'`.
+Place such a branch BEFORE the plain Ctrl+digit branch, which on a layout where Shift+3 still
+yields `'3'` would otherwise swallow it. The suite's keystroke driver already maps `'#'` to
+`Digit3` (`lib/keystroke.mjs` `KEY_CODE`), and a synthetic `KeyboardEvent` in a fixture must pass
+`code` explicitly. Related: the Alt+V branch in `input.ts` matches on `e.code` for the macOS
+compose reason (`'√'`).
+
+While wiring it, a comment in `createTupletAtCursor` claimed the cursor is seated "past the
+tuplet wrapper"; it is seated AT the wrapper's flat index, which `isCursorInTuplet` reads as
+inside, and that misled a fixture assertion into expecting one stop later. When writing a
+cursor assertion for a model mutation, probe the existing path first
+(`test/composer-inspect/inspect.mjs`) instead of trusting the comment — see the probe in the
+tuplet-modal session: flat `[measure, tuplet, rest[ph]]`, cursor `1`, `isCursorInTuplet()` true.

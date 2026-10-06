@@ -162,19 +162,99 @@ export function resolveTupletTarget(
   };
 }
 
+/* ── Ratio derivation for an arbitrary count over an arbitrary span ──────
+ *
+ * A tuplet of `count` notes over `spanTicks` of real time is written as
+ * `count : numbase` of some undotted atomic value, where
+ * `numbase × ticksOf(atomicDur) === spanTicks` (the identity
+ * createTupletAtCursor enforces). For a given span the valid numbases are
+ * therefore spanTicks ÷ A for every standard written value A that divides it
+ * — a doubling ladder (e.g. a quarter: 1, 2, 4, 8, 16; a dotted quarter:
+ * 3, 6, 12, 24). The Ctrl+N table picks one rung per N by convention; the
+ * Ctrl+Shift+3 modal lists every rung and defaults to the one NEAREST the
+ * count (ties toward the longer written value), which reproduces the table
+ * for 2:3, 3:2, 5:4, 6:4 and 7:8 and gives the engraving-standard 5:6, 7:6,
+ * 9:8, 9:6 beyond it. (Ctrl+4 over a dotted span writes 4:6 by convention;
+ * the nearest rung is 4:3 — the modal lists both.) */
+
+/** One way of writing `count` notes over a span: the ratio base and the
+ *  undotted written value of each note. */
+export type TupletRatioOption = { numbase: number; atomicDur: Duration };
+
+const WRITTEN_VALUES: ReadonlyArray<Duration> = ['1', '2', '4', '8', '16', '32', '64'];
+
+/** Every valid (numbase, atomicDur) pair for a span of `spanTicks` 64th-ticks,
+ *  longest written value first. Empty when the span is not a whole number of
+ *  64ths. A pair whose numbase equals the count is NOT a tuplet (the notes
+ *  already fill the span in plain notation) and is excluded. */
+export function tupletRatioOptions(count: number, spanTicks: number): TupletRatioOption[] {
+  const out: TupletRatioOption[] = [];
+  if (!Number.isInteger(spanTicks) || spanTicks <= 0) return out;
+  for (const dur of WRITTEN_VALUES) {
+    const a = ticksOf(dur, 0);
+    if (spanTicks % a !== 0) continue;
+    const numbase = spanTicks / a;
+    if (numbase === count) continue;
+    out.push({ numbase, atomicDur: dur });
+  }
+  return out;
+}
+
+/** True when `count` notes fill `spanTicks` exactly in a standard written
+ *  value — no tuplet is needed (or possible) for that pair. */
+export function tupletFitsExactly(count: number, spanTicks: number): boolean {
+  for (const dur of WRITTEN_VALUES) {
+    const a = ticksOf(dur, 0);
+    if (spanTicks % a === 0 && spanTicks / a === count) return true;
+  }
+  return false;
+}
+
+/** The conventional default among `options` for `count`: the numbase nearest
+ *  the count; on a tie, the smaller numbase (the longer written value — 3:2
+ *  over 3:4, 6:4 over 6:8, 9:6 over 9:12). */
+export function defaultTupletRatio(count: number, options: ReadonlyArray<TupletRatioOption>): TupletRatioOption | null {
+  let best: TupletRatioOption | null = null;
+  let bestDist = Infinity;
+  for (const o of options) {
+    const d = Math.abs(o.numbase - count);
+    if (d < bestDist || (d === bestDist && best && o.numbase < best.numbase)) {
+      best = o;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+/** Free real-time ticks a new tuplet could occupy at the cursor (the resolved
+ *  target measure's capacity less everything already in it). 0 when the cursor
+ *  has no layer or sits inside a tuplet. */
+export function tupletFreeTicksAtCursor(model: ComposerModel): number {
+  const v = model.getCurrentVoice();
+  const loc = locateCursor(model, v, model.getCursor(v));
+  if (!loc || loc.inTuplet) return 0;
+  const target = resolveTupletTarget(model, v, loc);
+  return Math.max(0, target.cap - target.usedBefore - target.postTicks);
+}
+
 /** Create a new <tuplet> at the cursor and step the cursor onto its first
  *  placeholder (the fill anchor). Builds `num` placeholder slots of
  *  `atomicDur`. Rejects if the tuplet's real-time span doesn't fit in the
  *  remaining ticks of the current measure, or if the cursor is already
  *  inside a tuplet (no nesting in v1). Returns the tuplet's xml:id on
- *  success, an error reason on rejection. */
+ *  success, an error reason on rejection.
+ *
+ *  The span is `numbase × atomicDur` by identity; `spanDur`/`spanDots` are
+ *  optional and, when given, are checked against it (the Ctrl+N path passes
+ *  them; the Ctrl+Shift+3 modal's span in eighths need not be a single
+ *  dotted value, so it passes none). */
 export function createTupletAtCursor(
   model: ComposerModel,
   opts: {
     num: number;
     numbase: number;
-    spanDur: Duration;
-    spanDots: Dots;
+    spanDur?: Duration;
+    spanDots?: Dots;
     atomicDur: Duration;
   },
 ): { ok: true; id: string } | { ok: false; reason: string } {
@@ -185,7 +265,7 @@ export function createTupletAtCursor(
   if (!loc) return { ok: false, reason: 'no layer at cursor' };
   if (loc.inTuplet) return { ok: false, reason: 'cannot nest tuplets' };
 
-  const spanTicks = ticksOf(spanDur, spanDots);
+  const spanTicks = spanDur !== undefined ? ticksOf(spanDur, spanDots ?? 0) : ticksOf(atomicDur, 0) * numbase;
   /* A tuplet is atomic: it lands whole in exactly ONE measure and needs free
      room there. The only subtlety is that the end-of-full-measure stop names
      two locations — see resolveTupletTarget. */
@@ -238,9 +318,14 @@ export function createTupletAtCursor(
   insertAt(model, targetLayer, tuplet, target.withinIdx);
   model.normalizePlaceholdersAll();
   model.setBarlines();
-  /* Seat the cursor on the "entered tuplet" stop (= past the tuplet wrapper).
-     Resolved by id rather than +1: when the location was re-read into the
-     next measure the wrapper is not simply the following stop. */
+  /* Seat the cursor AT the tuplet wrapper's own flat index. That stop is the
+     fill anchor of a fresh tuplet: `isCursorInTuplet` (the insert-mode
+     "between" rule) reads it as inside, and the next duration digit fills the
+     first slot. It is NOT one past the wrapper — flat = [..., wrapper,
+     placeholder...] and the cursor goes to the wrapper's index (the
+     tupletModal_* fixtures assert exactly this). Resolved by id rather than
+     +1: when the location was re-read into the next measure the wrapper is
+     not simply the following stop. */
   const tupletId = tuplet.getAttribute('xml:id') ?? '';
   const flat = model.flatChildren(v);
   const idx = flat.findIndex((e) => e.getAttribute('xml:id') === tupletId);

@@ -204,6 +204,11 @@ export const KEYBINDINGS: KeySection[] = [
         note: "Ctrl+2,d = duplet (2:3) in space of dotted-d; Ctrl+3,d = triplet (3:2) in space of d; Ctrl+4,d = quadruplet (4:6) in space of dotted-d; Ctrl+5..7,d = quintuplet/sextuplet/septuplet in space of d.",
       },
       {
+        keys: "Ctrl+Shift+3",
+        desc: "Tuplet of ANY count: a modal asking for the count, the span in EIGHTH NOTES, and the written note value — every ratio the span admits is listed, the conventional one pre-selected. Enter confirms.",
+        note: "Count 9, span 2 → 9:8 in 32nds over a quarter; count 5, span 3 → 5:6 in 16ths over a dotted quarter. A count that fills the span in plain notation (4 over 2 eighths) is refused — that is not a tuplet.",
+      },
+      {
         keys: "Escape",
         desc: "Cancel a pending tuplet (between Ctrl+N and the digit).",
       },
@@ -315,6 +320,10 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "Ctrl+Shift+A",
         desc: "Pickup / anacrusis at the start of the cursor's section: give its length in EIGHTH NOTES (anything shorter than a full bar). A pickup is a short measure 0 (full time signature still shown); the following measure stays numbered 1. Set to 0 to remove it.",
+      },
+      {
+        keys: "Ctrl+Shift+3",
+        desc: "Tuplet of any count at the cursor: count, span in eighth notes, written value (see Tuplet creation).",
       },
     ],
   },

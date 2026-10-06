@@ -10,8 +10,8 @@ running invariant checks across ~45 fixtures in <15 seconds.
 npm run dev
 
 # In another terminal: run the gate
-npm run test:composer       # full tier (~12 s; pre-merge gate)
-npm run test:composer:fast  # fast tier (~8 s; inner loop)
+npm run test:composer       # full tier (581 fixtures, ~5 min; pre-merge gate)
+npm run test:composer:fast  # fast tier (60 fixtures, ~25 s; inner loop)
 ```
 
 Or call the runner directly:
@@ -42,8 +42,8 @@ Exit code: 0 if all pass, 1 if any fail, 2 on infra failure.
 
 | Tier      | Invariants                          | Wall time | When               |
 |-----------|-------------------------------------|-----------|--------------------|
-| fast      | MODEL + CURSOR + CONSOLE            | ~8 s      | Every iteration     |
-| full      | fast + ROUNDTRIP + RENDER + INPUT + VISUAL | ~12 s | Pre-merge gate      |
+| fast      | MODEL + CURSOR + CONSOLE            | ~25 s     | Every iteration     |
+| full      | fast + ROUNDTRIP + RENDER + INPUT + VISUAL | ~5 min    | Pre-merge gate      |
 | visual    | VISUAL only                         | ~5 s      | After intended visual changes |
 | scenario  | All applicable invariants, single   | varies    | Debugging           |
 
