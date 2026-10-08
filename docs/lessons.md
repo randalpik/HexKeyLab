@@ -745,6 +745,11 @@ I put expression elements as the LAST children of their `<measure>` (after both 
 
 If you ever need to query "all expressions in document order", do it by walking the measures first and then their `<dynam>`/`<hairpin>` children — not by DOM-order across the whole `<section>`, since `<measure>`s come in document order but their inner children don't have a meaningful order.
 
+### Verovio's `@place="between"` works on a single `@staff` — and a probe column must be clear of stems
+
+`between` is not a two-staff-only attribute in the loaded build (6.3.0): a dynam, hairpin or dir on `staff="1"` is centred between its staff and the next one down, regardless of instrument grouping (which is why it is wrong under a one-staff instrument — sonata m. 19, the viola's mp halfway to the piano). It centres the mark's REFERENCE POINT, so a glyph box sits ~0.3 space below true centre, and it reserves the gap (a crowded gap grew 6.03 → 8.0 spaces for a 1.72-space mark) but keeps only a quarter space from the mark's own staff when the lower staff's overflow is tall, where `below` holds `dynamDist` and widens the gap further. The first probe (2026-10-07) concluded `between == below` for every variant, and was wrong: the treble line's first note (b4, stem down) overflowed the staff under the mark's tstamp, so Verovio pushed the `below` mark down onto the `between` position and masked the difference. Put a probe's mark under a column with no stem or notehead outside either staff (f4/g4 stems up above; e3–g3 stems down below), and only then read the numbers. The DOM centring in `render/textlayout.ts` that this replaced had re-implemented the built-in because the May helpers defaulted to `between` while Finale imports said `below` — see decisions.md 2026-10-07.
+
+
 ## Transcription quantization
 
 ### `TIE_COST` calibration matters more than `BOUNDARY_WEIGHT`

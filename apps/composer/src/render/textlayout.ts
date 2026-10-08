@@ -1,11 +1,18 @@
 // Below-staff text layout — a DOM post-process on rendered systems (2026-09-04).
 //
 // Verovio places a dynamic, hairpin or expressive text just under its staff
-// (its `dynamDist` floor, or whatever the staff's lowest content forces). Two
-// conventions on top of that (backlog, Opinionation):
-//   • Inside a GRAND STAFF, a mark under the upper staff (or above the lower
-//     one) is centred in the gap between the two staves, as far as the other
-//     staff's content in the same horizontal range allows.
+// (its `dynamDist` floor, or whatever the staff's lowest content forces).
+// Conventions on top of that (backlog, Opinionation):
+//   • Inside a GRAND STAFF a mark is @place="between" (expressions.ts
+//     `defaultMarkPlace` / `normalizeMarkPlaces`, 2026-10-07) and Verovio's own
+//     between pass centres it in the gap, clear of the lower staff's content.
+//     Until then such marks were `below` and THIS pass centred them — a
+//     re-implementation of the built-in, deleted once the model said `between`
+//     (Verovio centres the mark's reference point, so a glyph sits ~0.3 space
+//     below true centre; the DOM version centred the box). A `between` mark is
+//     neither clustered nor centred here; the one rule it meets pushes it off
+//     its own staff when Verovio's lift over the lower staff's stems put it
+//     there (see below).
 //   • Under any OTHER staff (a single-line instrument, the bottom of a grand
 //     staff), expressive text (<dir>) is kept at least as far from the staff
 //     as the dynamics are — Verovio's `dynamDist` governs <dynam> only — and a
@@ -91,8 +98,6 @@
 
 /** The staff-relationships the pass needs from the document. */
 export interface TextLayoutOpts {
-  /** [upper, lower] staff @n of every two-staff instrument (grand staff). */
-  grandPairs: ReadonlyArray<readonly [number, number]>;
   /** Minimum clearance kept between a <dir> and the staff line above it, in
    *  SVG user units: matches the dynamics' `dynamDist` so text and dynamics
    *  under one staff share a baseline. */
@@ -101,7 +106,7 @@ export interface TextLayoutOpts {
 
 export interface Box { left: number; right: number; top: number; bottom: number }
 interface Row extends Box { n: number; el: Element }
-interface Mark { el: SVGGraphicsElement; box: Box; upper: Row; lower: Row | null; mode: 'center' | 'mingap' }
+interface Mark { el: SVGGraphicsElement; box: Box; upper: Row; lower: Row | null }
 
 const MARK_SEL = 'g.dynam, g.dir, g.hairpin';
 /* Text marks placed above a staff: the slur-clearance rule's subjects. A
@@ -280,10 +285,6 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const ish = b ? ishOf(el) : 0;
     return b && ish ? { ...b, top: b.top + ish, bottom: b.bottom + ish } : b;
   };
-  const grandLowerOf = new Map<number, number>();
-  const grandUpperOf = new Map<number, number>();
-  for (const [u, l] of opts.grandPairs) { grandLowerOf.set(u, l); grandUpperOf.set(l, u); }
-
   /* ── reads ── */
   const rowCache = new Map<Element, Row[]>();
   const rowsFor = (measure: Element): Row[] => {
@@ -397,22 +398,18 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     const box = shifted.get(el) ?? markBox(el);
     if (!box || !(box.right > box.left) || !(box.bottom > box.top)) continue;
     const place = el.getAttribute('data-place') ?? ((box.top + box.bottom) / 2 > (own.top + own.bottom) / 2 ? 'below' : 'above');
+    /* `between` is Verovio's (see the header); `above` meets only the slur rule. */
+    if (place !== 'below') continue;
     const idx = rows.indexOf(own);
-    if (place === 'below') {
-      const lower = idx + 1 < rows.length ? rows[idx + 1] : null;
-      if (lower && grandLowerOf.get(staffN) === lower.n) items.push({ el, box, upper: own, lower, mode: 'center' });
-      else items.push({ el, box, upper: own, lower, mode: 'mingap' });   // dynam / dir / hairpin — see the cluster rule
-    } else if (place === 'above') {
-      const upper = idx > 0 ? rows[idx - 1] : null;
-      if (upper && grandUpperOf.get(staffN) === upper.n) items.push({ el, box, upper, lower: own, mode: 'center' });
-    }
+    const lower = idx + 1 < rows.length ? rows[idx + 1] : null;   // always another instrument's staff, or none
+    items.push({ el, box, upper: own, lower });                   // dynam / dir / hairpin — see the cluster rule
   }
   const shifts = new Map<SVGGraphicsElement, { dx: number; dy: number }>();
   for (const [el, dx] of hshift) shifts.set(el, { dx, dy: 0 });
 
   /* Cluster x-overlapping marks that share a gap. */
   const clusters: Mark[][] = [];
-  const key = (m: Mark): string => m.upper.n + '/' + (m.lower?.n ?? '-') + '/' + m.mode;
+  const key = (m: Mark): string => m.upper.n + '/' + (m.lower?.n ?? '-');
   const byGap = new Map<string, Mark[]>();
   for (const m of items) { const k = key(m); (byGap.get(k) ?? byGap.set(k, []).get(k)!).push(m); }
   for (const group of byGap.values()) {
@@ -509,26 +506,19 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   for (const cl of clusters) {
     let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
     for (const m of cl) { top = Math.min(top, m.box.top); bottom = Math.max(bottom, m.box.bottom); left = Math.min(left, m.box.left); right = Math.max(right, m.box.right); }
-    const { upper, lower, mode } = cl[0];
+    const { upper, lower } = cl[0];
     const moving = new Set<Element>(cl.map((m) => m.el));
-    let dy: number;
-    if (mode === 'center') {
-      if (!lower) continue;
-      dy = (upper.bottom + lower.top) / 2 - (top + bottom) / 2;
-    } else {
-      /* A dynamic anchors its cluster: Verovio's placement stands. */
-      if (cl.some((m) => m.el.classList.contains('dynam'))) continue;
-      const line = upper.bottom + opts.dirGapUser;
-      /* Text is pushed DOWN to the dynamics' clearance, never up (Verovio's
-         floor is right when it is lower); hairpins alone go to the line. */
-      dy = cl.some((m) => m.el.classList.contains('dir')) ? Math.max(0, line - top) : (line - HAIRPIN_LIFT) - top;
-    }
+    /* A dynamic anchors its cluster: Verovio's placement stands. */
+    if (cl.some((m) => m.el.classList.contains('dynam'))) continue;
+    const line = upper.bottom + opts.dirGapUser;
+    /* Text is pushed DOWN to the dynamics' clearance, never up (Verovio's
+       floor is right when it is lower); hairpins alone go to the line. */
+    let dy: number = cl.some((m) => m.el.classList.contains('dir')) ? Math.max(0, line - top) : (line - HAIRPIN_LIFT) - top;
     if (dy > 0) {
-      /* Moving down: stay above the lower staff's line and its content — by
-         the grand-staff pad inside an instrument, by a full space toward
-         another instrument (in 'mingap' the lower row is always another
-         instrument's; grand pairs centre). */
-      const clear = mode === 'mingap' ? INSTR_CLEAR : PAD;
+      /* Moving down: stay a full space clear of the next instrument's line and
+         its content (the lower row, when there is one, is always another
+         instrument's — inside a grand staff the marks are `between`). */
+      const clear = INSTR_CLEAR;
       let limit = lower ? lower.top - clear : Infinity;
       if (lower) for (const b of obstacleBoxes(lower, left, right, 'above', moving)) limit = Math.min(limit, b.top - clear);
       const wanted = dy;
@@ -536,9 +526,8 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       if (dy < 0) dy = 0;
       /* What the clearance to the NEXT INSTRUMENT refused. render/instrgap.ts
          grants it by moving that instrument, and this pass then reruns with the
-         room (only a 'mingap' lower row is another instrument's — grand pairs
-         centre, and their pad is not a shortage worth widening a system for). */
-      if (mode === 'mingap' && wanted - dy >= 1) {
+         room. */
+      if (wanted - dy >= 1) {
         for (const m of cl) m.el.setAttribute('data-hkl-clamped', String(Math.round(wanted - dy)));
       }
     } else if (dy < 0) {
@@ -560,6 +549,39 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
          every other cluster.) */
       if (s) s.dy += dy; else shifts.set(m.el, { dx: 0, dy });
     }
+  }
+
+  /* ── `between` marks lifted into their own staff ──
+     Verovio's between pass centres a mark between its staff and the next one
+     and lifts it clear of the lower staff's overflow, but never looks at the
+     upper staff: over tall left-hand stems (engr_dirCenteredClearsChordStem —
+     the sonata's p. 6 m. 90 "cresc." over the A♭–C–E♭ chords) a 2.5-space word
+     ended 2 px INTO the right hand's bottom line with the gap still at its
+     6-space floor (2026-10-07). Such a mark is pushed down to PAD under its
+     staff, as far as the lower staff's content leaves room (PAD above the
+     nearest obstacle); with no room it stays where Verovio put it. This is
+     the one thing the pass does to a `between` mark. */
+  for (const el of marks) {
+    if (el.getAttribute('data-place') !== 'between' || !el.matches(MARK_SEL)) continue;
+    const measure = el.closest('g.measure');
+    if (!measure) continue;
+    const staffN = attrNum(el, 'data-staff');
+    if (staffN === null) continue;
+    const rows = rowsFor(measure);
+    const own = rows.find((r) => r.n === staffN);
+    if (!own) continue;
+    const idx = rows.indexOf(own);
+    const lower = idx + 1 < rows.length ? rows[idx + 1] : null;
+    const box = shifted.get(el) ?? markBox(el);
+    if (!box || !(box.right > box.left) || !(box.bottom > box.top)) continue;
+    let dy = (own.bottom + PAD) - box.top;
+    if (dy < 3) continue;
+    let limit = lower ? lower.top - PAD : Infinity;
+    if (lower) for (const b of obstacleBoxes(lower, box.left, box.right, 'above', new Set<Element>([el]))) limit = Math.min(limit, b.top - PAD);
+    dy = Math.round(Math.min(dy, limit - box.bottom));
+    if (dy < 3) continue;
+    const s = shifts.get(el);
+    if (s) s.dy += dy; else shifts.set(el, { dx: 0, dy });
   }
 
   /* ── above-staff text vs the staff's slurs and ties ── */
@@ -624,16 +646,18 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       const idx = a.rows.indexOf(a.own);
       const upper = idx > 0 ? a.rows[idx - 1] : null;
       if (upper) {
-        const acrossInstruments = grandUpperOf.get(a.staffN) !== upper.n;
-        const clear = acrossInstruments ? INSTR_CLEAR : PAD;
-        let limit = upper.bottom + clear;
-        for (const b of obstacleBoxes(upper, a.box.left, a.box.right, 'below', moving)) limit = Math.max(limit, b.bottom + clear);
+        /* The staff above is always another instrument's: inside a grand
+           staff an `above` mark on the lower staff is `between` on the upper
+           (expressions.ts `normalizeMarkPlaces`), so the lift keeps a full
+           space clear of that instrument's line and ink. */
+        let limit = upper.bottom + INSTR_CLEAR;
+        for (const b of obstacleBoxes(upper, a.box.left, a.box.right, 'below', moving)) limit = Math.max(limit, b.bottom + INSTR_CLEAR);
         dy = Math.max(dy, limit - a.box.top);
         if (dy > 0) dy = 0;
         /* The slur-clearance lift this instrument boundary refused — sonata
            p. 21 m. 94's "rit." stopped one space under the viola with the
            slur still inside its box, and only more room can finish it. */
-        if (acrossInstruments && want - dy <= -1) {
+        if (want - dy <= -1) {
           a.el.setAttribute('data-hkl-clamped', String(Math.round(dy - want)));
         }
       }

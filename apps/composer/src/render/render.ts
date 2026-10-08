@@ -3416,9 +3416,10 @@ class Renderer {
       }
     }
     st.noteheads = performance.now() - t;
-    /* Below-staff marks: centre dynamics / hairpins / expressive text between
-       the staves of a grand staff and keep <dir> text a dynamic's distance
-       below any other staff (render/textlayout.ts). Before placement measures
+    /* Below-staff marks: keep <dir> text a dynamic's distance below a staff
+       and a lone hairpin on the dynamics' line (render/textlayout.ts; inside a
+       grand staff the marks are `between` and Verovio centres them — see
+       expressions.ts `defaultMarkPlace`). Before placement measures
        the system — a nudged <dir> under a system's last staff is the one case
        that changes its extents — and idempotent, so a re-run on a mounted page
        is harmless. Needs the instrument table for which staff pairs are grand
@@ -3432,7 +3433,7 @@ class Renderer {
          (render/barlines.ts) BEFORE the marks move: a barline never breaks. */
       for (const el of targets) repairBarLines(el, pairs);
       const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
-      for (const el of targets) layoutBelowStaffText(el, { grandPairs: pairs, dirGapUser });
+      for (const el of targets) layoutBelowStaffText(el, { dirGapUser });
       /* Then the inter-instrument clearance (render/instrgap.ts): it needs the
          marks SETTLED (its metric measures what is actually drawn) and it also
          has to release textlayout's INSTR_CLEAR clamp, which is what left
@@ -3448,7 +3449,7 @@ class Renderer {
         const gapOpts = { instrStaffNs, grid: 1000 / this.currentScale(), unitUser: unit * 10 };
         const shifted = new Set<Element>();
         for (const el of targets) for (const sys of layoutInstrumentGaps(el, gapOpts)) shifted.add(sys);
-        for (const sys of shifted) layoutBelowStaffText(sys, { grandPairs: pairs, dirGapUser });
+        for (const sys of shifted) layoutBelowStaffText(sys, { dirGapUser });
       }
       /* Bracketless tuplet numerals off their beams (render/tupletnums.ts),
          then flipped slurs Verovio carried away from their notes re-drawn at

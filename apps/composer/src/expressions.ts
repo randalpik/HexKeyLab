@@ -19,6 +19,7 @@
 
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
+import { instrumentStaffSets } from './notation/parts.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
@@ -203,6 +204,62 @@ function readEndMoment(el: Element, measures: Element[]): Moment | null {
   return parseTstamp2(ts2, start.measureIdx);
 }
 
+/* ── mark placement by instrument shape (2026-10-07) ─────────────────────
+   A dynamic / hairpin / expressive text under the UPPER staff of a grand
+   staff is @place="between": Verovio's own between pass centres it in the gap
+   and reserves the gap for it (probed: a mark 1.72 spaces tall grows a
+   crowded gap by its height). Under a one-staff instrument, or under the
+   lower staff of a grand staff, it is @place="below" — dynamDist under its
+   own staff — which `between` gets wrong: Verovio centres a between mark
+   toward the NEXT staff regardless of instrument (sonata m. 19: the viola's
+   mp sat 2.45 spaces under the viola, halfway to the piano, against 1.2 for
+   below). The value is decided here, once, for every entry path — the live
+   insert helpers below, the MusicXML importer, and a load
+   (`normalizeMarkPlaces`, run by `ensureExpressionDefaults`) for files
+   written before this rule. Until 2026-10-07 the helpers defaulted every mark
+   to `between` (a single-piano-era choice: "between voices 2 and 3") while
+   Finale imports carried `below`, so the same mark placed live and reloaded
+   engraved 1.25 spaces apart; the grand-staff centring of `below` marks was
+   meanwhile re-implemented in render/textlayout.ts. Both are gone. */
+export type MarkPlace = 'above' | 'below' | 'between';
+
+/** [upper, lower] staff @n of every two-staff instrument in the document. */
+export function grandStaffPairs(doc: Document): Array<readonly [number, number]> {
+  return instrumentStaffSets(doc).filter((s) => s.length === 2).map((s) => [s[0], s[1]] as const);
+}
+
+/** The @place a below-the-staff mark on `staffN` gets: between inside a
+ *  grand staff (its upper staff), below anywhere else. */
+export function defaultMarkPlace(doc: Document, staffN: number): 'between' | 'below' {
+  return grandStaffPairs(doc).some(([u]) => u === staffN) ? 'between' : 'below';
+}
+
+const firstStaffOf = (el: Element): number => {
+  const n = parseInt((el.getAttribute('staff') ?? '1').trim().split(/\s+/)[0], 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+};
+
+/** Rewrite every <dynam> / <hairpin> / <dir>'s @place to the policy. A mark
+ *  ABOVE the lower staff of a grand staff lives in the same gap, so it moves
+ *  to the upper staff as `between`; `above` on any other staff stays.
+ *  Idempotent (a reload must serialize byte-equal). */
+export function normalizeMarkPlaces(doc: Document): void {
+  const pairs = grandStaffPairs(doc);
+  for (const el of Array.from(doc.querySelectorAll('dynam, hairpin, dir'))) {
+    const staffN = firstStaffOf(el);
+    const place = el.getAttribute('place');
+    if (place === 'above') {
+      const pair = pairs.find(([, l]) => l === staffN);
+      if (!pair) continue;
+      el.setAttribute('staff', String(pair[0]));
+      el.setAttribute('place', 'between');
+      continue;
+    }
+    const want = defaultMarkPlace(doc, staffN);
+    if (place !== want) el.setAttribute('place', want);
+  }
+}
+
 export interface DynamOpts {
   text: string;
   place?: 'above' | 'below' | 'between';
@@ -214,11 +271,12 @@ export interface DynamOpts {
 export function addDynam(doc: Document, at: Moment, opts: DynamOpts): Element | null {
   const measure = measureAtIdx(doc, at.measureIdx);
   if (!measure) return null;
+  const staff = opts.staff ?? 1;
   const attrs: Record<string, string | number | undefined> = {
     'xml:id': newId('d'),
     tstamp: formatTstamp(at.tstamp),
-    place: opts.place ?? 'between',
-    staff: opts.staff ?? 1,
+    place: opts.place ?? defaultMarkPlace(doc, staff),
+    staff,
   };
   if (opts.val !== undefined) attrs.val = Math.max(0, Math.min(127, opts.val | 0));
   if (opts.vgrp !== undefined) attrs.vgrp = opts.vgrp;
@@ -246,7 +304,7 @@ export function addHairpin(doc: Document, start: Moment, end: Moment, opts: Hair
     tstamp: formatTstamp(start.tstamp),
     tstamp2: formatTstamp2(start, end),
     form: opts.form,
-    place: opts.place ?? 'between',
+    place: opts.place ?? defaultMarkPlace(doc, opts.staff ?? 1),
     staff: opts.staff ?? 1,
   };
   if (opts.vgrp !== undefined) attrs.vgrp = opts.vgrp;
@@ -371,15 +429,16 @@ function setDirContent(el: Element, text: string, italic: boolean): void {
 }
 
 /** Add a <dir> (expressive text) at the moment, sibling of <staff>, @tstamp
- *  anchored — same shape as <dynam>. Default place 'below' (the conventional
- *  spot for performance text under the staff); 2.4 will toggle place. */
+ *  anchored — same shape as <dynam>. Default place by instrument shape
+ *  (`defaultMarkPlace`: between inside a grand staff, else below, the
+ *  conventional spot for performance text under the staff). */
 export function addDir(doc: Document, at: Moment, opts: DirOpts): Element | null {
   const measure = measureAtIdx(doc, at.measureIdx);
   if (!measure) return null;
   const el = createMei(doc, 'dir', {
     'xml:id': newId('dir'),
     tstamp: formatTstamp(at.tstamp),
-    place: opts.place ?? 'below',
+    place: opts.place ?? defaultMarkPlace(doc, opts.staff ?? 1),
     staff: opts.staff ?? 1,
   });
   setDirContent(el, opts.text, !!opts.italic);
@@ -991,6 +1050,7 @@ function childInHklNs(parent: Element, localName: string): Element | null {
  *  Called on document creation and on load/migration. */
 export function ensureExpressionDefaults(doc: Document): void {
   ensureExtMetaConfig(doc);
+  normalizeMarkPlaces(doc);
 }
 
 /** Read the document-level dynamic→velocity map. Falls back to defaults for

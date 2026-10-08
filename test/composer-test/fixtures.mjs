@@ -1005,7 +1005,7 @@ const SCROLL = {
       for (let i = 0; i < 4 * 80; i++) m.insertChordAtCursor({ notes: [N(4, 69)], duration: '4', dots: 0 });
       const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
       const meas = doc.querySelectorAll('measure'); const last = meas[meas.length - 1];
-      const dyn = (measure, id) => { const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', id); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '1'); d.textContent = 'p'; measure.appendChild(d); };
+      const dyn = (measure, id) => { const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', id); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'between'); d.setAttribute('staff', '1'); d.textContent = 'p'; measure.appendChild(d); };
       /* The voice cycle offers the expression layer only when the CURRENT
          measure holds an expression (cycleVoice: measureHasExpression), so
          bar 1 gets one too; End then jumps to the far one. */
@@ -5870,7 +5870,7 @@ const PHASE1 = {
       const ms = doc.querySelectorAll('measure'); const m2 = ms[ms.length - 1];
       const hp = doc.createElementNS(MEI, 'hairpin');
       hp.setAttribute('xml:id', 'h-align'); hp.setAttribute('tstamp', '1'); hp.setAttribute('tstamp2', '0m+2');
-      hp.setAttribute('form', 'cres'); hp.setAttribute('place', 'below'); hp.setAttribute('staff', '1');
+      hp.setAttribute('form', 'cres'); hp.setAttribute('place', 'between'); hp.setAttribute('staff', '1');
       m2.appendChild(hp);
     `,
   },
@@ -6582,8 +6582,8 @@ const PHASE1 = {
       mk('slur', 'slur-x-cov', { startid: '#' + notes[0].getAttribute('xml:id'), endid: '#' + notes[1].getAttribute('xml:id') });
       /* Explicit stem direction. */
       notes[0].setAttribute('stem.dir', 'down');
-      mk('dynam', 'dyn-x-cov', { tstamp: 1, staff: 1, place: 'below' }, 'mf');
-      mk('hairpin', 'hp-x-cov', { tstamp: 2, tstamp2: '0m+4', staff: 1, form: 'cres', place: 'below' });
+      mk('dynam', 'dyn-x-cov', { tstamp: 1, staff: 1, place: 'between' }, 'mf');
+      mk('hairpin', 'hp-x-cov', { tstamp: 2, tstamp2: '0m+4', staff: 1, form: 'cres', place: 'between' });
       mk('dir', 'dir-x-cov', { tstamp: 3, staff: 1, place: 'above' }, 'dolce');
       mk('pedal', 'ped-x-cov-d', { tstamp: 1, staff: 2, dir: 'down' });
       mk('pedal', 'ped-x-cov-u', { tstamp: 4, staff: 2, dir: 'up' });
@@ -8055,8 +8055,60 @@ const ENGRAVING = {
       m.setVoice(3); m.setCursor(0, 3); m.insertChordAtCursor({ notes: [N(2, 45)], duration: '1', dots: 0 });
       const doc = m.getDoc(); const meas = doc.querySelector('measure');
       const d = doc.createElementNS('http://www.music-encoding.org/ns/mei', 'dynam');
-      d.setAttribute('xml:id', 'd-test-center'); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '1'); d.textContent = 'p';
+      d.setAttribute('xml:id', 'd-test-center'); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'between'); d.setAttribute('staff', '1'); d.textContent = 'p';
       meas.appendChild(d);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
+  /* Mark placement policy (2026-10-07): a dynamic / hairpin / expressive text
+     under the UPPER staff of a grand staff is @place="between" — Verovio's own
+     between pass centres it in the gap — and under a one-staff instrument it
+     is @place="below" (dynamDist under its staff). The live insert path picks
+     the value from the instrument's shape; a load normalizes older files. */
+  expr_dynamicInsertBetweenOnGrandStaff: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(3); m.setCursor(0, 3); m.insertChordAtCursor({ notes: [N(2, 45)], duration: '1', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      m.setCursor(1, 1);  /* park on the note */
+      /* Shift+6 in voice mode = p (SHIFT_DIGIT_TO_DYNAMIC) — the real insert path. */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '^', shiftKey: true, bubbles: true }));
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+  expr_dynamicInsertBelowOnSingleStaff: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      m.setCursor(1, 5);  /* park on the viola note */
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '^', shiftKey: true, bubbles: true }));
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+  /* A load rewrites @place by instrument shape: below on the grand-staff upper
+     staff → between; between on a one-staff instrument → below; above on the
+     grand-staff LOWER staff is the same gap, so it becomes between on the upper
+     staff. Idempotent (the ROUNDTRIP invariant reloads this document). */
+  expr_loadNormalizesMarkPlaces: {
+    setup: `
+      const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      m.setVoice(1); m.setCursor(0, 1); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3); m.insertChordAtCursor({ notes: [N(2, 45)], duration: '1', dots: 0 });
+      m.setVoice(5); m.setCursor(0, 5); m.insertChordAtCursor({ notes: [N(5, 81)], duration: '1', dots: 0 });
+      const doc = m.getDoc(); const meas = doc.querySelector('measure'); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const mk = (tag, id, attrs, text) => { const e = doc.createElementNS(MEI, tag); e.setAttribute('xml:id', id); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text) e.textContent = text; meas.appendChild(e); };
+      mk('dynam', 'd-norm-rh', { tstamp: '1', place: 'below', staff: '1' }, 'p');
+      mk('dynam', 'd-norm-vla', { tstamp: '1', place: 'between', staff: '3' }, 'f');
+      mk('dynam', 'd-norm-lh', { tstamp: '2', place: 'above', staff: '2' }, 'mf');
+      mk('hairpin', 'h-norm-rh', { tstamp: '2', tstamp2: '0m+4', form: 'cres', place: 'below', staff: '1' });
+      mk('dir', 'dir-norm-vla', { tstamp: '3', place: 'above', staff: '3' }, 'dolce');
+      m.replaceDocument(m.serialize());
       m.setVoice(1); m.setCursor(0, 1);
       r();
     `,
@@ -8120,7 +8172,7 @@ const ENGRAVING = {
       for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [N(2, 45)], duration: '1', dots: 0 });
       const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
       const meas = doc.querySelectorAll('measure');
-      const dyn = (mi, tstamp, text, id) => { const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', id); d.setAttribute('tstamp', String(tstamp)); d.setAttribute('place', 'below'); d.setAttribute('staff', '1'); d.textContent = text; meas[mi].appendChild(d); };
+      const dyn = (mi, tstamp, text, id) => { const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', id); d.setAttribute('tstamp', String(tstamp)); d.setAttribute('place', 'between'); d.setAttribute('staff', '1'); d.textContent = text; meas[mi].appendChild(d); };
       dyn(0, 5, 'p', 'd-test-barline-end');
       dyn(2, 1, 'sfz', 'd-test-barline-start');
       m.setVoice(1); m.setCursor(0, 1);
@@ -8963,7 +9015,7 @@ const MULTIREST = {
       for (const i of [1, 2, 3]) ms[i].querySelector('staff[n="3"]').setAttribute('data-hkl-multirest', 'true');
       /* piano dynamic in m3 (interior of the violin run) */
       const dyn = ms[2].ownerDocument.createElementNS('http://www.music-encoding.org/ns/mei', 'dynam');
-      dyn.setAttribute('staff', '1'); dyn.setAttribute('tstamp', '1'); dyn.setAttribute('place', 'below'); dyn.textContent = 'p';
+      dyn.setAttribute('staff', '1'); dyn.setAttribute('tstamp', '1'); dyn.setAttribute('place', 'between'); dyn.textContent = 'p';
       ms[2].appendChild(dyn);
       m.setVoice(5); m.setCursor(0, 5);
     `,
@@ -9588,7 +9640,7 @@ const LC_VIOLIN = `${LC_SETUP}
 /* One mark of each kind at beat 2 of the piano's top staff, the hairpin running to beat 4. */
 const LC_MULTI = `${LC_PIANO}
   lcMark(0, 'dynam', { 'xml:id': 'lc-d', tstamp: 2, place: 'between', staff: 1 }, 'p');
-  lcMark(0, 'dir', { 'xml:id': 'lc-x', tstamp: 2, place: 'below', staff: 1 }, 'dolce');
+  lcMark(0, 'dir', { 'xml:id': 'lc-x', tstamp: 2, place: 'between', staff: 1 }, 'dolce');
   lcMark(0, 'hairpin', { 'xml:id': 'lc-h', tstamp: 2, tstamp2: '0m+4', form: 'cres', place: 'between', staff: 1 });
   m.setVoice(1); m.setCursor(1, 1);`;
 const LC_PAGE = `window.__hkl_composer.renderer.setViewMode('page');`;
@@ -9713,7 +9765,7 @@ const LAYER_CURSOR = {
   },
   lc_dirBelow: {
     setup: `${LC_PIANO}
-      lcMark(0, 'dir', { 'xml:id': 'lc-x', tstamp: 3, place: 'below', staff: 1 }, 'dolce');
+      lcMark(0, 'dir', { 'xml:id': 'lc-x', tstamp: 3, place: 'between', staff: 1 }, 'dolce');
       m.setVoice(1); m.setCursor(1, 1);`,
     setupKeys: ['ArrowDown', 'ArrowDown'],
     skipCursorTrace: true,
@@ -9783,7 +9835,7 @@ const LAYER_CURSOR = {
   lc_placeholderAcrossSystems: {
     setup: `${LC_PAGE} ${LC_SETUP}
       lcNotes(1, 48, '4', 'a', 4);
-      for (let mi = 0; mi < 12; mi++) lcMark(mi, 'dynam', { 'xml:id': 'lc-d' + mi, tstamp: 4, place: 'below', staff: 1 }, mi % 2 ? 'p' : 'f');
+      for (let mi = 0; mi < 12; mi++) lcMark(mi, 'dynam', { 'xml:id': 'lc-d' + mi, tstamp: 4, place: 'between', staff: 1 }, mi % 2 ? 'p' : 'f');
       m.setVoice(1); m.setCursor(1, 1);`,
     setupKeys: ['ArrowDown', 'ArrowDown'],
     skipCursorTrace: true,
@@ -9872,7 +9924,7 @@ const LAYER_CURSOR = {
       lcNotes(3, 4, '4', 'a', 2);
       lcMark(0, 'dynam', { 'xml:id': 'lc-d', tstamp: 1, place: 'between', staff: 1 }, 'p');
       lcMark(0, 'hairpin', { 'xml:id': 'lc-h', tstamp: 2, tstamp2: '1m+3', form: 'cres', place: 'between', staff: 1 });
-      lcMark(1, 'dir', { 'xml:id': 'lc-x', tstamp: 4, place: 'below', staff: 1 }, 'dolce');
+      lcMark(1, 'dir', { 'xml:id': 'lc-x', tstamp: 4, place: 'between', staff: 1 }, 'dolce');
       m.setVoice(1); m.setCursor(1, 1);`,
     setupKeys: ['ArrowDown', 'ArrowDown'],
     skipCursorTrace: true,
@@ -20601,7 +20653,7 @@ export const FIXTURE_ASSERTIONS = {
 
   /* ── Phase 2.2: expressive text ───────────────────────────────────────── */
   phase2_exprtext_create: [
-    { name: 'M_1 has a <dir tstamp≈1 place="below"> with italic "dolce"',
+    { name: 'M_1 has a <dir tstamp≈1 place="between"> (the gap of the grand staff) with italic "dolce"',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const dirs = [...m.getDoc().querySelectorAll('measure > dir')];
@@ -20610,7 +20662,7 @@ export const FIXTURE_ASSERTIONS = {
         const ts = parseFloat(d.getAttribute('tstamp') ?? '0');
         const text = (d.textContent ?? '').trim();
         const rend = d.querySelector('rend[fontstyle="italic"]');
-        const placeOk = d.getAttribute('place') === 'below';
+        const placeOk = d.getAttribute('place') === 'between';   /* policy: the piano's upper staff → the gap */
         return (Math.abs(ts - 1) < 0.01 && text === 'dolce' && !!rend && placeOk)
           ? { ok: true } : { ok: false, detail: 'ts=' + ts + ' text=' + text + ' italic=' + !!rend + ' place=' + d.getAttribute('place') };
       })()` },
@@ -20818,13 +20870,13 @@ export const FIXTURE_ASSERTIONS = {
   ],
 
   phase2_expr_place_voicemode: [
-    { name: 'dynamic @place="below" set from voice mode; still in voice mode',
+    { name: 'Ctrl+↓ from voice mode writes @place="between" on the grand staff (the gap); still in voice mode',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const d = m.getDoc().querySelector('measure > dynam');
         if (!d) return { ok: false, detail: 'no dynam' };
         const mode = window.__hkl_composer.inputState().cursorMode;
-        return (d.getAttribute('place') === 'below' && mode === 'voice')
+        return (d.getAttribute('place') === 'between' && mode === 'voice')
           ? { ok: true } : { ok: false, detail: 'place=' + d.getAttribute('place') + ' mode=' + mode };
       })()` },
   ],
@@ -21363,8 +21415,65 @@ export const FIXTURE_ASSERTIONS = {
         if (!d || !rows[1] || !rows[2]) return { ok: false, detail: 'dynam=' + !!d + ' rows=' + JSON.stringify(rows) };
         const b = d.getBoundingClientRect(); const cy = b.top + b.height / 2;
         const mid = (rows[1].bot + rows[2].top) / 2;
-        if (!d.hasAttribute('data-hkl-vshift')) return { ok: false, detail: 'dynam not laid out (no data-hkl-vshift)' };
-        return Math.abs(cy - mid) <= 2 ? { ok: true } : { ok: false, detail: 'cy=' + cy + ' mid=' + mid };
+        /* Verovio's between pass centres the mark's reference point, not its
+           glyph box — measured 0.31 space low on an mp (2026-10-07). Half a
+           space of tolerance; the DOM centring (±2 px) is gone with it. */
+        const space = (rows[1].bot - rows[1].top) / 4;
+        if (d.getAttribute('data-place') !== 'between') return { ok: false, detail: 'data-place=' + d.getAttribute('data-place') };
+        return Math.abs(cy - mid) <= 0.5 * space ? { ok: true, detail: 'cy-mid=' + (cy - mid).toFixed(1) + 'px' } : { ok: false, detail: 'cy=' + cy + ' mid=' + mid + ' space=' + space };
+      })()` },
+  ],
+  expr_dynamicInsertBetweenOnGrandStaff: [
+    { name: 'a live-inserted dynamic on the grand-staff upper staff is @place="between" and centred in the gap',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const el = [...doc.querySelectorAll('dynam')].find((e) => e.textContent.trim() === 'p');
+        if (!el) return { ok: false, detail: 'no <dynam> p in the model' };
+        if (el.getAttribute('place') !== 'between' || el.getAttribute('staff') !== '1') return { ok: false, detail: 'place=' + el.getAttribute('place') + ' staff=' + el.getAttribute('staff') };
+        const meas = document.querySelector('#score g.measure');
+        const rows = {};
+        for (const st of meas.querySelectorAll(':scope > g.staff')) {
+          const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+          rows[st.getAttribute('data-n')] = { top: Math.min(...ys), bot: Math.max(...ys) };
+        }
+        const d = document.querySelector('#score g.dynam');
+        if (!d || !rows[1] || !rows[2]) return { ok: false, detail: 'dynam=' + !!d + ' rows=' + JSON.stringify(rows) };
+        const b = d.getBoundingClientRect(); const cy = b.top + b.height / 2;
+        const mid = (rows[1].bot + rows[2].top) / 2, space = (rows[1].bot - rows[1].top) / 4;
+        return Math.abs(cy - mid) <= 0.5 * space ? { ok: true, detail: 'cy-mid=' + (cy - mid).toFixed(1) + 'px' } : { ok: false, detail: 'cy=' + cy + ' mid=' + mid + ' space=' + space };
+      })()` },
+  ],
+  expr_dynamicInsertBelowOnSingleStaff: [
+    { name: 'a live-inserted dynamic on a one-staff instrument is @place="below" at dynamDist under its staff',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const el = [...doc.querySelectorAll('dynam')].find((e) => e.textContent.trim() === 'p');
+        if (!el) return { ok: false, detail: 'no <dynam> p in the model' };
+        if (el.getAttribute('place') !== 'below' || el.getAttribute('staff') !== '3') return { ok: false, detail: 'place=' + el.getAttribute('place') + ' staff=' + el.getAttribute('staff') };
+        const meas = document.querySelector('#score g.measure');
+        const st = meas.querySelector(':scope > g.staff[data-n="3"]');
+        const d = document.querySelector('#score g.dynam[data-staff="3"]');
+        if (!st || !d) return { ok: false, detail: 'staff3=' + !!st + ' dynam=' + !!d };
+        const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const bot = Math.max(...ys), space = (bot - Math.min(...ys)) / 4;
+        const gap = (d.getBoundingClientRect().top - bot) / space;
+        /* dynamDist 4.5 → the glyph top 1.2 spaces under the staff (architecture doc); a quarter space of slack. */
+        return gap >= 0.95 && gap <= 1.45 ? { ok: true, detail: 'gap=' + gap.toFixed(2) + ' spaces' } : { ok: false, detail: 'gap=' + gap.toFixed(2) + ' spaces' };
+      })()` },
+  ],
+  expr_loadNormalizesMarkPlaces: [
+    { name: 'a load rewrites @place by instrument shape',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const byId = (id) => [...doc.querySelectorAll('dynam, hairpin, dir')].find((e) => e.getAttribute('xml:id') === id);
+        const want = { 'd-norm-rh': ['between', '1'], 'd-norm-vla': ['below', '3'], 'd-norm-lh': ['between', '1'], 'h-norm-rh': ['between', '1'], 'dir-norm-vla': ['above', '3'] };
+        const bad = [];
+        for (const [id, [place, staff]] of Object.entries(want)) {
+          const e = byId(id);
+          if (!e) { bad.push(id + ': missing'); continue; }
+          if (e.getAttribute('place') !== place || e.getAttribute('staff') !== staff) bad.push(id + ': place=' + e.getAttribute('place') + ' staff=' + e.getAttribute('staff') + ' want ' + place + '/' + staff);
+        }
+        return bad.length ? { ok: false, detail: bad.join('; ') } : { ok: true };
       })()` },
   ],
   engr_dirClearanceBelowSingleStaff: [
@@ -21518,7 +21627,7 @@ export const FIXTURE_ASSERTIONS = {
         const centredBottom = (b1.bottom + b2.top) / 2 + d.height / 2;
         if (!(stemTop < centredBottom - 1)) return { ok: false, detail: 'stem top ' + stemTop.toFixed(1)
           + ' is below the centred dir\u2019s bottom ' + centredBottom.toFixed(1) + ': the fixture tests nothing' };
-        if (!(d.top > b1.bottom)) return { ok: false, detail: 'dir top ' + d.top.toFixed(1) + ' is on the upper staff (bottom line ' + b1.bottom.toFixed(1) + ')' };
+        if (!(d.top > b1.bottom)) return { ok: false, detail: 'dir top ' + d.top.toFixed(1) + ' is on the upper staff (bottom line ' + b1.bottom.toFixed(1) + ') place=' + dirs[0].getAttribute('data-place') + ' transform=' + dirs[0].getAttribute('transform') + ' gap=' + (b2.top - b1.bottom).toFixed(1) + ' stemTop-b1=' + (stemTop - b1.bottom).toFixed(1) + ' dirH=' + d.height.toFixed(1) };
         if (!(d.bottom < stemTop)) return { ok: false, detail: 'dir bottom ' + d.bottom.toFixed(1) + ' overlaps the chord stem (top ' + stemTop.toFixed(1) + ')' };
         return { ok: true };
       })()` },
@@ -21591,15 +21700,16 @@ export const FIXTURE_ASSERTIONS = {
         };
         const b2 = band(s2), b3 = band(s3);
         if (!b2 || !b3) return { ok: false, detail: 'could not measure the piano staff lines' };
-        const dyn = [...sys.querySelectorAll('g.dynam')].filter((g) => g.getAttribute('data-staff') === '2' && g.getAttribute('data-place') === 'below');
-        if (dyn.length !== 1) return { ok: false, detail: 'piano below-dynamics on staff 2: ' + dyn.length + ' (want 1)' };
+        const dyn = [...sys.querySelectorAll('g.dynam')].filter((g) => g.getAttribute('data-staff') === '2' && g.getAttribute('data-place') === 'between');
+        if (dyn.length !== 1) return { ok: false, detail: 'piano between-dynamics on staff 2: ' + dyn.length + ' (want 1)' };
         const box = dyn[0].getBoundingClientRect();
         const gapMid = (b2.bottom + b3.top) / 2, markMid = (box.top + box.bottom) / 2;
         /* The defect measured a whole shift — 2 staff spaces on the sonata —
-           so a 3px window is far inside the failure and outside the pass's own
-           whole-user-unit rounding. */
-        const err = markMid - gapMid;
-        if (Math.abs(err) > 3) return { ok: false, detail: 'piano dynamic sits ' + err.toFixed(1) + 'px off the gap centre (positive = too low; the double-counted shift was ' + (ish[0] / 10).toFixed(1) + 'px)' };
+           so half a space is far inside the failure. (Was 3 px under the DOM
+           centring; Verovio's between pass centres the mark's reference point,
+           which leaves the glyph box ~0.3 space low — 2026-10-07.) */
+        const err = markMid - gapMid, space = (b2.bottom - b2.top) / 4;
+        if (Math.abs(err) > 0.5 * space) return { ok: false, detail: 'piano dynamic sits ' + err.toFixed(1) + 'px off the gap centre (positive = too low; the double-counted shift was ' + (ish[0] / 10).toFixed(1) + 'px)' };
         if (!(box.bottom < b3.top)) return { ok: false, detail: 'piano dynamic bottom ' + box.bottom.toFixed(1) + ' has reached the lower staff (top ' + b3.top.toFixed(1) + ')' };
         if (!(box.top > b2.bottom)) return { ok: false, detail: 'piano dynamic top ' + box.top.toFixed(1) + ' is inside the upper staff (bottom ' + b2.bottom.toFixed(1) + ')' };
         /* And the viola's f, whose crowding paid for the shift, keeps the

@@ -20,7 +20,7 @@ import { coordForSpelling } from '@hkl/notation/coord-spelling.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { keySigToTonic } from './notation/accidentals.js';
 import { findTonicCoord } from './cursor/refNote.js';
-import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir, addTempo, addOctave } from './expressions.js';
+import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir, addTempo, addOctave, normalizeMarkPlaces } from './expressions.js';
 import { addSlur } from './slurs.js';
 import { realTicks } from './model/ticks.js';
 import { decomposeBeatAlignedRests } from './model/restfill.js';
@@ -1450,17 +1450,17 @@ export function importMusicXml(xmlText: string): string {
   const seenTempi = new Set<string>();
   for (const { dynamics, hairpins, dirs, tempi } of dirScans) {
     for (const d of dynamics) {
-      addDynam(doc, { measureIdx: d.measureIdx, tstamp: d.tstamp }, { text: d.text, place: d.place, staff: d.staff });
+      addDynam(doc, { measureIdx: d.measureIdx, tstamp: d.tstamp }, { text: d.text, place: d.place === 'above' ? 'above' : undefined, staff: d.staff });
     }
     for (const h of hairpins) {
       addHairpin(doc,
         { measureIdx: h.startMeasureIdx, tstamp: h.startTstamp },
         { measureIdx: h.endMeasureIdx, tstamp: h.endTstamp },
-        { form: h.form, place: h.place, staff: h.staff });
+        { form: h.form, place: h.place === 'above' ? 'above' : undefined, staff: h.staff });
     }
     for (const d of dirs) {
       addDir(doc, { measureIdx: d.measureIdx, tstamp: d.tstamp },
-        { text: d.text, place: d.place, staff: d.staff, italic: d.italic });
+        { text: d.text, place: d.place === 'above' ? 'above' : undefined, staff: d.staff, italic: d.italic });
     }
     /* Tempo markings, once per moment: Finale writes the same direction on
        every part, so identical (moment, text, bpm) records collapse to one
@@ -1473,6 +1473,10 @@ export function importMusicXml(xmlText: string): string {
       addTempo(doc, { measureIdx: t.measureIdx, tstamp: t.tstamp },
         { text: t.text, bpm: t.bpm, unit: t.unit, dots: t.dots, showMm: t.showMm, italic: t.italic, place: 'above', staff: 1 });
     }
+    /* Placement by instrument shape (expressions.ts): the helpers above gave
+       every non-`above` mark its value; a Finale mark ABOVE the lower staff of
+       a grand staff is the same gap, and becomes `between` on the upper. */
+    normalizeMarkPlaces(doc);
   }
 
   /* Beam markers: diff the source beaming against our auto-beamer and set

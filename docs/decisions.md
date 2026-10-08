@@ -9544,3 +9544,56 @@ Fixtures: `heji_unison_two_voices_hook` (visual), `heji_unison_two_voices_flat_a
 `accid_unison_two_voices_plain`, `heji_default_on`.
 
 ---
+
+## Composer mark placement by instrument shape: `between` inside a grand staff, `below` elsewhere (2026-10-07, Max)
+
+**Picked**: a dynamic, hairpin or expressive text under the UPPER staff of a grand staff is
+`@place="between"`; under a one-staff instrument (or the lower staff of a grand staff) it is
+`@place="below"`. One policy (`expressions.ts` `defaultMarkPlace`) for every entry path: the live
+insert helpers (`addDynam`/`addHairpin`/`addDir` when the caller passes no place), the MusicXML
+importer (Finale's `placement="below"` is replaced by the policy; `above` is kept), and every load
+(`normalizeMarkPlaces`, run from `ensureExpressionDefaults`, so the constructor, `replaceDocument`
+and instrument add/remove all apply it — idempotent, so the ROUNDTRIP invariant holds). A mark
+`above` the LOWER staff of a grand staff is the same gap, so it becomes `between` on the upper
+staff (the sonata's 16 left-hand dynamics and 2 words). With the model saying `between`, the
+grand-staff centring in `render/textlayout.ts` (its `center` mode and the `grandPairs` option) is
+deleted; the pass keeps its one-staff rules (a `<dir>` at the dynamics' clearance, a lone hairpin
+on the dynamics' line, barline nudges, slur clearance, the same-moment fallback).
+
+**Why**: the May expression layer defaulted every mark to `between` ("between voices 2 and 3",
+single-piano era) while Finale imports carried `below`, so the same mark placed live and reloaded
+engraved 1.25 spaces apart (sonata m. 19, the viola's mp: `below` sits 1.2 spaces under the viola,
+`between` 2.45 — Verovio centres a between mark toward the NEXT staff regardless of instrument).
+Max: "we spent so much effort designing an entire text layout pass to essentially recreate a
+built-in Verovio setting that we were already using elsewhere." Probed on the loaded build
+(6.3.0): `between` works on a single `@staff` for dynam, hairpin and dir, centres the mark's
+reference point (an mp lands 0.31 space below true centre; a `between` hairpin aligns with a
+`between` dynamic, 2.31 vs 2.45), and RESERVES the gap — a crowded gap grew from 6.03 to 8.0
+spaces for a 1.72-space mark — but gives up the mark's own-staff clearance under crowding (0.25
+space, against `below`'s 1.2 plus a wider gap, 8.94). Max took that trade for one mechanism.
+
+**Rejected**: keeping `below` everywhere and the DOM centring (two implementations of one idea);
+rewriting `place` on the render clone only (the document is the truth — a reload must engrave the
+same, and `.hkc` files written since May already carry `between`); converting `above` marks on
+one-staff instruments (those are genuinely above). Sonata census (`inventory-{before,after}` probe,
+298 marks, pagination unchanged): 101 marks moved ≥ 3 px, the largest a stray viola `between` at
+m. 85 (p. 6) rising 1.66 spaces to its `below` spot; right-hand marks move ±0.8 space either way
+(Verovio's centre vs the box centre, and lone hairpins now on the dynamics' line); left-hand
+`above` marks moved to the right hand shift up to 1.27 spaces (p. 8 m. 103).
+
+**Two consequences landed with it.** Ctrl+↓ on a mark of a grand staff's upper staff writes
+`between`, not `below` (`input.ts` `commitExpressionPlace`): "below the right hand" IS the gap, and
+a reload would have rewritten `below` anyway. And the pass keeps ONE rule for a `between` mark:
+Verovio's between pass never looks at the upper staff, so over tall left-hand stems a 2.5-space
+word ended 2 px INTO the right hand's bottom line with the gap unchanged at its floor
+(`engr_dirCenteredClearsChordStem`, the sonata's p. 6 m. 90 "cresc."); such a mark is pushed down
+to a quarter unit under its staff as far as the lower staff's content allows.
+
+**Files**: `apps/composer/src/expressions.ts` (policy + normalization), `importMusicXml.ts`,
+`input.ts`, `render/textlayout.ts` (centre mode removed; between clamp), `render/render.ts`. Fixtures:
+`expr_dynamicInsertBetweenOnGrandStaff`, `expr_dynamicInsertBelowOnSingleStaff`,
+`expr_loadNormalizesMarkPlaces`; `engr_dynamicCenteredInGrandStaff` now asserts Verovio's centring
+(half a space), and the fixtures that wrote raw `below` marks on the piano's upper staff write
+`between`.
+
+---

@@ -16,8 +16,7 @@ import {
   hairpinsAt, momentCompare, measureHasExpression,
   addDir, dirAt, dirText, dirIsItalic, setDirText,
   addOctave, octaveAt,
-  type Moment,
-} from './expressions.js';
+  type Moment, defaultMarkPlace } from './expressions.js';
 import { openTextEntryModal } from './ui/textEntryModal.js';
 import { openTempoModal } from './tempoDialog.js';
 import { openSignatureModal } from './sigDialog.js';
@@ -660,9 +659,18 @@ function commitExpressionPlace(
     hooks.setStatus?.(state.cursorMode === 'expr' ? 'No expression mark selected.' : 'No expression at this moment to place.', 'error');
     return false;
   }
-  for (const el of els) el.setAttribute('place', place);
+  /* "Below" the upper staff of a grand staff is the gap, i.e. `between`
+     (expressions.ts `defaultMarkPlace`); a reload would rewrite `below` there
+     anyway, so write what the document will say. */
+  let said: 'above' | 'below' | 'between' = place;
+  for (const el of els) {
+    const staffN = parseInt((el.getAttribute('staff') ?? '1').trim().split(/\s+/)[0], 10) || 1;
+    const v = place === 'below' ? defaultMarkPlace(doc, staffN) : place;
+    el.setAttribute('place', v);
+    said = v;
+  }
   if (state.cursorMode === 'expr') refreshExprCursor(model);
-  hooks.setStatus?.('Moved expression ' + place + ' the staff.', 'action');
+  hooks.setStatus?.('Moved expression ' + said + ' the staff.', 'action');
   hooks.onChange();
   hooks.onStateChange();
   return true;
