@@ -749,45 +749,6 @@ const HKL_SVG_NS = 'http://www.w3.org/2000/svg';
  * is unchanged) and the title is a sibling <text> in the page margin, not a
  * pgHead child. Page 1 keeps Verovio's title block. Idempotent — the position
  * is recomputed from the page's current number on every mount. */
-function styleRunningHeader(pageMargin: Element, pageNo: number, title: string, frame: PageFrame): void {
-  pageMargin.querySelector(':scope > text.hkl-running-title')?.remove();
-  if (pageNo < 2) return;
-  const head = pageMargin.querySelector(':scope > g.pgHead') as SVGGraphicsElement | null;
-  const num = head?.querySelector('tspan.num') ?? null;
-  const rend = num?.closest('tspan.rend') ?? null;
-  if (!head || !num || !rend) return;
-  /* Record the header's ORIGINAL ink bottom before restyling. Placement
-     (`Renderer.headBottomOf`) measures the first system's clearance from it,
-     and the restyled number reads one unit off Verovio's dashed original —
-     enough to flip rule v2's quantization by a pixel on a re-placed page while
-     the reference gate's fresh render did not move (2026-09-04). Same formula
-     as headBottomOf: bbox bottom plus the group's own translate. */
-  if (!head.hasAttribute('data-hkl-head-bottom')) {
-    try {
-      const bb = head.getBBox();
-      if (bb.height > 0) head.setAttribute('data-hkl-head-bottom', String(bb.y + bb.height + translateOf(head).ty));
-    } catch { /* not laid out yet — placement falls back to the live bbox */ }
-  }
-  /* Drop the dashes (the rend's children that are not the number). */
-  for (const c of Array.from(rend.children)) if (c !== num && !c.contains(num)) c.remove();
-  /* The number at the footer's size (Max, 2026-09-06): Verovio's 288 px reads
-     small next to the 320 px footer. Post-placement, band already recorded. */
-  rend.querySelector('[font-size]')?.setAttribute('font-size', RUNNING_HEADER_FONT_PX + 'px');
-  const even = pageNo % 2 === 0;
-  rend.setAttribute('x', String(even ? 0 : frame.innerW));
-  rend.setAttribute('text-anchor', even ? 'start' : 'end');
-  rend.setAttribute('data-hkl-pgnum', String(pageNo));
-  if (!title) return;
-  const t = pageMargin.ownerDocument!.createElementNS(HKL_SVG_NS, 'text');
-  t.setAttribute('class', 'hkl-running-title');
-  t.setAttribute('x', String(frame.innerW / 2));
-  t.setAttribute('y', rend.getAttribute('y') ?? '195');
-  t.setAttribute('text-anchor', 'middle');
-  t.setAttribute('font-size', RUNNING_HEADER_FONT_PX + 'px');
-  t.setAttribute('font-family', 'Times, serif');
-  t.textContent = title;
-  pageMargin.appendChild(t);
-}
 
 function injectHeaderFooter(scoreEl: HTMLElement, footer: string, title: string): void {
   /* `scoreEl` is either #score (legacy whole-container pass) or one .score-page
@@ -801,7 +762,8 @@ function injectHeaderFooter(scoreEl: HTMLElement, footer: string, title: string)
     const ownerPage = pageMargin.closest('.score-page') as HTMLElement | null;
     const pageNo = ownerPage ? Number(ownerPage.dataset.page) : 1;
     const frame = pageFrameOf(pageMargin);
-    styleRunningHeader(pageMargin, pageNo, title, frame);
+    /* The running header (page number + title) is drawn by the page shell
+       (render/pageshell.ts) since 2026-10-08; only the footer is injected here. */
     if (footer) {
       let existing = pageMargin.querySelector(':scope > text.hkl-injected-footer');
       if (existing) existing.parentNode?.removeChild(existing);
@@ -1562,7 +1524,7 @@ $('btnSetup')?.addEventListener('click', () => {
        old header, so a Setup apply re-engraves (Max, 2026-09-06: the Setup
        subtitle "doesn't actually do anything" — it only showed after a
        reload). Setup is a modal, not an editing keystroke; the cost is fine. */
-    renderer.forceFullRerender();
+    renderer.forceFullRerender('setup apply');
     reRender();
     refreshIndicators();
     setStatus('Setup applied.', 'action');
@@ -1668,7 +1630,7 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
      view and rebuild the selector before rendering. */
   setViewInstr(model, null);
   refreshViewSelector();
-  renderer.forceFullRerender();   // new document → full re-engrave, not a splice
+  renderer.forceFullRerender('new document');   // new document → full re-engrave, not a splice
   reRender();
   refreshIndicators();
   afterRender(() => maybeScrollMeasureIntoView(visualCursorMeasure()));
@@ -1839,7 +1801,7 @@ $('viewInstrSelect')?.addEventListener('change', (e) => {
   const val = (e.target as HTMLSelectElement).value;
   const idx = val === 'all' ? null : parseInt(val, 10);
   setViewInstr(model, idx);
-  renderer.forceFullRerender();   // changes the visible staff set → full re-engrave
+  renderer.forceFullRerender('view staves');   // changes the visible staff set → full re-engrave
   reRender();
   refreshIndicators();
   afterRender(() => {
@@ -1886,7 +1848,7 @@ void bootRenderer();
      state straight after reRender() must await this — reRender returns BEFORE
      rendering on the deferred path, so the read would otherwise sample the
      PREVIOUS render's outcome. See test/composer-test __waitForRender. */
-  renderPending: (): boolean => renderQueued || renderInFlight,
+  renderPending: (): boolean => renderQueued || renderInFlight || renderer.assemblyPending(),
   isHklConnected: () => hklConnected,
   inputState: getInputState,
   history,

@@ -503,12 +503,62 @@ export const ASSERTION_LIB = `
     return fails.length ? { ok: false, detail: fails.join('; ') } : { ok: true };
   }
 
+  /* Pagination is first-fit over the systems as placed (design doc
+     composer-pagination-design.md, 2026-10-08): every mounted page's systems
+     fit under Composer's minimum placement (no overflow), and the NEXT page's
+     first system would NOT also fit (no under-full page), a user <pb> before
+     it excepted. Read from the DOM through renderer.placeFor, so it holds on
+     any implementation; opts.mountAll mounts every page first (fixtures), the
+     universal form checks what is mounted. */
+  function assertPaginationFirstFit(opts) {
+    const r = window.__hkl_composer.renderer;
+    if (r.getViewMode() !== 'page') return { ok: true };
+    if (opts && opts.mountAll && typeof r.mountAllPages === 'function') r.mountAllPages();
+    const pages = Array.from(document.querySelectorAll('#score .score-page:not(.score-page-pending)'));
+    const marginOf = (page) => page.querySelector('svg.definition-scale > g.page-margin');
+    const sysOf = (page) => { const mg = marginOf(page); return mg ? Array.from(mg.children).filter((c) => c.classList.contains('system')) : []; };
+    const limitOf = (page) => {
+      const mg = marginOf(page); const frame = mg.closest('svg');
+      const vb = (frame.getAttribute('viewBox') || '').trim().split(/[\\s,]+/).map(Number);
+      const tr = /translate\\(\\s*(-?[\\d.]+)[\\s,]+(-?[\\d.]+)/.exec(mg.getAttribute('transform') || '');
+      const my = tr ? Number(tr[2]) : 1400;
+      return vb[3] - 2 * my;                       // content column bottom, page-margin frame
+    };
+    const doc = m().getDoc();
+    const hardStart = (id) => {
+      const me = doc.querySelector('[*|id="' + id + '"]');
+      return !!me && !!me.previousElementSibling && me.previousElementSibling.localName === 'pb';
+    };
+    const TOL = 20;                                 // two device pixels at scale 100
+    const fails = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i], p = Number(page.dataset.page);
+      const systems = sysOf(page); if (!systems.length) continue;
+      const limit = limitOf(page);
+      const placed = r.placeFor(systems, { pageNo: p });
+      if (!placed) { fails.push('p' + p + ': unplaceable'); continue; }
+      const bottom = placed[placed.length - 1].contentBottom;
+      if (bottom > limit + TOL) fails.push('p' + p + ' overflows (' + Math.round(bottom) + ' > ' + Math.round(limit) + ')');
+      const next = pages[i + 1];
+      if (!next || Number(next.dataset.page) !== p + 1) continue;
+      const nextSys = sysOf(next)[0]; if (!nextSys) continue;
+      const nextId = (nextSys.querySelector('g.measure') || {}).id || '';
+      if (nextId && hardStart(nextId)) continue;
+      const withNext = r.placeFor(systems.concat([nextSys]), { pageNo: p });
+      if (!withNext) continue;
+      const b2 = withNext[withNext.length - 1].contentBottom;
+      if (b2 <= limit - TOL) fails.push('p' + p + ' under-full: page ' + (p + 1) + "'s first system (" + nextId + ') fits under it (' + Math.round(b2) + ' <= ' + Math.round(limit) + '; own bottom ' + Math.round(bottom) + ', ' + systems.length + '+1 systems placed ' + withNext.length + ', next h=' + Math.round(nextSys.getBoundingClientRect().height) + 'px)');
+    }
+    return fails.length ? { ok: false, detail: fails.join('; ') } : { ok: true, detail: pages.length + ' pages checked' };
+  }
+
   window.__test = {
     assertModelState,
     assertCursorConvention,
     assertPastEndConditional,
     assertNoTieOrphans,
     assertPlaceholderInvariant,
+    assertPaginationFirstFit,
     assertBracketRendered,
     assertTupletPlaceholdersHidden,
     assertColorIsolation,

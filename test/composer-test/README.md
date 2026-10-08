@@ -33,7 +33,18 @@ Output:
   distinguishable from a rendering change)
 - `test/composer-test/out/<name>.png` (screenshot on visual failure)
 - on a non-visual failure: `<name>-live.png` + `<name>-reengrave.png` in
-  `$HKL_FAIL_SHOTS` (spliced page vs full re-engrave, same capture path)
+  `$HKL_FAIL_SHOTS` (spliced page vs full re-engrave, same capture path);
+  the ledger and console are read BEFORE these shots, so the re-engrave they
+  force is never charged to the fixture
+- the splice invariant ("edits splice (no full engrave)") fails on any full
+  render among the fixture's own edits whose reason is not by design. By
+  design: `single-line partition` (a one-system document always derives) and
+  `forced full render (<cause>)` — `forceFullRerender`'s callers: new document,
+  setup apply, view staves, zoom, page scale, string render. Anything else,
+  e.g. `no owned partition`, is an invalidation nobody asked for. The failure
+  detail prints the render SEQUENCE (`F:<reason>@ms` / outcome) so a stray
+  full render can be placed among the steps; a fixture whose point is a
+  derive declares `fullRender: '<why>'`
 - heatmaps and failure shots never go in `out/` — it is tracked in git
 
 Exit code: 0 if all pass, 1 if any fail, 2 on infra failure.

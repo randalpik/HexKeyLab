@@ -96,7 +96,6 @@ out.editMeasure = MI;
 const mountAround = async () => {
   if (editMode === 'append' || editMode === 'appendnear' || editMode === 'appendskipdefs') {
     r.setMountWindowEnabled(false);
-    if (!r['ensureTkHoldsPageLayout']()) return;
     if (editMode === 'appendskipdefs') globalThis.__skipDefCopy = true;
     const n = pb.pageStarts().length;
     for (const page of document.querySelectorAll('#score .score-page.score-page-pending')) {
@@ -108,9 +107,8 @@ const mountAround = async () => {
     await sleep(80);
     return;
   }
-  if (!r['ensureTkHoldsPageLayout']()) return;
-  const ids = model.allMeasures().map((m) => m.getAttribute('xml:id'));
-  const page = r['tk'].getPageWithElement(ids[MI]);
+  /* Pages are assembled by Composer (2026-10-08): the owner knows the page, not the toolkit. */
+  const page = r['pageOfMeasure'](MI) || 1;
   for (const p of [page - 1, page, page + 1]) if (p >= 1) r['mountPage'](p);
   await sleep(80);
 };

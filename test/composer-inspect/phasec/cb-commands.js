@@ -31,9 +31,8 @@ const park = () => {
   return true;
 };
 const mountAround = async () => {
-  if (!r['ensureTkHoldsPageLayout']()) return;
-  const ids = model.allMeasures().map((m) => m.getAttribute('xml:id'));
-  const page = r['tk'].getPageWithElement(ids[Math.min(MI, ids.length - 1)]);
+  /* Pages are assembled by Composer (2026-10-08): the owner knows the page, not the toolkit. */
+  const page = r['pageOfMeasure'](Math.min(MI, model.allMeasures().length - 1)) || 1;
   for (const p of [page - 1, page, page + 1]) if (p >= 1) r['mountPage'](p);
   await sleep(60);
 };

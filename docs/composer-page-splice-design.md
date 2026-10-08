@@ -30,6 +30,13 @@ nothing else.
   per-page distribution (rule v2: 14u max gap, a 10u top gap only as a last
   resort, page 1 exempt), the running footer in the bottom margin, the fold at
   the content column, and the crisp snap applied once, as output.
+- Pagination is owned for real (2026-10-08, composer-pagination-design.md):
+  pages are ASSEMBLED from measured systems by first-fit — Composer draws the
+  page, Verovio renders one line window at a time — and the castoff is gone.
+  A splice re-paginates from one page BEFORE the first touched page over the
+  extents store (a shrunk first line may go back to the page it left), in
+  both directions, rebuilding only the pages whose membership — start AND
+  end — changed.
 
 **Governing principle (Max, 2026-09-01):** *"The goal is to hit O(edit) in ALL
 cases. Any time the user is exposed to O(document) on a live path when they
@@ -81,18 +88,22 @@ non-visual failure.
   render time only — nothing is stored in the model. Display renders use
   `breaks:'encoded'`, the only mode that honors pins verbatim. Pins after an
   `<ending>` wrapper go INSIDE it.
-- **One break algorithm everywhere.** The derive does a castoff `loadData` with
-  the castoff strategy, reads the partition and pagination from page-based
-  `getMEI({scoreBased:false})` (~100 ms, never painted), then paints the pinned
-  encoded render. Every pixel comes from one algorithm and the first edit after
-  a load splices like any other. Unreadable output falls back to painting the
-  castoff layout and adopting it lazily in idle slices (`armAdoption`); only
-  the CURRENT adoption task may commit, once — a superseded or already-finished
-  task's queued idle step must never write (decisions.md 2026-09-01). Phase 2
-  of the vertical-ownership plan adds a second idle job beside adoption, the
-  EXTENTS job: measuring the lines of not-yet-mounted pages into the
-  `ExtentsStore` (next bullet) so the cascade can place and fold pages it has
-  not mounted; same ownership discipline (only the current task commits).
+- **One break algorithm everywhere — and no castoff (2026-10-08).** The derive
+  seeds the partition from Composer's own naturals (`seedPartition`: each
+  section filled greedily at cap 1.0), the balancer computes it, and the pages
+  are then ASSEMBLED from measured systems (`render/pageassembly.ts`): each
+  line is rendered alone from a window (`render/systemrender.ts`, the
+  splicer's recipe), post-processed and measured where it sits in a hidden
+  Composer-drawn page shell (`render/pageshell.ts`), and the page closes when
+  the next system fails the minimum-placement fold — first-fit, pure in the
+  extents, a user `<pb>` a hard start. Nothing is adopted from Verovio and
+  nothing is painted from a guess; the `<pb>` pins survive only for the
+  reference gate's Verovio page. Until then Verovio's castoff seeded the lines
+  AND its page starts were carried by line index onto the balanced lines
+  (`balanceInitialBand`), which made it a second authority for pagination —
+  the sonata's m. 76 "cresc." could flip a page boundary nobody could see
+  move (lessons.md). The extents job and the lazy adoption task are gone with
+  it: the assembly fills the `ExtentsStore` itself, in document order.
 - **Composer owns height** (Max, 2026-09-02; vertical-ownership plan Phase 1,
   `render/pagefit.ts`). The paper is fixed — Verovio's page box, one size for
   every page, the scale pinned at that box — and the components that fill it
@@ -114,8 +125,14 @@ non-visual failure.
   restates Verovio 6.3's clearance so pages moved only where Verovio's text
   metrics and the browser's bbox disagree (sonata: 92 of 116 systems within
   1u of the old placement, max 5.1u). A header consumes budget, it never adds
-  paper; a page is legal when its components fit; overflow from any cause is
-  repaired by the cascade (`repairPagination`).
+  paper; a page is legal when its components fit. Since 2026-10-08 the page
+  header is Composer's too (`pageshell.ts`: title block / page number +
+  running title at Verovio's header geometry, ink bottom recorded from the
+  nominal em-boxes), and a page's system set is decided by first-fit over
+  the measured extents — a splice re-runs it from one page before the first
+  touched page (`PageAssembler.repaginateFrom`, both directions; the rebuild
+  window is trimmed to the pages whose (start, end) membership changed, kept
+  pages renumbered) in place of the overflow-only cascade.
 - **A page distributes its own slack** (rule v2, 2026-09-04). The clearances
   above are MINIMUMS; on top of them each page shares out what it has left.
   The gaps that equalize are the inter-system gaps AND the gap between the
@@ -146,8 +163,8 @@ non-visual failure.
 - **Zoom is layout-neutral**: the crisp presets share `unit: 8`, so all zooms
   produce one partition and every zoom change is a partition-cache hit (keyed on
   unit, pageScale, heji + document version; `cb-zoomunit.js` guards it).
-- **User page breaks** cast off per inter-break segment; a break splits its
-  line.
+- **User page breaks** are hard page starts for first-fit (and section
+  boundaries for the balancer); a break splits its line.
 
 ### The refill (`tryRefill` → `repartition`)
 
@@ -698,6 +715,21 @@ One line per landing; the reasoning is the dated decisions.md entry.
 - 2026-09-01 — Size caps dropped (both splicers); signature changes govern
   RANGES; replaced lines never compared live; glyph-identity gates. Sonata
   115/115, 420/420, 8/8.
+- 2026-10-08 — Pagination owned for real: pages assembled from measured
+  systems (first-fit over `ExtentsStore`), Composer-drawn page shells,
+  castoff / pinned page paint / extents job / overflow cascade removed,
+  two-way `repaginateFrom`. Root cause: the castoff's page counts were
+  transplanted by line index onto the balanced lines (sonata p. 5/7 after a
+  one-mark edit). Suite: universal `assertPaginationFirstFit`, `pag_*`.
+  Gating fixes the same day: `repaginateFrom` starts one page before the
+  first touched page and trims the rebuild window by (start, end)
+  membership (`pag_spillThenPullBack`); the seed's signature window is
+  spanner-expanded; the line window carries the splicer's courtesy stub
+  (B3) — without it 8 of the sonata's 31 pages were off the reference on a
+  fresh load (`pag_courtesyAtLineEnd`); forced full renders carry their
+  cause into the ledger and the runner reads ledger + console before its
+  failure shots and waits out a deferred setup render (lessons.md
+  2026-10-08). Fresh-load reference gate over all 31 pages: clean.
 - 2026-09-01 — All remaining sonata refusals root-caused and fixed.
 - 2026-08-31 — B1 dy-cascade, B3 courtesy window, B4 section headers, B5 lazy
   mount, eviction, zoom-neutral unit 8, user page breaks, Phase D (edit path

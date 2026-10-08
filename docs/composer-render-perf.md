@@ -336,6 +336,27 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   loaded, read via page-based getMEI, and replaced by the pinned encoded
   render. First edit after a derive: ~1.2 s full render → 333 ms splice. Four
   page-mode baselines reseeded with Max's approval.
+- 2026-10-08 — **Pages assembled from measured systems** (composer-pagination-design.md):
+  the castoff pass, the pinned page paint and the extents job are gone; Verovio
+  renders one line window per system (~36 ms a line on the sonata) and Composer
+  first-fits pages from the measured extents. Sonata, headless Chromium: first
+  page painted at 637 ms (synchronous to the cursor's page), the remaining 30
+  pages in 40 ms idle slices, whole document 8.5–8.9 s (115 windows 4.1–4.2 s
+  of Verovio, the rest post passes + measurement) — a load's TOTAL CPU went up
+  (one castoff + one paint was ~2.5 s) while time-to-first-page went down.
+  Steady-state edit (unchecked sweep, 24 lines): spliced median 145 ms,
+  min 79 ms; `cb-splicecost` steady 116 ms (render 92, splice 53, refill 38,
+  naturals 34). Checked sweep: 114 lines, every line splices once the refill
+  waits for the assembly; fresh-load reference gate 31/31 pages exact.
+  OPEN — a DERIVE (user page break, section header, pickup, meter change,
+  add instrument, `head context changed`) now re-assembles the document
+  synchronously up to the cursor's page: 8–11 s with the cursor deep in the
+  sonata (`cb-commands`, `cb-splice-battery`), against ~1.2 s for the old
+  castoff + paint. Document order is the accepted design; the lever is to
+  reuse the unchanged systems and their extents on a derive (the splicer's
+  bank + `moveSystems`, applied to the whole document) instead of
+  re-rendering 115 windows, so a derive costs the changed lines plus a
+  first-fit — not built yet, Max to decide.
 - 2026-09-11 — **T2.1b shipped**: visible-first mount pump with a fast-scroll
   gate, one near page per idle slice, and the post-repair toolkit warm. The
   "3 s to mount a page" was 8–18 synchronous mounts queued ahead of the visible

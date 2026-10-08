@@ -750,6 +750,14 @@ If you ever need to query "all expressions in document order", do it by walking 
 `between` is not a two-staff-only attribute in the loaded build (6.3.0): a dynam, hairpin or dir on `staff="1"` is centred between its staff and the next one down, regardless of instrument grouping (which is why it is wrong under a one-staff instrument — sonata m. 19, the viola's mp halfway to the piano). It centres the mark's REFERENCE POINT, so a glyph box sits ~0.3 space below true centre, and it reserves the gap (a crowded gap grew 6.03 → 8.0 spaces for a 1.72-space mark) but keeps only a quarter space from the mark's own staff when the lower staff's overflow is tall, where `below` holds `dynamDist` and widens the gap further. The first probe (2026-10-07) concluded `between == below` for every variant, and was wrong: the treble line's first note (b4, stem down) overflowed the staff under the mark's tstamp, so Verovio pushed the `below` mark down onto the `between` position and masked the difference. Put a probe's mark under a column with no stem or notehead outside either staff (f4/g4 stems up above; e3–g3 stems down below), and only then read the numbers. The DOM centring in `render/textlayout.ts` that this replaced had re-implemented the built-in because the May helpers defaulted to `between` while Finale imports said `below` — see decisions.md 2026-10-07.
 
 
+### Page-view pagination is Verovio's castoff count transplanted by line index — the castoff IS a second authority
+
+The derive casts off with Verovio (`breaks:'smart'`, full staves, Verovio's OWN line breaks), adopts its lines and page starts, re-balances the LINES (so the castoff's lines are never painted), then re-maps the page starts BY LINE INDEX onto the balanced partition (`balanceInitialBand`: `pageStartIds = pageLines.map((li) => newStarts[li])`). So the systems-per-page counts come from a layout nobody sees: on the sonata the castoff's lines run m66–69, 70–73, 74–77, 78–80 … while the balanced ones run m64–67, 68–71, 72–75, 76–79 …, and the castoff's counts [4,4,4,4,3,3,4,…] decide which balanced systems share a page. Two consequences (2026-10-08, Max's "pagination changed" after a save):
+- A minor edit can flip a page boundary through the castoff while the screen shows nothing: during a session the owner carries the page starts (edits only repair lines; the cascade only pushes overfull pages), and the next load re-derives. Removing the `<dir>` "cresc." in m76 — Max's edit the night before — turns the castoff's counts from [4,4,3,3,4] back to [4,4,4,4,4] over pages 4–8: that single mark decides whether the balanced system m76–79 sits on page 5 or 6, and the three hide-empty one-staff systems (m90–98) then land on one page together.
+- Hide-empty systems are substituted AFTER the castoff (render/hiddenstaves.ts re-renders them alone), so a page the castoff filled with three-staff systems ends up holding 216-px one-staff ones with a 700-px hole, and nothing pulls the next page's first system back (the cascade repairs overflow only). Page 7 of the sonata: 738 px of slack with a 606-px system on page 8.
+Probe: `test/composer-inspect` scratch `probe-castoff2.js` pattern — `new verovio.toolkit()` with `renderer['buildOptions'](renderer['castoffPlan'](model.serialize(...)).strategy)`, read `getMEI({scoreBased:false})` for the castoff's lines/pages, compare with `pageBreaks.startIds` / `pageStartIds`. The fix is to paginate from the balanced lines with Composer's own measured extents (post hide-empty) and a pull-back step — not designed yet.
+
+
 ## Transcription quantization
 
 ### `TIE_COST` calibration matters more than `BOUNDARY_WEIGHT`
@@ -4989,7 +4997,7 @@ can report a different cursor measure than V1 after `setVoicePreservingMeasure`.
 mark's measure, in the voice adjacent to the layer stop (`setVoice(2); setCursor(getMeasureStartCursor
 (mi, 2), 2)` + one `↓`), and assert `cursorMode` in the failure detail.
 
-## The line-break owner's signature window warns on a spanner leaving it (2026-09-30, not fixed)
+## The line-break owner's signature window warns on a spanner leaving it (2026-09-30, fixed 2026-10-08)
 
 `PageLineBreaks.measureAllSigCtx` renders a two-measure window at each signature context's first
 measure (m. 1–2 for a one-meter piece) to measure the leading clef+key width. A hairpin hosted in the
@@ -4999,6 +5007,101 @@ invariant counts. Harmless to that measurement (only the signature width is read
 document with a wedge leaving m. 2 logs it on load. Not the splice path's version of the same warning
 (`expandForSpanners`, fixed 2026-08-30): this window is built by `serializeRangeForRender` directly.
 The `lc_hairpinEndAcrossSystems` fixture keeps its wedges from m. 3 on for this reason.
+
+Fixed 2026-10-08, when the seed (`seedPartition`) started measuring every context on the FIRST render
+and `mrest_other_staff_slur_keeps_run` (a slur m. 2 → m. 4) logged it on every load: the window's tail
+now grows through `expandForSpanners` + `expandForEndings` exactly as `measureWindow`'s does, head
+pinned at the context's first measure (the one that draws the signature), bare window past `WINDOW_CAP`.
+
+## Pagination is a function of the extents, so a repagination starts one page BEFORE the touched page (2026-10-08)
+
+`PageAssembler.repaginateFrom(touched)` first-fits from the first touched page. A line that grew spills
+onto the next page and becomes its FIRST line; the same line shrinking back is then an edit on that
+next page, and a first-fit from there can never offer the line back to the page it left — page 1
+stayed at 5 systems with room for the 6th (`pageSectionHeaderOwnLine`'s grow/shrink; the universal
+`assertPaginationFirstFit` caught it as "p1 under-full"). Pagination must come out the same for the
+same extents whatever the edit history (Max's rule: no layout state the document can't reproduce), so
+the first-fit now starts at `firstTouched − 1`: the page before can only be affected through the
+touched page's first line, never further back. The rebuild window is then trimmed by MEMBERSHIP — a
+page is unchanged when its start AND its end (next start / document end) match — on both ends of the
+old and new tails, so a page is rebuilt only when its line set changed, and kept pages are renumbered
+when the window's count changed. Comparing starts alone at the same index (the first cut) stopped at
+a page whose start held while its content had overflowed (compose-past-end never split page 3), and
+could not recognise a kept page once a page had been inserted or removed before it. Fixture:
+`pag_spillThenPullBack` (grow the last line of page 1 at both extremes, shrink it back: page counts
+must return to what they were).
+
+## A line window is not a system until it carries the NEXT line's signature change (2026-10-08)
+
+The assembly's first line recipe (`renderLineSystem`) took the splicer's window — leader / trailer
+stubs, spanner and ending closure, the view's staff subset — but not its courtesy rule (B3), and
+the sonata's fresh load came out 8 of 31 pages off the full-engrave reference: six lines whose
+last measure was 69–227 units narrower than the reference's (m. 47 → 48, two flats to five
+sharps: 681 units in that one measure) and two whose last measure lacked three meter signatures.
+All one defect: Verovio draws the end-of-line courtesy clef / key / meter in the measure BEFORE a
+signature change, generated by the line that follows — a window that ends at the line's own last
+measure never sees the change. The fix is the splicer's: when `beginsSignatureChange` holds for the
+measure after the line, that measure rides along as a pinned one-measure stub (`buildWindowMei`'s
+`stubId`), discarded after the render. The two "meterSig: reference 3, live 0" gate messages named
+the line's LAST measure, not its first — the courtesy, not a missing meter change — read the
+measure id against the system before guessing which signature is missing. Gate for this class:
+`verifyAgainstReference` over every mounted page of a fresh load (`cb-refgate2.js`: page ELEMENTS,
+not page numbers — passing numbers checks nothing and reports every page clean), and the suite's
+`pag_courtesyAtLineEnd` (a line lock pins the boundary, since the courtesy's own width would
+otherwise move it).
+
+## An assembly in flight is a PREFIX: read nothing from the owner's page starts before finishing it (2026-10-08)
+
+With pages assembled in idle slices, `PageLineBreaks.pageStarts()` holds only the pages that have
+closed, and nothing beyond them exists in the DOM — not even a placeholder, since the page count
+is not known until the lines are measured. Two consumers read that prefix as if it were the whole
+document and failed at every chunk start of the gated sweep (a cursor placed deep in the sonata
+right after a load):
+- the refill carries page starts by MEMBERSHIP, so a line past the prefix landed on a provisional
+  page the DOM did not agree with and the splice refused (`DOM partition drift above`), costing a
+  full re-assembly. `renderPageComposer` now finishes the assembly BEFORE `tryRefill`, not merely
+  before the splice;
+- the mount window pinned `pageOfMeasure(cursor) ± 1`, which is 0 for an unbuilt page, so it
+  mounted whatever placeholders were in band (pages 1–4 for a cursor on page 7). It now calls
+  `ensureMeasureMounted` first when the assembly is pending — the synchronous build to the cursor's
+  page is exactly the document-order cost the design accepts.
+Also: `verifyRenderedPartition` must skip a page the assembler is still BUILDING
+(`.score-page-building`: systems present, start not yet committed) — it read as a page with an
+unpinned start and threw "rendered partition diverged" after every such refusal. Probes that wait
+for `badgeHidden` are not waiting for the assembly; `renderPending()` is.
+
+## The reference gate renders on the splice toolkit, and so does hide-empty substitution (2026-10-08)
+
+`verifyAgainstReference` loads the pinned reference once on `ctx.toolkit` (the splice toolkit)
+and renders each touched page from it. Post-processing a reference page runs
+`substituteHiddenStaffSystems`, which engraves a one-line window for every hidden-staff system —
+on the same toolkit. After the first touched page with a viola-solo system, the toolkit held a
+one-page window and the second touched page threw `reference lost page 8` (chunk 25 of the gated
+sweep; sonata p. 7 → 8, three one-staff systems). The gate now reloads the reference before each
+page after a post-process. Pre-existing hazard, not the rewrite's; it needed a two-page touched set
+whose first page carries hidden staves.
+
+## The splice ledger's derive reason was stale for forced renders, and the harness read it too late (2026-10-08)
+
+Three harness defects surfaced at once when the pagination rewrite started attributing unowned
+derives honestly, and each had been masking the others:
+
+- `renderPageComposer`'s "nothing owned" branch never set `lastDeriveReason`, so a render after
+  `forceFullRerender()` (new document, Setup apply, view-staff change, zoom, page scale) was logged
+  under whatever the PREVIOUS bail had said — usually `single-line partition`, which the suite
+  exempts. The file-load, page-scale and MusicXML fixtures passed on that accident. Now
+  `forceFullRerender(cause)` carries its caller's cause and the branch logs `forced full render
+  (<cause>)`, which the runner's `byDesign` exempts by prefix (an explicit decision, never a command
+  quietly deriving); an invalidation nobody asked for is still `no owned partition` and still fails.
+- `run.mjs` took its failure shots (`forceFullRerender()` + `reRender()` for the re-engrave PNG)
+  BEFORE reading the ledger and draining the console, so every failing fixture also reported a
+  bogus unowned full render and the re-engrave's own console. Both are read first now.
+- The runner cleared the ledger one double-rAF after setup; a setup render the heavy-render badge
+  DEFERRED (double-rAF + setTimeout) landed after the clear and was charged to the fixture's edits.
+  It awaits `__waitForRender` first now. The splice failure detail also prints the render SEQUENCE
+  (`F:<reason>@ms` / outcome), which is what finally placed the stray renders among the steps —
+  "29 full render(s): no owned partition" was two deferred setup renders plus 27 by-design
+  single-line derives, not 29 of anything.
 
 ## A test that imports app modules by bare path can get a second instance after HMR (2026-10-02)
 

@@ -10,12 +10,15 @@ import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, type DistributeOpts, alignStaffRows } from './pagefit.js';
+import { PageAssembler, type AssemblyHost } from './pageassembly.js';
+import type { LineRenderCtx } from './systemrender.js';
+import type { ShellGeom, ShellMeta } from './pageshell.js';
 import { ScrollSplicer, type SpliceCtx } from './splice.js';
 import { refreshLockMarks, LOCK_SELECTOR } from './lockmarks.js';
 import { lockStartIds, type OwnerWidths } from './linebreaks.js';
 import type { LayoutSnapshot } from '../history.js';
 import {
-  PageLineBreaks, partitionFromLayout, systemStartsFromPageSvg, injectPins,
+  PageLineBreaks,
   type PageBreaksCtx,
   scheduleIdle, MIN_FILL, viewKeyOf, hardStartIds,
 } from './linebreaks.js';
@@ -117,6 +120,8 @@ interface ModeCacheEntry {
   zoom: ZoomLevel;
   pageScale: number;
   theme: ScoreTheme;
+  /** The page assembler that describes a stashed page DOM. */
+  assembler: PageAssembler | null;
 }
 /** Score theme. 'transparent' renders like 'dark' (light-source noteheads,
  *  light ink) but with no background fill, so the score can be exported / read
@@ -310,22 +315,11 @@ class Renderer {
    *  size, and whether the live toolkit still holds this layout (renderToSVG
    *  of a lazy page needs it). Describes the one page DOM wherever it lives —
    *  on screen or stashed by the mode cache — so it survives view switches. */
-  private pageVirt: {
-    mei: string;                 // exact data loaded (post-layoutBreaks)
-    options: object;             // buildOptions the layout used
-    pageCount: number;
-    pageW: number;               // placeholder content box, px (from page 1's SVG)
-    pageH: number;
-    mounted: Set<number>;
-    io: IntersectionObserver | null;
-    tkCurrent: boolean;          // tk still holds this layout → loadData-free mounts
-    /** Pages a system splice edited in place, so `mei`/the toolkit layout
-     *  describe THEM. Every other page is byte-identical to the loaded layout
-     *  (a splice only replaces the systems it touched), so those still mount
-     *  for free — only mounting one of THESE needs the document re-serialized
-     *  and re-pinned first. */
-    stalePages: Set<number>;
-  } | null = null;
+  /** The page assembler (render/pageassembly.ts): pages built from measured
+   *  systems, first-fit, mounted and parked. Null until the first page render. */
+  private assembler: PageAssembler | null = null;
+  /** Lazy-mount observer over the page placeholders. */
+  private pageIo: IntersectionObserver | null = null;
   /** The model of the last renderComposer — needed to rebuild page data for a
    *  lazy mount after a splice (see pageVirt.stale). Renders always pass it;
    *  this only makes it reachable from the mount path. */
@@ -341,13 +335,6 @@ class Renderer {
    *  (the page draws the block and checks itself at mount), CREATED when a
    *  last page spilled. */
   lastCascade = { steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0, ms: 0, msFold: 0, msClone: 0, msMove: 0, msPlace: 0, msSnap: 0, msMount: 0 };
-  /** The extents job (Phase 2): idle measurement of the lines on pages that are
-   *  not mounted, so a cascade through them is arithmetic instead of a park.
-   *  Adoption's discipline: only the current job runs, any document change or
-   *  re-render cancels it, never on the edit path. */
-  private extentsJob: { docVer: number; nextPage: number; measured: number[]; cancelled: boolean; warmMs: number } | null = null;
-  /** Unique suffix for glyph defs a transplant copies into a page (attachBlock). */
-  private transplantSeq = 0;
   /** Outcome of every page-view composer render, newest last, bounded
    *  (2026-09-02). The refill is command-agnostic — it diffs the document, not
    *  the command that changed it — but nothing ASSERTED that a given user
@@ -853,216 +840,10 @@ class Renderer {
     return ctm ? ((ctm.f % 1) + 1) % 1 : 0;
   }
 
-  /** Bake natural system breaks into the MEI so page-break ('encoded') docs
-   *  still auto-wrap. Lays the data out once with 'smart' + breaksSmartSb:0
-   *  (honors every <sb> + wraps overflow; ignores <pb>), reads which measure
-   *  starts each rendered system, and inserts an `<sb>` before each of those
-   *  measures. The caller then renders the result with 'encoded' so the
-   *  forced <pb> page breaks AND the baked system breaks are all honored. */
-  private layoutBreaks(mei: string): string {
-    return this.layoutBreaksWithLines(mei).data;
-  }
 
-  /** `layoutBreaks`, also returning the line partition it baked — the segmented
-   *  castoff (`castoffSegmentedByUserBreaks`) needs the list, not just the
-   *  data. `lines` is empty when the castoff could not be read. */
-  private layoutBreaksWithLines(mei: string): { data: string; lines: string[] } {
-    if (!this.tk) return { data: mei, lines: [] };
-    this.tk.setOptions(this.buildOptions('smartSb0'));
-    if (!this.tk.loadData(mei)) return { data: mei, lines: [] };
-    /* Read the partition from page-based MEI (~0.1 s on the sonata) rather than
-       rendering every page to SVG (~1.8 s) — same read the partition adoption
-       uses. The SVG walk stays as the fallback for unreadable output. */
-    let ordered: string[] = partitionFromLayout(this.tk)?.lines ?? [];
-    if (!ordered.length) {
-      for (let p = 1; p <= this.tk.getPageCount(); p++) {
-        ordered = ordered.concat(systemStartsFromPageSvg(this.tk.renderToSVG(p, {})));
-      }
-    }
-    const starts = new Set<string>(ordered);
-    if (!starts.size) return { data: mei, lines: [] };
-    const MEI_NS = 'http://www.music-encoding.org/ns/mei';
-    const mdoc = new DOMParser().parseFromString(mei, 'application/xml');
-    const section = mdoc.querySelector('section');
-    if (!section) return { data: mei, lines: [] };
-    for (const meas of Array.from(mdoc.querySelectorAll('measure'))) {
-      const id = meas.getAttribute('xml:id');
-      if (!id || !starts.has(id)) continue;
-      let node: Node = meas;
-      while (node.parentNode && node.parentNode !== section) node = node.parentNode;
-      const prev = (node as Element).previousElementSibling;
-      if (!prev) continue;                    /* first measure — no break needed */
-      if (prev.localName === 'sb') continue;  /* already broken here */
-      section.insertBefore(mdoc.createElementNS(MEI_NS, 'sb'), node);
-    }
-    return { data: new XMLSerializer().serializeToString(mdoc), lines: ordered };
-  }
 
-  /** Document-order measure indices that a USER page break forces onto a new
-   *  page: the measure immediately after a section-level `<pb>`. Index 0 is
-   *  excluded — the document already starts a page there. */
-  private userPageBreakIndices(model: ComposerModel): number[] {
-    const measures = model.allMeasures();
-    const pos = new Map<Element, number>();
-    measures.forEach((m, i) => pos.set(m, i));
-    const section = model.getDoc().querySelector('section');
-    if (!section) return [];
-    const out: number[] = [];
-    let pending = false;
-    const walk = (el: Element): void => {
-      for (const c of Array.from(el.children)) {
-        if (c.localName === 'measure') {
-          if (pending) { const i = pos.get(c); if (i !== undefined && i > 0) out.push(i); }
-          pending = false;
-        } else if (c.localName === 'pb') {
-          pending = true;
-        } else if (c.localName === 'sb') {
-          pending = false;          // a system break is not a page break
-        } else if (c.localName !== 'scoreDef' && c.querySelector('measure')) {
-          walk(c);
-        }
-      }
-    };
-    walk(section);
-    return out.sort((a, b) => a - b);
-  }
 
-  /** Pagination for a document containing USER page breaks, computed by casting
-   *  off each inter-break SEGMENT independently.
-   *
-   *  Why this is needed: no Verovio mode does both jobs. `'line'` paginates by
-   *  height but treats `<pb>` as a SYSTEM break (measured: on the sonata with one
-   *  Ctrl+B it returns the same 30 pages as with no break at all, and the break
-   *  measure is not a page start); `'encoded'` honors `<pb>` as a page break but
-   *  never paginates by height. Previously we took `'line'`'s page starts —
-   *  computed as if the break did not exist — and then painted `'encoded'`, which
-   *  honored the `<pb>` ON TOP of those unchanged pins. That inserted an extra
-   *  boundary without re-packing anything after it: a short page (one system if
-   *  the break fell before a page's last line), our page list one short of the
-   *  DOM, and no cascade — exactly the reported defect.
-   *
-   *  The fix keeps Verovio as the page-fit engine and only chooses where to cut.
-   *  The LINE partition comes from the whole-document castoff and is pinned, so
-   *  it is identical to what it would be without any break; each segment is then
-   *  laid out alone with `'line'`, which honors those pins verbatim and decides
-   *  only how many lines fit per page. Concatenating the segments' page starts
-   *  gives "a user break starts a fresh page, and everything after it re-packs
-   *  by height". Reading page ASSIGNMENT is insensitive to the segment-edge
-   *  justification differences (a segment's last line is document-final for
-   *  Verovio), so those cannot corrupt the result.
-   *
-   *  Returns null when anything is unreadable, and the caller falls back to the
-   *  ordinary single-pass castoff. */
-  private castoffSegmentedByUserBreaks(
-    model: ComposerModel, mei: string, heji: { hejiEnabled: boolean },
-  ): { lines: string[]; pages: string[] } | null {
-    if (!this.tk) return null;
-    const breaks = this.userPageBreakIndices(model);
-    if (!breaks.length) return null;
-    const baked = this.layoutBreaksWithLines(mei);
-    const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
-    const idxOf = new Map<string, number>();
-    ids.forEach((id, i) => { if (id) idxOf.set(id, i); });
-    /* A page break MUST split its line — a page begins with a new system, so the
-       break measure has to start one. The whole-document castoff ran under
-       smartSb0, which IGNORES `<pb>`, so the break measure is generally mid-line
-       there and absent from `baked.lines`. Merge the break measures in (document
-       order) before segmenting: without this the segment document begins at a
-       measure the partition says is mid-line, Verovio necessarily starts a line
-       there, and the partition check below refuses the inconsistency — which is
-       exactly what it is for. This merge is also what makes a MID-SYSTEM page
-       break reflow its measures: the measures before it finish the previous
-       (now shorter) line, and the break measure opens the new page's first. */
-    const lineIdx = new Set<number>();
-    for (const id of baked.lines) {
-      const i = idxOf.get(id);
-      if (i !== undefined) lineIdx.add(i);
-    }
-    for (const b of breaks) lineIdx.add(b);
-    const mergedLines = Array.from(lineIdx).sort((a, b) => a - b).map((i) => ids[i]);
-    if (mergedLines.some((id) => !id)) return null;
-    /* The single-line bail belongs HERE, on the merged set, not on the raw
-       castoff above it (2026-09-18). A short document whose natural castoff is
-       one line — two measures, say — still becomes TWO lines once the user's
-       break measures are merged in, and it is precisely the document that
-       needs this path: it would otherwise fall through to the ordinary castoff,
-       which runs `breaks:'line'`, which ignores `<pb>` entirely, so the owner
-       adopted ONE page start for a document the paint gives two pages. Testing
-       `baked.lines` meant a user page break could never be adopted on a score
-       short enough to fit one system. */
-    if (mergedLines.length <= 1) return null;
-    /* Segment bounds: [0..b1-1], [b1..b2-1], … [bk..last]. */
-    const bounds: Array<[number, number]> = [];
-    let from = 0;
-    for (const b of breaks) {
-      if (b <= from || b >= ids.length) continue;
-      bounds.push([from, b - 1]);
-      from = b;
-    }
-    bounds.push([from, ids.length - 1]);
-    if (bounds.length < 2) return null;
-    const pages: string[] = [];
-    for (const [lo, hi] of bounds) {
-      const segLines = mergedLines.filter((id) => {
-        const i = idxOf.get(id);
-        return i !== undefined && i >= lo && i <= hi;
-      });
-      if (!segLines.length) return null;
-      /* A single-line segment occupies exactly one page and cannot overflow, so
-         it needs no layout pass at all. Skipping it also avoids Verovio's
-         "Requesting layout with line breaks but nothing provided in the data"
-         warning: `injectPins` emits no pin for the first line (the document
-         already starts there), so a one-line segment would hand `'line'` data
-         with no encoded break — which warns and falls back to castoff
-         internally. The composer suite treats any console warning as a failure,
-         which is how this surfaced. */
-      if (segLines.length === 1) { pages.push(segLines[0]); continue; }
-      const segMei = model.serializeRangeForRender(lo, hi, heji, this.viewStaves);
-      /* Pin the GLOBAL line partition inside this segment (sb only — pagination
-         is what we are asking Verovio for, so it must not be pre-decided). */
-      const pinned = injectPins(segMei, segLines, null);
-      if (pinned === null) return null;
-      /* Defensive: multi-line segment whose starts all already sit behind an
-         existing sb/pb would likewise give 'line' nothing encoded to honor. */
-      if (!/<(sb|pb)\b/.test(pinned)) return null;
-      this.tk.setOptions(this.buildOptions('line', 'page'));
-      if (!this.tk.loadData(pinned)) return null;
-      const read = partitionFromLayout(this.tk);
-      if (!read) return null;
-      /* Load-bearing check: pinning must have preserved the global partition
-         inside the segment. If a segment re-broke its lines, its page starts
-         describe a different layout than the one we will paint. */
-      if (read.lines.join('|') !== segLines.join('|')) return null;
-      for (const p of read.pages) pages.push(p);
-    }
-    if (pages.length <= 1) return null;
-    return { lines: mergedLines, pages };
-  }
 
-  /** Which breaks strategy lets Verovio CAST OFF this document, and the data
-   *  to feed it. Section/system breaks alone → 'smart' + breaksSmartSb:0
-   *  (honors them and auto-wraps). Page breaks → bake the natural system
-   *  breaks first, then **'line'**, which paginates by height. Note 'line' does
-   *  NOT honor `<pb>` — measured 2026-09-18 on the baked data this returns, it
-   *  gives 1 page where 'encoded' gives 2. That is exactly why user page breaks
-   *  go through `castoffSegmentedByUserBreaks`, which casts off each
-   *  inter-break segment separately, rather than relying on this pass. No manual breaks → plain 'auto'. This is the
-   *  pass that DECIDES a partition; with line/page ownership it is a bootstrap
-   *  whose output is read, not painted.
-   *
-   *  The `<pb>` case used to cast off with 'encoded', which paginates ONLY at
-   *  encoded breaks — so one Ctrl+B on the sonata produced TWO pages of 15 and
-   *  104 systems, overhanging the paper by 6 800 and 59 534 px (C1, measured by
-   *  `cb-userpb.js`). 'encoded' remains the strategy for PAINTING a pinned
-   *  document, where every page start is pinned by construction; it was never
-   *  right for discovering pagination. `layoutBreaks` still bakes the `<sb>`
-   *  first, because 'line' honors breaks verbatim and would otherwise render
-   *  each section-break-delimited chunk as one enormous system. */
-  private castoffPlan(mei: string): { data: string; strategy: 'auto' | 'smartSb0' | 'line' } {
-    if (mei.includes('<pb')) return { data: this.layoutBreaks(mei), strategy: 'line' };
-    if (mei.includes('<sb')) return { data: mei, strategy: 'smartSb0' };
-    return { data: mei, strategy: 'auto' };
-  }
 
   /** Resolves once Verovio WASM is ready. */
   ready(): Promise<void> {
@@ -1074,7 +855,6 @@ class Renderer {
    *  (PDF export does, per page) — page-mode lazy mounts must reload theirs. */
   toolkit(): VerovioToolkit {
     if (!this.tk) throw new Error('Verovio toolkit not ready');
-    if (this.pageVirt) this.pageVirt.tkCurrent = false;
     return this.tk;
   }
 
@@ -1162,12 +942,20 @@ class Renderer {
    *  or a mode-cache restore). Call on file open, explicit reflow, or any
    *  change neither can retrofit (zoom, page scale, instrument-view filter,
    *  HEJI toggle). Theme is NOT such a change — see applyThemeToRendered. */
-  forceFullRerender(): void {
+  forceFullRerender(cause = 'unspecified'): void {
     this.forceFull = true;
+    this.forcedCause = cause;
     this.splicer.invalidate();
     this.modeCache = {};
     this.pageBreaks.invalidate();
   }
+
+  /** Why the next unowned page render is a full one — set by
+   *  forceFullRerender (its caller's cause) and the string-entry render(),
+   *  consumed by the derive it explains. The ledger then says "forced full
+   *  render (page scale)" instead of "no owned partition", which is the
+   *  reading for an invalidation nobody asked for. */
+  private forcedCause: string | null = null;
 
   getViewMode(): ViewMode {
     return this.viewMode;
@@ -1205,7 +993,7 @@ class Renderer {
   }
 
   setZoom(z: ZoomLevel): void {
-    if (z !== this.zoom) this.forceFullRerender();    // changes scale → whole layout
+    if (z !== this.zoom) this.forceFullRerender('zoom');    // changes scale → whole layout
     this.zoom = z;
   }
 
@@ -1219,7 +1007,7 @@ class Renderer {
    *  splicing. */
   setPageScale(ratio: number): void {
     const next = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
-    if (next !== this.pageScale) this.forceFullRerender();
+    if (next !== this.pageScale) this.forceFullRerender('page scale');
     this.pageScale = next;
   }
 
@@ -1245,219 +1033,41 @@ class Renderer {
     this.splicer.invalidate();
     this.pageBreaks.invalidate();
     this.forceFull = true;
+    this.forcedCause = 'string render';
     this.lastRenderedMode = this.viewMode;
-    this.disposePageVirt();
+    this.disposePages();
     if (this.viewMode === 'scroll') { this.renderSingleSystem(mei); return; }
-    this.renderPage(mei, false);
+    this.renderPage(mei);
   }
 
-  /** Page-view full render: strategy choice + layout + per-page SVG. Internal
-   *  (renderComposer / render) — does not touch splicer or mode-cache state.
-   *  `virtualize` (the renderComposer path): only pages near the viewport +
-   *  page 1 get real SVG; the rest are fixed-size placeholders mounted on
-   *  demand (T2.1, docs/composer-render-perf.md). The string-entry path
-   *  renders every page (legacy tooling asserts on the full DOM). */
-  private renderPage(mei: string, virtualize: boolean, forcedStrategy?: 'auto' | 'smartSb0' | 'line' | 'encoded'): void {
-    /* The DOM this call replaces is the only one pageVirt could describe. */
-    this.disposePageVirt();
-    /* A refill or pinned render forces its strategy — its pins are already in
-       the data, so the sniffing (and layoutBreaks' second layout pass) must
-       not run. Otherwise let castoffPlan choose. */
-    const plan = forcedStrategy ? { data: mei, strategy: forcedStrategy } : this.castoffPlan(mei);
-    const data = plan.data;
-    const strategy = plan.strategy;
-    const options = this.buildOptions(strategy);
-    this.tk!.setOptions(options);
-    if (!this.tk!.loadData(data)) {
+  /** String entry only (`render(mei)`): Verovio's own castoff and page paint,
+   *  every page real. Composer renders never come here — page view assembles
+   *  pages from measured systems (render/pageassembly.ts). */
+  private renderPage(mei: string): void {
+    this.disposePages();
+    const strategy = mei.includes('<sb') ? 'smartSb0' : 'auto';
+    this.tk!.setOptions(this.buildOptions(strategy));
+    if (!this.tk!.loadData(mei)) {
       this.container!.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
       return;
     }
-    /* Each page SVG wrapped in a .score-page div so CSS can give it
-       a white background, border, and surrounding margin against the
-       dark #score surround. */
     const pages = Math.max(1, this.tk!.getPageCount());
-    if (!virtualize) {
-      let combined = '';
-      for (let i = 1; i <= pages; i++) {
-        combined += '<div class="score-page" data-page="' + i + '">' + this.tk!.renderToSVG(i, {}) + '</div>';
-      }
-      this.container!.innerHTML = combined;
-      for (const div of Array.from(this.container!.querySelectorAll('.score-page'))) this.substituteHiddenStaffSystems(div as HTMLElement);
-      this.postProcessRendered(this.container!);
-      for (const div of Array.from(this.container!.querySelectorAll('.score-page'))) this.placePage(div as HTMLElement);
-      return;
+    let combined = '';
+    for (let i = 1; i <= pages; i++) {
+      combined += '<div class="score-page" data-page="' + i + '">' + this.tk!.renderToSVG(i, {}) + '</div>';
     }
-    /* Virtualized: page 1 real (its box sizes every placeholder — CSS gives
-       .score-page `width: max-content`, so an empty placeholder needs explicit
-       dims to hold the grid). Sizes are set after insertion, BEFORE any
-       observer exists, so a zero-height placeholder can never look "visible".
-
-       MEASURE THE PAGE DIV, AFTER finishPageMount — not the inner SVG, before.
-       A placeholder must predict the box the page will have once MOUNTED,
-       because mountPage drops the explicit dims and lets the page size to its
-       own content. Two things made the old measurement fall short of that:
-       the .score-page div is taller than the SVG it wraps (2794 → 2796 px on
-       the sonata, every page), and finishPageMount's crisp pinning runs after.
-       Every page therefore GREW 2 px the moment it mounted — 56 px across the
-       sonata — so each full render, which rebuilds the whole placeholder grid,
-       shifted the document under the reader by a few px as pages re-mounted.
-       Splices never touch the grid, which is why only fallbacks drifted
-       (cb-sweep.js: 34 of 42 full renders, 3 of 65 splices). */
-    /* The swap below momentarily leaves every non-first page as an EMPTY
-       zero-height div, and the getBoundingClientRect that measures page 1
-       forces layout in that collapsed state — the browser clamps the
-       container's scrollTop to the one-page extent, and the clamp survives
-       the placeholder re-sizing (probe-confirmed on the sonata: 25392 → 2744
-       across a content-identical edit). Capture the scroll position first and
-       restore it once the grid is back — in this same synchronous block, and
-       BEFORE mountVisiblePages, so the pages at the restored position are the
-       ones that mount. A legitimately shorter document just re-clamps. */
-    const keepTop = this.container!.scrollTop;
-    const keepLeft = this.container!.scrollLeft;
-    let html = '<div class="score-page" data-page="1">' + this.tk!.renderToSVG(1, {}) + '</div>';
-    for (let i = 2; i <= pages; i++) {
-      html += '<div class="score-page score-page-pending" data-page="' + i + '"></div>';
-    }
-    this.container!.innerHTML = html;
-    const p1 = this.container!.querySelector('.score-page[data-page="1"]') as HTMLElement;
-    this.pageVirt = {
-      mei: data, options, pageCount: pages,
-      pageW: 0, pageH: 0,
-      mounted: new Set([1]), io: null, tkCurrent: true, stalePages: new Set(),
-    };
-    this.finishPageMount(p1);
-    const box = p1.getBoundingClientRect();
-    const pageW = box.width || 800, pageH = box.height || 1000;
-    for (const div of Array.from(this.container!.querySelectorAll('.score-page-pending'))) {
-      (div as HTMLElement).style.width = pageW + 'px';
-      (div as HTMLElement).style.height = pageH + 'px';
-    }
-    this.pageVirt.pageW = pageW;
-    this.pageVirt.pageH = pageH;
-    this.container!.scrollTop = keepTop;
-    this.container!.scrollLeft = keepLeft;
-    this.setContainerThemeTags();
-    this.mountVisiblePages();
-    /* Page 1 is mounted above without going through mountPage, so it gets its
-       page-fit repair here: a section header's reserve is page budget (Max,
-       2026-09-02), and a page whose systems no longer fit below it spills —
-       the tail moves onto page 2 like any other overflow. Pages mounted by
-       mountVisiblePages were repaired as they mounted. */
-    /* NO repairAtMount: pagination is settled once, in the render. A mount
-       draws it. (See the Phase 2 note in the derive path.) */
-    this.armPageIo();
+    this.container!.innerHTML = combined;
+    for (const div of Array.from(this.container!.querySelectorAll('.score-page'))) this.substituteHiddenStaffSystems(div as HTMLElement);
+    this.postProcessRendered(this.container!);
+    for (const div of Array.from(this.container!.querySelectorAll('.score-page'))) this.placePage(div as HTMLElement);
   }
 
   /* ── page-view virtualization (T2.1) ─────────────────────────────────────── */
 
-  /** Drop virtualization state (the page DOM it describes is going away). */
-  private disposePageVirt(): void {
-    this.cancelExtentsJob();
-    this.extents.clear();
-    this.pageVirt?.io?.disconnect();
-    this.pageVirt = null;
-    this.cancelPump();
-  }
 
-  /** Reload the page layout into the live toolkit if something else (a scroll
-   *  engrave, PDF export via toolkit()) replaced it — lazy mounts render from
-   *  tk. One loadData (~1 s on the sonata), then mounts are cheap again. */
-  private ensureTkHoldsPageLayout(forPage?: number): boolean {
-    const st = this.pageVirt;
-    if (!st) return false;
-    /* Only a page a splice actually edited needs fresh data; every other page
-       is untouched, so mounting it from the loaded layout is both correct and
-       free. Rebuilding costs a whole-document serialize + pin + loadData
-       (~600 ms on the sonata) — never pay it speculatively. */
-    const needsFresh = forPage === undefined ? st.stalePages.size > 0 : st.stalePages.has(forPage);
-    if (needsFresh) {
-      const mei = this.pinnedMeiForCurrentModel();
-      if (mei === null) return false;
-      /* Data and options travel together — loading pinned MEI under the
-         previous strategy's options (or vice versa) would repaginate the
-         whole document. */
-      st.mei = mei;
-      st.options = this.buildOptions(this.paintedBreaks());
-      st.stalePages.clear();
-      st.tkCurrent = false;
-    }
-    if (st.tkCurrent) return true;
-    this.tk!.setOptions(st.options);
-    if (!this.tk!.loadData(st.mei)) return false;
-    st.tkCurrent = true;
-    return true;
-  }
 
-  /** Render one pending page's real SVG into its placeholder + run the full
-   *  per-page post pass. Idempotent per page. */
-  private mountPage(p: number): void {
-    const st = this.pageVirt;
-    if (!st || st.mounted.has(p) || !this.container) return;
-    const div = this.container.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null;
-    if (!div) return;
-    if (!this.ensureTkHoldsPageLayout(p)) return;
-    st.mounted.add(p);
-    div.innerHTML = this.tk!.renderToSVG(p, {});
-    div.classList.remove('score-page-pending');
-    /* The SVG defines the box now; a page later grown by a section-header
-       injection (viewBox growth) must not be clipped by the placeholder dims. */
-    div.style.removeProperty('width');
-    div.style.removeProperty('height');
-    st.io?.unobserve(div);
-    this.finishPageMount(div);
-    /* B2: a page drawn from pinned data can spill past its paper — Verovio does
-       not re-paginate under <pb> pins, a section header's reserve is page
-       budget the castoff knows nothing about, and a lazy cascade step may have
-       parked a block here (repairPagination). Repair it now. */
-    /* NO repairAtMount: a mount must not re-decide pagination — unmount and
-       remount has to be identity. */
-  }
 
-  /** The page-fit repair for pages that were just MOUNTED (lazy mount, page 1
-   *  of a full render, a created page): never re-entered from inside a splice
-   *  or cascade (their own ensure-mounts come through mountPage), a spill no
-   *  step can move is warned about, never hidden, and under HKL_INDEX_CHECK the
-   *  pages a repair touched are verified against a fresh full render exactly
-   *  like an edit-path splice. */
-  private repairAtMount(pages: number[]): void {
-    if (this.spliceDepth !== 0 || !this.pageBreaks.paginationRepairable() || !this.lastModel) return;
-    this.spliceDepth++;
-    this.touchedPages = [];
-    try {
-      if (!this.repairPagination(pages)) {
-        console.warn('[page-breaks] page ' + pages.join(',') + ' overflows its box and could not be repaired (' + this.pageSplicer.lastSkipReason + ')');
-      } else if (indexCheckEnabled() && this.touchedPages.length) {
-        this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
-      }
-    } finally {
-      this.spliceDepth--;
-    }
-  }
 
-  /** Return a mounted page to a placeholder. The inverse of mountPage, and the
-   *  half virtualization never had: nothing un-mounted, so `mounted` was
-   *  monotonic between full renders and converged on "every page you visited"
-   *  (sweep: 2 → 9 and climbing; the battery's mountAll reaches 30). Every
-   *  `getBBox` in a splice flushes layout over all of them — ~400 ms per splice
-   *  at 30 pages against ~245 ms at 2-6, and the scaling baseline is +260 %
-   *  from 1 page to 37 — so the accumulator was a slow leak in edit latency.
-   *
-   *  Safe only because a placeholder is now sized from the MOUNTED page's box:
-   *  while it was 2 px shorter, un-mounting would have shifted the document
-   *  under the reader, which is the drift this pass just removed. */
-  private unmountPage(p: number): void {
-    const st = this.pageVirt;
-    if (!st || !this.container || !st.mounted.has(p)) return;
-    const div = this.container.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null;
-    if (!div) return;
-    div.innerHTML = '';
-    div.classList.add('score-page-pending');
-    div.style.width = st.pageW + 'px';
-    div.style.height = st.pageH + 'px';
-    st.mounted.delete(p);
-    /* Re-observe so scrolling back re-mounts it. */
-    st.io?.observe(div);
-  }
 
   /** Turn the mount window off (verification harnesses only). A gate that
    *  compares the WHOLE document — the sonata battery's reference render, or
@@ -1486,15 +1096,7 @@ class Renderer {
    *  mount window evicts them on its next idle pass. */
   mountAllPages(): SVGSVGElement[] {
     if (!this.container) return [];
-    if (this.viewMode === 'page' && this.pageVirt) {
-      let prev = Infinity;
-      for (;;) {
-        const pending = Array.from(this.container.querySelectorAll('.score-page.score-page-pending')) as HTMLElement[];
-        if (!pending.length || pending.length >= prev) break;
-        prev = pending.length;
-        for (const div of pending) this.mountPage(Number(div.dataset.page));
-      }
-    }
+    if (this.viewMode === 'page' && this.assembler) this.assembler.mountAll();
     return Array.from(this.container.querySelectorAll('.score-page > svg')) as SVGSVGElement[];
   }
 
@@ -1590,7 +1192,8 @@ class Renderer {
     if (!id || !this.container) return 0;
     const el = this.container.querySelector('#' + CSS.escape(id));
     const pageEl = el?.closest('.score-page') as HTMLElement | null;
-    return pageEl ? Number(pageEl.dataset.page) || 0 : 0;
+    if (pageEl) return Number(pageEl.dataset.page) || 0;
+    return this.assembler?.pageOfMeasure(mi) ?? 0;
   }
 
   /** Hold the mounted set to a small window: mount what is within one viewport
@@ -1606,19 +1209,24 @@ class Renderer {
    *  377 ms and a 239 ms splice. Doing it here moves that cost off the edit
    *  path entirely. */
   private updateMountWindow(cursorMeasure: number): void {
-    const st = this.pageVirt;
-    if (this.viewMode !== 'page' || !st || !this.container) return;
+    const as = this.assembler;
+    if (this.viewMode !== 'page' || !as || !this.container) return;
     const view = this.container.getBoundingClientRect();
     const vh = view.height || 1;
     const pages = Array.from(this.container.querySelectorAll('.score-page')) as HTMLElement[];
     const rect = new Map<number, DOMRect>();
     for (const div of pages) rect.set(Number(div.dataset.page), div.getBoundingClientRect());
 
+    /* The cursor's page may not exist yet (an assembly in idle slices): make
+       it real first — the sync build to that page is the document-order cost
+       the design accepts — so the window pins the right neighbourhood instead
+       of whatever placeholders happen to be in band (2026-10-08). */
+    if (as.pending() && cursorMeasure >= 0 && this.pageOfMeasure(cursorMeasure) < 1) as.ensureMeasureMounted(cursorMeasure);
     const cursorPage = this.pageOfMeasure(cursorMeasure);
     const pinned = new Set<number>();
     if (cursorPage >= 1) {
       for (const q of [cursorPage - 1, cursorPage, cursorPage + 1]) {
-        if (q >= 1 && q <= st.pageCount) pinned.add(q);
+        if (q >= 1 && q <= as.pageCount) pinned.add(q);
       }
     }
     /* Mount ONE page per idle slice (2026-09-11) — nearest the viewport first,
@@ -1629,7 +1237,7 @@ class Renderer {
        stale or toolkit-less page; skip those rather than spin on them. */
     const cands: Array<{ p: number; d: number }> = [];
     for (const [p, r] of rect) {
-      if (st.mounted.has(p)) continue;
+      if (as.mounted.has(p)) continue;
       const inBand = r.bottom >= view.top - vh && r.top <= view.bottom + vh;
       if (!inBand && !pinned.has(p)) continue;
       const d = r.bottom < view.top ? view.top - r.bottom : r.top > view.bottom ? r.top - view.bottom : 0;
@@ -1643,7 +1251,7 @@ class Renderer {
     let mountedOne = false;
     if (!moving) {
       for (const c of cands) {
-        if (!this.mountPageIfCheap(c.p)) continue;
+        if (!this.mountOne(c.p)) continue;
         mountedOne = true;
         break;
       }
@@ -1653,11 +1261,11 @@ class Renderer {
        page is evictable like any other — re-mounting one reloads the document
        once (~600 ms) and leaves the toolkit current for everything after, which
        is better than pinning edited pages in memory forever. */
-    for (const p of Array.from(st.mounted)) {
+    for (const p of Array.from(as.mounted)) {
       if (pinned.has(p)) continue;
       const r = rect.get(p);
       if (!r) continue;
-      if (r.bottom < view.top - 2 * vh || r.top > view.bottom + 2 * vh) this.unmountPage(p);
+      if (r.bottom < view.top - 2 * vh || r.top > view.bottom + 2 * vh) this.evictPage(p);
     }
   }
 
@@ -1667,7 +1275,7 @@ class Renderer {
   scheduleMountWindow(cursorMeasure: number): void {
     this.mountWindowMi = cursorMeasure;
     if (!this.mountWindowEnabled) return;
-    if (this.viewMode !== 'page' || !this.pageVirt || this.mountWindowHandle !== null) return;
+    if (this.viewMode !== 'page' || !this.assembler || this.mountWindowHandle !== null) return;
     const run = (): void => {
       this.mountWindowHandle = null;
       try { this.updateMountWindow(this.mountWindowMi); } catch { /* never break a render */ }
@@ -1679,52 +1287,13 @@ class Renderer {
       : (setTimeout(run, 0) as unknown as number);
   }
 
-  /** Shared per-page post pass: crisp pinning/notehead/HEJI/theme, then the
-   *  main.ts page injections (exactly once per mount — they aren't idempotent). */
-  private finishPageMount(div: HTMLElement): void {
-    this.substituteHiddenStaffSystems(div);   // hide-empty staves: BEFORE anything measures the page
-    this.postProcessRendered(div);
-    /* Volta numbers are RESTYLED before placement, not after (2026-09-03).
-       `styleVoltaNumbers` changes a tspan's font-size/family/weight and appends
-       a '.', so it changes the volta bracket's bbox — and a volta is content
-       ABOVE the staff, so it changes the system's `above`, which placement
-       consumes. Running it afterwards left a mounted page 20 units (2 device
-       pixels) below its own rule from the volta system down, while the SPLICE
-       path — which decorates before placing — was correct: the gate then read
-       the discrepancy as a splice defect and it held `TOL` at 20. Idempotent,
-       so the injection pass below may run it again harmlessly. Same shape as
-       the place-then-snap defect §3.5 fixed: anything that moves geometry must
-       run before the pass that measures it. */
-    styleVoltaNumbers(div);
-    /* Composer places the page's systems and header bands (Phase 1); the
-       main.ts injections then DRAW into those bands — they must not change
-       geometry, or they invalidate the extents placement just consumed. */
-    this.placePage(div);
-    this.onPageMountedCb?.(div);
-  }
 
-  /** Mount every pending page whose box lies within one page-height of the
-   *  viewport. Synchronous — used at render/restore time so what the user is
-   *  looking at is never a blank placeholder. */
-  private mountVisiblePages(): void {
-    const st = this.pageVirt;
-    if (!st || !this.container) return;
-    const view = this.container.getBoundingClientRect();
-    const pad = st.pageH;
-    for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
-      const r = (div as HTMLElement).getBoundingClientRect();
-      if (r.bottom >= view.top - pad && r.top <= view.bottom + pad) {
-        this.mountPage(Number((div as HTMLElement).dataset.page));
-      }
-    }
-  }
 
   /** (Re)arm the lazy-mount observer over the current pending placeholders. */
   private armPageIo(): void {
-    const st = this.pageVirt;
-    if (!st || !this.container) return;
-    st.io?.disconnect();
-    st.io = new IntersectionObserver((entries) => {
+    if (!this.assembler || !this.container) return;
+    this.pageIo?.disconnect();
+    this.pageIo = new IntersectionObserver((entries) => {
       /* The observer only WAKES the pump. Its entries describe the moment of
          observation, in DOM order: mounting them here drew the page above the
          viewport before the visible one, and every page a drag swept through
@@ -1736,7 +1305,7 @@ class Renderer {
       if (this.pumpWanted.size) this.requestPump();
     }, { root: this.container, rootMargin: '100% 0px 100% 0px' });
     for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
-      st.io.observe(div);
+      this.pageIo.observe(div);
     }
   }
 
@@ -1765,8 +1334,8 @@ class Renderer {
    *  thumb mounts PUMP_SETTLE_MS after it stops. Measured (sonata, Chromium): a drag 20→3 went from 15 mounts
    *  / 2.75 s before the landing page was drawn to one mount of ~150 ms. */
   private pumpMounts(): void {
-    const st = this.pageVirt;
-    if (this.viewMode !== 'page' || !st || !this.container) { this.pumpWanted.clear(); return; }
+    const as = this.assembler;
+    if (this.viewMode !== 'page' || !as || !this.container) { this.pumpWanted.clear(); return; }
     const view = this.container.getBoundingClientRect();
     const vh = view.height || 1;
     const moving = this.viewportMoving(vh);
@@ -1774,7 +1343,7 @@ class Renderer {
     let visible = 0;
     let near = false;
     for (const p of Array.from(this.pumpWanted)) {
-      if (st.mounted.has(p)) { this.pumpWanted.delete(p); continue; }
+      if (as.mounted.has(p)) { this.pumpWanted.delete(p); continue; }
       const div = this.pageDiv(p);
       if (!div) { this.pumpWanted.delete(p); continue; }
       const r = div.getBoundingClientRect();
@@ -1789,7 +1358,7 @@ class Renderer {
       }
     }
     if (best && !moving) {
-      this.mountPage(best.p);
+      this.mountOne(best.p);
       this.pumpWanted.delete(best.p);
       visible--;
     }
@@ -1798,7 +1367,7 @@ class Renderer {
     } else {
       /* Near pages are idle work; the window also evicts what a scroll left
          behind. */
-      if (near || st.mounted.size > 0) this.scheduleMountWindow(this.mountWindowMi);
+      if (near || as.mounted.size > 0) this.scheduleMountWindow(this.mountWindowMi);
     }
   }
 
@@ -1819,9 +1388,6 @@ class Renderer {
    *  `#score.view-scroll svg` CSS). This is the persistent SVG that edits will
    *  spot-splice into (Phase B); for now every render re-engraves it whole. */
   private renderSingleSystem(mei: string): void {
-    /* The live toolkit now holds the scroll layout — a stashed page DOM's lazy
-       mounts must reload theirs first (ensureTkHoldsPageLayout). */
-    if (this.pageVirt) this.pageVirt.tkCurrent = false;
     this.tk!.setOptions(this.buildOptions('none'));
     if (!this.tk!.loadData(mei)) {
       this.container!.innerHTML = '<div style="color:#c00;padding:20px">Verovio loadData failed (invalid MEI).</div>';
@@ -1910,13 +1476,21 @@ class Renderer {
     heji: { hejiEnabled: boolean },
   ): boolean {
     if (this.pageBreaks.canAttemptRefill()) {
+      /* An assembly still in flight (a keystroke right after a load) has
+         committed only a PREFIX of the page starts; the refill carries page
+         starts by membership, so it must see the whole list — else a line past
+         the prefix lands on a provisional page the DOM does not agree with and
+         the splice refuses ('DOM partition drift above', every chunk start of
+         the gated sweep, 2026-10-08). Finish it first — the same cost the
+         splice would pay below, paid before the partition is read. */
+      if (this.assembler?.pending()) this.assembler.finishSync();
       const refill = this.pageBreaks.tryRefill(model, viewStaves, this.pageBreaksCtx());
       if (refill) {
         /* Splice/no-op only when the mounted DOM is the page render the
            committed partition describes: never across a view-mode switch
            (preMei non-null — the container may hold the OTHER mode's DOM,
            where measure ids resolve into the wrong frame). */
-        const pageDomLive = preMei === null && this.pageVirt !== null
+        const pageDomLive = preMei === null && this.assembler !== null
           && this.container!.querySelector('.score-page svg') !== null;
         if (pageDomLive) {
           if (refill.changedRun === null) {
@@ -1935,6 +1509,9 @@ class Renderer {
              (repairPagination), never by handing pagination back. Only a
              refusal, or a spill no step can move, falls through to the full
              refill render / derive below — with its reason on the splicer. */
+          /* The DOM must hold every page the splice may touch: finish an
+             assembly still in flight (a keystroke right after a load). */
+          this.assembler!.finishSync();
           this.spliceDepth++;
           this.touchedPages = [];
           let spliced = false, landed = false;
@@ -1948,9 +1525,11 @@ class Renderer {
             if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
               spliced = true;
               this.registerSpliceEffects();
-              landed = this.repairPagination(this.pageSplicer.lastPages.slice());
+              landed = this.assembler!.repaginateFrom(this.pageSplicer.lastPages.slice());
+              this.noteRepagination();
               if (!landed) {
-                console.warn('[page-splice] spilled page could not be repaired (' + this.pageSplicer.lastSkipReason + ') — returning pagination to Verovio (derive)');
+                this.pageSplicer.lastSkipReason = 'repagination refused';
+                console.warn('[page-splice] repagination refused — re-assembling');
               }
             } else {
               console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — full refill render');
@@ -1962,7 +1541,7 @@ class Renderer {
             this.lastPageSpliced = true;
             for (const el of this.touchedPages) this.drawLockMarks(el);
             this.pageBreaks.verifyRenderedPartition(
-              this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+              this.container!, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
             /* Reference gate (test mode): after the splice AND its repair have
                settled, against the owner's CURRENT pins — a cascade moved them
                past what the refill committed. */
@@ -1988,45 +1567,31 @@ class Renderer {
             /* The surgery landed but a spill could not be moved on; the DOM is
                part-way. Derive from the model (pins are already restored to
                the last consistent pagination by the failed step). */
-            this.pageBreaks.invalidate();
-            this.renderPage(model.serialize(heji, viewStaves), true);
-            if (this.pageVirt) {
-              this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
-            }
+            this.assembleDocument(model, viewStaves, true);
             this.lastPageSpliced = false;
             return true;
           }
         }
-        const pinned = refill.mei();
-        if (pinned !== null) {
-          this.renderPage(pinned, true, refill.strategy);
-          /* The refill layout is now in the toolkit — the committed partition
-             describes it directly, no idle adoption needed. Verify the pins were
-             honored on the mounted pages (a safety net for castoff overrides —
-             warn + re-adopt; throws under HKL_INDEX_CHECK). */
-          this.pageBreaks.verifyRenderedPartition(
-            this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-          /* Owned pagination has no safety net inside Verovio — check it here
-             and hand the pages back if ours don't fit. */
-          this.lastPageSpliced = false;
-          const spill = this.overflowingPage();
-          if (spill !== 0) {
-            console.warn('[page-breaks] pinned page ' + spill + ' overflows its box — returning pagination to Verovio (derive)');
-            this.pageBreaks.invalidate();
-            this.renderPage(model.serialize(heji, viewStaves), true);
-            if (this.pageVirt) {
-              this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
-            }
-          }
-          return true;
-        }
-        console.warn('[page-breaks] pin injection failed (missing id) — derive render');
-        this.pageBreaks.invalidate();
+        /* Not spliceable: re-assemble every page from the partition the refill
+           just committed — a render of systems, never a Verovio page. */
+        this.assembleDocument(model, viewStaves, false);
+        this.pageBreaks.verifyRenderedPartition(
+          this.container!, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
+        this.lastPageSpliced = false;
+        return true;
       } else if (this.pageBreaks.ownershipActive()) {
         console.info('[page-breaks] refill unavailable for this edit — derive render');
       }
+    } else {
+      /* Nothing owned. A forced invalidation (new document, Setup apply, view
+         change, zoom, page scale — forceFullRerender's callers) is by design
+         and says why; anything else is an invalidation nobody asked for, and
+         the suite's splice invariant treats it as a defect. */
+      this.pageBreaks.lastDeriveReason = this.forcedCause !== null
+        ? 'forced full render (' + this.forcedCause + ')' : 'no owned partition';
+      this.forcedCause = null;
     }
-    this.derivePageRender(model, viewStaves, preMei, heji);
+    this.assembleDocument(model, viewStaves, true);
     this.lastPageSpliced = false;
     return true;
   }
@@ -2118,52 +1683,7 @@ class Renderer {
     return `u${unit}|s${this.pageScale}|${model.getHejiEnabled() ? 'heji' : 'plain'}|v${viewKeyOf(this.viewStaves)}|b${breaks}`;
   }
 
-  /** Measure EVERY page's extents and settle pagination ONCE, synchronously,
-   *  for a FRESHLY ADOPTED partition (2026-09-08, Max's ruling).
-   *
-   *  Pagination used to be finished lazily: an unmounted page's extents were
-   *  unknown at paint time, so its fold was re-checked when it MOUNTED
-   *  (`repairAtMount`, the PARK branch). That makes unmount -> remount
-   *  non-identity — the sonata paginated to 30 pages at first paint and 31
-   *  after scrolling down and back up, with no user action between. A mount is
-   *  a VIEW operation: it must DRAW the pagination, never re-decide it.
-   *
-   *  So the fold is measured from real extents while we are still in the
-   *  render, and the cascade runs once against complete information. After
-   *  this, only a MODEL CHANGE can move a page boundary — through the
-   *  incremental cascade on the edit path, which is untouched.
-   *
-   *  ONLY on adoption. It must not run on the cached-partition path (a zoom:
-   *  that pagination is already settled, and re-running this on the main
-   *  thread for a zoom stalled the browser) nor in the common render tail (an
-   *  edit: it would re-measure the whole document per keystroke and pre-empt
-   *  the incremental cascade the splice model is built on). Import pays for
-   *  it — the rare action, and Max's explicit trade. */
-  private settlePaginationForAdoptedPartition(model: ComposerModel): void {
-    this.armExtentsJob(model);
-    this.runExtentsJobNow();
-    const st = this.pageVirt;
-    if (st && st.pageCount > 0) {
-      this.repairAtMount(Array.from({ length: st.pageCount }, (_, i) => i + 1));
-      /* The repair's cascade re-paginates from the first spill on and marks
-         every UNMOUNTED page from there stale (markPagesStaleFrom) — AFTER the
-         synchronous extents pass above, so nothing warmed the toolkit for them
-         and the user's first scroll into that half paid the whole-document
-         reload (sonata: pages 15–31 stale after load, +784 ms on the first
-         mount there — half of the "3 s to mount a page"; 2026-09-11). Re-arm
-         the job: its first idle slice is exactly that warm. */
-      this.rearmWarmIfStaleUnmounted(model);
-    }
-  }
 
-  /** Arm the extents job when some unmounted page is stale (or the toolkit no
-   *  longer holds the page layout), so the ~600–800 ms whole-document reload
-   *  happens in idle time instead of on the user's next scroll-in. */
-  private rearmWarmIfStaleUnmounted(model: ComposerModel): void {
-    const st = this.pageVirt;
-    if (!st) return;
-    if (!st.tkCurrent || [...st.stalePages].some((p) => !st.mounted.has(p))) this.armExtentsJob(model);
-  }
 
   /** Snapshot the committed partition for the current key, so returning to this
    *  zoom/page scale on an unchanged document can skip the castoff pass. Called
@@ -2186,85 +1706,6 @@ class Renderer {
     }
   }
 
-  private derivePageRender(
-    model: ComposerModel, viewStaves: number[] | null, preMei: string | null,
-    heji: { hejiEnabled: boolean },
-  ): void {
-    const data = preMei ?? model.serialize(heji, viewStaves);
-    /* A single-part view is owned exactly like the score (2026-09-05): the
-       owner keys its partition on the staff subset (setView), so the filtered
-       document gets its own castoff, adoption, balance and cache entry. */
-    /* A partition we already computed for this exact layout budget, on a
-       document that has not changed since, is still the right partition — so
-       skip the castoff `loadData` (~1 s on the sonata) and paint the pinned
-       render directly. A zoom round-trip is the common case. Anything that
-       doesn't hold falls through to the castoff below, and the render is
-       verified either way (verifyRenderedPartition + overflowingPage). */
-    const cached = this.partitionCache.get(this.partitionKey(model));
-    if (cached && cached.docVer === model.docVersion()
-        && this.pageBreaks.restorePartition(model, cached.lines, cached.pages, cached.widths)) {
-      const pinnedFromCache = this.pageBreaks.pinRenderMei(data);
-      if (pinnedFromCache !== null) {
-        this.renderPage(pinnedFromCache, true, 'encoded');
-        this.pageBreaks.verifyRenderedPartition(
-          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-        /* Nothing to re-balance on a cache hit: `balanceInitialBand` balances
-           the WHOLE document before the paint, and the partition is a pure
-           function of content, so a cached partition for this docVersion is
-           already the balancer's answer. */
-        if (this.overflowingPage() === 0) return;
-        console.warn('[page-breaks] cached partition overflows its page — re-deriving');
-      }
-      this.partitionCache.delete(this.partitionKey(model));
-      this.pageBreaks.invalidate();
-    }
-    /* Documents with USER page breaks need pagination computed per inter-break
-       segment — see castoffSegmentedByUserBreaks for why a single pass cannot
-       do it. Falls through to the ordinary castoff when unavailable. */
-    const segmented = this.castoffSegmentedByUserBreaks(model, data, heji);
-    if (segmented && this.pageBreaks.restorePartition(model, segmented.lines, segmented.pages)) {
-      this.balanceInitialBand(model);
-      const pinnedSeg = this.pageBreaks.pinRenderMei(data);
-      if (pinnedSeg !== null) {
-        this.renderPage(pinnedSeg, true, 'encoded');
-        this.pageBreaks.verifyRenderedPartition(
-          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-        const segSpill = this.overflowingPage();
-        if (segSpill === 0) { this.settlePaginationForAdoptedPartition(model); return; }
-        console.warn('[page-breaks] segmented pagination overflows page ' + segSpill
-          + ' — falling back to the single-pass castoff');
-      }
-      this.pageBreaks.invalidate();
-    }
-    const plan = this.castoffPlan(data);
-    /* Bootstrap pass: load only — never rendered to SVG, never painted. */
-    this.tk!.setOptions(this.buildOptions(plan.strategy));
-    if (this.tk!.loadData(plan.data) && this.pageBreaks.adoptFromCastoff(model, this.tk!)) {
-      /* Section balancing: the WHOLE document, synchronously, before the
-         paint. The partition the balancer computes is a pure function of the
-         content (render/balance.ts), so what castoff chose here is discarded
-         and never observable — there is no second authority and no settling
-         window after the paint. */
-      this.balanceInitialBand(model);
-      const pinned = this.pageBreaks.pinRenderMei(data);
-      if (pinned !== null) {
-        this.renderPage(pinned, true, 'encoded');
-        this.pageBreaks.verifyRenderedPartition(
-          this.container!, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
-        const spill = this.overflowingPage();
-        if (spill === 0) { this.settlePaginationForAdoptedPartition(model); return; }
-        console.warn('[page-breaks] adopted pagination overflows page ' + spill + ' — painting Verovio\'s own layout instead');
-        this.pageBreaks.invalidate();
-      }
-    }
-    /* Fallback: paint the castoff layout itself and adopt from it lazily. */
-    this.renderPage(plan.data, true, plan.strategy);
-    if (this.pageVirt) {
-      this.pageBreaks.armAdoption(model, this.pageVirt.pageCount, this.pageBreaksCtx());
-    } else {
-      this.pageBreaks.invalidate();
-    }
-  }
 
   /** Context the page system splicer drives Verovio + the post passes through. */
   private pageSpliceCtx(): PageSpliceCtx {
@@ -2316,7 +1757,8 @@ class Renderer {
       alignStaves: (host: HTMLElement, originPhase?: number) => this.alignStavesIn(host, originPhase),
       originPhaseOf: (pageEl: HTMLElement) => this.originPhaseOf(pageEl),
       originPhaseXOf: (pageEl: HTMLElement) => this.originPhaseXOf(pageEl),
-      ensurePageMounted: (p: number) => this.mountPageIfCheap(p),
+      headerMeta: () => this.shellMeta(),
+      ensurePageMounted: (p: number) => this.assembler?.mount(p) ?? false,
       isPageMounted: (p: number) => this.isPageMounted(p),
     };
   }
@@ -2339,53 +1781,7 @@ class Renderer {
     return this.container?.querySelector('.score-page[data-page="' + p + '"]') as HTMLElement | null ?? null;
   }
 
-  /** B2: append page `p` (= pageCount + 1) built from `shell` — since Phase 2
-   *  the spilling page's own SVG with its systems stripped
-   *  (`createPageFromShell`; identical furniture, page number bumped), which
-   *  the cascade then fills by transplant. Registered mounted and STALE: the
-   *  live toolkit's layout has no such page, so any later re-mount rebuilds
-   *  from the current pins. */
-  private createPage(p: number, shell: Element): HTMLElement | null {
-    const st = this.pageVirt;
-    if (!st || !this.container || p !== st.pageCount + 1) return null;
-    const div = document.createElement('div');
-    div.className = 'score-page';
-    div.dataset.page = String(p);
-    div.appendChild(document.importNode(shell, true));
-    const all = this.container.querySelectorAll('.score-page');
-    const last = all.length ? all[all.length - 1] : null;
-    if (last) last.after(div); else this.container.appendChild(div);
-    st.pageCount = p;
-    st.mounted.add(p);
-    st.stalePages.add(p);
-    return div;
-  }
 
-  /** B2: drop a page the splice left without systems (every line on it was
-   *  deleted) and renumber what follows. The toolkit's layout still numbers
-   *  the later pages the old way, so every page from `p` on is stale: the
-   *  first re-mount of any of them rebuilds the layout from the current pins
-   *  (one reload), after which numbering agrees again. */
-  private removePage(div: HTMLElement): void {
-    const st = this.pageVirt;
-    const p = Number(div.dataset.page);
-    st?.io?.unobserve(div);
-    div.remove();
-    if (!st || !(p >= 1) || !this.container) return;
-    const shift = (s: Set<number>): Set<number> => {
-      const out = new Set<number>();
-      for (const q of s) { if (q !== p) out.add(q > p ? q - 1 : q); }
-      return out;
-    };
-    st.mounted = shift(st.mounted);
-    st.stalePages = shift(st.stalePages);
-    for (const el of Array.from(this.container.querySelectorAll('.score-page')) as HTMLElement[]) {
-      const q = Number(el.dataset.page);
-      if (q > p) el.dataset.page = String(q - 1);
-    }
-    st.pageCount = Math.max(1, st.pageCount - 1);
-    for (let q = p; q <= st.pageCount; q++) st.stalePages.add(q);
-  }
 
   /** Book-keeping after a landed splice (edit or cascade step): remove emptied
    *  pages, mark every touched page stale (the live toolkit still holds the
@@ -2393,25 +1789,19 @@ class Renderer {
    *  refresh the splicer's page-number diagnostics under the final numbering. */
   private registerSpliceEffects(): void {
     const ps = this.pageSplicer;
-    for (const div of ps.lastEmptiedPages) this.removePage(div);
+    for (const div of ps.lastEmptiedPages) this.assembler?.removePage(div);
     /* Pages the splice DEFERRED (2026-09-02): their hunk lines were not
        re-engraved because they lie outside the mounted band. Mark them stale so
        the next mount redraws them from the committed pins, and return any that
        are still drawn to placeholders — a drawn page holding pre-edit systems
        under post-edit pins is exactly what verifyRenderedPartition fails on. */
-    for (const p of ps.lastDeferredPages) {
-      this.pageVirt?.stalePages.add(p);
-      const div = this.pageDiv(p);
-      if (div && !div.classList.contains('score-page-pending')) this.unmountPage(p);
-    }
-    const st = this.pageVirt;
+    this.assembler?.markDeferred(ps.lastDeferredPages);
     const nums: number[] = [];
     for (const el of ps.lastPageEls) {
       if (!el.isConnected) continue;
       const p = Number(el.dataset.page);
       if (!(p >= 1)) continue;
       nums.push(p);
-      st?.stalePages.add(p);
       if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
     }
     ps.lastPages = nums;
@@ -2456,585 +1846,20 @@ class Renderer {
     return { systems: ps.systems, firstPast };
   }
 
-  /** B2 pagination repair — the overflow cascade, on the MODEL since Phase 2
-   *  of the vertical-ownership plan. Pages are OWNED, so a page whose content
-   *  spills past the paper is ours to fix, and the fix is what a castoff would
-   *  do: move the spilled tail onto the next page, then check that page.
-   *  Legality is overflow-only: a deletion leaves its slack (content over churn
-   *  — a page-side MIN_FILL, like vertical justification, is a D1/D2 question).
-   *
-   *  A step reads its FOLD from the placement rule (predicted: `foldOf` on a
-   *  mounted page, `predictFoldFromStore` on a placeholder) and lands as:
-   *  - a TRANSPLANT when the receiving page is mounted (or cheaply mountable):
-   *    the block's `g.system` elements and titles move to the head of that
-   *    page, glyph defs carried, both pages re-placed by the rule and snapped
-   *    — no window, nothing rendered;
-   *  - a CREATED page when the last page spills: the spilling page's own SVG
-   *    shell (same furniture, page number bumped), the block moved in, the
-   *    mount pass;
-   *  - ARITHMETIC when the receiving page is a placeholder whose lines'
-   *    extents are known (a mount or the extents job measured them): pins
-   *    move, both pages are marked stale, and the receiving page's own fold is
-   *    predicted from the store — O(pages) additions past the mounted set;
-   *  - a PARK when they are not known: the block leaves the spilling page and
-   *    the receiving page draws it — and checks its own fold — when it mounts
-   *    (`mountPage` → `repairAtMount`). The extents job makes this rare.
-   *
-   *  Returns false when a step could not be landed — the caller derives (edit
-   *  path) or warns (mount path). Pins are restored to the last consistent
-   *  pagination before returning. `lastCascade` records the step kinds. */
-  private repairPagination(pages: number[]): boolean {
-    const st = this.pageVirt;
-    if (!st || !this.container || !this.pageBreaks.paginationRepairable()) return true;
-    this.lastCascade = { steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0, ms: 0, msFold: 0, msClone: 0, msMove: 0, msPlace: 0, msSnap: 0, msMount: 0 };
-    const cas = this.lastCascade;
-    const tRepair = performance.now();
-    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth);
-    const headers = this.headerMeasureIds();
-    const touch = (el: HTMLElement): void => { if (!this.touchedPages.includes(el)) this.touchedPages.push(el); };
-    let pending = Array.from(new Set(pages)).filter((p) => p >= 1).sort((x, y) => x - y);
-    let steps = 0;
-    while (pending.length) {
-      const p = pending.shift()!;
-      const div = this.pageDiv(p);
-      if (!div) continue;
-      const mounted = !div.classList.contains('score-page-pending');
-      const lines = this.pageBreaks.lineStarts();
-      const lineAt = new Map(lines.map((id, i) => [id, i]));
-      const oldPages = this.pageBreaks.pageStarts();
-      /* A page BEYOND the owner's page index is not one we track, so it is not
-         ours to repair — skip it. Verovio paginates a document containing user
-         `<pb>`s at those breaks whether or not the owner adopted a page start
-         for each, so `pageVirt.pageCount` can legitimately exceed
-         `pageStarts().length`; before the repair covered one-page documents
-         this was unreachable, and treating it as a cascade FAILURE made
-         `repairAtMount` warn on documents that were perfectly well laid out
-         (phase3_pagebreak, 2026-09-18). A page INSIDE the index whose start is
-         not a line start is genuine corruption and still fails below. */
-      if (p - 1 >= oldPages.length) continue;
-      /* Page p's lines under the current pins: [pFirst, pEnd). */
-      const pFirst = lineAt.get(oldPages[p - 1]);
-      const pEnd = p < oldPages.length ? lineAt.get(oldPages[p]) : lines.length;
-      if (pFirst === undefined || pEnd === undefined) {
-        this.pageSplicer.lastSkipReason = 'page ' + p + ': page start is not a partition line';
-        return false;
-      }
-      let a: number;                 // first line of the spilled block
-      let block: Element[] = [];     // its systems (mounted page only)
-      if (mounted) {
-        const tFold = performance.now();
-        const fold = this.foldOf(div);
-        cas.msFold += performance.now() - tFold;
-        if (!fold || fold.firstPast < 0) continue;                       // fits
-        if (fold.firstPast === 0) {
-          this.pageSplicer.lastSkipReason = 'page ' + p + ': a single system is taller than the page';
-          return false;
-        }
-        block = fold.systems.slice(fold.firstPast);
-        const first = lineAt.get(block[0].querySelector('g.measure')?.id ?? '');
-        /* The fold is the model's, so the block is page p's tail by
-           construction; a DOM that disagrees with the pins is a defect. */
-        if (first === undefined || first !== pFirst + fold.firstPast || block.length !== pEnd - first) {
-          const why = 'page ' + p + ': spilled systems do not match the pinned lines';
-          if (indexCheckEnabled()) throw new Error('[page-fit] ' + why);
-          this.pageSplicer.lastSkipReason = why;
-          return false;
-        }
-        a = first;
-      } else {
-        /* Arithmetic (Phase 2): a placeholder the cascade reached. Its fold is
-           predicted from stored extents; unknown extents mean the page draws
-           the block and checks itself when it mounts (it is stale already). */
-        const fold = this.predictFoldFromStore(lines.slice(pFirst, pEnd), headers, k);
-        if (fold === null) { this.lastCascade.parked++; continue; }
-        if (fold < 0) continue;
-        if (fold === 0) {
-          this.pageSplicer.lastSkipReason = 'page ' + p + ': a single system is taller than the page (predicted)';
-          return false;
-        }
-        a = pFirst + fold;
-      }
-      if (++steps > MAX_CASCADE_STEPS) {
-        this.pageSplicer.lastSkipReason = 'pagination cascade exceeded ' + MAX_CASCADE_STEPS + ' steps';
-        return false;
-      }
-      this.lastCascade.steps++;
-      /* Page p+1 now starts at the block; a last page spawns one. */
-      const newPages = oldPages.slice();
-      if (p < oldPages.length) newPages[p] = lines[a]; else newPages.push(lines[a]);
-      if (!this.pageBreaks.replacePageStarts(newPages)) {
-        this.pageSplicer.lastSkipReason = 'page start list rejected';
-        return false;
-      }
-      const isLast = p >= st.pageCount;
-      if (!mounted) {
-        /* Bookkeeping only: both pages redraw from the new pins when they
-           mount; the receiving page is checked next. */
-        this.lastCascade.arithmetic++;
-        st.stalePages.add(p);
-        if (isLast) this.appendPlaceholderPage();
-        st.stalePages.add(p + 1);
-        pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
-        continue;
-      }
-      if (isLast && this.headIsTitleBlock(div)) {
-        /* A created page is NEVER a header page (Max, 2026-09-18), and the
-           header page's shell cannot supply what a created page needs: page
-           1's `g.pgHead` is the TITLE BLOCK, so cloning it drops the header
-           entirely and places the new page at C0 — while the SAME document
-           imported gets a running page-number header and is placed below it.
-           That divergence is the contract this whole cascade exists to keep,
-           so when the header page spills, the new page DRAWS ITSELF from the
-           pins (which now carry a `<pb>`) instead of being transplanted:
-           identical to a derived page by construction. Only reachable on the
-           1 -> 2 growth of a one-page score; every later page is cloned from a
-           numbered header, which renumbers correctly. */
-        this.lazyMoveOut(div, block);
-        this.placePage(div);
-        this.appendPlaceholderPage();
-        this.lastCascade.created++;
-        st.stalePages.add(p);
-        touch(div);
-        pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
-        continue;
-      }
-      if (isLast) {
-        /* Detach first and settle the spilling page while only ITS root is
-           dirty; the created page's root gets its first layout in its own
-           mount pass — two smaller flushes instead of one over both roots. */
-        const tMove = performance.now();
-        const parts = this.detachBlock(div, block);
-        cas.msMove += performance.now() - tMove;
-        const tPlace = performance.now();
-        this.placePage(div);
-        cas.msPlace += performance.now() - tPlace;
-        const tSnap = performance.now();
-        cas.msSnap += performance.now() - tSnap;
-        const tClone = performance.now();
-        const created = this.createPageFromShell(p + 1, div);
-        cas.msClone += performance.now() - tClone;
-        if (!created || !this.attachBlock(div, created, parts, null)) {
-          this.pageBreaks.replacePageStarts(oldPages);
-          this.pageSplicer.lastSkipReason = 'page creation failed';
-          return false;
-        }
-        this.lastCascade.created++;
-        this.lastCascade.transplanted++;
-        const tMount = performance.now();
-        this.finishPageMount(created);
-        cas.msMount += performance.now() - tMount;
-        st.stalePages.add(p);
-        touch(div); touch(created);
-        pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
-        continue;
-      }
-      const nextDiv = this.pageDiv(p + 1);
-      if (!nextDiv) {
-        this.pageBreaks.replacePageStarts(oldPages);
-        this.pageSplicer.lastSkipReason = 'page ' + (p + 1) + ' has no element';
-        return false;
-      }
-      const nextMounted = !nextDiv.classList.contains('score-page-pending') || this.mountPageIfCheap(p + 1);
-      if (!nextMounted) {
-        /* The receiving page is a placeholder: the block leaves this page and
-           redraws there at mount. With its lines' extents known the cascade
-           continues by arithmetic; otherwise it parks here, as before Phase 2. */
-        this.lazyMoveOut(div, block);
-        /* RE-PLACE the page we just shrank. Under rule v1 this was provably
-           unnecessary — placement was top-down and local, so removing the tail
-           could not move the systems above it. Rule v2 solves one level over
-           ALL of a page's gaps, so losing a system changes that level and every
-           remaining system moves, each by a cumulative amount. This was the one
-           path that mutated a mounted page's system set without re-placing it
-           (the splice, the transplant, the last-page spill and the mount all
-           already do), and the reference gate caught it as a per-system
-           cascade of downward shifts on the spilling page. */
-        this.placePage(div);
-        st.stalePages.add(p);
-        st.stalePages.add(p + 1);
-        touch(div);
-        const nextEnd = p + 1 < newPages.length ? (lineAt.get(newPages[p + 1]) ?? lines.length) : lines.length;
-        if (this.predictFoldFromStore(lines.slice(a, nextEnd), headers, k) === null) {
-          this.lastCascade.parked++;
-        } else {
-          this.lastCascade.arithmetic++;
-          pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
-        }
-        continue;
-      }
-      /* TRANSPLANT (Phase 2): the block's systems and titles move to the head
-         of page p+1; both pages are re-placed by the rule and snapped. */
-      const tMove = performance.now();
-      if (!this.moveBlock(div, nextDiv, block, firstSystemOf(nextDiv))) {
-        this.pageBreaks.replacePageStarts(oldPages);
-        this.pageSplicer.lastSkipReason = 'page ' + (p + 1) + ': transplant target unreadable';
-        return false;
-      }
-      cas.msMove += performance.now() - tMove;
-      this.lastCascade.transplanted++;
-      const tPlace = performance.now();
-      this.placePage(div);
-      this.placePage(nextDiv);
-      cas.msPlace += performance.now() - tPlace;
-      const tSnap = performance.now();
-      cas.msSnap += performance.now() - tSnap;
-      st.stalePages.add(p);
-      st.stalePages.add(p + 1);
-      touch(div); touch(nextDiv);
-      pending = [p + 1, ...pending.filter((q) => q !== p + 1)];
-      cas.ms = performance.now() - tRepair;
-    }
-    cas.ms = performance.now() - tRepair;
-    return true;
-  }
 
-  /** Move `block` (a page's tail systems, in order) and the titles riding on
-   *  them into `to`'s page margin before `anchor` (null = append), carrying
-   *  the glyph defs they reference. DOM only — placement follows. */
-  private moveBlock(from: HTMLElement, to: HTMLElement, block: Element[], anchor: Element | null): boolean {
-    return this.attachBlock(from, to, this.detachBlock(from, block), anchor);
-  }
 
-  /** Take `block` and the titles riding on it out of `from` (the elements stay
-   *  alive, off the DOM). */
-  private detachBlock(from: HTMLElement, block: Element[]): { systems: Element[]; titles: Element[] } {
-    const titles: Element[] = [];
-    for (const t of Array.from(from.querySelectorAll('text.hkl-section-header'))) {
-      const id = t.getAttribute('data-for');
-      const m = id ? from.querySelector('#' + CSS.escape(id)) : null;
-      const sys = m?.closest('g.system');
-      if (sys && block.includes(sys)) titles.push(t);
-    }
-    for (const t of titles) t.remove();
-    this.removeLockMarksOf(from, block);
-    for (const sys of block) sys.remove();
-    return { systems: block.slice(), titles };
-  }
 
-  /** Put a detached block into `to`'s page margin before `anchor` (null =
-   *  append), carrying the glyph defs it references. A glyph `to` already
-   *  defines is reused as is; one it lacks is copied from `from` under a FRESH
-   *  id and the block's `use` hrefs are rewritten to it. Never insert a def
-   *  under an id another mounted page already carries: every page of one
-   *  render shares its glyph ids, and appending duplicates invalidates every
-   *  `use` in the document that references them — 300 ms of layout on a
-   *  created page with 31 pages mounted (cb-splicecost.js edit=append,
-   *  2026-09-02) against ~30 with unique ids. */
-  private attachBlock(from: HTMLElement, to: HTMLElement, parts: { systems: Element[]; titles: Element[] }, anchor: Element | null): boolean {
-    const defs = to.querySelector('svg defs');
-    const margin = to.querySelector('svg g.page-margin');
-    if (!defs || !margin) return false;
-    const fromDefs = from.querySelector('svg defs');
-    const idFor = new Map<string, string>();
-    for (const g of Array.from(defs.children)) { const id = g.getAttribute('id'); if (id) idFor.set(id, id); }
-    const uid = 'c' + String(++this.transplantSeq);
-    for (const sys of parts.systems) {
-      for (const use of Array.from(sys.querySelectorAll('use'))) {
-        const href = use.getAttribute('xlink:href') || use.getAttribute('href');
-        if (!href || !href.startsWith('#')) continue;
-        const id = href.slice(1);
-        let target = idFor.get(id);
-        if (!target) {
-          const src = fromDefs ? Array.from(fromDefs.children).find((g) => g.getAttribute('id') === id) : undefined;
-          if (!src) continue;                       // resolves document-wide, as every page's uses do
-          const copy = src.cloneNode(true) as Element;
-          target = id + '-' + uid;
-          copy.setAttribute('id', target);
-          defs.appendChild(copy);
-          idFor.set(id, target);
-        }
-        if (target !== id) {
-          if (use.hasAttribute('xlink:href')) use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', '#' + target);
-          else use.setAttribute('href', '#' + target);
-        }
-      }
-      if (anchor) margin.insertBefore(sys, anchor); else margin.appendChild(sys);
-    }
-    for (const t of parts.titles) margin.appendChild(t);
-    return true;
-  }
 
-  /** Remove a spilled block from its page without re-rendering it anywhere
-   *  (the receiving page is unmounted and will draw it on mount). A section
-   *  title riding on the block leaves with it — the receiving page's mount
-   *  pass injects it again from the model. */
-  private lazyMoveOut(div: HTMLElement, block: Element[]): void {
-    for (const t of Array.from(div.querySelectorAll('text.hkl-section-header'))) {
-      const id = t.getAttribute('data-for');
-      const m = id ? div.querySelector('#' + CSS.escape(id)) : null;
-      const sys = m?.closest('g.system');
-      if (sys && block.includes(sys)) t.remove();
-    }
-    this.removeLockMarksOf(div, block);
-    for (const s of block) s.remove();
-  }
 
-  /** True when this page's `g.pgHead` is the TITLE BLOCK rather than a running
-   *  page-number header — i.e. cloning its shell cannot give the new page the
-   *  header a derived page would have. Mirrors `createPageFromShell`'s bump
-   *  scan, so the two cannot disagree. A page with NO header at all is not a
-   *  title page: there the clone is already faithful. */
-  private headIsTitleBlock(div: HTMLElement): boolean {
-    const hd = div.querySelector('g.pgHead');
-    if (!hd) return false;
-    const no = String(Number(div.dataset.page));
-    for (const t of Array.from(hd.querySelectorAll('tspan, text'))) {
-      if (t.children.length === 0 && (t.textContent ?? '').trim() === no) return false;
-    }
-    return true;
-  }
 
-  /** A new last page from the spilling page's own SVG (Phase 2): systems,
-   *  titles, injected texts and selection rects stripped, the page-number
-   *  header bumped. The caller routes a TITLE-block source away from here
-   *  (`headIsTitleBlock`), so the `hd.remove()` path below is only reached by
-   *  a source that genuinely has no header to carry. */
-  private createPageFromShell(p: number, from: HTMLElement): HTMLElement | null {
-    const svg = from.querySelector('svg');
-    if (!svg) return null;
-    const shell = svg.cloneNode(true) as Element;
-    for (const s of Array.from(shell.querySelectorAll('g.system, text.hkl-section-header, text.hkl-injected-composer, text.hkl-injected-footer, text.hkl-running-title, [data-selection-rect], ' + LOCK_SELECTOR))) s.remove();
-    /* The page's glyph defs stay behind: `moveBlock` merges exactly the glyphs
-       the transplanted systems reference (mergeGlyphDefs), so the new SVG root
-       is as small as its content — its first layout is the cascade's one
-       expensive flush. */
-    for (const d of Array.from(shell.querySelectorAll('defs'))) while (d.firstChild) d.removeChild(d.firstChild);
-    const hd = shell.querySelector('g.pgHead');
-    if (hd) {
-      const fromNo = String(Number(from.dataset.page));
-      let bumped = false;
-      for (const t of Array.from(hd.querySelectorAll('tspan, text'))) {
-        if (t.children.length === 0 && (t.textContent ?? '').trim() === fromNo) { t.textContent = String(p); bumped = true; }
-      }
-      if (!bumped) hd.remove();
-    }
-    return this.createPage(p, shell);
-  }
 
-  /** A new last page as a PLACEHOLDER (an arithmetic cascade step reached
-   *  it): it draws from the pins when it scrolls near, like any pending page. */
-  private appendPlaceholderPage(): void {
-    const st = this.pageVirt;
-    if (!st || !this.container) return;
-    const div = document.createElement('div');
-    div.className = 'score-page score-page-pending';
-    div.dataset.page = String(st.pageCount + 1);
-    div.style.width = st.pageW + 'px';
-    div.style.height = st.pageH + 'px';
-    const all = this.container.querySelectorAll('.score-page');
-    const last = all.length ? all[all.length - 1] : null;
-    if (last) last.after(div); else this.container.appendChild(div);
-    st.pageCount++;
-    st.stalePages.add(st.pageCount);
-    st.io?.observe(div);
-  }
 
-  /** Predicted fold of a page that is NOT mounted, from stored extents: the
-   *  index of the first of `lineIds` whose content bottom passes the paper, −1
-   *  when every line fits, null when any line's extents are unknown. */
-  private predictFoldFromStore(lineIds: string[], headers: Set<string>, k: PageFitConstants): number | null {
-    if (!lineIds.length) return -1;
-    const paper = this.columnBottom();
-    if (paper === null) return null;
-    const items: Array<{ ext: SysExtents; reserve: number }> = [];
-    for (const id of lineIds) {
-      const ext = this.extents.get(id);
-      if (!ext) return null;
-      items.push({ ext, reserve: this.lineReserve(id, headers) });
-    }
-    const placed = placeSystems(items, k, this.laterPageY0(k));
-    return foldIndex(placed, paper, 2 * 1000 / this.currentScale());
-  }
 
-  /** Header reserve carried by the line starting at `startId` (its measures
-   *  under the current pins). */
-  private lineReserve(startId: string, headers: Set<string>): number {
-    if (!headers.size) return 0;
-    const lines = this.pageBreaks.lineStarts();
-    const li = lines.indexOf(startId);
-    const lo = this.measureIds.indexOf(startId);
-    if (li < 0 || lo < 0) return 0;
-    const hiId = li + 1 < lines.length ? this.measureIds.indexOf(lines[li + 1]) : -1;
-    const hi = hiId < 0 ? this.measureIds.length : hiId;
-    let reserve = 0;
-    for (let mi = lo; mi < hi; mi++) if (headers.has(this.measureIds[mi])) reserve += SECTION_HEADER_RESERVE;
-    return reserve;
-  }
 
-  private mountedPageDivs(): HTMLElement[] {
-    return this.container ? Array.from(this.container.querySelectorAll('.score-page:not(.score-page-pending)')) as HTMLElement[] : [];
-  }
-
-  /** Paper bottom in the page-margin frame, from any mounted page (every page
-   *  shares one box). */
-  private columnBottom(): number | null {
-    for (const div of this.mountedPageDivs()) {
-      const ps = this.pageSystems(div);
-      if (ps && ps.contentBottom !== null) return ps.contentBottom;
-    }
-    return null;
-  }
-
-  /** First content top of a page after page 1 (below its page-number header),
-   *  read from any mounted such page; the calibrated default otherwise. */
-  private laterPageY0(k: PageFitConstants): number {
-    for (const div of this.mountedPageDivs()) {
-      if (Number(div.dataset.page) < 2) continue;
-      const ps = this.pageSystems(div);
-      if (ps) return this.firstContentTop(ps.margin, k);
-    }
-    return k.C0;
-  }
-
-  /* ── the extents job (Phase 2) ──────────────────────────────────────────── */
-
-  /** Arm the idle measurement of every unmounted page's lines. Each slice
-   *  renders one or two pages offscreen from the toolkit's current layout,
-   *  post-processes them (HEJI text is content), measures their systems'
-   *  extents into the store and discards the SVG (~100 ms a page). Mounted
-   *  pages measured themselves; stale pages are not in the toolkit's layout
-   *  (they redraw from the pins on mount) and are skipped, as is a page whose
-   *  lines are all known. Cancelled by any document change or re-render. */
-  private armExtentsJob(model: ComposerModel): void {
-    this.cancelExtentsJob();
-    const st = this.pageVirt;
-    if (!st || !this.pageBreaks.ownershipActive() || st.pageCount <= 1) return;
-    const job = { docVer: model.docVersion(), nextPage: 1, measured: [] as number[], cancelled: false, warmMs: 0 };
-    this.extentsJob = job;
-    const step = (): void => {
-      if (job.cancelled || this.extentsJob !== job) return;
-      if (this.spliceDepth !== 0 || this.pageVirt !== st || model.docVersion() !== job.docVer) {
-        job.cancelled = true;
-        this.extentsJob = null;
-        return;
-      }
-      /* WARM what a clip DEFERRED (2026-09-02). A splice that clipped its
-         replaced set to the mounted band left the pages beyond it stale AND
-         undrawn, and such a page's next mount reloads the whole document into
-         the toolkit (~600 ms on the sonata) — on the user's SCROLL. Do it here
-         instead, in one idle slice: the reload re-serializes the current pins,
-         clears the stale set and leaves every later mount cheap. Any document
-         change cancels the job before this runs, so the work is never wasted.
-         Only for an UNMOUNTED stale page. Every ordinary splice marks the pages
-         it edited stale too, but those are drawn and correct — warming on
-         `stalePages.size` alone put a ~600 ms reload in idle time after EVERY
-         edit, which the battery caught as +2 s on a multi-edit sequence. */
-      if (!st.tkCurrent || [...st.stalePages].some((p) => !st.mounted.has(p))) {
-        const tWarm = performance.now();
-        const ok = this.ensureTkHoldsPageLayout();
-        job.warmMs += performance.now() - tWarm;
-        if (!ok) { job.cancelled = true; this.extentsJob = null; return; }
-        scheduleIdle(step);
-        return;
-      }
-      const budget = performance.now() + 40;
-      while (job.nextPage <= st.pageCount && performance.now() < budget) {
-        const p = job.nextPage++;
-        if (st.mounted.has(p) || st.stalePages.has(p) || !this.pageNeedsExtents(p)) continue;
-        this.measurePageExtentsOffscreen(p);
-        job.measured.push(p);
-      }
-      if (job.nextPage > st.pageCount) { this.extentsJob = null; return; }
-      scheduleIdle(step);
-    };
-    scheduleIdle(step);
-  }
-
-  private cancelExtentsJob(): void {
-    if (this.extentsJob) { this.extentsJob.cancelled = true; this.extentsJob = null; }
-  }
-
-  /** Test hook: finish the armed extents job synchronously. Returns the pages
-   *  it measured (this call included). */
-  runExtentsJobNow(): number[] {
-    const job = this.extentsJob;
-    const st = this.pageVirt;
-    if (!job || !st) return [];
-    if (!st.tkCurrent || [...st.stalePages].some((p) => !st.mounted.has(p))) {
-      const tWarm = performance.now();
-      if (!this.ensureTkHoldsPageLayout()) { job.cancelled = true; this.extentsJob = null; return []; }
-      job.warmMs += performance.now() - tWarm;
-    }
-    while (job.nextPage <= st.pageCount && st.tkCurrent) {
-      const p = job.nextPage++;
-      if (st.mounted.has(p) || st.stalePages.has(p) || !this.pageNeedsExtents(p)) continue;
-      this.measurePageExtentsOffscreen(p);
-      job.measured.push(p);
-    }
-    job.cancelled = true;
-    this.extentsJob = null;
-    return job.measured;
-  }
-
-  /** Diagnostics: the armed extents job, or null when none is pending. */
-  extentsJobState(): { nextPage: number; measured: number[]; warmMs: number } | null {
-    const j = this.extentsJob;
-    return j ? { nextPage: j.nextPage, measured: j.measured.slice(), warmMs: Math.round(j.warmMs) } : null;
-  }
-
-  /** Diagnostics: are the extents of the line starting at `startId` known? */
-  extentsKnown(startId: string): boolean {
-    return this.extents.get(startId) !== undefined;
-  }
-
-  /** Does any line of page `p` (current pins) lack extents? */
-  private pageNeedsExtents(p: number): boolean {
-    const lines = this.pageBreaks.lineStarts();
-    const pages = this.pageBreaks.pageStarts();
-    const lo = lines.indexOf(pages[p - 1] ?? '');
-    if (lo < 0) return false;
-    const hiIdx = p < pages.length ? lines.indexOf(pages[p]) : -1;
-    const hi = hiIdx < 0 ? lines.length : hiIdx;
-    for (let li = lo; li < hi; li++) if (!this.extents.get(lines[li])) return true;
-    return false;
-  }
-
-  /** Render page `p` offscreen from the toolkit's current layout, post-process
-   *  it like a mounted page, record its systems' extents, discard it. */
-  private measurePageExtentsOffscreen(p: number): void {
-    const host = document.createElement('div');
-    host.style.cssText = 'position:absolute;left:-99999px;top:0';
-    host.innerHTML = this.tk!.renderToSVG(p, {});
-    document.body.appendChild(host);
-    try {
-      this.postProcessRendered(host);
-      for (const sys of Array.from(host.querySelectorAll('g.page-margin > g.system')) as SVGGraphicsElement[]) {
-        const first = sys.querySelector('g.measure');
-        const ext = measureExtents(sys);
-        if (first?.id && ext) this.extents.set(first.id, ext);
-      }
-    } finally {
-      host.remove();
-    }
-  }
-
-  /** Mount page `p` for the splicer (B5), but ONLY when doing so is cheap and
-   *  yields the PRE-EDIT layout. Two conditions, both load-bearing:
-   *
-   *  - `tkCurrent` — the toolkit already holds this page layout, so the mount
-   *    is one `renderToSVG` (~50 ms). Without it `ensureTkHoldsPageLayout`
-   *    would reload the whole document (~600 ms), which is most of what the
-   *    fallback full render costs anyway.
-   *  - not `stalePages.has(p)` — a page an earlier splice edited would be
-   *    re-serialized from the CURRENT model, i.e. rendered POST-edit, and
-   *    dropped into a DOM the splice is about to patch with post-edit systems.
-   *    The splicer needs every live system it measures to be pre-edit.
-   *
-   *  Returns whether the page is mounted afterwards; false simply means the
-   *  splice refuses as it did before. */
-  private mountPageIfCheap(p: number): boolean {
-    const st = this.pageVirt;
-    if (!st || !(p >= 1) || p > st.pageCount) return false;
-    if (st.mounted.has(p)) return true;
-    if (!st.tkCurrent || st.stalePages.has(p)) return false;
-    this.mountPage(p);
-    return st.mounted.has(p);
-  }
 
   /** Context the page line-break owner drives Verovio through. */
   private pageBreaksCtx(): PageBreaksCtx {
     return {
-      layoutToolkit: () => (this.pageVirt?.tkCurrent ? this.tk : null),
       naturalsToolkit: () => this.spliceTk!,
       naturalsOptions: () => this.buildOptions('none', 'scroll'),
       budgetW: () => this.pageBudgetW(),
@@ -3100,7 +1925,7 @@ class Renderer {
     oldStartIds: string[], newStartIds: string[], oldPageStartIds: string[], newPageStartIds: string[],
   ): boolean {
     const model = this.lastModel;
-    if (!model || !this.container || !this.pageVirt || this.spliceDepth !== 0) return false;
+    if (!model || !this.container || !this.assembler || this.spliceDepth !== 0) return false;
     if (this.container.querySelector('.score-page svg') === null) return false;
     const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
     const idIdx = new Map(ids.map((id, i) => [id, i]));
@@ -3126,7 +1951,8 @@ class Renderer {
       if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
         spliced = true;
         this.registerSpliceEffects();
-        landed = this.repairPagination(this.pageSplicer.lastPages.slice());
+        landed = this.assembler.repaginateFrom(this.pageSplicer.lastPages.slice());
+        this.noteRepagination();
       }
     } finally {
       this.spliceDepth--;
@@ -3137,16 +1963,14 @@ class Renderer {
     }
     if (landed) {
       for (const el of this.touchedPages) this.drawLockMarks(el);
-      this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt.pageCount, this.pageBreaksCtx());
+      this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler.pageCount, this.pageBreaksCtx());
       if (indexCheckEnabled()) {
         this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
       }
     } else {
-      console.warn('[page-balance] spilled page could not be repaired (' + this.pageSplicer.lastSkipReason + ') — full pinned render');
-      const pinned = this.pinnedMeiForCurrentModel();
-      if (pinned === null) return false;
-      this.renderPage(pinned, true, this.paintedBreaks());
-      this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+      console.warn('[page-balance] repagination refused (' + this.pageSplicer.lastSkipReason + ') — re-assembling');
+      this.assembleDocument(model, this.viewStaves, false);
+      this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
     }
     this.rememberPartition(model);
     return true;
@@ -3239,10 +2063,8 @@ class Renderer {
     if (!this.pageBreaks.replacePartition(model, snap.lines, snap.pages)) return false;
     const same = oldLines.join('|') === snap.lines.join('|') && oldPages.join('|') === snap.pages.join('|');
     if (!same && !this.applyPartitionChange(oldLines, snap.lines, oldPages, snap.pages)) {
-      const pinned = this.pinnedMeiForCurrentModel();
-      if (pinned === null) { this.pageBreaks.invalidate(); return false; }
-      this.renderPage(pinned, true, this.paintedBreaks());
-      this.pageBreaks.verifyRenderedPartition(this.container, model, this.pageVirt?.pageCount ?? 1, this.pageBreaksCtx());
+      this.assembleDocument(model, this.viewStaves, false);
+      this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
     }
     this.rememberPartition(model);
     return true;
@@ -3293,13 +2115,17 @@ class Renderer {
     if (this.container!.querySelector('svg')) {
       /* A stashed page DOM keeps its pageVirt (it describes those nodes); the
          observer must not keep firing on detached placeholders. */
-      if (outgoing === 'page' && this.pageVirt) {
-        this.pageVirt.io?.disconnect();
-        this.pageVirt.io = null;
+      let stashedAssembler: PageAssembler | null = null;
+      if (outgoing === 'page') {
+        this.pageIo?.disconnect();
+        this.pageIo = null;
+        this.assembler?.finishSync();
+        stashedAssembler = this.assembler;
+        this.assembler = null;
       }
       this.modeCache[outgoing] = {
         nodes: Array.from(this.container!.childNodes),
-        mei, zoom: this.zoom, pageScale: this.pageScale, theme: this.theme,
+        mei, zoom: this.zoom, pageScale: this.pageScale, theme: this.theme, assembler: stashedAssembler,
       };
     }
     const entry = this.modeCache[this.viewMode];
@@ -3313,9 +2139,10 @@ class Renderer {
          the cache, so we couldn't be here). */
       if (this.viewMode === 'scroll' && !this.splicer.canSplice()) this.forceFull = true;
       /* Restored page DOM: mount anything now visible + re-arm lazy mounts. */
-      if (this.viewMode === 'page' && this.pageVirt) {
+      if (this.viewMode === 'page') {
+        this.assembler = entry.assembler;
         this.setContainerThemeTags();
-        this.mountVisiblePages();
+        this.mountVisible();
         this.armPageIo();
       }
       this.lastRenderedMode = this.viewMode;
@@ -3394,7 +2221,7 @@ class Renderer {
        scroll GEOMETRY (the line-break owner's naturals windows,
        buildOptions('none','scroll')) never reach here — they measure through
        the toolkit, not the DOM. */
-    styleTitleBlock(container, this.viewMode === 'scroll' ? '' : (this.lastModel?.getComposer() ?? ''));
+    if (this.viewMode === 'scroll') styleTitleBlock(container, '');
     /* Crisp the verticals: snap intermediate barlines onto their pixel phase,
        then land each system's right edge (final barline + staff-line ends) on
        the grid (no sliver past the final bar). */
@@ -3502,19 +2329,185 @@ class Renderer {
    *  whole score in one SVG, so it's a no-op there. Call sites stay
    *  mode-agnostic. */
   ensureMeasureMounted(mi: number): void {
-    const st = this.pageVirt;
-    if (this.viewMode !== 'page' || !st) return;
-    if (st.mounted.size >= st.pageCount) return;   // everything already real
-    const id = this.renderIds[mi];
-    if (!id) return;
-    /* Already rendered → done. Checked BEFORE ensureTkHoldsPageLayout: locating
-       an element needs the layout in tk, and reloading it costs ~1 s on a large
-       doc — pure waste when the measure is visible anyway (e.g. the cursor
-       measure right after a view-switch restore). */
-    if (this.container?.querySelector('#' + CSS.escape(id))) return;
-    if (!this.ensureTkHoldsPageLayout()) return;
-    const p = this.tk!.getPageWithElement(id);
-    if (p >= 1) this.mountPage(p);
+    if (this.viewMode !== 'page' || !this.assembler) return;
+    this.assembler.ensureMeasureMounted(mi);
+  }
+
+
+  /* ── page assembly (composer-pagination-design.md, 2026-10-08) ──────────── */
+
+  /** True while pages are still being assembled after a render (idle slices). */
+  assemblyPending(): boolean {
+    return this.assembler?.pending() ?? false;
+  }
+
+  /** Test/probe compatibility: the page state object. Its IDENTITY changes on
+   *  every full render and survives a splice (what fixtures compare), and it
+   *  carries `pageCount` and `mounted` as the old virtualization record did. */
+  get pageVirt(): PageAssembler | null {
+    return this.assembler;
+  }
+
+  /** Map a repagination onto the cascade diagnostics the probes and fixtures
+   *  read: a rebuilt page is a step, a moved system a transplant, a page the
+   *  rebuild added a creation. */
+  private noteRepagination(): void {
+    const st = this.assembler?.lastRepaginate;
+    if (!st) return;
+    this.lastCascade = {
+      ...this.lastCascade,
+      steps: st.rebuiltPages, transplanted: st.movedSystems, arithmetic: 0, parked: 0,
+      created: Math.max(0, st.pagesAfter - st.pagesBefore), ms: Math.round(st.ms),
+    };
+  }
+
+  /** Page view, every non-splice path: build the pages from measured systems.
+   *  `reseed` recomputes the line partition from naturals (a derive); false
+   *  keeps the owner's committed partition (a refill the splicer refused). */
+  private assembleDocument(model: ComposerModel, viewStaves: number[] | null, reseed: boolean): void {
+    this.disposePages();
+    const ctx = this.pageBreaksCtx();
+    let lines: string[] | null = null;
+    if (reseed || !this.pageBreaks.ownershipActive()) {
+      const cached = this.partitionCache.get(this.partitionKey(model));
+      if (cached && cached.docVer === model.docVersion()
+          && this.pageBreaks.restorePartition(model, cached.lines, [], cached.widths)) {
+        lines = cached.lines;
+      } else {
+        lines = this.pageBreaks.seedPartition(model, ctx, this.pageBudgetW());
+        if (lines && lines.length > 1) this.balanceInitialBand(model);
+        if (this.pageBreaks.ownershipActive()) lines = this.pageBreaks.lineStarts();
+      }
+    } else {
+      lines = this.pageBreaks.lineStarts();
+    }
+    if (!lines || !lines.length) { this.container!.innerHTML = ''; return; }
+    this.assembler = new PageAssembler(this.assemblyHost(), this.pageBreaks, this.extents);
+    this.assembler.begin(lines, model.docVersion(), this.mountWindowMi >= 0 ? this.mountWindowMi : null);
+    this.setContainerThemeTags();
+    this.armPageIo();
+    this.lastCascade = { ...this.lastCascade, steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0 };
+  }
+
+  private assemblyHost(): AssemblyHost {
+    return {
+      container: this.container!,
+      model: () => this.lastModel!,
+      measureIds: () => this.measureIds,
+      lineRenderCtx: () => this.lineRenderCtx(),
+      shellGeom: () => this.shellGeom(),
+      shellMeta: () => this.shellMeta(),
+      fitConstants: () => pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth),
+      gridUser: () => 1000 / this.currentScale(),
+      postProcess: (div, scope) => this.postProcessRendered(div, this.substituteHiddenStaffSystems(div, scope), this.originPhaseXOf(div)),
+      decorate: (div) => styleVoltaNumbers(div),
+      placePage: (div) => { this.placePage(div); },
+      firstContentTop: (margin, k) => this.firstContentTop(margin, k),
+      contentBottomOf: (margin) => this.contentBottomOf(margin),
+      headerMeasureIds: () => this.headerMeasureIds(),
+      onPageMounted: (div) => this.onPageMountedCb?.(div),
+      removeLockMarksOf: (div, systems) => this.removeLockMarksOf(div, systems),
+      applyTheme: (div) => this.applyThemeTo(div),
+      foldTolerance: () => 2 * 1000 / this.currentScale(),
+    };
+  }
+
+  /** How a line window is rendered: the live page options, `breaks:'encoded'`
+   *  (the window carries its own `<sb>` pins), the isolated toolkit. */
+  private lineRenderCtx(): LineRenderCtx {
+    return { toolkit: this.spliceTk!, windowOptions: this.buildOptions('encoded', 'page'), viewStaves: this.viewStaves };
+  }
+
+  private shellGeom(): ShellGeom {
+    const g = this.scalePageGeom(PAGE_GEOM);
+    return { pageWidth: g.pageWidth, pageHeight: g.pageHeight, pageMarginLeft: g.pageMarginLeft, pageMarginTop: g.pageMarginTop, scale: CRISP_PRESETS[this.zoom].scale };
+  }
+
+  private shellMeta(): ShellMeta {
+    const m = this.lastModel;
+    return { title: m?.getTitle() ?? '', subtitle: m?.getSubtitle() ?? '', composer: m?.getComposer() ?? '' };
+  }
+
+  /** Drop the page DOM's bookkeeping (it is about to be replaced). */
+  private disposePages(): void {
+    this.assembler?.cancel();
+    this.assembler = null;
+    this.extents.clear();
+    this.pageIo?.disconnect();
+    this.pageIo = null;
+    this.cancelPump();
+  }
+
+  /** Mount every parked page whose placeholder lies within one page-height of
+   *  the viewport (restore time: what the user looks at is never blank). */
+  private mountVisible(): void {
+    const as = this.assembler;
+    if (!as || !this.container) return;
+    const view = this.container.getBoundingClientRect();
+    const pad = as.pageH || view.height;
+    for (const div of Array.from(this.container.querySelectorAll('.score-page-pending')) as HTMLElement[]) {
+      const r = div.getBoundingClientRect();
+      if (r.bottom >= view.top - pad && r.top <= view.bottom + pad) this.mountOne(Number(div.dataset.page));
+    }
+  }
+
+  /** Attach one parked page (no render) and stop observing its placeholder. */
+  private mountOne(p: number): boolean {
+    const as = this.assembler;
+    if (!as) return false;
+    const ok = as.mount(p);
+    const div = this.pageDiv(p);
+    if (ok && div) this.pageIo?.unobserve(div);
+    return ok;
+  }
+
+  /** Park one mounted page and observe its placeholder for a scroll-back. */
+  private evictPage(p: number): void {
+    const as = this.assembler;
+    if (!as) return;
+    as.unmount(p);
+    const div = this.pageDiv(p);
+    if (div) this.pageIo?.observe(div);
+  }
+
+  /** Theme tags on one page (a page re-attached from the park, or closed while
+   *  the theme is dark). Mirrors applyThemeToRendered for a single page. */
+  private applyThemeTo(div: HTMLElement): void {
+    const theme = this.theme === 'light' ? 'light' : 'dark';
+    applyNotationTheme(div, theme);
+    for (const el of Array.from(div.querySelectorAll('[data-notation-theme]')).concat([div])) {
+      if (theme === 'light') delete (el as HTMLElement).dataset.notationTheme;
+      else (el as HTMLElement).dataset.notationTheme = 'dark';
+    }
+  }
+
+  /** Probe API (kept for the phasec probes): is the line's extent known? */
+  extentsKnown(startId: string): boolean {
+    return this.extents.get(startId) !== undefined;
+  }
+
+  /** Probe API: finish the assembly now and rebuild every page a clipped
+   *  splice deferred, so a later mount is a plain re-attach (the old extents
+   *  job's "warm"). Returns the pages it rebuilt. */
+  runExtentsJobNow(): number[] {
+    const as = this.assembler;
+    if (!as) return [];
+    as.finishSync();
+    return as.rebuildDeferred();
+  }
+
+  /** Test compatibility: mount / park one page (the old lazy-mount entry
+   *  points, bracket-accessed by fixtures). */
+  private mountPage(p: number): void {
+    this.mountOne(p);
+  }
+  private unmountPage(p: number): void {
+    this.evictPage(p);
+  }
+
+  /** Probe API: the extents job is gone; null means "nothing pending". */
+  extentsJobState(): null {
+    return null;
   }
 
   /** Resolve a clicked SVG element to its xml:id, walking up to the nearest

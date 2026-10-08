@@ -9597,3 +9597,61 @@ to a quarter unit under its staff as far as the lower staff's content allows.
 `between`.
 
 ---
+
+## Composer draws the pages: pagination is first-fit over measured systems, the castoff is gone (2026-10-08, Max)
+
+**Picked**: in page view Composer assembles every page from systems Verovio laid out one line
+at a time (`render/pageassembly.ts`, `systemrender.ts`, `pageshell.ts`; design in
+`docs/composer-pagination-design.md` — seven decisions approved by Max): first-fit over the
+systems' MEASURED extents in document order (the rule v1 fold; a user `<pb>` a hard start; push
+and pull one predicate), a page closing as soon as the next system fails to fit, placed by rule
+v2, revealed and furnished, synchronous until the cursor's page closes and in idle slices after.
+The `ExtentsStore` is the source of truth — filled by the load, overwritten only for a splice's
+hunk, invalidated with the owner's keys; nothing is re-measured because a neighbour changed.
+Pages out of the mount window are parked (detached) and re-attached, never re-rendered. An edit
+re-paginates from one page BEFORE the first touched page (a touched line that starts its page
+may have shrunk enough to return to the page before it — pagination must be the same for the
+same extents whatever the edit history; nothing further back can change) and rebuilds only the
+pages whose membership (start AND end) came out different, keeping and renumbering the rest. The
+page — paper,
+margin frame, title block, page number, running title, footer — is Composer's; Verovio renders
+line windows and nothing else. Removed: the castoff pass, `adoptFromCastoff` and the lazy
+adoption, the line-index transplant of page starts in `balanceInitialBand`, the pinned
+`breaks:'encoded'` page paint, the "toolkit holds the page layout" warm reloads and stale pages,
+the extents job, the overflow-only cascade (`foldOf` / `overflowingPage` stay as assertions),
+`castoffSegmentedByUserBreaks`, `styleRunningHeader` and the title-block restyle on page view.
+
+**Why**: the contract was that Composer owns pagination, and it did not. The derive adopted
+Verovio's castoff lines AND page starts, discarded the lines (the balancer recomputed them) but
+carried the page starts across by LINE INDEX — so Verovio's systems-per-page counts, computed
+over its own line breaks with every staff visible, decided which balanced systems shared a page.
+Found 2026-10-08 chasing "the sonata's pagination changed after a save": one expressive text in
+m. 76 flipped the castoff's counts over pages 4–8 from [4,4,4,4,4] to [4,4,3,3,4] while the
+screen showed nothing (the session carries page starts; a load re-derives), and the three
+hide-empty one-staff systems then landed on one page under a count the castoff had taken for
+three-staff systems — a 738 px hole above a 606 px system. Max: "The contract has always been
+that we own pagination … What part of this process does Verovio still need to know about?"
+Verovio needs to know nothing about pages; it needs to lay out systems, which it is good at.
+
+**Rejected**: estimating system heights arithmetically from per-measure extents to paginate
+before any render (Max retracted it the same day: spanner shapes and nested staff gaps are
+exactly the layout Verovio handles, and we would be rebuilding it to within a tolerance — the
+same mistake as the dynamics centring); a seed-then-correct scheme ("nothing should ever paint
+from the seed alone"); measuring every system before painting any page (document order is
+accepted, but a page can distribute and render as soon as it is full while later pages
+measure); re-measuring a page's systems on every edit (the store is the truth, spot-updated by
+the splice).
+
+**Cost**: the first page closes after its line windows (~36 ms each on the sonata); the whole
+document assembles in idle slices; an edit's repagination is arithmetic plus the rebuild of the
+pages whose membership changed (the hide-empty fixture: a 7-line splice 187 ms, repagination of
+2 pages with 11 moved systems 22 ms). The castoff's ~1 s `loadData` per derive is gone.
+
+**Files**: `apps/composer/src/render/{pageassembly,pageshell,systemrender}.ts` (new),
+`pagefit.ts` (`firstFitLines`), `pageheader.ts` (em-box helpers exported, Verovio header
+metrics), `linebreaks.ts` (`seedPartition`, `setPageStarts`, adoption removed), `render.ts`,
+`pagesplice.ts` (the gate draws the Composer header), `main.ts`. Suite: universal
+`assertPaginationFirstFit`; fixtures `pag_hideEmptyNoHole`, `pag_shrinkPulls`,
+`pag_growPushes`, `pag_userPbHonoured`, `pag_zoomRoundTripKeepsPages`.
+
+---

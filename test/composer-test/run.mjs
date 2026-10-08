@@ -103,7 +103,11 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
     }
   }
 
-  /* Wait one RAF after re-render so SVG metrics settle before assertions. */
+  /* Let a render the setup DEFERRED (heavy-render badge: double-rAF +
+     setTimeout) land first — it is the setup's render, not the fixture's own
+     edit, and it used to slip past the ledger clear below as an "unowned"
+     full render. Then one RAF so SVG metrics settle before assertions. */
+  await cdp.evalJSON(`window.__waitForRender ? window.__waitForRender(8000) : true`);
   await cdp.evalJSON(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`);
 
   /* The document BUILD necessarily derives (there is no partition yet), so the
@@ -133,6 +137,9 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
   const universal = [
     { name: 'placeholder invariant', expr: `window.__test.assertPlaceholderInvariant()` },
     { name: 'no tie orphans',       expr: `window.__test.assertNoTieOrphans()` },
+    /* Pagination is first-fit over placed systems (2026-10-08): no mounted
+       page overflows, none leaves room for the next page's first system. */
+    { name: 'pagination first-fit', expr: `window.__test.assertPaginationFirstFit()` },
   ];
   if (currentTier === 'full') {
     universal.push({
@@ -214,6 +221,12 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
      same container, at the same scroll, through the same capture path. Shoot
      both here, into a scratch dir — never into out/, which is tracked — so the
      heatmap can be made without reproducing the ordering by hand. */
+  /* Read the splice ledger and drain the console BEFORE the failure shots
+     below: their forced re-engrave is a full render the fixture did not ask
+     for, and it used to land in both — every failing fixture also reported a
+     spurious "no owned partition" full render and the re-engrave's console. */
+  const ledger = await cdp.evalJSON(`(() => { const r = window.__hkl_composer && window.__hkl_composer.renderer; return (r && r.renderLedger) ? r.renderLedger() : []; })()`);
+  const consoleDrained = console_cap.drain();
   if (!result.ok && result.failures.some((f) => f.kind !== 'visual')) {
     try {
       const dir = process.env.HKL_FAIL_SHOTS || join(tmpdir(), 'hkl-composer-fail');
@@ -239,7 +252,7 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
      subject of the test (Max, 2026-09-13: "a refusal is a failure"). */
   result.counts.invariants++;
   const allowHere = fixture.allowConsole ?? [];
-  const consoleErrs = console_cap.drain()
+  const consoleErrs = consoleDrained
     .filter((e) => !allowHere.some((re) => new RegExp(re).test(e.text)));
   if (consoleErrs.length) {
     result.ok = false;
@@ -263,13 +276,16 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
      gets caught — Ctrl+M's 2.8 s derive lived for weeks because nothing here
      looked. */
   const BY_DESIGN = new Set(['single-line partition']);
-  const ledger = await cdp.evalJSON(`(() => { const r = window.__hkl_composer && window.__hkl_composer.renderer; return (r && r.renderLedger) ? r.renderLedger() : []; })()`);
+  /* A forced full render — forceFullRerender's callers: new document, Setup
+     apply, view-staff change, zoom, page scale — is an explicit decision, never
+     a command quietly deriving; the reason carries its cause (2026-10-08). */
+  const byDesign = (why) => BY_DESIGN.has(why) || why.startsWith('forced full render');
   if (Array.isArray(ledger)) {
     const fulls = ledger.filter((e) => e && e.full);
     result.renders = { total: ledger.length, full: fulls.length };
     if (fulls.length) {
       result.fullRenderReasons = [...new Set(fulls.map((e) => e.deriveReason || e.skipReason || '(unattributed)'))];
-      const unexplained = result.fullRenderReasons.filter((why) => !BY_DESIGN.has(why));
+      const unexplained = result.fullRenderReasons.filter((why) => !byDesign(why));
       if (unexplained.length && !fixture.fullRender) {
         result.counts.invariants++;
         result.ok = false;
@@ -277,7 +293,10 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
           kind: 'splice',
           name: 'edits splice (no full engrave)',
           detail: fulls.length + ' full render(s) during the fixture\'s own edits: ' +
-            unexplained.join('; ') + ' — if deriving is correct here, declare fullRender: \'<why>\'',
+            unexplained.join('; ') + ' — if deriving is correct here, declare fullRender: \'<why>\'' +
+            /* The render sequence, so a stray full render can be placed among the
+               fixture's steps (F = full with its reason, else the splice outcome). */
+            ' [sequence: ' + ledger.slice(0, 40).map((e) => (e.full ? 'F:' + (e.deriveReason || e.skipReason || '?') : e.outcome) + '@' + e.ms + 'ms').join(' ') + (ledger.length > 40 ? ' …' : '') + ']',
         });
       }
     }

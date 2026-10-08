@@ -423,3 +423,53 @@ export class ExtentsStore {
   clear(): void { this.map.clear(); }
   get size(): number { return this.map.size; }
 }
+
+/* ── first-fit pagination (composer-pagination-design.md, 2026-10-08) ────── */
+
+/** Which lines share a page: greedy first-fit over MEASURED system extents,
+ *  in document order. A page closes when the next system does not fit under
+ *  the minimum-clearance placement (rule v1 — the fold is judged on v1, never
+ *  on the distributed page) or when the next line is a hard page start (a
+ *  user `<pb>`). Push and pull are one predicate read in both directions, so
+ *  the result is a pure function of the extents: nothing iterates, nothing
+ *  oscillates, and a page's membership depends only on the lines before it.
+ *  Returns the page-start LINE INDICES (always starting with 0), or null when
+ *  a line's extents are unknown (`extOf` null) — the caller then stops at
+ *  that line (the assembly frontier) rather than guess. A system taller than
+ *  the page stands alone on its page. */
+export function firstFitLines(
+  lineCount: number,
+  extOf: (li: number) => SysExtents | null,
+  reserveOf: (li: number) => number,
+  hardStart: (li: number) => boolean,
+  k: PageFitConstants,
+  y0Of: (pageNo: number) => number,
+  limitOf: (pageNo: number) => number,
+  tolerance = 0,
+  fromLine = 0,
+  fromPage = 1,
+): { pageStarts: number[]; complete: boolean } {
+  const pageStarts: number[] = [];
+  let items: Array<{ ext: SysExtents; reserve: number }> = [];
+  let pageNo = fromPage;
+  for (let li = fromLine; li < lineCount; li++) {
+    const ext = extOf(li);
+    if (!ext) return { pageStarts, complete: false };
+    const item = { ext, reserve: reserveOf(li) };
+    if (!items.length) {
+      pageStarts.push(li);
+      items.push(item);
+      continue;
+    }
+    let fits = !hardStart(li);
+    if (fits) {
+      const placed = placeSystems(items.concat([item]), k, y0Of(pageNo));
+      fits = foldIndex(placed, limitOf(pageNo), tolerance) < 0;
+    }
+    if (fits) { items.push(item); continue; }
+    pageNo++;
+    pageStarts.push(li);
+    items = [item];
+  }
+  return { pageStarts, complete: true };
+}

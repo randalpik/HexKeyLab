@@ -53,6 +53,8 @@
 // invalidate and no drift to chase.
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
+import { pageFrameOf } from './pageheader.js';
+import { drawPageHeader, type ShellMeta } from './pageshell.js';
 import type { ComposerModel } from '../model/index.js';
 import { expandForSpannersOnce, expandForEndings, mergeGlyphDefs } from './splice.js';
 import { injectPins } from './linebreaks.js';
@@ -123,6 +125,9 @@ export interface PageSpliceCtx {
   /** Fractional device X of a live page's margin group — the horizontal twin,
    *  for `snapSystemRightEdge`'s absolute pixel snap (see postProcess). */
   originPhaseXOf: (pageEl: HTMLElement) => number | undefined;
+  /** What the page header shows (render/pageshell.ts): the reference gate
+   *  draws the live page's Composer header onto its Verovio page. */
+  headerMeta: () => ShellMeta;
   /** Mount a lazily-virtualized page so its systems can be measured and
    *  spliced (B5). Returns false when mounting would be expensive or would
    *  draw POST-edit content — the splice then refuses, as it always did. */
@@ -1060,8 +1065,20 @@ export class PageSystemSplicer {
        landing on new rounding boundaries). The accepted residual is one whole
        device pixel; this makes the comparison say so. */
     const TOL = 10 + 1e-6;
+    /* The reference page's post-processing below can render on THIS toolkit
+       (hide-empty substitution engraves a one-line window for a hidden-staff
+       system), replacing the loaded reference with a one-page window; the next
+       page element then read as "reference lost page N" (sonata p. 7 → 8, the
+       viola solo's one-staff systems, 2026-10-08). Reload before each page
+       after the first. */
+    let refLoaded = true;
     for (const pageEl of pageEls) {
       if (!pageEl.isConnected) continue;   // an emptied page the renderer removed
+      if (!refLoaded) {
+        tk.setOptions(ctx.liveOptions());
+        if (!tk.loadData(mei)) throw new Error('[page-splice] reference reload failed');
+        refLoaded = true;
+      }
       const pno = Number(pageEl.dataset.page);
       if (!(pno >= 1) || pno > tk.getPageCount()) {
         throw new Error(`[page-splice] reference lost page ${pageEl.dataset.page}`);
@@ -1070,6 +1087,11 @@ export class PageSystemSplicer {
       refHost.style.cssText = 'position:absolute;left:-99999px;top:0';
       refHost.innerHTML = tk.renderToSVG(pno, {});
       document.body.appendChild(refHost);
+      /* The live page's header is Composer's (render/pageshell.ts, 2026-10-08);
+         give the reference the same one, or page 1's title block anchors its
+         first system elsewhere. */
+      const refMargin = refHost.querySelector('svg g.page-margin');
+      if (refMargin) drawPageHeader(refMargin, pno, ctx.headerMeta(), pageFrameOf(refMargin).innerW);
       /* Same post-processing the live pages and the window hosts get: the HEJI
          pass replaces key-signature `use` glyphs with injected <text>, so a raw
          reference would compare its E260 flats against a live page that has
@@ -1084,6 +1106,7 @@ export class PageSystemSplicer {
          and the same `g.page-margin` origin, as the vertical `alignStaves`
          transfer below. */
       ctx.postProcess(refHost, undefined, ctx.originPhaseXOf(pageEl));
+      refLoaded = false;   // may have rendered a window on this toolkit
       /* The reference must be prepared EXACTLY as a live page is, decoration
          included. `decorateHost` (styleVoltaNumbers) restyles a tspan inside
          `g.voltaBracket` — font, weight and a trailing '.' — which changes the
@@ -1269,7 +1292,7 @@ const SECTION_TITLE_BAND = 900;
  *    (dW 347 and 604 at the II→III and III→IV boundaries);
  *  - a leading clef on staff 2 is a courtesy clef on staff 2 (dW 49 — a
  *    piano right hand going G→F at a line start). */
-function beginsSignatureChange(meas: Element | undefined): boolean {
+export function beginsSignatureChange(meas: Element | undefined): boolean {
   if (!meas) return false;
   let top: Element = meas;
   while (top.parentElement && top.parentElement.localName !== 'section') top = top.parentElement;

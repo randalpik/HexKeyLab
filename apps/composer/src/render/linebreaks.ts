@@ -117,9 +117,6 @@ function indexCheckEnabled(): boolean {
 
 /** Everything the owner needs from the Renderer. */
 export interface PageBreaksCtx {
-  /** The live toolkit while it still holds the page layout being adopted
-   *  (renderPage's data); null once something else was loaded into it. */
-  layoutToolkit(): VerovioToolkit | null;
   /** Isolated toolkit for offscreen naturals renders (never the live one). */
   naturalsToolkit(): VerovioToolkit;
   /** breaks:'none' options at the current zoom preset with a huge page budget
@@ -504,14 +501,6 @@ function headExtra(model: ComposerModel): string {
 
 /* ── the owner ────────────────────────────────────────────────────────────── */
 
-interface AdoptionTask {
-  nextPage: number;
-  pageCount: number;
-  startIds: string[];
-  /** First line start of each page — the pagination being adopted. */
-  pageStartIds: string[];
-  cancelled: boolean;
-}
 
 /** Diagnostics of one balance pass (edit path, initial band, or one job step). */
 export interface BalanceStats {
@@ -626,7 +615,6 @@ export class PageLineBreaks {
   private sigMoDoc: Document | null = null;
   private sigDirty = new Set<Element>();
   private sigAll = true;
-  private adoption: AdoptionTask | null = null;
   /** Line starts the last refill actually MOVED (0 = the edit changed content
    *  only and no boundary shifted — the common, desired case). Diagnostics
    *  and tests read it; fixtures assert 0 for no-op-equivalent edits. */
@@ -668,8 +656,6 @@ export class PageLineBreaks {
     this.sigDirty.clear();
     this.sigAll = true;
     this.budgetW = 0;
-    if (this.adoption) this.adoption.cancelled = true;
-    this.adoption = null;
   }
 
   /** Own the partition of `viewStaves` (null = every staff). A subset other
@@ -808,10 +794,9 @@ export class PageLineBreaks {
     return true;
   }
 
-  /** True when a refill attempt is worth making (adopted, or adoption armed
-   *  and finishable). */
+  /** True when a refill attempt is worth making (a partition is owned). */
   canAttemptRefill(): boolean {
-    return this.startIds !== null || this.adoption !== null;
+    return this.startIds !== null;
   }
 
   /** True when the doc is actually being line-break-owned (a multi-line
@@ -821,24 +806,85 @@ export class PageLineBreaks {
     return this.startIds !== null && this.startIds.length > 1;
   }
 
-  /* ── adoption ─────────────────────────────────────────────────────────── */
+  /* ── the seed partition (composer-pagination-design.md, 2026-10-08) ─────── */
 
-  /** Adopt the partition Verovio just cast off, read from PAGE-BASED MEI
-   *  (`getMEI({scoreBased:false})` → `<page>`/`<system>` wrappers) instead of
-   *  rendering every page to SVG. Measured on the sonata: ~100 ms vs ~1830 ms
-   *  for the SVG walk, producing a byte-identical partition (118 lines /
-   *  37 pages). Being both cheap and SYNCHRONOUS is what matters: the caller
-   *  can adopt and then immediately paint the pinned `encoded` render, so the
-   *  castoff pass becomes an internal bootstrap the user never sees — one
-   *  break algorithm on screen, always, and no first-edit transition.
-   *
-   *  `tk` must hold the castoff layout (loadData done, nothing else needed).
-   *  Returns false when the output can't be read, and the caller falls back to
-   *  painting the castoff layout + arming the idle SVG walk. */
-  adoptFromCastoff(model: ComposerModel, tk: VerovioToolkit): boolean {
-    const read = partitionFromLayout(tk);
-    if (!read) return false;
-    return this.adoptPartition(model, read.lines, read.pages);
+  /** The partition a fresh derive starts from, computed from Composer's own
+   *  measurements — no Verovio castoff anywhere. Every natural width is
+   *  measured first (`warmAllNaturals`), then each SECTION (document start +
+   *  every hard start: user `<sb>`/`<pb>`, section breaks) is filled greedily
+   *  at cap 1.0 — "a line never compresses past its natural width" — which is
+   *  the same `greedyLines` count the balancer uses, so the balance that
+   *  follows (`balanceInitialBand`, λ = 0) only redistributes measures within
+   *  a section's lines. Returns the seed lines (start-measure ids) — ONE line
+   *  for a document that fits on one — or null when nothing could be measured.
+   *  A multi-line seed is adopted (the owner then carries it across edits);
+   *  a one-line document is never owned (tryRefill's rule) and the renderer
+   *  assembles its single page from the returned line directly. */
+  seedPartition(model: ComposerModel, ctx: PageBreaksCtx, budget: number): string[] | null {
+    const meiMeasures = model.allMeasures();
+    if (!meiMeasures.length) return null;
+    const ids = measureIds(meiMeasures);
+    this.invalidate();
+    this.budgetW = budget;
+    this.viewKey = viewKeyOf(this.viewStaves);
+    this.ensureSigCtx(model, meiMeasures, ids, ctx);
+    if (!this.warmAllNaturals(model, ctx)) {
+      console.warn('[page-breaks] could not measure every natural — seeding with what is cached');
+    }
+    const hard = hardStartIds(model);
+    const units = model.renderUnits(this.viewStaves);
+    const starts: number[] = [0];
+    let acc = this.sigWForLine(0) ?? 0;
+    for (let i = 0; i < ids.length;) {
+      const [uLo, uHi] = units.unitOf(i);
+      let w = 0;
+      for (let k = uLo; k <= Math.min(uHi, ids.length - 1); k++) w += this.naturals.get(ids[k]) ?? 0;
+      const lineStart = starts[starts.length - 1];
+      if (i !== lineStart && (hard.has(ids[i]) || acc + w > budget)) {
+        starts.push(i);
+        acc = (this.sigWForLine(i) ?? 0) + w;
+      } else {
+        acc += w;
+      }
+      i = uHi + 1;
+    }
+    const lines = starts.map((i) => ids[i]);
+    if (lines.length > 1) {
+      this.adoptPartition(model, lines, []);
+    } else {
+      /* A one-line document is never OWNED (tryRefill's rule: it derives on
+         every edit), but it is registered — signatures baselined, the one
+         start held — so the next render's refill bails with its reason
+         ('single-line partition') instead of an unattributed derive. */
+      this.userBreakSig = computeUserBreakSig(model);
+      this.sigState = captureSigState(model.getDoc(), headExtra(model));
+      this.captureSigs(model.getDoc(), meiMeasures, ids);
+      this.startIds = lines;
+      this.pageStartIds = [];
+    }
+    return lines;
+  }
+
+  /** The page starts the renderer's first-fit assembly decided (any prefix of
+   *  the final list while pages are still closing). Validated like
+   *  `replacePageStarts` — every id a line start, page 1 the document start,
+   *  strictly ascending — and refused otherwise. */
+  setPageStarts(pages: string[]): boolean {
+    if (this.startIds === null) {
+      /* A one-line document is not owned; its single page needs no pin. */
+      this.pageStartIds = [];
+      return pages.length <= 1;
+    }
+    const pos = new Map(this.startIds.map((id, i) => [id, i]));
+    if (pages.length && pages[0] !== this.startIds[0]) return false;
+    let prev = -1;
+    for (const id of pages) {
+      const p = pos.get(id);
+      if (p == null || p <= prev) return false;
+      prev = p;
+    }
+    this.pageStartIds = pages.slice();
+    return true;
   }
 
   /** Copies of the width caches for the renderer's partition cache (see
@@ -920,81 +966,12 @@ export class PageLineBreaks {
     const lineSet = new Set(lines);
     if (pages.length && pages[0] !== lines[0]) return false;
     if (!pages.every((id) => lineSet.has(id))) return false;
-    if (this.adoption) { this.adoption.cancelled = true; this.adoption = null; }
     this.userBreakSig = computeUserBreakSig(model);
     this.sigState = captureSigState(model.getDoc(), headExtra(model));
     this.captureSigs(model.getDoc(), meiMeasures, ids);
     this.startIds = lines.slice();
     this.pageStartIds = pages.slice();
     this.lastDeriveReason = '';
-    return true;
-  }
-
-  /** Arm lazy partition adoption right after a derive render: the live toolkit
-   *  holds the rendered layout; read each page's system starts in idle slices
-   *  so the (~2 s on a large score) walk never blocks an interaction. */
-  armAdoption(model: ComposerModel, pageCount: number, ctx: PageBreaksCtx): void {
-    this.invalidate();
-    this.userBreakSig = computeUserBreakSig(model);
-    this.sigState = captureSigState(model.getDoc(), headExtra(model));
-    /* Signatures of the doc state this layout renders — captured NOW, in the
-       same synchronous block as the derive render, so the idle-completed
-       partition and the sig baseline describe the same document. */
-    const meiMeasures = model.allMeasures();
-    this.captureSigs(model.getDoc(), meiMeasures, measureIds(meiMeasures));
-    const task: AdoptionTask = { nextPage: 1, pageCount, startIds: [], pageStartIds: [], cancelled: false };
-    this.adoption = task;
-    const step = (): void => {
-      if (task.cancelled) return;
-      const tk = ctx.layoutToolkit();
-      if (!tk) { task.cancelled = true; this.adoption = null; return; }
-      const budget = performance.now() + 40;
-      while (task.nextPage <= task.pageCount && performance.now() < budget) {
-        const starts = systemStartsFromPageSvg(tk.renderToSVG(task.nextPage, {}));
-        if (starts.length) task.pageStartIds.push(starts[0]);
-        task.startIds.push(...starts);
-        task.nextPage++;
-      }
-      if (task.nextPage > task.pageCount) {
-        this.commitAdoption(task);
-        return;
-      }
-      scheduleIdle(step);
-    };
-    scheduleIdle(step);
-  }
-
-  /** Finish an in-flight adoption synchronously (an edit arrived first). */
-  private finishAdoptionNow(ctx: PageBreaksCtx): boolean {
-    const task = this.adoption;
-    if (!task || task.cancelled) return this.startIds !== null;
-    const tk = ctx.layoutToolkit();
-    if (!tk) { task.cancelled = true; this.adoption = null; return false; }
-    while (task.nextPage <= task.pageCount) {
-      const starts = systemStartsFromPageSvg(tk.renderToSVG(task.nextPage, {}));
-      if (starts.length) task.pageStartIds.push(starts[0]);
-      task.startIds.push(...starts);
-      task.nextPage++;
-    }
-    return this.commitAdoption(task);
-  }
-
-  private commitAdoption(task: AdoptionTask): boolean {
-    /* Only the CURRENT task may commit — once. `finishAdoptionNow` completes a
-       walk synchronously when an edit arrives, but the task's already-scheduled
-       idle `step` still fires later; with `nextPage` past `pageCount` it skipped
-       straight here and RE-INSTALLED the task's stale start list over the
-       partition the refill had just committed (2026-09-01: the between-fixture
-       blank-document adoption, finished with ONE start during the next fixture's
-       setup, re-committed that one-line partition 150 ms after the fixture's
-       second splice — intermittent, order-dependent, traced by a setter trap on
-       `startIds`). A superseded or already-committed task must never write. */
-    if (this.adoption !== task || task.cancelled) return false;
-    this.adoption = null;
-    task.cancelled = true;
-    if (task.startIds.length === 0) return false;
-    this.startIds = task.startIds;
-    this.pageStartIds = task.pageStartIds;
     return true;
   }
 
@@ -1017,7 +994,7 @@ export class PageLineBreaks {
   ): RefillResult | null {
     const bail = (why: string): null => { this.lastDeriveReason = why; return null; };
     this.setView(viewStaves);
-    if (this.startIds === null && !this.finishAdoptionNow(ctx)) return bail('no adoptable partition');
+    if (this.startIds === null) return bail('no owned partition');
     if (this.startIds!.length <= 1) return bail('single-line partition');
     /* User breaks. A page break or section header change still derives; a
        MANUAL LINE BREAK — a plain <sb>, `lock:` in the sig — is a partition
@@ -1699,9 +1676,12 @@ export class PageLineBreaks {
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; touched = true; }
     }
     if (touched) {
-      const newStarts = starts.map((i) => ids[i]);
-      this.startIds = newStarts;
-      this.pageStartIds = pageLines.map((li) => newStarts[li]);
+      /* Lines only. Pages are no longer carried by line index from a castoff
+         (composer-pagination-design.md): the renderer decides them from the
+         measured systems after the balance and commits them with
+         `setPageStarts`. */
+      this.startIds = starts.map((i) => ids[i]);
+      this.pageStartIds = [];
     }
     lb.ms = Math.round(performance.now() - t0);
   }
@@ -1849,7 +1829,7 @@ export class PageLineBreaks {
        sigWAt then reports misses instead of inventing a yardstick. */
     this.sigCtxKeys = out.length === meiMeasures.length && meiMeasures.every((m) => seen.has(m)) ? out : [];
     this.sigCtxVer = ver;
-    this.measureAllSigCtx(model, ids, ctx);
+    this.measureAllSigCtx(model, meiMeasures, ids, ctx);
   }
 
   /** Measure the leading clef+key width of EVERY signature context in the
@@ -1865,7 +1845,7 @@ export class PageLineBreaks {
    *  because some measure carries it. Widths depend on the context alone, not
    *  on document content, so they survive edits and are measured at most once
    *  per context per document load (cleared only by `invalidate`). */
-  private measureAllSigCtx(model: ComposerModel, ids: string[], ctx: PageBreaksCtx): void {
+  private measureAllSigCtx(model: ComposerModel, meiMeasures: Element[], ids: string[], ctx: PageBreaksCtx): void {
     if (!this.sigCtxKeys.length) { this.sigCtxPending = 0; return; }
     const firstIdx = new Map<string, number>();
     this.sigCtxKeys.forEach((k, i) => { if (!firstIdx.has(k)) firstIdx.set(k, i); });
@@ -1873,7 +1853,15 @@ export class PageLineBreaks {
     let measured = 0;
     for (const [key, idx] of firstIdx) {
       if (this.sigWByCtx.has(key)) continue;
-      const hi = Math.min(ids.length - 1, idx + 1);
+      let hi = Math.min(ids.length - 1, idx + 1);
+      /* Cover the spanners the two-measure window would cut (a slur leaving
+         measure 2 for measure 4), the way `measureWindow` does: a cut spanner
+         is a Verovio warning on every first render, since the seed measures
+         every context up front. The head stays at `idx` — the window's first
+         measure is the one that draws the signature — so only the tail grows;
+         past the cap, the bare window is measured and the warning tolerated. */
+      const [elo, ehi] = expandForEndings(meiMeasures, ...expandForSpanners(meiMeasures, idx, hi, model.docVersion()));
+      if (elo === idx && ehi - idx + 1 <= WINDOW_CAP) hi = ehi;
       let ok = false;
       try {
         const sub = model.serializeRangeForRender(idx, hi, { hejiEnabled: model.getHejiEnabled() }, this.viewStaves);
@@ -1969,7 +1957,10 @@ export class PageLineBreaks {
     const pageOf = new Map(this.pageStartIds.map((id, i) => [id, i + 1]));
     let ok = true;
     let prevEnd = -1;
-    for (const page of Array.from(container.querySelectorAll('.score-page:not(.score-page-pending)'))) {
+    /* A page the assembler is still BUILDING (pageassembly.ts: its systems
+       are being added and its start is not committed until it closes) is not
+       a rendered page yet — it reads as a page with an unpinned start. */
+    for (const page of Array.from(container.querySelectorAll('.score-page:not(.score-page-pending):not(.score-page-building)'))) {
       const starts: string[] = [];
       for (const sys of Array.from(page.querySelectorAll('g.system'))) {
         const first = sys.querySelector('g.measure');
@@ -1993,8 +1984,7 @@ export class PageLineBreaks {
       if (indexCheckEnabled()) {
         throw new Error('[page-breaks] rendered partition diverged from the pinned one (castoff override?)');
       }
-      console.warn('[page-breaks] rendered partition diverged from pins — re-adopting from the rendered layout');
-      this.armAdoption(model, pageCount, ctx);
+      console.warn('[page-breaks] rendered partition diverged from pins');
     }
     return ok;
   }

@@ -192,7 +192,7 @@ const runEdit = async (name, editFn, expect) => {
   entry.refillLines = pb.lastRefillLines;
   /* Phase 2: how the overflow cascade landed (transplant / arithmetic / park / created). */
   entry.cascade = r.lastCascade ? { ...r.lastCascade } : null;
-  entry.derive = pb['adoption'] !== null;
+  entry.derive = ps.lastOutcome !== 'spliced' && ps.lastOutcome !== 'noop';   /* adoption is gone (2026-10-08): a derive is any non-splice outcome */
   if (entry.derive) await waitFor(() => pb['startIds'] !== null, 60000, 200);
   await mountAll();
   entry.reference = referenceCompare();
