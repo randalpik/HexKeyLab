@@ -27,7 +27,7 @@ import {
   SECTION_HEADER_RESERVE, type PageFitConstants, type SysExtents,
 } from './pagefit.js';
 import { createPageShell, renumberPageHeader, type ShellGeom, type ShellMeta } from './pageshell.js';
-import { renderLineSystem, styleTextOf, type LineRenderCtx } from './systemrender.js';
+import { renderLineSystem, renderLineSystems, CHUNK_LINES, styleTextOf, type LineRenderCtx, type RenderedLine } from './systemrender.js';
 import { mergeGlyphDefs } from './splice.js';
 
 /** What the assembler needs from the renderer. */
@@ -42,8 +42,10 @@ export interface AssemblyHost {
   fitConstants(): PageFitConstants;
   /** SVG user units per device pixel (1000 / scale). */
   gridUser(): number;
-  /** Renderer.postProcessRendered on `div` for exactly `scope`. */
-  postProcess(div: HTMLElement, scope: Element[]): void;
+  /** Renderer.postProcessRendered on `div` for exactly `scope` — after the
+   *  hide-empty substitution, which may REPLACE a system; returns the systems
+   *  now in the DOM, which is what a caller must measure and move. */
+  postProcess(div: HTMLElement, scope: Element[]): Element[];
   /** Content-level decoration (volta numbers) — idempotent. */
   decorate(div: HTMLElement): void;
   /** Renderer.placePage: rule v1 + v2 over the page, extents into the store. */
@@ -81,19 +83,39 @@ interface Job {
   t0: number;
   syncMs: number;
   renderMs: number;
+  /** Systems rendered ahead by the last chunk window, by line index. */
+  prepared: Map<number, RenderedLine>;
+  /** Document version the prepared systems were rendered from: an edit while
+   *  the assembly is in flight stales them (a hide-empty toggle swapped a
+   *  stale three-staff system out from under the step, 2026-10-09). */
+  preparedVer: number;
 }
 
 const BUILDING = 'score-page-building';
 const PENDING = 'score-page-pending';
-const IDLE_BUDGET_MS = 40;
-
+/** A slice of assembly work between yields. Each yield is a macrotask hop
+ *  (MessageChannel), not an idle callback: `requestIdleCallback` waited for
+ *  the browser to declare idle time after every slice, and with a slice
+ *  holding one line (68 ms on the sonata) that was ~2 s of waiting across a
+ *  load (2026-10-08). A macrotask hop still lets input and painting through
+ *  between slices; the slice length bounds how long they wait. */
+const IDLE_BUDGET_MS = 60;
+const yieldPort = typeof MessageChannel !== 'undefined' ? new MessageChannel() : null;
+const yieldCbs = new Map<number, () => void>();
+let yieldSeq = 0;
+if (yieldPort) {
+  yieldPort.port1.onmessage = (e: MessageEvent<number>) => {
+    const cb = yieldCbs.get(e.data);
+    if (cb) { yieldCbs.delete(e.data); cb(); }
+  };
+}
 const scheduleIdle = (cb: () => void): number => {
-  const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
-  return ric ? ric(cb, { timeout: 200 }) : (setTimeout(cb, 0) as unknown as number);
+  const id = ++yieldSeq;
+  if (yieldPort) { yieldCbs.set(id, cb); yieldPort.port2.postMessage(id); return id; }
+  return setTimeout(cb, 0) as unknown as number;
 };
 const cancelIdle = (h: number): void => {
-  const cic = (globalThis as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback;
-  if (cic) cic(h); else clearTimeout(h);
+  if (yieldPort) yieldCbs.delete(h); else clearTimeout(h);
 };
 
 export class PageAssembler {
@@ -118,9 +140,19 @@ export class PageAssembler {
   /** Measures preceded by a user `<pb>`: hard page starts. */
   private pbStarts = new Set<string>();
   private keepScroll: { top: number; left: number } | null = null;
+  /** Page cards expected for this assembly (the previous count on a zoom or
+   *  page-scale change, the cached pagination on a round trip, page 1's
+   *  estimate on a fresh load) — placeholders exist for all of them from the
+   *  first paint, and the count is corrected only when the assembly ends with
+   *  a different total. Null until known. */
+  private expected: number | null = null;
   lastStats: AssemblyStats = { lines: 0, pages: 0, syncMs: 0, totalMs: 0, renderMs: 0 };
   /** Diagnostics of the last repagination (fixtures and the sweep read it). */
-  lastRepaginate = { fromPage: 0, rebuiltPages: 0, movedSystems: 0, pagesBefore: 0, pagesAfter: 0, ms: 0 };
+  lastRepaginate = { fromPage: 0, rebuiltPages: 0, movedSystems: 0, renderedLines: 0, pagesBefore: 0, pagesAfter: 0, ms: 0 };
+  /** Pages applyPartition rebuilt on its last run (the renderer's touched set). */
+  lastRebuiltPages: HTMLElement[] = [];
+  /** Parked pages whose post passes must re-run on mount (a rescale). */
+  private needsPost = new Set<number>();
 
   constructor(private readonly host: AssemblyHost, private readonly pageBreaks: PageLineBreaks, private readonly extents: ExtentsStore) {}
 
@@ -176,18 +208,61 @@ export class PageAssembler {
   /** Start assembling `lines` (the owner's, or a single unowned line) into a
    *  cleared container. Synchronous until the page holding `targetMeasure`
    *  closes (page 1 when unknown), then idle slices. */
-  begin(lines: string[], docVer: number, targetMeasure: number | null): void {
+  begin(lines: string[], docVer: number, targetMeasure: number | null, expectedPages: number | null = null, scrollScale = 1): void {
     this.cancel();
     this.reset();
     this.seedLines = lines.slice();
     const c = this.host.container;
-    this.keepScroll = { top: c.scrollTop, left: c.scrollLeft };
+    /* `scrollScale` = new card height / old card height on a re-assembly of
+       the same document (zoom, page scale): the reader stays on the same
+       page, not at the same pixel. */
+    this.keepScroll = { top: c.scrollTop * scrollScale, left: c.scrollLeft * scrollScale };
     c.innerHTML = '';
     this.pbStarts = this.readPbStarts();
+    /* Card geometry is the shell's (createPageShell) — known before anything
+       renders — so every expected page gets its card now and the scroll
+       position survives the first paint (Max, 2026-10-08: the card count
+       stays constant unless the total is actually different). */
+    const g = this.host.shellGeom();
+    this.pageW = g.pageWidth * g.scale / 100;
+    this.pageH = g.pageHeight * g.scale / 100;
+    this.expected = expectedPages !== null && expectedPages >= 1 ? Math.floor(expectedPages) : null;
+    if (this.expected !== null) { this.ensurePlaceholders(this.expected); this.restoreScroll(); }
     const target = targetMeasure === null ? -1 : this.lineOfMeasure(targetMeasure);
-    this.job = { docVer, nextLine: 0, cancelled: false, targetLine: Math.max(0, target), targetClosed: false, idle: null, t0: performance.now(), syncMs: 0, renderMs: 0 };
+    this.job = { docVer, nextLine: 0, cancelled: false, targetLine: Math.max(0, target), targetClosed: false, idle: null, t0: performance.now(), syncMs: 0, renderMs: 0, prepared: new Map(), preparedVer: docVer };
     this.runSync(() => this.job?.targetClosed === true);
     this.scheduleSlice();
+  }
+
+  /** Blank, sized cards for pages 1..n that have none yet (appended at the
+   *  end, so nothing above moves). */
+  private ensurePlaceholders(n: number): void {
+    const c = this.host.container;
+    let maxP = 0;
+    for (const div of Array.from(c.querySelectorAll('.score-page')) as HTMLElement[]) maxP = Math.max(maxP, Number(div.dataset.page) || 0);
+    for (let p = maxP + 1; p <= n; p++) {
+      const div = c.ownerDocument.createElement('div');
+      div.className = 'score-page ' + PENDING;
+      div.dataset.page = String(p);
+      div.style.width = this.pageW + 'px';
+      div.style.height = this.pageH + 'px';
+      c.appendChild(div);
+    }
+  }
+
+  private restoreScroll(): void {
+    if (!this.keepScroll) return;
+    this.host.container.scrollTop = this.keepScroll.top;
+    this.host.container.scrollLeft = this.keepScroll.left;
+    this.keepScroll = null;
+  }
+
+  /** Cards in the container for pages ≥ 1 (built or placeholder) — what the
+   *  next assembly of the same document should expect. */
+  cardCount(): number {
+    let n = 0;
+    for (const div of Array.from(this.host.container.querySelectorAll('.score-page')) as HTMLElement[]) n = Math.max(n, Number(div.dataset.page) || 0);
+    return Math.max(n, this.pageCount);
   }
 
   /** Run the job to completion now (an edit, a far mount, the PDF export). */
@@ -266,7 +341,18 @@ export class PageAssembler {
     }
     const li = job.nextLine;
     const tr = performance.now();
-    const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
+    /* One window per CHUNK_LINES lines: the systems rendered ahead wait in
+       `prepared` and are consumed one line per step. */
+    const ver = this.host.model().docVersion();
+    if (job.preparedVer !== ver) { job.prepared.clear(); job.preparedVer = ver; }
+    let rl = job.prepared.get(li) ?? null;
+    if (!rl) {
+      job.prepared.clear();
+      const chunk = renderLineSystems(this.host.model(), lines, li, Math.min(lines.length, li + CHUNK_LINES), this.host.measureIds(), this.host.lineRenderCtx());
+      for (const [k, v] of chunk) job.prepared.set(k, v);
+      rl = job.prepared.get(li) ?? null;
+    }
+    job.prepared.delete(li);
     job.renderMs += performance.now() - tr;
     if (!rl) {
       console.warn('[page-assembly] line ' + li + ' (' + lines[li] + ') could not be rendered — skipped');
@@ -276,12 +362,14 @@ export class PageAssembler {
     if (!this.styleText) this.styleText = styleTextOf(rl.host);
     if (!this.open) this.openPage(this.pageCount + 1);
     const open = this.open!;
-    const sys = this.importSystem(rl.system, rl.host, open.div);
-    this.host.postProcess(open.div, [sys]);
+    const imported = this.importSystem(rl.system, rl.host, open.div);
+    /* The passes may REPLACE the system (hide-empty substitution): measure and
+       move what is in the DOM afterwards, never the import. */
+    const sys = this.host.postProcess(open.div, [imported])[0] ?? imported;
     alignStaffRows(sys, this.host.gridUser());
     const ext = measureExtents(sys as SVGGraphicsElement);
     if (ext) this.extents.set(lines[li], ext);
-    else console.warn('[page-assembly] line ' + lines[li] + ' has no readable extents');
+    else console.warn('[page-assembly] line ' + lines[li] + ' has no readable extents (assembly step)');
     if (!this.fitsOnOpen(lines[li])) {
       /* Out BEFORE the page closes: rule v2 distributes over the page's
          systems, so a candidate still in the margin would be counted and the
@@ -300,6 +388,10 @@ export class PageAssembler {
   private finishJob(job: Job): void {
     if (this.job !== job) return;
     this.job = null;
+    /* The total is known now: cards past it were an estimate and go. */
+    for (const div of Array.from(this.host.container.querySelectorAll('.score-page.' + PENDING)) as HTMLElement[]) {
+      if ((Number(div.dataset.page) || 0) > this.pageCount) div.remove();
+    }
     this.lastStats = {
       lines: this.lines().length, pages: this.pageCount,
       syncMs: Math.round(job.syncMs), totalMs: Math.round(performance.now() - job.t0), renderMs: Math.round(job.renderMs),
@@ -308,14 +400,29 @@ export class PageAssembler {
 
   private openPage(pageNo: number): void {
     const doc = this.host.container.ownerDocument;
-    const div = doc.createElement('div');
-    div.className = 'score-page ' + BUILDING;
-    div.dataset.page = String(pageNo);
     const shell = createPageShell(doc, this.host.shellGeom(), pageNo, this.host.shellMeta(), this.styleText);
+    /* Take over the page's placeholder card in place when there is one. */
+    const existing = this.pageDiv(pageNo);
+    let div: HTMLElement;
+    if (existing && existing.classList.contains(PENDING) && !this.parked.has(pageNo)) {
+      div = existing;
+      div.innerHTML = '';
+      div.classList.remove(PENDING);
+      div.style.removeProperty('width');
+      div.style.removeProperty('height');
+      div.classList.add(BUILDING);
+    } else {
+      div = doc.createElement('div');
+      div.className = 'score-page ' + BUILDING;
+      div.dataset.page = String(pageNo);
+      /* Before the first card numbered past it (an estimate's placeholders), else last. */
+      let before: HTMLElement | null = null;
+      for (const d of Array.from(this.host.container.querySelectorAll('.score-page')) as HTMLElement[]) {
+        if ((Number(d.dataset.page) || 0) > pageNo) { before = d; break; }
+      }
+      if (before) before.before(div); else this.host.container.appendChild(div);
+    }
     div.appendChild(shell.svg);
-    const all = this.host.container.querySelectorAll('.score-page');
-    const last = all.length ? all[all.length - 1] : null;
-    if (last) last.after(div); else this.host.container.appendChild(div);
     this.pageCount = pageNo;
     this.open = { pageNo, div, lines: [] };
   }
@@ -337,14 +444,23 @@ export class PageAssembler {
     const next = open.pageNo === 1 ? [open.lines[0]] : starts.concat([open.lines[0]]);
     if (!this.pageBreaks.setPageStarts(next)) console.warn('[page-assembly] page start refused for page ' + open.pageNo);
     if (open.pageNo === 1) {
+      /* The real card box (border included) sizes the placeholders. */
       const box = open.div.getBoundingClientRect();
-      this.pageW = box.width || 800;
-      this.pageH = box.height || 1000;
-      if (this.keepScroll) {
-        this.host.container.scrollTop = this.keepScroll.top;
-        this.host.container.scrollLeft = this.keepScroll.left;
-        this.keepScroll = null;
+      if (box.width && box.height && (Math.abs(box.width - this.pageW) > 0.5 || Math.abs(box.height - this.pageH) > 0.5)) {
+        this.pageW = box.width;
+        this.pageH = box.height;
+        for (const d of Array.from(this.host.container.querySelectorAll('.score-page.' + PENDING)) as HTMLElement[]) {
+          d.style.width = this.pageW + 'px';
+          d.style.height = this.pageH + 'px';
+        }
       }
+      /* A fresh load has no expected count: estimate it from page 1 — still
+         inside the synchronous burst, so the first paint shows every card. */
+      if (this.expected === null) {
+        this.expected = Math.max(1, Math.ceil(this.lines().length / Math.max(1, open.lines.length)));
+        this.ensurePlaceholders(this.expected);
+      }
+      this.restoreScroll();
     }
     const job = this.job;
     if (job && !job.targetClosed) {
@@ -410,9 +526,13 @@ export class PageAssembler {
   /* ── mount / unmount (no render) ─────────────────────────────────────── */
 
   /** Attach a parked page. True when the page is mounted afterwards. */
-  mount(p: number): boolean {
+  mount(p: number, build = true): boolean {
     if (this.mounted.has(p)) return true;
     if (!this.isBuilt(p)) {
+      /* An unbuilt page is a blank card until the assembly reaches it; only a
+         caller that must have it now (the cursor's page, an edit, the export)
+         builds synchronously — the scroll path (`build: false`) never does. */
+      if (!build) return false;
       this.ensurePageBuilt(p);
       if (this.mounted.has(p)) return true;
     }
@@ -433,8 +553,73 @@ export class PageAssembler {
     this.parked.delete(p);
     this.mounted.add(p);
     this.host.applyTheme(div);
+    if (this.needsPost.has(p)) {
+      this.needsPost.delete(p);
+      delete (div as HTMLElement & { __hklPhaseX?: unknown }).__hklPhaseX;
+      this.host.postProcess(div, this.systemsOf(svg));
+    }
     if (this.needsPlace.has(p)) { this.needsPlace.delete(p); this.host.placePage(div); }
     return true;
+  }
+
+  /** Zoom is visual-only: the inner SVG coordinates, viewBox and margin are
+   *  identical at every zoom; only the card's outer size and the device-grid
+   *  placement differ (measured on the sonata, 2026-10-09). So a zoom renders
+   *  NOTHING: every shell is resized, every built page gets its post passes
+   *  (the crisp snaps, the grid-dependent instrument gaps) and its placement
+   *  again at the new scale — mounted pages now, parked pages on mount — and
+   *  the kept scroll position scales with the cards so the reader stays on the
+   *  same page. Before this a zoom was a full re-assembly (20 s in Firefox). */
+  rescale(scrollScale: number): void {
+    this.finishSync();
+    const g = this.host.shellGeom();
+    this.pageW = g.pageWidth * g.scale / 100;
+    this.pageH = g.pageHeight * g.scale / 100;
+    const c = this.host.container;
+    const top = c.scrollTop * scrollScale, left = c.scrollLeft * scrollScale;
+    for (let p = 1; p <= this.pageCount; p++) {
+      const root = this.rootOf(p);
+      if (!root) continue;
+      root.setAttribute('width', this.pageW + 'px');
+      root.setAttribute('height', this.pageH + 'px');
+      const div = this.pageDiv(p);
+      if (this.mounted.has(p) && div) {
+        delete (div as HTMLElement & { __hklPhaseX?: unknown }).__hklPhaseX;
+        this.host.postProcess(div, this.systemsOf(root));
+        this.host.placePage(div);
+      } else {
+        this.needsPost.add(p);
+        this.needsPlace.add(p);
+        if (div) { div.style.width = this.pageW + 'px'; div.style.height = this.pageH + 'px'; }
+      }
+    }
+    c.scrollTop = top;
+    c.scrollLeft = left;
+  }
+
+  /** The line starts the built pages render, in order — the partition the DOM
+   *  holds (every page built). */
+  domLineStarts(): string[] {
+    this.finishSync();
+    const out: string[] = [];
+    for (let p = 1; p <= this.pageCount; p++) {
+      const root = this.rootOf(p);
+      if (!root) continue;
+      for (const sys of this.systemsOf(root)) { const id = sys.querySelector('g.measure')?.id; if (id) out.push(id); }
+    }
+    return out;
+  }
+
+  /** The first line of every built page, in order. */
+  domPageStarts(): string[] {
+    this.finishSync();
+    const out: string[] = [];
+    for (let p = 1; p <= this.pageCount; p++) {
+      const root = this.rootOf(p);
+      const id = root ? this.systemsOf(root)[0]?.querySelector('g.measure')?.id : undefined;
+      if (id) out.push(id);
+    }
+    return out;
   }
 
   /** Detach a mounted page into the park, leaving a sized placeholder. */
@@ -532,29 +717,98 @@ export class PageAssembler {
   }
   private static seq = 0;
 
-  /** After a landed splice: first-fit from the first touched page over the
-   *  store, rebuild the pages whose membership changed, up to the first page
-   *  whose start is unchanged. Returns false when the pins could not be
-   *  committed (the caller derives). */
+  /** After a landed splice: pages re-fit from the first touched page over the
+   *  store (lines unchanged, the hunk's extents already refreshed by the
+   *  splice's placePage) — `applyPartition` with nothing to render. */
   repaginateFrom(touched: number[]): boolean {
+    return this.applyPartition(this.lines(), new Set(), touched);
+  }
+
+  /** THE edit operation (composer-pagination-design.md, "Every edit is a
+   *  splice", 2026-10-08). `oldLines` is the partition the DOM renders,
+   *  `this.lines()` the one the refill just committed, `changedIds` the lines
+   *  whose content or render context changed (the refill's changed run, by
+   *  line start). A line is re-rendered when it is in that set or when its
+   *  member set differs from what its system was drawn with (same start,
+   *  different end): the fresh system is engraved into a hidden staging shell,
+   *  post-processed and measured there, exactly as the assembly measures a
+   *  line. Every other line is reused from the DOM with its stored extents —
+   *  no Verovio call for an unchanged line. Pages are then first-fit from one
+   *  page before the first affected line (a changed line that starts a page
+   *  may fit on the page before) and rebuilt by moving systems between
+   *  shells; pages past the last changed one are kept and renumbered.
+   *  `touched` names pages whose extents a splice refreshed in place, or the
+   *  page of a changed break: they re-fit even with no line change. False
+   *  when the page starts could not be committed (the caller re-assembles). */
+  applyPartition(oldLines: readonly string[], changedIds: ReadonlySet<string>, touched: number[]): boolean {
     const t0 = performance.now();
     this.finishSync();
+    this.lastRebuiltPages = [];
+    this.pbStarts = this.readPbStarts();
     const lines = this.lines();
     const pages = this.pageBreaks.pageStarts();
-    const stats = { fromPage: 0, rebuiltPages: 0, movedSystems: 0, pagesBefore: this.pageCount, pagesAfter: this.pageCount, ms: 0 };
+    const stats = { fromPage: 0, rebuiltPages: 0, movedSystems: 0, renderedLines: 0, pagesBefore: this.pageCount, pagesAfter: this.pageCount, ms: 0 };
     this.lastRepaginate = stats;
-    if (!lines.length || !pages.length || !touched.length) { stats.ms = performance.now() - t0; return true; }
-    /* Start one page BEFORE the first touched page: a changed line that
+    if (!lines.length || !pages.length) { stats.ms = performance.now() - t0; return true; }
+    const lineIdx = new Map(lines.map((id, i) => [id, i]));
+    const oldIdx = new Map(oldLines.map((id, i) => [id, i]));
+
+    /* Lines that need a fresh system, and the first line about which anything
+       differs from the DOM: content, membership, or index. */
+    const needRender = new Set<string>();
+    let firstAffected = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+      const id = lines[i];
+      const oi = oldIdx.get(id);
+      const newEnd = i + 1 < lines.length ? lines[i + 1] : '';
+      const oldEnd = oi === undefined ? null : (oi + 1 < oldLines.length ? oldLines[oi + 1] : '');
+      if (changedIds.has(id) || oi === undefined || oldEnd !== newEnd) needRender.add(id);
+      if ((needRender.has(id) || oi !== i) && i < firstAffected) firstAffected = i;
+    }
+    /* The committed page starts as NEW line indices (−1 when that line is gone). */
+    const pageStartLines = pages.map((id) => lineIdx.get(id) ?? -1);
+    const pageOfLineIdx = (li: number): number => {
+      let p = 0;
+      for (let i = 0; i < pageStartLines.length; i++) if (pageStartLines[i] >= 0 && pageStartLines[i] <= li) p = i + 1;
+      return Math.max(1, p);
+    };
+    let fromLine = firstAffected < lines.length ? firstAffected : -1;
+    const touchedPages = touched.filter((p) => p >= 1 && p <= pages.length);
+    if (touchedPages.length) {
+      const tl = pageStartLines[Math.min(...touchedPages) - 1];
+      if (tl >= 0 && (fromLine < 0 || tl < fromLine)) fromLine = tl;
+    }
+    if (fromLine < 0) { stats.ms = performance.now() - t0; return true; }   // nothing differs
+    /* Start one page BEFORE the first affected page: a changed line that
        starts a page may have shrunk enough to go back onto the page before
        it — the one the first-fit closed on that line's old height. Pagination
        is a function of the extents alone, never of the edit history, so the
        page before must be offered the line again. The membership compare
        below trims the rebuild to the pages that actually change. */
-    const firstTouched = Math.max(1, Math.min(...touched));
-    if (firstTouched > pages.length) { stats.ms = performance.now() - t0; return true; }
-    const fromPage = Math.max(1, firstTouched - 1);
-    const fromLine = lines.indexOf(pages[fromPage - 1]);
-    if (fromLine < 0) return false;
+    let fromPage = Math.max(1, pageOfLineIdx(fromLine) - 1);
+    while (fromPage > 1 && pageStartLines[fromPage - 1] < 0) fromPage--;
+    fromLine = pageStartLines[fromPage - 1] >= 0 ? pageStartLines[fromPage - 1] : 0;
+
+    /* Stage the fresh systems. */
+    const staged = new Map<string, Element>();
+    let staging: { div: HTMLElement; root: SVGSVGElement } | null = null;
+    for (const id of needRender) {
+      const li = lineIdx.get(id)!;
+      const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
+      if (!rl) { console.warn('[page-assembly] line ' + id + ' could not be rendered — its old system stays'); continue; }
+      if (!this.styleText) this.styleText = styleTextOf(rl.host);
+      if (!staging) staging = this.openStaging();
+      const imported = this.importSystem(rl.system, rl.host, staging.div);
+      const sys = this.host.postProcess(staging.div, [imported])[0] ?? imported;
+      alignStaffRows(sys, this.host.gridUser());
+      const ext = measureExtents(sys as SVGGraphicsElement);
+      if (ext) this.extents.set(id, ext);
+      else console.warn('[page-assembly] line ' + id + ' has no readable extents (staging)');
+      staged.set(id, sys);
+      stats.renderedLines++;
+    }
+    const disposeStaging = (): void => { staging?.div.remove(); staging = null; };
+
     const k = this.host.fitConstants();
     const headers = this.host.headerMeasureIds();
     const marginOf = (p: number): Element | null => this.rootOf(p)?.querySelector('g.page-margin') ?? null;
@@ -578,39 +832,48 @@ export class PageAssembler {
     );
     if (!ff.complete) {
       console.warn('[page-assembly] a line has no extents — pagination left as committed');
+      disposeStaging();
       stats.ms = performance.now() - t0;
-      return true;
+      return staged.size === 0;   // a staged line with nowhere to go is a failed apply
     }
     const newTail = ff.pageStarts.map((li) => lines[li]);
     const oldTail = pages.slice(fromPage - 1);
     /* A page is unchanged when its start AND its end (the next start, or the
-       document's end) are what they were: its lines and their extents are then
-       exactly what the old pagination placed, wherever the page now sits in
-       the numbering. Trim such pages off both ends of the tails; what remains
-       is the contiguous window to rebuild — old pages [s, a] become new pages
-       [s, b] — and every old page past `a` is kept as is (renumbered when the
-       window's page count changed). Comparing starts alone at the same index
-       (what this did before) stopped at a page whose start held while its
-       content had overflowed, and never recognised a kept page once the
-       count had changed. */
+       document's end) are what they were AND none of its lines was re-rendered:
+       its lines and their extents are then exactly what the old pagination
+       placed, wherever the page now sits in the numbering. Trim such pages off
+       both ends of the tails; what remains is the contiguous window to rebuild
+       — old pages [s, a] become new pages [s, b] — and every old page past `a`
+       is kept as is (renumbered when the window's page count changed). */
     const END = '';
+    const rangeHasRender = (startId: string, nextId: string | undefined): boolean => {
+      if (!staged.size) return false;
+      const a0 = lineIdx.get(startId) ?? 0;
+      const b0 = nextId !== undefined && nextId !== END ? (lineIdx.get(nextId) ?? lines.length) : lines.length;
+      for (let i = a0; i < b0; i++) if (staged.has(lines[i])) return true;
+      return false;
+    };
     const pairSame = (ni: number, oi: number): boolean =>
-      newTail[ni] === oldTail[oi] && (newTail[ni + 1] ?? END) === (oldTail[oi + 1] ?? END);
+      newTail[ni] === oldTail[oi] && (newTail[ni + 1] ?? END) === (oldTail[oi + 1] ?? END) && !rangeHasRender(newTail[ni], newTail[ni + 1]);
     let s = 0;
     while (s < newTail.length && s < oldTail.length && pairSame(s, s)) s++;
     let a = oldTail.length - 1, b = newTail.length - 1;
     while (a >= s && b >= s && pairSame(b, a)) { a--; b--; }
-    if (a < s && b < s) { stats.ms = performance.now() - t0; return true; }   // identical pagination
+    if (a < s && b < s) { disposeStaging(); stats.ms = performance.now() - t0; return true; }   // identical pagination
     const base = fromPage + s;                       // first page rebuilt (same number on both sides)
     const rebuildNew = newTail.slice(s, b + 1);
     const rebuildOld = oldTail.slice(s, a + 1);
     const keptAfter = oldTail.slice(a + 1);          // unchanged pages past the window, old order
     stats.fromPage = base;
-    /* Pages [base, base + rebuildOld.length) are torn down; their
-       systems, in line order, refill rebuildNew.length pages. */
+    /* Pages [base, base + rebuildOld.length) are torn down; their systems, in
+       line order, plus the staged ones, refill rebuildNew.length pages. */
     const oldCount = rebuildOld.length, newCount = rebuildNew.length;
     const firstUnchanged = base + oldCount;                // old numbering; past the end when none
-    const lastOld = Math.min(this.pageCount, base + oldCount - 1);
+    /* Every built page from `base` on goes when nothing past the window is
+       kept — including pages the committed list no longer names (a page start
+       the owner dropped): the DOM is rebuilt from `lines`, never from stale
+       divs. */
+    const lastOld = keptAfter.length ? Math.min(this.pageCount, base + oldCount - 1) : this.pageCount;
     const bank: Array<{ id: string; el: Element; root: Element }> = [];
     for (let p = base; p <= lastOld; p++) {
       const root = this.rootOf(p);
@@ -620,8 +883,7 @@ export class PageAssembler {
         bank.push({ id, el: sys, root });
       }
     }
-    const byId = new Map(bank.map((b) => [b.id, b]));
-    const lineIdx = new Map(lines.map((id, i) => [id, i]));
+    const byId = new Map(bank.map((bk) => [bk.id, bk]));
     const rangeEnd = keptAfter.length ? (lineIdx.get(keptAfter[0]) ?? lines.length) : lines.length;
     /* Tear down the old pages' divs (keep the roots alive for the move). */
     const oldRoots: Element[] = [];
@@ -655,13 +917,19 @@ export class PageAssembler {
       div.appendChild(shell.svg);
       if (anchorDiv) anchorDiv.before(div);
       else {
-        const all = this.host.container.querySelectorAll('.score-page');
+        const all = this.host.container.querySelectorAll('.score-page:not(.' + BUILDING + ')');
         const last = all.length ? all[all.length - 1] : null;
         if (last) last.after(div); else this.host.container.appendChild(div);
       }
       for (let li = from; li < to; li++) {
-        const b = byId.get(lines[li]);
-        if (!b) {
+        const st = staged.get(lines[li]);
+        if (st && staging) {
+          this.moveSystems(staging.root, shell.svg, [st], null);
+          stats.movedSystems++;
+          continue;
+        }
+        const bk = byId.get(lines[li]);
+        if (!bk) {
           /* A line the splice deferred (its page was not mounted): render it now. */
           const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
           if (!rl) { console.warn('[page-assembly] line ' + lines[li] + ' could not be rendered during repagination'); continue; }
@@ -669,7 +937,7 @@ export class PageAssembler {
           this.host.postProcess(div, [sys]);
           continue;
         }
-        this.moveSystems(b.root, shell.svg, [b.el], null);
+        this.moveSystems(bk.root, shell.svg, [bk.el], null);
         stats.movedSystems++;
       }
       this.host.decorate(div);
@@ -677,8 +945,10 @@ export class PageAssembler {
       this.host.onPageMounted(div);
       this.host.applyTheme(div);
       this.mounted.add(p);
+      this.lastRebuiltPages.push(div);
       stats.rebuiltPages++;
     }
+    disposeStaging();
     const committed = pages.slice(0, base - 1).concat(rebuildNew, keptAfter);
     if (!this.pageBreaks.setPageStarts(committed)) {
       console.warn('[page-assembly] page starts refused after repagination');
@@ -687,6 +957,33 @@ export class PageAssembler {
     stats.pagesAfter = this.pageCount;
     stats.ms = performance.now() - t0;
     return true;
+  }
+
+  /** A hidden shell to engrave and measure fresh systems in before they are
+   *  moved to their page (applyPartition). */
+  private openStaging(): { div: HTMLElement; root: SVGSVGElement } {
+    const doc = this.host.container.ownerDocument;
+    const div = doc.createElement('div');
+    div.className = 'score-page ' + BUILDING;
+    div.dataset.page = '0';
+    const shell = createPageShell(doc, this.host.shellGeom(), Math.max(2, this.pageCount + 1), this.host.shellMeta(), this.styleText);
+    div.appendChild(shell.svg);
+    this.host.container.appendChild(div);
+    return { div, root: shell.svg };
+  }
+
+  /** The page headers changed (Setup apply: title, subtitle, composer):
+   *  redraw every built page's header, re-place page 1 (its title block
+   *  anchors its first system) and re-fit from it. No system renders. */
+  refreshHeaders(meta: ShellMeta): void {
+    this.finishSync();
+    for (let p = 1; p <= this.pageCount; p++) {
+      const root = this.rootOf(p);
+      if (root) renumberPageHeader(root, p, meta);
+    }
+    const d1 = this.pageDiv(1);
+    if (d1 && this.mounted.has(1)) this.host.placePage(d1);
+    this.repaginateFrom([1]);
   }
 
   /** Give page `from` the number `to`: its div, its header, its park/mount keys. */

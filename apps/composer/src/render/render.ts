@@ -815,9 +815,20 @@ class Renderer {
    *  `originPhaseOf`, handed to `snapSystemRightEdge` so an offscreen host snaps
    *  its system right edges exactly where the live page does. */
   originPhaseXOf(pageEl: HTMLElement): number | undefined {
+    /* Cached per page card while the container keeps its width: the margin's
+       screen x moves only with the card's centring. Read per LINE during an
+       assembly, the `getScreenCTM` right after a system import forced the
+       browser to lay the new system out at that moment, then once more for the
+       snap passes — 115 extra full layouts on the sonata (7 ms each in
+       Chromium, far more in Gecko), 2026-10-08. */
+    const w = this.container?.clientWidth ?? 0;
+    const holder = pageEl as HTMLElement & { __hklPhaseX?: { w: number; v: number | undefined } };
+    if (holder.__hklPhaseX && holder.__hklPhaseX.w === w) return holder.__hklPhaseX.v;
     const margin = pageEl.querySelector('svg g.page-margin') as SVGGraphicsElement | null;
     const ctm = margin?.getScreenCTM?.();
-    return ctm ? ((ctm.e % 1) + 1) % 1 : undefined;
+    const v = ctm ? ((ctm.e % 1) + 1) % 1 : undefined;
+    holder.__hklPhaseX = { w, v };
+    return v;
   }
 
   /** Phase-align every staff row on a page. The page-margin group's fractional
@@ -956,6 +967,9 @@ class Renderer {
    *  render (page scale)" instead of "no owned partition", which is the
    *  reading for an invalidation nobody asked for. */
   private forcedCause: string | null = null;
+  /** Document version the current assembler was built for (the card count of
+   *  a re-assembly of the SAME document is expected to hold). */
+  private lastAssembledDocVer = -1;
 
   getViewMode(): ViewMode {
     return this.viewMode;
@@ -1493,7 +1507,7 @@ class Renderer {
         const pageDomLive = preMei === null && this.assembler !== null
           && this.container!.querySelector('.score-page svg') !== null;
         if (pageDomLive) {
-          if (refill.changedRun === null) {
+          if (refill.changedRun === null && !refill.breaksChanged) {
             /* Signature-identical doc (head/user-break/interior guards all
                passed) — the mounted DOM already renders exactly this. */
             this.pageSplicer.noteNoop();
@@ -1516,29 +1530,53 @@ class Renderer {
           this.touchedPages = [];
           let spliced = false, landed = false;
           try {
-            const req: SpliceRequest = {
-              oldStartIds: refill.oldStartIds, newStartIds: refill.newStartIds,
-              oldPageStartIds: refill.oldPageStartIds, newPageStartIds: refill.newPageStartIds,
-              changedRun: refill.changedRun,
-              partitionOnly: refill.partitionOnly,
-            };
-            if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
-              spliced = true;
-              this.registerSpliceEffects();
-              landed = this.assembler!.repaginateFrom(this.pageSplicer.lastPages.slice());
-              this.noteRepagination();
-              if (!landed) {
-                this.pageSplicer.lastSkipReason = 'repagination refused';
-                console.warn('[page-splice] repagination refused — re-assembling');
+            if (refill.changedRun !== null) {
+              const req: SpliceRequest = {
+                oldStartIds: refill.oldStartIds, newStartIds: refill.newStartIds,
+                oldPageStartIds: refill.oldPageStartIds, newPageStartIds: refill.newPageStartIds,
+                changedRun: refill.changedRun,
+                partitionOnly: refill.partitionOnly,
+              };
+              if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
+                spliced = true;
+                this.registerSpliceEffects();
+                landed = this.assembler!.repaginateFrom(this.pageSplicer.lastPages.slice());
+                this.noteRepagination();
+                if (!landed) {
+                  this.pageSplicer.lastSkipReason = 'repagination refused';
+                  console.warn('[page-splice] repagination refused — re-assembling');
+                }
+              } else {
+                console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — applying the partition line by line');
               }
-            } else {
-              console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — full refill render');
+            }
+            if (!spliced) {
+              /* Every edit is a splice (composer-pagination-design.md,
+                 2026-10-08): the lines the refill's changed run reaches are
+                 re-engraved one window each, every other system is reused, and
+                 pages re-fit from the first affected page — also for a change
+                 that is not a hunk at all (a page break on an existing line
+                 start: no line changes, pages re-fit from its page). */
+              const changed = this.changedLineIdsFor(model, refill.changedRun, refill.newStartIds);
+              landed = this.assembler!.applyPartition(refill.oldStartIds, changed, this.pagesOfBreaks(refill.breakIds));
+              this.noteRepagination();
+              if (landed) {
+                this.pageSplicer.noteApplied();
+                for (const el of this.assembler!.lastRebuiltPages) if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
+              } else {
+                console.warn('[page-splice] partition could not be applied — re-assembling');
+              }
             }
           } finally {
             this.spliceDepth--;
           }
           if (landed) {
             this.lastPageSpliced = true;
+            /* The page's furniture follows its content: a splice that lands a
+               new section header needs its title injected, exactly as a mount
+               does (the hook is idempotent — both injectors replace what they
+               find). Pages the rebuild created already got it; harmless twice. */
+            for (const el of this.touchedPages) this.onPageMountedCb?.(el);
             for (const el of this.touchedPages) this.drawLockMarks(el);
             this.pageBreaks.verifyRenderedPartition(
               this.container!, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
@@ -1589,10 +1627,39 @@ class Renderer {
          the suite's splice invariant treats it as a defect. */
       this.pageBreaks.lastDeriveReason = this.forcedCause !== null
         ? 'forced full render (' + this.forcedCause + ')' : 'no owned partition';
+      const cause = this.forcedCause;
       this.forcedCause = null;
+      if (cause === 'zoom' && this.rescaleForZoom(model)) {
+        this.pageSplicer.noteRescaled();
+        this.lastPageSpliced = true;
+        return false;
+      }
     }
     this.assembleDocument(model, viewStaves, true);
     this.lastPageSpliced = false;
+    return true;
+  }
+
+  /** Zoom is visual-only (the inner SVG is identical at every zoom): keep every
+   *  rendered system, restore the owner's partition from the DOM and the width
+   *  cache, and let the assembler resize, re-snap and re-place in place. False
+   *  when the current assembly cannot stand in (another document, nothing
+   *  built, no cached widths) — the caller then assembles. */
+  private rescaleForZoom(model: ComposerModel): boolean {
+    const as = this.assembler;
+    if (!as || this.lastAssembledDocVer !== model.docVersion() || this.viewMode !== 'page') return false;
+    const cached = this.partitionCache.get(this.partitionKey(model));
+    if (!cached || cached.docVer !== model.docVersion()) return false;
+    const lines = as.domLineStarts();
+    const pages = as.domPageStarts();
+    if (lines.length <= 1 || !pages.length) return false;
+    if (!this.pageBreaks.restorePartition(model, lines, pages, cached.widths)) return false;
+    const prevH = as.pageH;
+    const g = this.shellGeom();
+    const newH = g.pageHeight * g.scale / 100;
+    as.rescale(prevH > 0 ? newH / prevH : 1);
+    this.setContainerThemeTags();
+    this.armPageIo();
     return true;
   }
 
@@ -1694,8 +1761,17 @@ class Renderer {
     if (!this.pageBreaks.ownershipActive()) return;
     const lines = this.pageBreaks.lineStarts();
     if (lines.length <= 1) return;
-    this.partitionCache.set(this.partitionKey(model), {
-      docVer: model.docVersion(), lines, pages: this.pageBreaks.pageStarts(),
+    /* Page starts are a PREFIX while the assembly is in flight (pages commit
+       as they close): remember them only when it is complete, else keep the
+       complete list an earlier render stored for this key — a prefix served
+       as the expected card count made a zoom start as one page (2026-10-08). */
+    const key = this.partitionKey(model);
+    const complete = this.assembler !== null && !this.assembler.pending();
+    const prior = this.partitionCache.get(key);
+    const pages = complete ? this.pageBreaks.pageStarts()
+      : (prior && prior.docVer === model.docVersion() ? prior.pages : []);
+    this.partitionCache.set(key, {
+      docVer: model.docVersion(), lines, pages,
       widths: this.pageBreaks.exportWidths(),
     });
     /* Bounded: one entry per (zoom, pageScale, heji) combination actually
@@ -1958,10 +2034,24 @@ class Renderer {
       this.spliceDepth--;
     }
     if (!spliced) {
-      console.info('[page-balance] partition change not spliceable (' + this.pageSplicer.lastSkipReason + ') — left for the next derive');
-      return false;
+      /* Apply it line by line instead (2026-10-08): the hunk's lines re-engrave,
+         the rest is reused. */
+      this.spliceDepth++;
+      try {
+        landed = this.assembler.applyPartition(oldStartIds, this.changedLineIdsFor(model, req.changedRun, newStartIds), []);
+      } finally {
+        this.spliceDepth--;
+      }
+      this.noteRepagination();
+      if (!landed) {
+        console.info('[page-balance] partition change could not be applied (' + this.pageSplicer.lastSkipReason + ') — left for the next derive');
+        return false;
+      }
+      this.pageSplicer.noteApplied();
+      for (const el of this.assembler.lastRebuiltPages) if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
     }
     if (landed) {
+      for (const el of this.touchedPages) this.onPageMountedCb?.(el);
       for (const el of this.touchedPages) this.drawLockMarks(el);
       this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler.pageCount, this.pageBreaksCtx());
       if (indexCheckEnabled()) {
@@ -2200,7 +2290,7 @@ class Renderer {
        tagged). An EMPTY scope means "no systems on this host are imported" and
        must not fall back to the whole host. */
     const t0 = performance.now();
-    const st = { pin: 0, snapBar: 0, snapEdge: 0, noteheads: 0, ties: 0, heji: 0, theme: 0, total: 0, scoped: scope !== undefined, targets: scope ? scope.length : 1 };
+    const st = { pin: 0, snapBar: 0, snapEdge: 0, noteheads: 0, text: 0, instr: 0, tuplets: 0, slurs: 0, ties: 0, heji: 0, theme: 0, total: 0, scoped: scope !== undefined, targets: scope ? scope.length : 1 };
     const targets: Element[] = scope !== undefined ? scope : [container];
     /* Pin device scale exact so thin staff lines stay grid-aligned (crisp) —
        counters Verovio's whole-px ceil of the root <svg> box. */
@@ -2260,7 +2350,9 @@ class Renderer {
          (render/barlines.ts) BEFORE the marks move: a barline never breaks. */
       for (const el of targets) repairBarLines(el, pairs);
       const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
+      t = performance.now();
       for (const el of targets) layoutBelowStaffText(el, { dirGapUser });
+      st.text += performance.now() - t;
       /* Then the inter-instrument clearance (render/instrgap.ts): it needs the
          marks SETTLED (its metric measures what is actually drawn) and it also
          has to release textlayout's INSTR_CLEAR clamp, which is what left
@@ -2275,8 +2367,12 @@ class Renderer {
         const unit = CRISP_PRESETS[this.zoom].unit;
         const gapOpts = { instrStaffNs, grid: 1000 / this.currentScale(), unitUser: unit * 10 };
         const shifted = new Set<Element>();
+        t = performance.now();
         for (const el of targets) for (const sys of layoutInstrumentGaps(el, gapOpts)) shifted.add(sys);
+        st.instr = performance.now() - t;
+        t = performance.now();
         for (const sys of shifted) layoutBelowStaffText(sys, { dirGapUser });
+        st.text += performance.now() - t;
       }
       /* Bracketless tuplet numerals off their beams (render/tupletnums.ts),
          then flipped slurs Verovio carried away from their notes re-drawn at
@@ -2286,9 +2382,13 @@ class Renderer {
          grow a system by a few units, and a re-drawn slur hugs its notes, so
          it only ever shrinks the extents. */
       const unitUser = CRISP_PRESETS[this.zoom].unit * 10;
+      t = performance.now();
       for (const el of targets) layoutTupletNums(el, { unitUser });
+      st.tuplets = performance.now() - t;
+      t = performance.now();
       for (const el of targets) restoreTieRedraws(el);
       for (const el of targets) layoutFlippedSlurs(el, { unitUser });
+      st.slurs = performance.now() - t;
     }
     /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
        glyphs (+ paren <use> swaps). No-op when none are tagged. Host-wide. */
@@ -2321,7 +2421,7 @@ class Renderer {
 
   /** Per-pass wall of the last `postProcessRendered` call (diagnostics for
    *  `cb-splicecost.js`; A8). */
-  lastPostStats: { pin: number; snapBar: number; snapEdge: number; noteheads: number; ties: number; heji: number; theme: number; total: number; scoped: boolean; targets: number } | null = null;
+  lastPostStats: { pin: number; snapBar: number; snapEdge: number; noteheads: number; text: number; instr: number; tuplets: number; slurs: number; ties: number; heji: number; theme: number; total: number; scoped: boolean; targets: number } | null = null;
 
   /** Page mode: mount the page holding this measure so rectForId / the cursor
    *  overlay can resolve it (a cursor move, scroll-into-view, or playback bar
@@ -2348,6 +2448,50 @@ class Renderer {
     return this.assembler;
   }
 
+  /** The lines of `newStartIds` a changed measure run reaches — what
+   *  `applyPartition` re-engraves. The run's first measure pulls its
+   *  predecessor in when it holds a layer clef (`relocateInitialClefs` draws a
+   *  measure-initial clef at the end of the PREVIOUS measure, possibly on the
+   *  line above — the splicer's rule); a signature range already starts one
+   *  measure early for the end-of-line courtesy (sigranges.ts). */
+  private changedLineIdsFor(model: ComposerModel, run: { lo: number; hi: number } | null, newStartIds: readonly string[]): Set<string> {
+    const out = new Set<string>();
+    if (!run) return out;
+    const meas = model.allMeasures();
+    const ids = meas.map((m) => m.getAttribute('xml:id') ?? '');
+    const idIdx = new Map(ids.map((id, i) => [id, i]));
+    let lo = Math.min(run.lo, ids.length - 1);
+    if (lo > 0 && meas[lo]?.querySelector(':scope > staff > layer > clef')) lo--;
+    const hi = Math.min(run.hi, ids.length - 1);
+    const starts = newStartIds.map((id) => idIdx.get(id) ?? -1);
+    for (let k = 0; k < newStartIds.length; k++) {
+      const a = starts[k];
+      if (a < 0) continue;
+      const b = k + 1 < newStartIds.length && starts[k + 1] >= 0 ? starts[k + 1] - 1 : ids.length - 1;
+      if (b >= lo && a <= hi) out.add(newStartIds[k]);
+    }
+    return out;
+  }
+
+  /** Pages holding the measures a changed page break / section header precedes. */
+  private pagesOfBreaks(breakIds: readonly string[]): number[] {
+    const out: number[] = [];
+    for (const id of breakIds) {
+      const mi = this.measureIds.indexOf(id);
+      if (mi < 0) continue;
+      const p = this.pageOfMeasure(mi);
+      if (p >= 1 && !out.includes(p)) out.push(p);
+    }
+    return out;
+  }
+
+  /** Setup apply: the page headers changed (title, subtitle, composer). Redraw
+   *  them on every built page and re-fit from page 1 — no system renders. */
+  refreshPageHeaders(): void {
+    if (this.viewMode !== 'page' || !this.assembler) return;
+    this.assembler.refreshHeaders(this.shellMeta());
+  }
+
   /** Map a repagination onto the cascade diagnostics the probes and fixtures
    *  read: a rebuilt page is a step, a moved system a transplant, a page the
    *  rebuild added a creation. */
@@ -2365,6 +2509,14 @@ class Renderer {
    *  `reseed` recomputes the line partition from naturals (a derive); false
    *  keeps the owner's committed partition (a refill the splicer refused). */
   private assembleDocument(model: ComposerModel, viewStaves: number[] | null, reseed: boolean): void {
+    /* The card count to show from the first paint: the same document's
+       previous count (zoom, page scale, view change), the cached pagination's
+       on a round trip, else page 1's estimate once it closes. */
+    const sameDoc = this.assembler !== null && this.lastAssembledDocVer === model.docVersion();
+    let expected: number | null = sameDoc ? this.assembler!.cardCount() : null;
+    const geomNow = this.shellGeom();
+    const newPageH = geomNow.pageHeight * geomNow.scale / 100;
+    const scrollScale = sameDoc && this.assembler!.pageH > 0 ? newPageH / this.assembler!.pageH : 1;
     this.disposePages();
     const ctx = this.pageBreaksCtx();
     let lines: string[] | null = null;
@@ -2373,6 +2525,7 @@ class Renderer {
       if (cached && cached.docVer === model.docVersion()
           && this.pageBreaks.restorePartition(model, cached.lines, [], cached.widths)) {
         lines = cached.lines;
+        if (cached.pages.length) expected = cached.pages.length;
       } else {
         lines = this.pageBreaks.seedPartition(model, ctx, this.pageBudgetW());
         if (lines && lines.length > 1) this.balanceInitialBand(model);
@@ -2383,7 +2536,8 @@ class Renderer {
     }
     if (!lines || !lines.length) { this.container!.innerHTML = ''; return; }
     this.assembler = new PageAssembler(this.assemblyHost(), this.pageBreaks, this.extents);
-    this.assembler.begin(lines, model.docVersion(), this.mountWindowMi >= 0 ? this.mountWindowMi : null);
+    this.assembler.begin(lines, model.docVersion(), this.mountWindowMi >= 0 ? this.mountWindowMi : null, expected, scrollScale);
+    this.lastAssembledDocVer = model.docVersion();
     this.setContainerThemeTags();
     this.armPageIo();
     this.lastCascade = { ...this.lastCascade, steps: 0, transplanted: 0, arithmetic: 0, parked: 0, created: 0 };
@@ -2399,7 +2553,11 @@ class Renderer {
       shellMeta: () => this.shellMeta(),
       fitConstants: () => pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth),
       gridUser: () => 1000 / this.currentScale(),
-      postProcess: (div, scope) => this.postProcessRendered(div, this.substituteHiddenStaffSystems(div, scope), this.originPhaseXOf(div)),
+      postProcess: (div, scope) => {
+        const scoped = this.substituteHiddenStaffSystems(div, scope);
+        this.postProcessRendered(div, scoped, this.originPhaseXOf(div));
+        return scoped;
+      },
       decorate: (div) => styleVoltaNumbers(div),
       placePage: (div) => { this.placePage(div); },
       firstContentTop: (margin, k) => this.firstContentTop(margin, k),
@@ -2455,7 +2613,7 @@ class Renderer {
   private mountOne(p: number): boolean {
     const as = this.assembler;
     if (!as) return false;
-    const ok = as.mount(p);
+    const ok = as.mount(p, false);   // the scroll path never builds a page synchronously
     const div = this.pageDiv(p);
     if (ok && div) this.pageIo?.unobserve(div);
     return ok;

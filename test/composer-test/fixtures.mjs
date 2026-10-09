@@ -1615,7 +1615,6 @@ const PAGE_LINEBREAKS = {
       r();
     `,
     skipCursorTrace: true,
-    fullRender: 'a user page break IS a break-structure change: the refill cannot introduce a line boundary, so this derives by design and the fixture asserts the reflow',
   },
 
   /* THE reversibility gate (Max, 2026-08-30): the partition is never
@@ -1637,9 +1636,10 @@ const PAGE_LINEBREAKS = {
     `,
   },
 
-  /* A user break toggle changes the doc's break structure — the refill must
-   * refuse (userBreakSig guard) and the derive path re-adopt. Asserted via
-   * FIXTURE_ASSERTIONS.pageLineBreaksDeriveFallback. */
+  /* A user break toggle used to refuse the refill (userBreakSig guard) and
+   * derive; since 2026-10-08 ("Every edit is a splice") a page break is a
+   * partition edit the refill carries — a hard line AND page start — and the
+   * render is a splice. Asserted via FIXTURE_ASSERTIONS.pageLineBreaksDeriveFallback. */
   pageLineBreaksDeriveFallback: {
     setup: `
       m.setCursor(0, 1);
@@ -1650,7 +1650,6 @@ const PAGE_LINEBREAKS = {
       }
       r();
     `,
-    fullRender: 'this fixture exists to assert the derive fallback',
   },
 
   /* ── Section balancing (render/balance.ts, 2026-09-05) ──
@@ -2119,7 +2118,6 @@ const PAGE_SPLICE = {
       }
       r();
     `,
-    fullRender: 'adding a section header adds a user break (see decisions.md): the refill has no operation that introduces a boundary, so it derives — remove this flag when that gap closes',
   },
 
   /* B3, third hole (2026-09-01): a leading clef on a staff other than the
@@ -2370,7 +2368,6 @@ const PAGE_SPLICE = {
        full refill render. Measured the same with the old refill strategy (2
        full renders there against 1 here), so it is independent of the encoded
        fix this fixture guards. Worth its own work; see decisions.md. */
-    fullRender: 'the splice window contains the user <pb> and paginates, so the splicer refuses (pre-existing, measured both ways)',
   },
 
   /* B2: the other direction — a line whose every measure is deleted vanishes
@@ -2432,7 +2429,6 @@ const PAGE_SPLICE = {
        every stop of a deliberately multi-page score into view — ~14 s here,
        for coverage the small cursor fixtures already give (2026-09-02). */
     skipCursorTrace: true,
-    fullRender: 'adding a section header adds a user break, which derives — remove this flag when the refill learns to introduce a boundary',
   },
 
   /* A render request with a signature-identical doc must not touch the page
@@ -8157,6 +8153,170 @@ const ENGRAVING = {
    * sonata's reference gate (m. 47→48, two flats to five sharps: 681 units of
    * width the live line lacked; 8 of 31 pages off the reference on a fresh
    * load, key and meter courtesies alike), 2026-10-08. */
+  /* ── Every edit is a splice (composer-pagination-design.md, second round,
+   * 2026-10-08). A page break, a section header or a meter change never
+   * affects a page before it, so page 1's systems must be the SAME DOM nodes
+   * afterwards and nothing may full-render; Setup apply redraws headers only;
+   * add instrument is the one all-lines edit and says so. The edit happens in
+   * the assertion so the suite's own ledger sees it. */
+  pag_pageBreakSplices: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
+  pag_sectionHeaderSplices: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
+  pag_meterChangeSplices: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
+  pag_setupApplyKeepsSystems: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
+  pag_addInstrumentAllLines: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 200; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
+  /* ── Page cards and the cascade (Max, 2026-10-08): the number of rendered
+   * page cards is known at first paint and changes only when the calculation
+   * says the total differs; a page shows its content only once its systems are
+   * placed. The lazy assembly used to start as one card and grow (the scroll
+   * jumped on every load and zoom) and painted the open page while its
+   * systems were still being appended (staves overlapping). */
+  pag_loadCardsUpFront: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 800; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setCursor(0, 1);   /* cursor on page 1: the synchronous burst stops there */
+      r();
+      /* Synchronous part only: page 1 is closed, the rest is idle slices. */
+      window.__pagCardsAtPaint = document.querySelectorAll('#score .score-page').length;
+      window.__pagBuildingHidden = (() => { const b = document.querySelector('#score .score-page-building'); return b ? getComputedStyle(b).visibility : 'none'; })();
+    `,
+    skipCursorTrace: true,
+  },
+  pag_zoomKeepsCardsAndScroll: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 800; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setCursor(0, 1);   /* cursor on page 1: the synchronous burst stops there */
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+      const score = document.getElementById('score');
+      const p4 = document.querySelector('#score .score-page[data-page="4"]');
+      score.scrollTop = p4.offsetTop - score.offsetTop;
+      window.__pagScrollBefore = score.scrollTop;
+      window.__pagCardsBefore = document.querySelectorAll('#score .score-page').length;
+      /* The zoom render may be deferred behind the badge: capture at the
+         moment the render lands, inside the render call itself. */
+      const rr = window.__hkl_composer.renderer; const orig = rr.renderComposer;
+      rr.renderComposer = function (...a) { const res = orig.apply(this, a); rr.renderComposer = orig; window.__pagCardsAtPaint = document.querySelectorAll('#score .score-page').length; window.__pagScrollAtPaint = score.scrollTop; return res; };
+      window.__hkl_composer.renderer.setZoom(50); r();
+    `,
+    skipCursorTrace: true,
+  },
+  pag_buildingPageHidden: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 800; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setCursor(0, 1);   /* cursor on page 1: the synchronous burst stops there */
+      r();
+      /* 40 lines: page 1 closes synchronously, the rest is in flight. */
+      const b = document.querySelector('#score .score-page-building');
+      window.__pagBuildingVisibility = b ? getComputedStyle(b).visibility : 'no building page';
+      window.__pagPendingAtPaint = document.querySelectorAll('#score .score-page-pending').length;
+      window.__pagCardsAtPaint = document.querySelectorAll('#score .score-page').length;
+    `,
+    skipCursorTrace: true,
+  },
+  /* Zoom is visual-only (Max): the inner SVG coordinates, viewBox and margin
+   * are identical at every zoom; only the card's outer size and the device-grid
+   * placement differ. A zoom therefore re-renders NOTHING — the shells are
+   * resized and every page re-snapped and re-placed in place (2026-10-08, the
+   * 20 s Firefox zoom). Asserted via FIXTURE_ASSERTIONS.pag_zoomRescalesInPlace. */
+  pag_zoomRescalesInPlace: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 400; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      m.setCursor(0, 1);
+      window.__hkl_composer.renderer.setZoom(100);   /* explicit start */
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
   pag_courtesyAtLineEnd: {
     setup: `
       window.__hkl_composer.renderer.setViewMode('page');
@@ -8217,12 +8377,11 @@ const ENGRAVING = {
       window.__hkl_composer.renderer.setViewMode('page');
       ${PAG_BUILD}
       build({ full: [0, 24] });
-      const cc = m.getMeasureStartCursor(8, 1); m.setCursor(cc, 1);
+      const cc = m.getMeasureStartCursor(1, 8); m.setCursor(cc, 1);   /* (voice, measure): the break goes before m9 */
       r();
     `,
     setupKeys: [{ key: 'b', ctrl: true }],
     skipCursorTrace: true,
-    fullRender: 'a user page break is a break-structure change: the refill cannot introduce a line boundary, so this derives by design',
   },
   /* A zoom round-trip is visual-only: the same pages come back. */
   pag_zoomRoundTripKeepsPages: {
@@ -8472,7 +8631,6 @@ const ENGRAVING = {
       r();
     `,
     skipCursorTrace: true,
-    fullRender: 'a user page break is a break-structure change and derives by design (see pageUserBreakReflows)',
   },
 
   /* One stem direction under a slur (2026-09-05, Max: a slurred group should
@@ -15121,22 +15279,19 @@ export const FIXTURE_ASSERTIONS = {
       })()` },
   ],
   pageLineBreaksDeriveFallback: [
-    { name: 'a page-break toggle refuses the refill (userBreakSig guard) and the derive re-arms adoption',
-      expr: `(() => {
+    { name: 'a page-break toggle is carried by the refill and lands as a splice (no derive), giving 2 pages',
+      expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
-        const pb = H.renderer['pageBreaks'];
-        /* Engage ownership first: the runner's universal invariants (roundtrip,
-           cursor trace) re-render between setup and assertion, so the state
-           here is not necessarily what setup left. Without this the guard test
-           can run against a partition that is already stale for other reasons. */
+        const pb = H.renderer['pageBreaks'], ps = H.renderer['pageSplicer'];
         for (let i = 0; i < 3 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+        H.renderer.clearRenderLedger();
         if (m.togglePageBreakAt(6) !== true) return { ok: false, detail: 'togglePageBreakAt(6) did not insert a <pb>' };
-        H.reRender();
-        if (pb.lastDeriveReason !== 'user breaks changed') {
-          return { ok: false, detail: 'expected the refill to refuse a user-break change; lastDeriveReason=' + JSON.stringify(pb.lastDeriveReason) };
-        }
+        H.reRender(); await window.__waitForRender();
+        const fulls = H.renderer.renderLedger().filter((e) => e.full);
+        if (fulls.length) return { ok: false, detail: 'a page break derived: ' + fulls.map((e) => e.deriveReason || e.skipReason).join('; ') };
+        if (ps.lastOutcome !== 'spliced' && ps.lastOutcome !== 'applied') return { ok: false, detail: 'outcome ' + ps.lastOutcome + ' (' + ps.lastSkipReason + ')' };
         const pages = document.querySelectorAll('#score .score-page').length;
         return pages === 2 ? { ok: true } : { ok: false, detail: 'expected 2 pages after the <pb>, got ' + pages };
       })()` },
@@ -21574,6 +21729,195 @@ export const FIXTURE_ASSERTIONS = {
         const pages = document.querySelectorAll('#score .score-page').length;
         const oneStaff = [...document.querySelectorAll('#score g.system')].filter((s) => { const f = s.querySelector('g.measure'); return !!f && f.querySelectorAll(':scope > g.staff').length === 1; }).length;
         return pages >= 2 && oneStaff >= 2 ? { ok: true, detail: pages + ' pages, ' + oneStaff + ' one-staff systems' } : { ok: false, detail: pages + ' pages, ' + oneStaff + ' one-staff systems (want >= 2 and >= 2)' };
+      })()` },
+  ],
+  pag_pageBreakSplices: [
+    { name: 'a page break deep in the document splices: page 1 untouched, the break starts a page',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model, r = H.renderer;
+        const sysOf = (p) => [...document.querySelectorAll('#score .score-page[data-page="' + p + '"] g.system')];
+        const pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const starts = pb.pageStarts();
+        if (starts.length < 2) return { ok: false, detail: 'need 2+ pages, got ' + starts.length };
+        const li2 = pb['startIds'].indexOf(starts[1]);
+        const target = pb['startIds'][li2 + 1];                     /* second line of page 2 */
+        if (!target) return { ok: false, detail: 'page 2 has one line' };
+        const mi = ids.indexOf(target);
+        const before = sysOf(1);
+        if (before.length < 2) return { ok: false, detail: 'page 1 has ' + before.length + ' systems' };
+        r.clearRenderLedger();
+        if (m.togglePageBreakAt(mi) === null) return { ok: false, detail: 'togglePageBreakAt refused' };
+        H.reRender(); await window.__waitForRender();
+        const fulls = r.renderLedger().filter((e) => e.full);
+        if (fulls.length) return { ok: false, detail: 'full render during the edit: ' + fulls.map((e) => e.deriveReason || e.skipReason || '?').join('; ') };
+        const after = sysOf(1);
+        if (after.length !== before.length || !after.every((sys, i) => sys === before[i])) return { ok: false, detail: 'page 1 was re-rendered or re-paginated (' + before.length + ' -> ' + after.length + ' systems)' };
+        const p3 = document.querySelector('#score .score-page[data-page="3"]');
+        const first = p3 && p3.querySelector('g.system g.measure');
+        if (!first || first.id !== target) return { ok: false, detail: 'page 3 does not start at the break (' + (first && first.id) + ' vs ' + target + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  pag_sectionHeaderSplices: [
+    { name: 'a section header deep in the document splices: page 1 untouched, the header line restarts',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model, r = H.renderer;
+        const sysOf = (p) => [...document.querySelectorAll('#score .score-page[data-page="' + p + '"] g.system')];
+        const pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const starts = pb.pageStarts();
+        if (starts.length < 2) return { ok: false, detail: 'need 2+ pages, got ' + starts.length };
+        const li2 = pb['startIds'].indexOf(starts[1]);
+        const target = pb['startIds'][li2 + 1];                     /* second line of page 2 */
+        if (!target) return { ok: false, detail: 'page 2 has one line' };
+        const mi = ids.indexOf(target);
+        const before = sysOf(1);
+        if (before.length < 2) return { ok: false, detail: 'page 1 has ' + before.length + ' systems' };
+        r.clearRenderLedger();
+        if (!m.setSectionHeaderAt(mi, 'II')) return { ok: false, detail: 'setSectionHeaderAt refused' };
+        H.reRender(); await window.__waitForRender();
+        const fulls = r.renderLedger().filter((e) => e.full);
+        if (fulls.length) return { ok: false, detail: 'full render during the edit: ' + fulls.map((e) => e.deriveReason || e.skipReason || '?').join('; ') };
+        const after = sysOf(1);
+        if (after.length !== before.length || !after.every((sys, i) => sys === before[i])) return { ok: false, detail: 'page 1 was re-rendered or re-paginated (' + before.length + ' -> ' + after.length + ' systems)' };
+        const me = document.getElementById(target);
+        const sys = me && me.closest('g.system');
+        if (!sys || sys.querySelector('g.measure').id !== target) return { ok: false, detail: 'the header measure does not start a system' };
+        if (!document.querySelector('text.hkl-section-header[data-for="' + target + '"]')) return { ok: false, detail: 'no section title rendered for ' + target };
+        return { ok: true };
+      })()` },
+  ],
+  pag_meterChangeSplices: [
+    { name: 'a meter change deep in the document splices: page 1 untouched, the change is drawn',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model, r = H.renderer;
+        const sysOf = (p) => [...document.querySelectorAll('#score .score-page[data-page="' + p + '"] g.system')];
+        const pb = r['pageBreaks'];
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const starts = pb.pageStarts();
+        if (starts.length < 2) return { ok: false, detail: 'need 2+ pages, got ' + starts.length };
+        const li2 = pb['startIds'].indexOf(starts[1]);
+        const target = pb['startIds'][li2 + 1];                     /* second line of page 2 */
+        if (!target) return { ok: false, detail: 'page 2 has one line' };
+        const mi = ids.indexOf(target);
+        const before = sysOf(1);
+        if (before.length < 2) return { ok: false, detail: 'page 1 has ' + before.length + ' systems' };
+        r.clearRenderLedger();
+        m.setMeterAt(mi, 3, 4);
+        H.reRender(); await window.__waitForRender();
+        const fulls = r.renderLedger().filter((e) => e.full);
+        if (fulls.length) return { ok: false, detail: 'full render during the edit: ' + fulls.map((e) => e.deriveReason || e.skipReason || '?').join('; ') };
+        const after = sysOf(1);
+        if (after.length !== before.length || !after.every((sys, i) => sys === before[i])) return { ok: false, detail: 'page 1 was re-rendered or re-paginated (' + before.length + ' -> ' + after.length + ' systems)' };
+        const me = document.getElementById(target);
+        if (!me || !me.querySelector('g.meterSig')) return { ok: false, detail: 'no meter signature drawn at ' + target };
+        return { ok: true };
+      })()` },
+  ],
+  pag_setupApplyKeepsSystems: [
+    { name: 'Setup apply redraws the headers only: every system is the same node, the title is new',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model, r = H.renderer;
+        const all = () => [...document.querySelectorAll('#score .score-page g.system')];
+        const before = all();
+        if (before.length < 4) return { ok: false, detail: 'only ' + before.length + ' systems' };
+        r.clearRenderLedger();
+        m.setTitle('Renamed Piece');
+        if (typeof r.refreshPageHeaders !== 'function') return { ok: false, detail: 'renderer.refreshPageHeaders missing (Setup apply still force-renders)' };
+        r.refreshPageHeaders();
+        H.reRender(); await window.__waitForRender();
+        const fulls = r.renderLedger().filter((e) => e.full);
+        if (fulls.length) return { ok: false, detail: 'full render on Setup apply: ' + fulls.map((e) => e.deriveReason || e.skipReason || '?').join('; ') };
+        const after = all();
+        if (after.length !== before.length || !after.every((sys, i) => sys === before[i])) return { ok: false, detail: 'systems were re-rendered (' + before.length + ' -> ' + after.length + ')' };
+        const title = document.querySelector('#score .score-page[data-page="1"] text.hkl-title');
+        if (!title || !title.textContent.includes('Renamed Piece')) return { ok: false, detail: 'title not redrawn: ' + (title && title.textContent) };
+        return { ok: true };
+      })()` },
+  ],
+  pag_addInstrumentAllLines: [
+    { name: 'adding an instrument re-renders every line through the assembly and says so',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model, r = H.renderer;
+        r.clearRenderLedger();
+        m.addInstrument({ name: 'Probe', staffCount: 1 });
+        H.reRender(); await window.__waitForRender();
+        const fulls = r.renderLedger().filter((e) => e.full);
+        if (!fulls.length) return { ok: false, detail: 'no full render recorded for add instrument' };
+        const bad = fulls.filter((e) => !/^all lines/.test(e.deriveReason || ''));
+        if (bad.length) return { ok: false, detail: 'full render reason not "all lines…": ' + bad.map((e) => e.deriveReason || e.skipReason || '?').join('; ') };
+        r.mountAllPages();
+        const systems = [...document.querySelectorAll('#score .score-page g.system')];
+        const short = systems.filter((s) => s.querySelector('g.measure').querySelectorAll(':scope > g.staff').length !== 3);
+        if (short.length) return { ok: false, detail: short.length + ' of ' + systems.length + ' systems lack the third staff' };
+        return { ok: true };
+      })()` },
+  ],
+  pag_loadCardsUpFront: [
+    { name: 'every page card exists at first paint (count only corrected if the total differs)',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        H.renderer.runExtentsJobNow();
+        const final = document.querySelectorAll('#score .score-page').length;
+        if (final < 4) return { ok: false, detail: 'document has ' + final + ' page(s); need 4+' };
+        if (window.__pagCardsAtPaint !== final) return { ok: false, detail: 'cards at first paint ' + window.__pagCardsAtPaint + ', final ' + final };
+        return { ok: true };
+      })()` },
+  ],
+  pag_zoomKeepsCardsAndScroll: [
+    { name: 'a zoom change keeps the page cards and the scroll position at first paint',
+      expr: `(async () => {
+        await window.__waitForRender();
+        const score = document.getElementById('score');
+        if (window.__pagCardsAtPaint === undefined) return { ok: false, detail: 'the zoom render never landed' };
+        if (window.__pagCardsAtPaint !== window.__pagCardsBefore) return { ok: false, detail: 'cards at paint ' + window.__pagCardsAtPaint + ' != before ' + window.__pagCardsBefore };
+        /* Zoom 100 → 50 halves the cards: the reader stays on the same PAGE,
+           so the scroll position scales by the card-height ratio (card margins
+           are unscaled, hence the tolerance). */
+        const want = window.__pagScrollBefore * 0.5;
+        if (Math.abs(window.__pagScrollAtPaint - want) > 160) return { ok: false, detail: 'scrollTop at paint ' + window.__pagScrollAtPaint + ', before ' + window.__pagScrollBefore + ' (expected about ' + Math.round(want) + ')' };
+        return { ok: true };
+      })()` },
+  ],
+  pag_buildingPageHidden: [
+    { name: 'a page being built is not painted; unbuilt pages are blank cards',
+      expr: `(() => {
+        const H = window.__hkl_composer;
+        const cardsAtPaint = window.__pagCardsAtPaint, pending = window.__pagPendingAtPaint;
+        H.renderer.runExtentsJobNow();
+        const final = document.querySelectorAll('#score .score-page').length;
+        if (final < 3) return { ok: false, detail: 'document has ' + final + ' page(s); need 3+' };
+        if (window.__pagBuildingVisibility === 'no building page') return { ok: true, detail: 'assembly finished synchronously (' + final + ' pages) — nothing was in flight' };
+        if (window.__pagBuildingVisibility !== 'hidden') return { ok: false, detail: 'the page being built was visible (visibility=' + window.__pagBuildingVisibility + ')' };
+        if (cardsAtPaint !== final) return { ok: false, detail: 'cards at paint ' + cardsAtPaint + ' (pending ' + pending + '), final ' + final };
+        return { ok: true };
+      })()` },
+  ],
+  pag_zoomRescalesInPlace: [
+    { name: 'a zoom renders no window: every system node survives, page starts hold, no full render',
+      expr: `(async () => {
+        const H = window.__hkl_composer, r = H.renderer, pb = r['pageBreaks'];
+        r.mountAllPages();
+        const before = [...document.querySelectorAll('#score .score-page g.system')];
+        const startsBefore = JSON.stringify(pb.pageStarts());
+        if (before.length < 6) return { ok: false, detail: 'only ' + before.length + ' systems' };
+        const tk = r['spliceTk']; const orig = tk.loadData; let loads = 0; tk.loadData = function (...a) { loads++; return orig.apply(this, a); };
+        r.clearRenderLedger();
+        r.setZoom(50); H.reRender(); await window.__waitForRender();
+        r.runExtentsJobNow(); r.mountAllPages();
+        tk.loadData = orig;
+        const fulls = r.renderLedger().filter((e) => e.full);
+        const after = [...document.querySelectorAll('#score .score-page g.system')];
+        const same = after.length === before.length && after.every((sys, i) => sys === before[i]);
+        const w = document.querySelector('#score .score-page[data-page="1"] > svg').getAttribute('width');
+        r.setZoom(100); H.reRender(); await window.__waitForRender();
+        if (loads) return { ok: false, detail: 'the zoom rendered ' + loads + ' window(s)' };
+        if (fulls.length) return { ok: false, detail: 'the zoom was a full render: ' + fulls.map((e) => e.deriveReason).join('; ') };
+        if (!same) return { ok: false, detail: 'systems were replaced (' + before.length + ' -> ' + after.length + ')' };
+        if (JSON.stringify(pb.pageStarts()) !== startsBefore) return { ok: false, detail: 'page starts changed across the zoom' };
+        if (!/^1079/.test(w || '')) return { ok: false, detail: 'card width at zoom 50 is ' + w + ', expected 1079.5px' };
+        return { ok: true };
       })()` },
   ],
   pag_courtesyAtLineEnd: [

@@ -190,7 +190,9 @@ export function signatureRanges(req: RangeRequest): RangeResult {
   };
 
   /* head */
-  if (oldState.head.rest !== newState.head.rest) return { ranges, bail: 'head context changed' };
+  /* Every system's staff set changes: the one legitimately all-lines edit
+     (composer-pagination-design.md, "Every edit is a splice", 2026-10-08). */
+  if (oldState.head.rest !== newState.head.rest) return { ranges, bail: 'all lines (head context changed)' };
   if (oldState.head.key !== newState.head.key) push(0, nextReset(-1, 'key') - 1);
   if (oldState.head.meter !== newState.head.meter) push(0, nextReset(-1, 'meter') - 1);
 

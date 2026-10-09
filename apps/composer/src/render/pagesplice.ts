@@ -343,7 +343,7 @@ interface Target {
 
 export class PageSystemSplicer {
   /** Diagnostics for tests/probes. */
-  lastOutcome: 'spliced' | 'skipped' | 'noop' | '' = '';
+  lastOutcome: 'spliced' | 'applied' | 'rescaled' | 'skipped' | 'noop' | '' = '';
   lastSkipReason = '';
   /** Page numbers the last splice edited in place, as numbered at the END of
    *  the splice (the renderer renumbers after removing an emptied page). The
@@ -392,6 +392,20 @@ export class PageSystemSplicer {
 
   /** The caller resolved a signature-identical doc — the mounted DOM already
    *  renders it; nothing to do. Recorded for diagnostics only. */
+  /** The renderer applied the partition line by line (PageAssembler.applyPartition)
+   *  after this splicer refused or the change was not a hunk — a splice in every
+   *  sense the ledger cares about. */
+  noteApplied(): void {
+    this.lastOutcome = 'applied';
+    this.lastSkipReason = '';
+  }
+
+  /** A zoom rescaled the pages in place (PageAssembler.rescale): no render. */
+  noteRescaled(): void {
+    this.lastOutcome = 'rescaled';
+    this.lastSkipReason = '';
+  }
+
   noteNoop(): void {
     this.lastOutcome = 'noop';
     this.lastSkipReason = '';

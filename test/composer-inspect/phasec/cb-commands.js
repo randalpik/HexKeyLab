@@ -125,7 +125,9 @@ const CASES = [
   { name: 'paste into selection',       kind: 'key',   pre: () => { if (!stageMeasureCopy()) return false; const cur = model.getFirstVisualCursorInMeasure(1, Math.min(MI + 2, measures() - 1), 'overwrite'); if (cur < 0) return false; model.setCursor(cur, 1); selectMeasure(); return true; }, run: () => pasteClip() },
   /* Dialog-driven commands, at the model level the dialog commits to. These are
      the SIGNATURE RANGES the refill folds into the changed run (sigranges.ts). */
-  { name: 'time-sig mid-piece (model)', kind: 'model', run: () => model.setTimeSigAt ? model.setTimeSigAt(MI, 3, 4) : model.setTimeSig(3, 4) },
+  { name: 'time-sig mid-piece (model)', kind: 'model', run: () => { model.setMeterAt(MI, 3, 4); return true; } },
+  /* The HEAD meter governs every measure to the next change (226 on the sonata): an O(range) edit by nature. */
+  { name: 'time-sig head (model)',      kind: 'model', run: () => { model.setTimeSig(3, 4); return true; } },
   { name: 'key-sig mid-piece (model)',  kind: 'model', run: () => model.setKeySigAt(MI, '2s', 'major') },
   { name: 'clef mid-piece (model)',     kind: 'model', run: () => model.setClefAt('C', '3', null, null) },
   { name: 'pickup (model)',             kind: 'model', run: () => model.setPickupAt(model.sectionStartIdxForCursor(), 2) },

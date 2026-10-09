@@ -9655,3 +9655,92 @@ metrics), `linebreaks.ts` (`seedPartition`, `setPageStarts`, adoption removed), 
 `pag_growPushes`, `pag_userPbHonoured`, `pag_zoomRoundTripKeepsPages`.
 
 ---
+
+## Every edit is a splice: the derive branch is gone for owned documents (2026-10-08, Max)
+
+**Picked**: in page view an edit on an owned document never re-assembles the document. The
+refill always returns a partition — a page break or section header is a line-start edit it
+carries like a lock (an added break splits its line; a removed page break or section header
+examines its neighbours so the remnant is repaired; a removed lock still changes nothing), a
+signature range is measured in chunked windows instead of refused past one window's cap — and
+the renderer applies it with one assembler operation, `PageAssembler.applyPartition`: lines the
+changed run reaches, and lines whose member set changed, get a fresh line window engraved and
+measured in a staging shell; every other system is reused from the DOM with its stored extents;
+pages first-fit from one page before the first affected line and systems move between shells.
+The splicer's hunk path stays as the fast case; when it refuses, `applyPartition` runs. A page
+break or section header with no line change re-fits pages from its page (`breaksChanged`). The
+section balance is bounded to the suffix of each touched section from the first line of the
+edit's PAGE: within the page a section is still balanced whole (every lock fixture holds), but
+no page before the edit ever moves. Setup apply redraws the page shells' headers and re-fits from
+page 1 (`refreshPageHeaders`); after a landed splice the mount hook re-runs on the touched pages
+so a new section title is injected. The one all-lines edit is add instrument (`all lines (head
+context changed)`): every system's staff set changes, and it goes through the assembly, lazily.
+Zoom, page scale, view-staff change and a new document remain full assemblies by definition.
+
+**Why**: Max: *"Any O(document) cost from an edit that doesn't affect the whole document is a
+failure … now that we own the full page-level layout and not Verovio, what is the distinction of
+a 'full derive' anyway? Every single edit now should only touch the systems that it affects.
+Every single edit is effectively a splice."* The first landing of the assembled pagination had
+kept the derive branch: a page break, a section header, a meter change or a Setup apply
+re-assembled the document synchronously to the cursor's page — 8–11 s deep in the sonata
+against ~1.2 s for the old castoff. The document-order cost Max accepted was for a load, not for
+an edit.
+
+**Rejected**: keeping the balance whole-section (it moved lines three pages up for a page break
+on page four — exactly the cost the rule forbids) or dropping it (a lock's sparse remainder and a
+section-final stub must still be absorbed; the lock fixtures encode that); bounding the balance
+to the edit's LINE (too tight: one-page documents lost the whole-section fixed point the lock
+fixtures assert); synchronous all-lines re-render for add instrument (the lazy assembly is the
+better UX for a change that is a reload in all but name).
+
+## Page cards are known at first paint; a page paints only once placed (2026-10-08, Max)
+
+**Picked**: an assembly creates a card for every expected page before anything paints — the
+same document's previous card count on a zoom or page-scale change, the cached pagination's
+count on a round trip (stored only when an assembly was complete), and on a fresh load the
+estimate from page 1 (`ceil(lines / page-1 lines)`), made while page 1 closes inside the
+synchronous burst. The open page takes over its placeholder in place; the count is corrected
+only when the assembly ends with a different total (trailing placeholders go, extra pages are
+appended). The page being built, and `applyPartition`'s staging shell, carry
+`score-page-building` and are `visibility: hidden`: a page's content appears only once its
+systems are placed. The scroll path never builds a page synchronously (`mount(p, false)`): an
+unbuilt card stays blank until the assembly reaches it; only the cursor's page, an edit and the
+export build on demand. On a same-document re-assembly the kept scroll position is scaled by the
+card-height ratio, so the reader stays on the same page through a zoom.
+
+**Why**: Max, on the lazy assembly: *"it always starts as 1 page and expands, causing the scroll
+to shift … if I scroll down during the cascade it's possible to see staves overlapping each
+other. This is sloppy. The number of rendered pages should stay constant unless we actually
+calculate that the total number of pages is different. The content of a page should only appear
+once the whole page's system positions are resolved."* The castoff had given the old pipeline its
+page count up front; the assembly has to earn it, and the estimate plus end-of-assembly
+correction is what "constant unless calculated different" means in practice.
+
+**Rejected**: scaling the previous count by the zoom ratio (over-engineering; the end
+correction covers it); building synchronously from the scroll path (seconds of freeze for a far
+scroll right after a load); showing the open page as it fills (the overlapping staves).
+
+## Zoom renders nothing: the pages are rescaled in place (2026-10-09)
+
+**Picked**: a zoom keeps every rendered system. The inner SVG coordinates, viewBox and
+page-margin translate are identical at every zoom (measured on the sonata: the same staff-line
+path text at 100 and 50; only the card's outer size and the device-grid placement differ), so
+`PageAssembler.rescale` resizes every shell, re-runs the post passes (the crisp snaps and the
+grid-dependent instrument-gap pass, all idempotent by contract) and the placement on each built
+page — mounted pages now, parked pages on mount — and scales the kept scroll position with the
+cards so the reader stays on the same page. The owner's partition, invalidated by the forced
+render, is restored from the DOM (`domLineStarts` / `domPageStarts`) and the zoom-independent
+width cache. The ledger outcome is `rescaled`, not a full render. Page scale is NOT a rescale:
+it changes the page geometry and the layout budget, so it still assembles.
+
+**Why**: Max, after the assembly landed: *"fully loading the sonata document or changing zoom
+takes upwards of 20 seconds in Firefox … My expectation was that fully owning pagination and
+building the document ourselves would be much faster than relying on Verovio."* A zoom was a
+full re-assembly — 115 windows re-rendered for a change that touches no coordinate. Sonata zoom
+in Chromium: 5.6 s → 0.93 s, zero Verovio loads, page starts and every system node preserved
+(`pag_zoomRescalesInPlace`).
+
+**Rejected**: re-running only the snap passes (the instrument-gap shift is a whole multiple of
+the device grid and must be recomputed at the new grid; the whole pass list is cheap once the
+curve sampling and matrix lookups are in JS, ~8 ms a system); treating page scale the same way
+(its geometry change re-flows lines).

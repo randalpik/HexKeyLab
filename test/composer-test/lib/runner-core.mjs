@@ -104,6 +104,9 @@ export const RESET_SNIPPET = `
   if (window.__hkl_composer.renderer) {
     window.__hkl_composer.renderer.setViewMode('page');
     window.__hkl_composer.renderer.setTheme('light');
+    /* Zoom too: a fixture that zooms left the next one at its zoom, and a
+       zoom fixture then saw its setZoom as a no-op (2026-10-09). */
+    if (window.__hkl_composer.renderer.getZoom() !== 100) window.__hkl_composer.renderer.setZoom(100);
   }
   if (score) {
     score.classList.add('view-page');

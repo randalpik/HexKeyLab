@@ -592,16 +592,16 @@ naturals, SVG options) are in decisions.md (2026-09-01 "A thread measured",
 
 Only what is open. Landed work is in the Status log; reasoning in decisions.md.
 
-- **Structural bails** (each a derive, each with its reason on the splicer):
-  head/interior `rest` (staffDefs, elements before the first measure; credits —
-  C2, composer/footer text changes derive, rare); user breaks (Ctrl+B, section
-  header, pickup); foreign document; the repair-loop caps (`MAX_ENSURES`,
-  `MAX_REPAIR_STEPS`, `MAX_CASCADE_STEPS` 64); a replaced line on an unmounted
-  page a PREVIOUS splice marked stale (`changed line not mounted`); a
-  section-header measure deleted by the edit; a single system taller than its
-  page.
-- **A5** — worker-offloaded castoff `loadData` (~1.4 s on the derive); with the
-  window settled, the remaining latency lever on the derive path.
+- **What still assembles** (2026-10-09, after "Every edit is a splice"): a new
+  document, a page-scale change, a view-staff change and add instrument
+  (`all lines (head context changed)`) — each a load in all but name; a
+  foreign document (line-start survival < 50 %); a single system taller than
+  its page. User breaks, section headers, pickups and meter changes splice or
+  apply now; zoom rescales in place.
+- **Load cost** — the next levers (worker-rendered windows, a cross-pass box
+  memo, chunk sizing, deferred cosmetic passes, query hygiene) are written up
+  with numbers in `docs/composer-render-perf.md` → Tier 4. Firefox's number
+  is Max's to measure.
 - **A3** — collapse the two `cursor.update` calls (~1.6 ms; blocked on the
   `onStateChange`-before-`onChange` bridge ordering).
 - **A created page's first layout scales with the mounted set** (~180 ms at 31
@@ -730,6 +730,25 @@ One line per landing; the reasoning is the dated decisions.md entry.
   cause into the ledger and the runner reads ledger + console before its
   failure shots and waits out a deferred setup render (lessons.md
   2026-10-08). Fresh-load reference gate over all 31 pages: clean.
+- 2026-10-08 (second round) — Every edit is a splice: the derive branch is
+  gone for owned documents (`PageAssembler.applyPartition`; the refill carries
+  page breaks and section headers, measures signature ranges in chunks; the
+  balance is bounded to the edit's page; Setup apply redraws headers; add
+  instrument is the one all-lines edit). Fixtures `pag_pageBreakSplices`,
+  `pag_sectionHeaderSplices`, `pag_meterChangeSplices`,
+  `pag_setupApplyKeepsSystems`, `pag_addInstrumentAllLines`; the seven
+  fixtures that declared a by-design derive now splice.
+- 2026-10-08 (third round) — Page cards known at first paint (previous /
+  cached / page-1 estimate), open page hidden until placed, scroll path never
+  builds, zoom keeps the reader's page (`pag_loadCardsUpFront`,
+  `pag_zoomKeepsCardsAndScroll`, `pag_buildingPageHidden`).
+- 2026-10-08 (fourth round) — Load cost halved in Chromium (10.0 → 5.6 s):
+  JS curve sampling (`render/curves.ts`), page-cached phase, chain-memoised
+  CTM, six lines per Verovio window, macrotask slices; reference gate exact.
+- 2026-10-09 (fifth round) — Zoom rescales in place (`rescale`, outcome
+  `rescaled`; sonata 5.6 → 0.93 s); the step measures the system the post
+  passes return (hide-empty substitution) and drops stale prepared chunks;
+  the test reset restores zoom 100 (`pag_zoomRescalesInPlace`).
 - 2026-09-01 — All remaining sonata refusals root-caused and fixed.
 - 2026-08-31 — B1 dy-cascade, B3 courtesy window, B4 section headers, B5 lazy
   mount, eviction, zoom-neutral unit 8, user page breaks, Phase D (edit path

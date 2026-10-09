@@ -1,3 +1,4 @@
+import { sampleOutline, ctmOf } from './curves.js';
 // Below-staff text layout — a DOM post-process on rendered systems (2026-09-04).
 //
 // Verovio places a dynamic, hairpin or expressive text just under its staff
@@ -174,7 +175,7 @@ export function svgBox(el: Element, frameInv: DOMMatrix): Box | null {
   if (typeof g.getBBox !== 'function' || typeof g.getCTM !== 'function') return null;
   let b: DOMRect;
   try { b = g.getBBox(); } catch { return null; }
-  const own = g.getCTM();
+  const own = ctmOf(g);
   if (!own) return null;
   const m = frameInv.multiply(own);
   const x1 = m.a * b.x + m.c * b.y + m.e, x2 = m.a * (b.x + b.width) + m.c * (b.y + b.height) + m.e;
@@ -206,7 +207,7 @@ export function strokedBox(el: Element, frameInv: DOMMatrix, b: Box | null = svg
   for (const p of paths) {
     const sw = parseFloat(p.getAttribute('stroke-width') ?? '');
     if (!(sw > 0) || typeof (p as SVGGraphicsElement).getCTM !== 'function') continue;
-    const ctm = (p as SVGGraphicsElement).getCTM();
+    const ctm = ctmOf(p as SVGGraphicsElement);
     if (!ctm) continue;
     const m = frameInv.multiply(ctm);
     half = Math.max(half, (sw / 2) * (noW ? Math.hypot(m.a, m.b) : Math.hypot(m.c, m.d)));
@@ -219,9 +220,14 @@ export function strokedBox(el: Element, frameInv: DOMMatrix, b: Box | null = svg
  *  cannot be measured. */
 function curvePoints(path: Element, frameInv: DOMMatrix): Array<{ x: number; y: number }> | null {
   const p = path as SVGGeometryElement;
-  if (typeof p.getTotalLength !== 'function' || typeof p.getPointAtLength !== 'function' || typeof p.getCTM !== 'function') return null;
+  if (typeof p.getCTM !== 'function') return null;
   const own = p.getCTM();
   if (!own) return null;
+  /* Sampled in JS from the path data (render/curves.ts) — see tielayout's
+     `outline`; the DOM API only for a path the parser declines. */
+  const js = sampleOutline(p.getAttribute('d') ?? '', CURVE_SAMPLES, frameInv.multiply(own));
+  if (js) return js;
+  if (typeof p.getTotalLength !== 'function' || typeof p.getPointAtLength !== 'function') return null;
   let L: number;
   try { L = p.getTotalLength(); } catch { return null; }
   if (!(L > 0)) return null;

@@ -226,6 +226,54 @@ Phases 1 and 2 ship together.
   slice (the extents job's rhythm), or burst until the cursor's page closes?
   (Recommendation: burst to the cursor's page, then slices.)
 
+
+## Every edit is a splice (approved by Max 2026-10-08, second round)
+
+The first landing kept the old derive branch for edits the refill would not
+carry: a structural lock diff (`user breaks changed` — page break, section
+header, pickup), a signature range longer than one window (`repartition
+window/cap exhausted` — a meter change mid-piece) and a head-context change
+(`head context changed` — add instrument). Each re-assembled the document
+synchronously up to the cursor's page: 8–11 s deep in the sonata against
+~1.2 s for the old castoff. Max: *"Any O(document) cost from an edit that
+doesn't affect the whole document is a failure … now that we own the full
+page-level layout and not Verovio, what is the distinction of a 'full derive'
+anyway? Every single edit now should only touch the systems that it affects.
+Every single edit is effectively a splice."*
+
+Decisions:
+
+1. **The refill always returns a partition.** The structural bails go. An
+   added or removed page break changes no line: it is a hard page start handed
+   to first-fit. A section header is a line lock plus its reserve band plus a
+   restart on that line. A signature range is measured in chunked windows, not
+   refused past one window's cap.
+2. **One assembler operation applies any partition change**:
+   `PageAssembler.applyPartition(newLines, changedLineIds)`, a generalisation of
+   `repaginateFrom`. Lines in the changed set get a fresh line window
+   (`renderLineSystem`); every other line is reused from the DOM bank with its
+   stored extents; pages are first-fit from the first affected page and systems
+   move between shells. No Verovio call for an unchanged line, ever. The
+   splicer's hunk path (`trySplice`) stays as the fast case inside this; when it
+   refuses, or when the refill's change is not a hunk, `applyPartition` runs —
+   never a full assembly on an owned document.
+3. **The changed set is derived, not guessed**: lines holding a dirty measure;
+   lines whose membership changed; the line BEFORE a new or removed signature
+   change (its end-of-line courtesy); lines inside a signature range whose
+   naturals changed; a section's first line on header add or remove; every line
+   for add instrument (the staff set changes on every system — the one
+   legitimately all-lines edit, still through the same path).
+4. **Setup apply** redraws the shells' headers and re-places page 1 — no system
+   renders. Zoom, page scale, view-staff change and new document stay full
+   assemblies by definition (every window renders at a new scale, or it is a
+   load).
+5. **Gate**: `cb-commands` must show every mutating command spliced, with add
+   instrument the only all-lines case; the checked sweep and the suite stay
+   green; page break, section header, meter change and setup apply land well
+   under a second deep in the sonata. Fixtures: `pag_pageBreakSplices`,
+   `pag_sectionHeaderSplices`, `pag_meterChangeSplices`,
+   `pag_setupApplyKeepsSystems`, `pag_addInstrumentAllLines`.
+
 ## Implementation plan (2026-10-08, after approval)
 
 File by file. Everything not listed is untouched.

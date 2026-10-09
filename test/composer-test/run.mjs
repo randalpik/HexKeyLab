@@ -279,7 +279,7 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
   /* A forced full render — forceFullRerender's callers: new document, Setup
      apply, view-staff change, zoom, page scale — is an explicit decision, never
      a command quietly deriving; the reason carries its cause (2026-10-08). */
-  const byDesign = (why) => BY_DESIGN.has(why) || why.startsWith('forced full render');
+  const byDesign = (why) => BY_DESIGN.has(why) || why.startsWith('forced full render') || why.startsWith('all lines');
   if (Array.isArray(ledger)) {
     const fulls = ledger.filter((e) => e && e.full);
     result.renders = { total: ledger.length, full: fulls.length };

@@ -83,7 +83,12 @@ export const MIN_FILL = 0.65;
 const MAX_REPAIR_STEPS = 64;
 /** Naturals windows one repartition may render before giving up (derive).
  *  Repairs examine a handful of lines, so this is generous. */
-const MAX_ENSURES = 4;
+const MAX_ENSURES = 64;
+/** A naturals window never spans more measures than this: a long governed
+ *  signature range (a meter change mid-piece governs to the next change) is
+ *  measured in chunks instead of refused ('repartition window/cap exhausted'
+ *  derived the whole document for it until 2026-10-08). */
+const ENSURE_CHUNK = 96;
 /** A single naturals window (post spanner/ending expansion) larger than this
  *  falls back to a derive render instead. */
 const WINDOW_CAP = 260;
@@ -167,6 +172,11 @@ export interface RefillResult {
    *  line-break command, 2026-09-11): the splicer may treat the hunk like the
    *  balancer's partition-only changes. */
   partitionOnly: boolean;
+  /** A page break or section header was added or removed: pages must re-fit
+   *  from the break's page even when `changedRun` is null (2026-10-08). */
+  breaksChanged: boolean;
+  /** Measure ids those breaks precede (added and removed). */
+  breakIds: string[];
 }
 
 /** A manual line-break edit in CURRENT measure indices: the measures a newly
@@ -177,7 +187,7 @@ export interface RefillResult {
  *  the line is split at the lock and the ordinary carry/repair/balance does
  *  the rest, exactly as for a measure insert. A removed lock changes nothing
  *  here: the boundary merely stops being hard. */
-interface PartitionEdit { addStarts: number[] }
+interface PartitionEdit { addStarts: number[]; removedAt: number[] }
 
 /* ── pure helpers ─────────────────────────────────────────────────────────── */
 
@@ -352,16 +362,23 @@ function computeUserBreakSig(model: ComposerModel): string {
   return parts.join(',');
 }
 
-/** Diff two user-break signatures. 'structural' when a page break or section
- *  header entry differs (the refill derives, as before); otherwise the measure
- *  ids whose MANUAL line break (`lock:`) was added / removed. */
-function diffBreakSigs(oldSig: string, newSig: string): 'structural' | { added: string[]; removed: string[] } {
+/** Diff two user-break signatures: the measure ids whose break (a manual
+ *  `lock:`, a `pb:` page break or a section header's `sb:`) was added /
+ *  removed. Every kind is a LINE-START edit the refill carries like a lock
+ *  (an added break splits its line; a removed one merely stops being hard);
+ *  `structural` flags a page break or section header among them, which the
+ *  renderer answers with a page re-fit even when no line changed ("Every edit
+ *  is a splice", 2026-10-08 — until then these derived). */
+function diffBreakSigs(oldSig: string, newSig: string): { added: string[]; removed: string[]; removedStructural: string[]; structural: boolean } {
   const parse = (sig: string): Set<string> => new Set(sig ? sig.split(',') : []);
   const a = parse(oldSig), b = parse(newSig);
-  const added: string[] = [], removed: string[] = [];
-  for (const e of b) if (!a.has(e)) { if (!e.startsWith('lock:')) return 'structural'; added.push(e.slice(5)); }
-  for (const e of a) if (!b.has(e)) { if (!e.startsWith('lock:')) return 'structural'; removed.push(e.slice(5)); }
-  return { added: added.filter((id) => id !== '$end'), removed: removed.filter((id) => id !== '$end') };
+  const added = new Set<string>(), removed = new Set<string>(), removedStructural = new Set<string>();
+  let structural = false;
+  const idOf = (e: string): string => e.slice(e.indexOf(':') + 1);
+  for (const e of b) if (!a.has(e)) { if (!e.startsWith('lock:')) structural = true; added.add(idOf(e)); }
+  for (const e of a) if (!b.has(e)) { if (!e.startsWith('lock:')) { structural = true; removedStructural.add(idOf(e)); } removed.add(idOf(e)); }
+  added.delete('$end'); removed.delete('$end'); removedStructural.delete('$end');
+  return { added: [...added], removed: [...removed], removedStructural: [...removedStructural], structural };
 }
 
 /** Measure range (CURRENT indices) of the lines whose starts differ between
@@ -996,14 +1013,15 @@ export class PageLineBreaks {
     this.setView(viewStaves);
     if (this.startIds === null) return bail('no owned partition');
     if (this.startIds!.length <= 1) return bail('single-line partition');
-    /* User breaks. A page break or section header change still derives; a
-       MANUAL LINE BREAK — a plain <sb>, `lock:` in the sig — is a partition
-       edit handled below like a measure insert, never a derive: a derive lets
-       castoff re-decide every line of the document for an edit whose effect
-       is one local split (2026-09-11). */
+    /* User breaks — a manual line break, a page break, a section header —
+       are partition edits handled below like a measure insert, never a
+       derive: an added break splits its line, a removed one stops being hard,
+       and a page break or section header additionally has the renderer re-fit
+       pages from its page (`breaksChanged`). Until 2026-10-08 the page break
+       and the section header derived ('user breaks changed'), re-assembling
+       the document for an edit that cannot touch a page before it. */
     const newBreakSig = computeUserBreakSig(model);
     const lockDiff = newBreakSig === this.userBreakSig ? null : diffBreakSigs(this.userBreakSig, newBreakSig);
-    if (lockDiff === 'structural') return bail('user breaks changed');
     /* Head / interior signature changes are handled AFTER the measure diff, as
        governed RANGES folded into the changed run (sigranges.ts); only a
        structural change there still derives. */
@@ -1134,10 +1152,16 @@ export class PageLineBreaks {
        and the layout holds no state the document cannot reproduce (Max,
        2026-09-12). */
     const addStarts: number[] = [];
+    /* A REMOVED page break or section header examines its neighbours (the
+       remnant it leaves is repaired and balanced from there); a removed LOCK
+       does not — the boundary merely stops being hard (pin-removed-only,
+       Max 2026-09-12: `lock_click_unlocks_keeps_layout`). */
+    const removedAt: number[] = [];
     if (lockDiff) {
       for (const id of lockDiff.added) { const i = idIdx.get(id); if (i != null && i > 0) addStarts.push(i); }
+      for (const id of lockDiff.removedStructural) { const i = idIdx.get(id); if (i != null && i > 0) removedAt.push(i); }
     }
-    const hasEdit = addStarts.length > 0;
+    const hasEdit = addStarts.length > 0 || removedAt.length > 0;
 
     let newStartIds: string[];
     let newPageStartIds: string[];
@@ -1162,7 +1186,7 @@ export class PageLineBreaks {
          decide whether the page grid itself changed. */
       const repaired = this.repartition(
         model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx,
-        hasEdit ? { addStarts } : null,
+        hasEdit ? { addStarts, removedAt } : null,
       );
       if (!repaired) return bail('repartition window/cap exhausted');
       newStartIds = repaired.starts;
@@ -1220,6 +1244,8 @@ export class PageLineBreaks {
     return {
       strategy, mei, changedRun, oldStartIds, newStartIds,
       oldPageStartIds, newPageStartIds, partitionOnly,
+      breaksChanged: lockDiff?.structural ?? false,
+      breakIds: lockDiff ? lockDiff.added.concat(lockDiff.removed) : [],
     };
   }
 
@@ -1334,10 +1360,13 @@ export class PageLineBreaks {
         if (this.naturals.has(ids[i])) { i++; continue; }
         let j = i;
         while (j + 1 <= hi && !this.naturals.has(ids[j + 1])) j++;
-        if (ensures >= MAX_ENSURES) return false;
-        ensures++;
-        const w = this.measureWindow(model, meiMeasures, ids, i, j, ctx);
-        if (w == null) return false;
+        /* One window per ENSURE_CHUNK measures: the cost is the range's own. */
+        for (let c = i; c <= j; c += ENSURE_CHUNK) {
+          if (ensures >= MAX_ENSURES) return false;
+          ensures++;
+          const w = this.measureWindow(model, meiMeasures, ids, c, Math.min(j, c + ENSURE_CHUNK - 1), ctx);
+          if (w == null) return false;
+        }
         i = j + 1;                       // measureWindow files sigW by context
       }
       return true;
@@ -1388,6 +1417,18 @@ export class PageLineBreaks {
         lineInserted(k);
         touch(starts[k - 1], lineEndAt(k) - 1);
       }
+      /* Removed page breaks / section headers (2026-10-08): the boundary is no
+         longer hard. Examine the line before it and the line it started, so
+         the remnant the break left is repaired and the section balanced from
+         here — the symmetric half of the add above. The boundary itself moves
+         only if the repair or the balance moves it. */
+      for (const raw of edit.removedAt) {
+        const at = unitLo(raw);
+        if (at <= 0) continue;
+        let k = 0;
+        while (k < starts.length && starts[k] < at) k++;
+        if (k < starts.length && starts[k] === at && k > 0) touch(starts[k - 1], lineEndAt(k) - 1);
+      }
     }
 
     /* ── repair ──
@@ -1411,8 +1452,16 @@ export class PageLineBreaks {
     let steps = 0;
     let k = first;
     let through = last;
+    /* The step cap guards against a loop, not against a long range: a head
+       meter change governs every measure to the next change (226 on the
+       sonata, ~56 lines) and each illegal line costs a step, so a fixed 64
+       refused it ('repartition window/cap exhausted') and the document was
+       re-seeded — the O(document) answer to an O(range) edit (2026-10-08).
+       Scale with the lines examined; the `pushed` guard still forbids
+       oscillation, so the bound is linear in the range. */
+    const stepCap = Math.max(MAX_REPAIR_STEPS, 8 * (last - first + 2));
     while (k < starts.length && k <= through) {
-      if (++steps > MAX_REPAIR_STEPS) return null;
+      if (++steps > stepCap) return null;
       const f = fillOf(k);
       if (f == null) return null;
       const from = starts[k], to = lineEnd(k);
@@ -1594,8 +1643,23 @@ export class PageLineBreaks {
     const secs = sectionRanges(starts, ids, hard).filter(([lo, hi]) => hi >= kFrom && lo <= kTo);
     for (let s = secs.length - 1; s >= 0; s--) {
       const [kLo, kHi] = secs[s];
+      /* Only the section's suffix from the first line of the PAGE the edit
+         examined first: an edit never reaches a page before it ("Every edit
+         is a splice", Max, 2026-10-08 — a page break, a section header or a
+         meter change must not touch a page before it). Balancing the whole
+         section re-laid it from scratch whenever a hard start appeared inside
+         it or its tail was re-measured, and moved lines three pages up for a
+         page break on page four. Within the edit's own page the section is
+         still balanced whole (a one-page document behaves exactly as before:
+         a lock's sparse remainder is absorbed, a section stays a balancer
+         fixed point); the lines on earlier pages keep the partition they
+         have — the balance's own answer from the load. */
+      let pageFirst = 0;
+      for (const pl of pageLines) if (pl <= kFrom && pl > pageFirst) pageFirst = pl;
+      const lo = Math.max(kLo, pageFirst);
+      if (lo > kHi) continue;
       lb.sections++;
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, lambda, units);
+      const r = this.balanceSectionLines(starts, pageLines, lo, kHi, ids, lambda, units);
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
     }

@@ -5050,6 +5050,96 @@ not page numbers — passing numbers checks nothing and reports every page clean
 `pag_courtesyAtLineEnd` (a line lock pins the boundary, since the courtesy's own width would
 otherwise move it).
 
+## A system prepared ahead is only as fresh as the document it came from (2026-10-09)
+
+The chunked window renders six lines at a time and keeps the five it has not consumed in
+`job.prepared`. An edit while the assembly was in flight (the hide-empty toggle in
+`pag_shrinkPulls`) then had `renderPageComposer` finish that assembly against the NEW model with
+systems rendered from the OLD one: a three-staff system for a line whose staves were now hidden.
+Two things went wrong at once. The hide-empty substitution replaced the stale system in the DOM
+— correct — but `step()` went on to align and measure the reference it had imported, now
+detached: "line … has no readable extents", a page folded without that line's extents. The host's
+`postProcess` now RETURNS the systems in the DOM after substitution and the step measures those;
+and a prepared chunk is dropped when the document version has moved on. A mirror of the step
+written after the edit could not reproduce it — it rendered from the current model. Reproduce
+with the fixture's own sequence, and hook the warning with a stack and the assembler's state.
+
+## Profile the DOM calls, not the functions: a sonata load was half layout queries (2026-10-08)
+
+Max measured a full sonata load at 20+ s in Firefox after the assembly landed, against ~8 s
+before. The Chromium profile (10 s) by function said "Verovio 3.3 s, post passes 2.6 s"; the
+profile by DOM CALL said what to fix:
+- `getPointAtLength`: 105 000 calls, 1.4 s. The tie outline, the text-layout obstacle curves and
+  the slur pass sampled every curve through the DOM API (Gecko re-flattens the path on each
+  call). Verovio's curves are `M` + two cubics in absolute coordinates; `render/curves.ts` parses
+  the path data and samples by arc length in JS — same parametrisation, no layout.
+- `getScreenCTM`: 769 calls, 913 ms — 115 of them 7 ms each: `originPhaseXOf` read the page
+  margin's screen matrix once per LINE, right after a system import, which forced the browser to
+  lay the new system out then and again for the snap passes. Cached per page card (keyed on the
+  container width).
+- `getCTM`: 96 000 calls. `svgBox` asked every element for its matrix; an element's CTM is the
+  product of the transforms on its ancestor chain, so `ctmOf` memoises by (viewport, chain
+  string), read live from the attributes — nothing can go stale, one real `getCTM` per chain.
+- One Verovio window per line: 115 `loadData` + `renderToSVG` where the castoff had done one.
+  `renderLineSystems` renders `CHUNK_LINES` (6) lines per window, each on its own pin, never
+  across a change in the hidden-staff set: 20 windows, Verovio 3.3 s → 2.1 s.
+- `requestIdleCallback` slices: ~2 s of waiting for idle across a load with one 68 ms line per
+  40 ms slice. A MessageChannel macrotask hop with a 60 ms budget still lets input and paint
+  through.
+Result in Chromium: 10.0 s → 5.6 s for the whole document, first page 0.65 s → 0.16 s;
+fresh-load reference gate exact on all 31 pages throughout. The engraving passes still make
+82 000 `getBBox` calls (79 ms here); a cross-pass box memo would need write invalidation and is
+the next lever if Gecko is still slow. What a profile by function hides, a profile by DOM call
+shows — `cb-loadprofile.js`, `cb-domcalls.js`, `cb-ctmattr.js` in `test/composer-inspect/phasec/`
+are the probes; the next levers are written up in `docs/composer-render-perf.md` → Tier 4.
+
+## A lazy assembly must show its page cards and hide its open page (2026-10-08)
+
+The first landing of the assembled page view grew the document one card at a time (the open
+page's card appeared when the previous one closed) and painted the open page while systems were
+still being appended across idle slices. Two visible defects: the scroll position collapsed to
+the top on every load and zoom (one card to scroll in), and scrolling into the cascade showed
+systems at the origin overlapping. Both were invisible to the suite because every fixture's
+cursor sat at the END of the document it had just typed, so the synchronous burst (to the
+cursor's page) built everything before the first read — `pag_loadCardsUpFront` passed twice on
+the unfixed code until its cursor went to measure 0. The fix: placeholders for every expected
+page at `begin` (previous count, cached count, or page 1's estimate inside the burst), the open
+page hidden by CSS, the count corrected only when the total is known. Also found on the way:
+`rememberPartition` ran after every render and stored the in-flight PREFIX as the pagination,
+so a zoom read "1 page" from the cache; it now stores page starts only when the assembly is
+complete. The partition cache is zoom-independent by design (`unit` is constant across presets),
+so a zoom round trip legitimately restores the same lines — do not read that as a wrong-zoom
+partition.
+
+## A fixed repair step cap turns a long governed range into a derive (2026-10-08)
+
+`MAX_REPAIR_STEPS = 64` guarded the repartition's push/pull loop against oscillation, but each
+illegal line costs at least one step, so a HEAD meter change on the sonata — governing every
+measure to the next change at m. 226, ~56 lines — ran out of steps, returned null, and the
+renderer re-seeded the whole document: `repartition window/cap exhausted` at 9.8 s for an edit
+whose honest cost is the range (785 ms once the cap scales with the lines examined; the `pushed`
+guard still forbids oscillation). Found through a misnomer: `cb-commands`' "time-sig mid-piece"
+called `model.setTimeSigAt`, which does not exist, and fell back to `setTimeSig` — the head meter.
+The real mid-piece API is `setMeterAt(mi, count, unit)` (172 ms, spliced); the probe now runs
+both. Check what a probe's fallback actually calls before trusting its label.
+
+## The section balance reaches back as far as you let it (2026-10-08)
+
+`balanceTouched` re-laid every section an edit touched from the section's FIRST line, and the
+balance is a pure function of the section's content and boundaries — so a page break or section
+header inserted on page four (a new hard start = a new section boundary) or a meter change that
+re-measured a section's tail re-laid the section from scratch, moving lines on page one. A splice
+then re-engraved those lines: "page 1 was re-rendered" on every structural edit, with no full
+render in the ledger to point at it. The balance is now bounded to each touched section's suffix
+from the first line of the PAGE the edit examined first: inside the edit's page a section is still
+balanced whole (one-page documents behave exactly as before — every lock fixture holds), and no
+page before the edit moves. Bounding to the edit's LINE instead was too tight: `lock_down_splits`
+and friends assert the whole-section fixed point on a one-page document. When a balance shrinks
+the line count, `linesReplaced` can collapse a page whose first line was in the removed tail —
+the owner's page list then names fewer pages than the DOM holds, and `applyPartition` must tear
+down every built page past its rebuild window when nothing is kept (a stale page 2 survived with
+its old number and sat first in the DOM: "page 2 starts at m-7nb, pb before m-7bt").
+
 ## An assembly in flight is a PREFIX: read nothing from the owner's page starts before finishing it (2026-10-08)
 
 With pages assembled in idle slices, `PageLineBreaks.pageStarts()` holds only the pages that have

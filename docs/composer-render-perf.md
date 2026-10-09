@@ -225,14 +225,113 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   Cost: first paint 1.2 s → ~2.0 s (one extra loadData) — accepted by Max as
   the one place additional time is acceptable, verified to happen once per
   derive with no idle tail. Total work per load-and-first-edit ~4.2 s → ~2.3 s.
-- [ ] **T3.2c Cascades + cross-page moves (Phase C-B2b)** — dy-translate of
-  following systems (the window MEASURES the new spacing, so dy is known),
-  line-count-changing splices (replace N systems with M), page-boundary
-  moves, `<pb>` pins + our height-fit rule so a full render agrees by
-  construction (also fixes the user-`<pb>` giant-page quirk); re-splice k−1
-  on courtesy-signature boundaries; section-zone windows (the k59/k87
-  scoreDef family); first-edit hit rate via a keep-current-boundary fill
-  bias (design item 1c, Max's call).
+- [x] **T3.2c Cascades + cross-page moves (Phase C-B2b)** — CLOSED
+  2026-10-09: every item shipped in another form or made moot by the
+  assembled page view (decisions.md 2026-10-08 ×2, 2026-10-09).
+  - dy-translate of following systems → superseded: a page places its own
+    systems from measured extents (`placePage`, rule v1 fold + rule v2
+    distribution, 2026-09-03/04); nothing is translated from a window.
+  - line-count-changing splices (N → M systems) → shipped as B2 line hunks
+    (2026-09-02) and, for every change the hunk splicer refuses,
+    `PageAssembler.applyPartition` (2026-10-08).
+  - page-boundary moves → shipped: first-fit from one page before the first
+    affected line, systems moved between shells (`repaginateFrom` /
+    `applyPartition`, 2026-10-08); a page break is a hard page start.
+  - `<pb>` pins + a height-fit rule so a full render agrees by construction
+    → moot: there is no full page render to agree with; Composer draws the
+    pages and the reference gate compares systems, not pages. The user-`<pb>`
+    giant-page quirk went with the castoff.
+  - re-splice k−1 on courtesy-signature boundaries → shipped as the courtesy
+    stub in every window (B3, 2026-09-02; the assembly's line windows carry
+    it since 2026-10-08) plus signature ranges that start one measure early
+    (sigranges.ts); the line before a change is in the hunk by construction.
+  - section-zone windows (the k59/k87 scoreDef family) →
+    `beginsSignatureChange` + the restart-aware window recipe; the battery's
+    `edit-section-header-zone` splices.
+  - first-edit hit rate via a keep-current-boundary fill bias → superseded by
+    the conservative repartition (2026-08-31: an edit that leaves every line
+    inside [MIN_FILL, FIT_MAX] moves no boundary); the checked sweep is
+    114/114 spliced on the sonata.
+
+## Tier 4 — assembled page view: where a load goes now, and the next levers
+
+Measured 2026-10-09, headless Chromium, `~/Documents/sonata.hkc` (115 lines,
+31 pages), after the 2026-10-08/09 rounds. Numbers are a full re-assembly
+(`forceFullRerender` + render), which is what a load and a page-scale change
+cost; a zoom no longer assembles at all. Firefox is NOT measured here — Max
+reported 20+ s before this round and is re-measuring; every item below says
+which engine it is expected to help most and why.
+
+| Phase (per full load) | Chromium | Calls | Notes |
+|---|---|---|---|
+| Verovio `renderToSVG` | 1.6 s | 20 windows | ~80 ms a 6-line window; per-system layout dominates |
+| Verovio `loadData` | 0.5 s | 20 | parse + setup per window |
+| `DOMParser` (window SVG + range MEI) | 0.5 s | 60 | |
+| Post passes (`postProcessRendered`) | 0.9 s | 115 systems | text 150, instr 180, slurs 80, ties 190, snapBar 100, rest small |
+| Import + align + measure + fit + close | ~0.4 s | | one layout per system is inherent |
+| `model.serializeRangeForRender` | 0.16 s | 20 | |
+| Slice gaps (macrotask hops) | ~0.4 s | | was ~2 s with `requestIdleCallback` |
+| **Whole document** | **5.1–5.6 s** | | first page 0.17 s (synchronous to the cursor's page) |
+
+Remaining DOM-call counts per load, the ones Gecko charges for: `getBBox`
+82 000 (79 ms here), `querySelector`/`querySelectorAll` 200 000 (250 ms),
+`closest` 73 000, `getCTM` 3 400, `getScreenCTM` 684 (97 ms). Forced reflows
+(a layout read after a write) ~450 — the passes are already read-then-write
+batched; a reflow here is mostly the one layout a freshly imported system
+must get.
+
+Probes (all `node test/composer-inspect/phasec/runner.mjs <probe>`):
+`cb-loadprofile.js` (phases of a re-assembly by function), `cb-domcalls.js`
+(every geometry / query DOM call, count + time, plus per-pass ms from
+`lastPostStats`), `cb-ctmattr.js` (which callers force reflows and sample
+curves), `cb-pagefill.js` (page-by-page fold and slack, load stats),
+`cb-zoomtime.js` (a zoom round trip: ms, loads, outcome), `cb-refgate.js`
+(every page against a full engrave — run after any change here).
+
+Next levers, in the order to try them. Each is independent of the others.
+
+1. **Verovio in a Web Worker** (expected: the biggest remaining win in both
+   engines). The window renders are pure functions of a MEI string: a worker
+   with its own Verovio instance can render chunk N+1 while the main thread
+   imports, post-processes and measures chunk N. Main-thread work per load is
+   ~2 s, Verovio ~2.1 s, so a pipelined load approaches max(2, 2.1) rather
+   than their sum — roughly 5.1 → 3 s here, more in Firefox, where the WASM
+   is no faster but the main thread is slower. Preconditions: load the
+   Verovio WASM in the worker (`@hkl/notation` loads it from the CDN on the
+   main thread today; the analyzer/orchestrator workers show the bundling
+   pattern); the chunk recipe (`renderLineSystems`) must send the window MEI
+   and the options and receive SVG strings; `applyPartition` and the splicer
+   can keep the main-thread toolkit for their one-off windows. Risk: a second
+   toolkit's output must be byte-identical to the first's (same build, same
+   options, same font) — gate with `cb-refgate.js`.
+2. **Cross-pass `getBBox` memo** (expected: Gecko-specific). The four heavy
+   passes measure the same ~150 elements per system, once per curve or mark:
+   82 000 reads for ~17 000 distinct elements. A memo keyed by element,
+   cleared on any geometry write (the passes write through `setAttribute` on
+   `transform`/`d` and through `appendChild`; ~24 sites across tielayout,
+   slurlayout, instrgap, textlayout), would cut the count 4–5×. Cheap in
+   Chromium (79 ms total), so only worth it if Firefox still shows the passes
+   as a hotspot; the risk is a stale box after a write a site forgot to
+   announce — `cb-refgate.js` and the engr_/tie/slur visual fixtures gate it.
+3. **Bigger chunks, first chunk small** (expected: small, both engines).
+   `CHUNK_LINES` 6 → 12 halves `loadData` and the parses (~0.5 s → ~0.3 s
+   here) at the cost of a longer first window; render the first chunk as 2–3
+   lines so the first page still paints in well under 200 ms.
+4. **Deferred cosmetic passes** (expected: Gecko). Notehead z-order, theme,
+   HEJI glyph injection and the snaps do not change a system's extents; they
+   could run at reveal (mount) rather than before the fold. Measured
+   2026-10-08: the passes that DO change extents (instrument gaps, below-staff
+   text, tuplet numbers, raised ties) grew 61 of 115 systems' bottoms by up to
+   420 units, so those must stay before measurement; the split saves only the
+   cosmetic ~250 ms here. Not worth it alone; worth it with 2.
+5. **Query hygiene** (expected: small). 200 000 `querySelector(All)` calls per
+   load — the passes re-query obstacles per curve. A per-system element index
+   built once (notes, accidentals, marks, curves by staff) and handed to every
+   pass would remove most of them; same invalidation story as 2.
+
+Not levers (measured): the slice scheduler (gaps are ~0.4 s now and a
+macrotask hop is the floor); the number of forced reflows (~4 a system, each
+inherent to a pass boundary); `serializeRangeForRender` (0.16 s).
 
 ## Rejected / dead ends (don't retry)
 
@@ -348,15 +447,42 @@ on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
   min 79 ms; `cb-splicecost` steady 116 ms (render 92, splice 53, refill 38,
   naturals 34). Checked sweep: 114 lines, every line splices once the refill
   waits for the assembly; fresh-load reference gate 31/31 pages exact.
-  OPEN — a DERIVE (user page break, section header, pickup, meter change,
-  add instrument, `head context changed`) now re-assembles the document
-  synchronously up to the cursor's page: 8–11 s with the cursor deep in the
-  sonata (`cb-commands`, `cb-splice-battery`), against ~1.2 s for the old
-  castoff + paint. Document order is the accepted design; the lever is to
-  reuse the unchanged systems and their extents on a derive (the splicer's
-  bank + `moveSystems`, applied to the whole document) instead of
-  re-rendering 115 windows, so a derive costs the changed lines plus a
-  first-fit — not built yet, Max to decide.
+  The same day's second round ("Every edit is a splice") retired the derive
+  branch for owned documents: a page break, section header, pickup, meter
+  change or Setup apply had re-assembled the document synchronously to the
+  cursor's page (8–11 s deep in the sonata, against ~1.2 s for the old
+  castoff). Now the refill carries page breaks and section headers, measures
+  signature ranges in chunks, and the renderer applies any partition change
+  with `PageAssembler.applyPartition` (changed lines engraved into a staging
+  shell, everything else reused, pages first-fit from one page before the
+  first affected line); the balance is bounded to the edit's page; Setup
+  apply redraws the shells' headers. `cb-commands` on the sonata (cursor at
+  m. 221, Chromium): page break 258 ms (applied), section header 152 ms,
+  meter change mid-piece 172 ms, HEAD meter change 785 ms (every measure to
+  the next change re-flows — an O(range) edit by nature), key change 296 ms
+  (applied), pickup 1.3 s (applied), insert measure 178 ms, tempo 217 ms;
+  add instrument 11.8 s as the one all-lines edit, through the lazy
+  assembly. 21 of 25 mutating commands splice, 3 apply, 1 is all-lines; no
+  derive. The first edit after a load still pays the in-flight assembly
+  (`finishSync`, ~7 s with the cursor deep) — that is the load's own cost,
+  once.
+- 2026-10-08 — **Load cost** (Max: 20+ s in Firefox for a sonata load or
+  zoom). Profiled by DOM call rather than by function (lessons.md "Profile
+  the DOM calls"): curve sampling through `getPointAtLength` (105 000 calls)
+  moved to JS (`render/curves.ts`); the per-line `getScreenCTM` cached per
+  page; `getCTM` memoised by ancestor transform chain (96 000 → 3 400 calls);
+  six lines per Verovio window (`renderLineSystems`, 115 → 20 windows);
+  macrotask slices in place of idle callbacks. Chromium, whole sonata:
+  10.0 s → 5.6 s (Verovio 3.3 → 2.1 s, passes 2.6 → 0.9 s, parse 0.8 →
+  0.5 s, slice gaps ~2 s → ~0.5 s); first page 0.65 → 0.16 s. Reference gate
+  exact throughout. Firefox to be re-measured by Max. Next levers if still
+  slow there: a cross-pass `getBBox` memo (82 000 calls remain), and
+  rendering windows in a Web Worker so Verovio (2.1 s) overlaps the
+  main-thread import/pass/measure work (~2 s).
+- 2026-10-09 — **Zoom rescales in place** (decisions.md): no Verovio, no
+  parsing; shells resized, passes + placement re-run per page. Sonata zoom
+  100 → 50 in Chromium: 5.6 s → 0.93 s (back: 0.91 s), 0 loads, every
+  system node and page start preserved.
 - 2026-09-11 — **T2.1b shipped**: visible-first mount pump with a fast-scroll
   gate, one near page per idle slice, and the post-repair toolkit warm. The
   "3 s to mount a page" was 8–18 synchronous mounts queued ahead of the visible

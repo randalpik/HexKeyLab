@@ -1,3 +1,4 @@
+import { samplePath } from './curves.js';
 // Flipped-slur re-draw — a DOM post-process on rendered systems (2026-09-05).
 //
 // `notation/slurSides.ts` puts a two-voice slur on the notehead side with
@@ -121,7 +122,11 @@ export function layoutFlippedSlurs(root: Element, opts: SlurLayoutOpts): void {
     /* Verovio's endpoints: the path starts at the start point and reaches the
        end point half-way along (two cubics of equal length). */
     let p0: Pt, pEnd: Pt;
-    try { const L = path.getTotalLength(); p0 = path.getPointAtLength(0); pEnd = path.getPointAtLength(L / 2); } catch { continue; }
+    /* Sampled in JS from the path data (render/curves.ts); the DOM API only
+       for a path the parser declines. */
+    const sp = samplePath(path.getAttribute('d') ?? '');
+    if (sp) { p0 = sp.pointAt(0); pEnd = sp.pointAt(sp.length / 2); }
+    else { try { const L = path.getTotalLength(); p0 = path.getPointAtLength(0); pEnd = path.getPointAtLength(L / 2); } catch { continue; } }
     const anchorEl = (sIn ? sEl : eEl) as Element;
     const staffN = anchorEl.closest('g.staff')?.getAttribute('data-n');
     const layerN = anchorEl.closest('g.layer')?.getAttribute('data-n');
@@ -185,9 +190,9 @@ export function layoutFlippedSlurs(root: Element, opts: SlurLayoutOpts): void {
     let collides = false;
     if (!displaced && tight.length) {
       try {
-        const L = path.getTotalLength();
+        const L = sp ? sp.length : path.getTotalLength();
         for (let i = 0; i <= SAMPLES && !collides; i++) {
-          const q = path.getPointAtLength(L / 2 * i / SAMPLES);
+          const q = sp ? sp.pointAt(L / 2 * i / SAMPLES) : path.getPointAtLength(L / 2 * i / SAMPLES);
           for (const b of tight) { if (inside(q, b)) { collides = true; break; } }
         }
       } catch { /* unmeasurable path: leave it */ }

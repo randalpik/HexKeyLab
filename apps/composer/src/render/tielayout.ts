@@ -44,6 +44,7 @@
 // extents; it still runs before placement measures them.
 
 import { strokedBox, svgBox, type Box } from './textlayout.js';
+import { samplePath, ctmOf } from './curves.js';
 import { bez, fmt, MARGIN, OBSTACLE_SEL, type Pt } from './slurlayout.js';
 
 export interface TieLayoutOpts {
@@ -109,10 +110,25 @@ const labelOf = (el: Element): string =>
 function outline(path: SVGGeometryElement, frameInv: DOMMatrix, gap: number): Pt[] | null {
   const own = path.getCTM();
   if (!own) return null;
+  const m = frameInv.multiply(own);
+  /* Sampled in JS from the path data (render/curves.ts): the DOM API cost
+     70 000 `getPointAtLength` calls on a sonata load. Same arc-length
+     parametrisation; the DOM API only for a path the parser declines. */
+  const sp = samplePath(path.getAttribute('d') ?? '');
+  if (sp) {
+    const L = sp.length;
+    if (!(L > 0)) return null;
+    const n = Math.max(8, Math.ceil(L / gap));
+    const out: Pt[] = [];
+    for (let i = 0; i <= n; i++) {
+      const q = sp.pointAt(L * i / n);
+      out.push({ x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f });
+    }
+    return out;
+  }
   let L: number;
   try { L = path.getTotalLength(); } catch { return null; }
   if (!(L > 0)) return null;
-  const m = frameInv.multiply(own);
   const n = Math.max(8, Math.ceil(L / gap));
   const out: Pt[] = [];
   for (let i = 0; i <= n; i++) {
@@ -155,7 +171,7 @@ function textInk(t: SVGTextElement, frameInv: DOMMatrix): { ok: boolean; box: Bo
   let n: number;
   try { n = t.getNumberOfChars(); } catch { return { ok: false, box: null }; }
   if (!n) return { ok: true, box: null };
-  const ctm = t.getCTM();
+  const ctm = ctmOf(t);
   if (!ctm) return { ok: false, box: null };
   const chars: Array<{ ch: string; font: string }> = [];
   const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);

@@ -98,6 +98,11 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   width: max-content;       /* hug the SVG's intrinsic width */
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
+/* A page the assembler is still building (systems being appended across idle
+   slices, nothing placed yet) keeps its card and its size but paints nothing:
+   a page's content appears only once its systems are placed (Max, 2026-10-08).
+   The staging shell applyPartition engraves into carries the same class. */
+#score.view-page .score-page.score-page-building { visibility: hidden; }
 /* Dark theme: scroll surface + page cards go dark (noteheads/staff are
    recolored by the shared notation-theme CSS via --notation-ink). Light theme
    is left exactly as above so existing visual baselines don't shift. */
