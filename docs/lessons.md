@@ -5193,6 +5193,46 @@ derives honestly, and each had been masking the others:
   "29 full render(s): no owned partition" was two deferred setup renders plus 27 by-design
   single-line derives, not 29 of anything.
 
+## Visual baselines can drift by a one-level anti-aliasing flip after a render-path change — establish determinism, mark the pixels binary, reseed (2026-10-09)
+
+After the 2026-10-08 profiling round (`render/curves.ts`: JS arc-length path sampling and the
+chain-keyed CTM memo replacing `getPointAtLength` / `getCTM` in the tie, slur and text passes;
+six-line Verovio windows; the cached origin phase) and the 2026-10-09 zoom rescale, three visual
+fixtures failed their baselines (seeded 2026-10-08 14:14–14:19): `page_balance_section_final`
+38 px and `page_system_splice_edit` 20 px (both max channel delta 1), `hide_staff_system` 34 px
+(max 3). Max read the pixels as the ends of certain ledger lines and a few on the final system's
+brace. **Established**: deterministic — two full-tier runs of each fixture seconds apart differ by
+0 px, and each run differs from its baseline by exactly the same pixels as the suite's capture
+hours earlier. **Not root-caused**, by Max's decision (decisions.md 2026-10-09 "Three visual
+baselines reseeded…"). Plausible origins, most likely first:
+
+1. `curves.ts` — its values are correct to well under 0.01 unit but not bit-identical to what the
+   DOM API returned, so any coordinate a pass writes from them can move by float noise.
+2. The chunked window (`CHUNK_LINES` 6) — a system now arrives with a different y offset inside
+   its window, and the translate Composer writes to place it starts from a different value.
+3. The cached origin phase (`originPhaseXOf`) — least likely: it would move every vertical edge
+   alike, and most edges did not change.
+
+A shift of a few thousandths of a pixel flips the 8-bit coverage only on edges that sit at a
+rounding boundary, which is what ~30 one-level pixels look like; the ledger ends and the brace are
+where the boundary fell, not elements anything targeted. **If it recurs, the discriminator is a
+DOM attribute dump of the rendered page** (every `transform` / `x` / `y` / `d`), looking for values
+that are not the clean integers the snap writes — never another screenshot. Baselines reseeded
+2026-10-09 09:35, byte-identical to the deterministic captures; `visualCheck` stays sha1-exact.
+
+Two procedure traps met on the way:
+
+- **`--only` matches fixture KEYS, not baseline names.** `--only page_balance_section_final` ran
+  "1 fixtures" — only `hide_staff_system`, whose key equals its baseline; the other two are
+  `pageBalanceSectionFinal` / `pageSystemSpliceEdit`. The tell is the runner's `N fixtures` line
+  and the `out/` png mtimes. A self-consistency "0 px" computed from two copies of a stale capture
+  proves nothing — check that the fixture RAN before diffing.
+- **A 6× amplified heatmap is invisible for a channel delta of 1–3** (Max saw nothing on it). For
+  small deltas render binary marks: the differing pixel in yellow with a red halo over a dimmed
+  copy — `test/composer-test/heatmap.py` picks that mode automatically below a max delta of 20.
+  The approved variance threshold is a max channel delta of 4 (2026-09-03); the gate does not
+  implement it, so any one-level flip fails a fixture and the decision is always Max's.
+
 ## A test that imports app modules by bare path can get a second instance after HMR (2026-10-02)
 
 In-page gates such as `test/hkl-midi/*.mjs` import app modules straight from the dev server

@@ -20,7 +20,7 @@ Or call the runner directly:
 node test/composer-test/run.mjs fast
 node test/composer-test/run.mjs full
 node test/composer-test/run.mjs scenario <name>   # single fixture, debug
-node test/composer-test/run.mjs full --only lc_,kbd_p1_   # tier filtered by name prefix(es)
+node test/composer-test/run.mjs full --only lc_,kbd_p1_   # tier filtered by fixture-KEY prefix(es) — not visualBaseline names
 node test/composer-test/run.mjs full --keep-open   # leave browser open at end
 node test/composer-test/run.mjs full --update-baselines  # accept new visuals
 ```
@@ -80,10 +80,12 @@ by feature) keeps coverage wide and redundancy low.
   Standing direction from Max (2026-09-03): opening `baselines/<n>.png` and
   `out/<n>.png` as two images makes him diff by eye. Generate a per-pixel
   difference map instead — max channel delta, amplified ~6x over a dimmed copy
-  of one side, labelled with `diff / >32 / max` — and open THAT first, before
-  quoting any pixel counts. Do not crop or vertically align to make a point.
+  of one side, labelled with `diff / >32 / max`; binary marks (yellow pixel in
+  a red halo) below a max delta of 20, where amplification is invisible — and
+  open THAT first, before quoting any pixel counts. Do not crop or vertically
+  align to make a point.
 
-  Two traps, both hit for real:
+  Three traps, all hit for real:
   - **Diff the right pair.** Baseline-vs-output only answers "did the rendering
     change", which is necessarily non-zero after an intended change. The
     *defect* question is self-consistency — a spliced page against a full
@@ -93,6 +95,12 @@ by feature) keeps coverage wide and redundancy low.
     count the capture actually contains. A capture at `scrollTop = 0` shows
     page 1 no matter which page you meant, and a capture taken after a sweep's
     snapshot-restore shows the restored document, not the state under test.
+  - **Prove the capture is fresh.** `--only` matches fixture KEYS
+    (`pageBalanceSectionFinal`), not `visualBaseline` names
+    (`page_balance_section_final`); a run that reports "1 fixtures" left the
+    other `out/` pngs stale, and a self-consistency "0 px" from two copies of a
+    stale capture proves nothing. Check the runner's fixture count and the
+    `out/` mtimes before diffing (2026-10-09).
 
   Never re-seed to make a red gate green: establish the cause first, then
   `--update-baselines` is the safety valve for a change whose reason is known.
@@ -261,8 +269,11 @@ This leaves Chromium running so you can attach DevTools. The page handle
 For visual diffs: make a HEATMAP, never a side-by-side —
 `python3 test/composer-test/heatmap.py baselines/<name>.png out/<name>.png
 /tmp/<name>.png --label "baseline vs output — <name>"` — and say which pair it
-is (see "Reviewing a visual failure" above). If the change is intentional and
-its reason is known, re-run with `--update-baselines` to accept.
+is (see "Reviewing a visual failure" above). Below a max channel delta of 20
+the tool marks the pixels BINARY (yellow inside a red halo) — a one-level
+anti-aliasing flip is invisible amplified — and the banner names the mode
+(lessons.md 2026-10-09). If the change is intentional and its reason is
+known, re-run with `--update-baselines` to accept.
 
 ## Self-tests
 

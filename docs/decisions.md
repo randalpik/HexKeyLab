@@ -9744,3 +9744,23 @@ in Chromium: 5.6 s → 0.93 s, zero Verovio loads, page starts and every system 
 the device grid and must be recomputed at the new grid; the whole pass list is cheap once the
 curve sampling and matrix lookups are in JS, ~8 ms a system); treating page scale the same way
 (its geometry change re-flows lines).
+
+## Three visual baselines reseeded after a deterministic one-level anti-aliasing drift, not root-caused (2026-10-09, Max)
+
+**Picked**: reseed `page_balance_section_final`, `page_system_splice_edit` and `hide_staff_system` on
+the current render path and record the plausible origins plus the discriminator (lessons.md 2026-10-09
+"Visual baselines can drift by a one-level anti-aliasing flip…") instead of bisecting now.
+
+**Why**: the drift is deterministic (0 px between two runs seconds apart, the same pixels in three
+captures hours apart), sub-pixel (max channel delta 3 on at most 38 px of a 2177 × 2812 capture),
+confined to ledger-line ends and one brace, and the candidate causes are the 2026-10-08 profiling
+changes that were taken on purpose — the JS path sampler and the CTM memo deviate from the DOM API at
+the float-noise level by design. Max: "Plausible origins is all I wanted to establish." A bisect
+would cost a session for a one-level flip.
+
+**Not changed**: `visualCheck` stays sha1-exact; no tolerance was added, so a real move is never
+absorbed by the gate.
+
+**Revisit when**: a visual baseline fails by more than a one-level flip, or the same fixtures drift
+again with no render-path change in between. Then run the DOM attribute dump first (lessons.md), not
+another screenshot.

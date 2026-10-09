@@ -7,7 +7,11 @@ visual failure").
 
 Red marks every pixel where the two renders disagree: per-pixel MAX CHANNEL
 DELTA, amplified 6x, laid over a dimmed copy of A so the music stays legible as
-context. The banner carries `diff / >32 / max`.
+context. The banner carries `diff / >32 / max`. When the largest delta is
+below BINARY_BELOW (a one-level anti-aliasing flip is invisible amplified —
+2026-10-09, lessons.md) the marks are BINARY instead: each differing pixel in
+yellow inside a red halo of HALO px, so a lone pixel reads at page scale; the
+banner says which mode was used.
 
 Rules baked in, because each was learned the hard way:
   * NEVER crop, shift or align to make a point — the full page goes in, both
@@ -22,6 +26,9 @@ Rules baked in, because each was learned the hard way:
 import sys
 from PIL import Image, ImageDraw
 import numpy as np
+
+BINARY_BELOW = 20   # max channel delta under which amplification is invisible
+HALO = 7            # px of red around each differing pixel in binary mode
 
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
 label = None
@@ -49,20 +56,33 @@ n_diff = int((delta > 0).sum())
 n_sig = int((delta > 32).sum())
 d_max = int(delta.max())
 
-# Dimmed copy of A as context, then paint amplified red over it.
+# Dimmed copy of A as context, then paint the marks over it.
 base = (np.asarray(A).astype(np.float32) * 0.25 + 191).astype(np.uint8)
-amp = np.clip(delta.astype(np.float32) * 6.0, 0, 255)
-out = base.astype(np.float32)
-out[..., 0] = np.maximum(out[..., 0], amp)                       # red up
-out[..., 1] = out[..., 1] * (1.0 - amp / 255.0 * 0.85)           # green/blue down
-out[..., 2] = out[..., 2] * (1.0 - amp / 255.0 * 0.85)
-img = Image.fromarray(out.astype(np.uint8))
+if d_max >= BINARY_BELOW:
+    amp = np.clip(delta.astype(np.float32) * 6.0, 0, 255)
+    out = base.astype(np.float32)
+    out[..., 0] = np.maximum(out[..., 0], amp)                       # red up
+    out[..., 1] = out[..., 1] * (1.0 - amp / 255.0 * 0.85)           # green/blue down
+    out[..., 2] = out[..., 2] * (1.0 - amp / 255.0 * 0.85)
+    img = Image.fromarray(out.astype(np.uint8))
+    mode = 'amplified 6x'
+else:
+    mask = delta > 0
+    H, W = mask.shape
+    halo = np.zeros_like(mask)
+    for y, x in zip(*np.nonzero(mask)):
+        halo[max(0, y - HALO):min(H, y + HALO + 1), max(0, x - HALO):min(W, x + HALO + 1)] = True
+    out = base.copy()
+    out[halo] = (255, 0, 0)
+    out[mask] = (255, 255, 0)
+    img = Image.fromarray(out)
+    mode = f'binary: yellow pixel in {HALO}px red halo'
 
 BANNER = 34
 canvas = Image.new('RGB', (img.width, img.height + BANNER), (24, 26, 32))
 canvas.paste(img, (0, BANNER))
 d = ImageDraw.Draw(canvas)
-txt = f'diff {n_diff}  |  >32 {n_sig}  |  max {d_max}'
+txt = f'diff {n_diff}  |  >32 {n_sig}  |  max {d_max}  |  {mode}'
 if label:
     txt = f'{label}    {txt}'
 d.text((10, 11), txt + note, fill=(255, 220, 220))
