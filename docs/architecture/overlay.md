@@ -290,3 +290,4 @@ same-origin-routed; it dials `127.0.0.1:5190` exactly like production does.)
 | Composer-frame mirror | `apps/hkl/src/bridge/hkl-side.ts`, `apps/hkl/src/render/composer-frame.ts` |
 | Protocol / client | `packages/bridge/src/overlay-protocol.ts`, `overlay-ws.ts` |
 | Publisher auto-start | `apps/hkl/src/ui/init.ts` (unconditional `setOverlayPublishing(true)` at boot) |
+| OBS recording → loop-ready mp4 | `tools/obs-trim/trim.py` (onset-anchored cut, downbeat end, declick ramps; README alongside) |

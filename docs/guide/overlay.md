@@ -62,6 +62,29 @@ magnifies — the score keeps exactly the same bar layout and line breaks at eve
 
 If you open the Browser Source mid-performance, it reconstructs the current state immediately: the relay remembers the latest of each kind of update.
 
+## Trimming a recording into a loop
+
+OBS records a whole session to one `.mkv`. `tools/obs-trim/trim.py` cuts one take out of it into a
+Shorts-ready `.mp4` whose loop lands on the beat: the start is the take's first onset (auto-detected —
+HKL's output is digital silence before the first note), and `--end` is the **loop downbeat** in source time,
+the moment the first onset should recur when the player wraps. The decay after that point is simply
+truncated. The only fades are 5 ms declick ramps, short enough that the seam repeats cleanly even at
+16th-note rates. A 25 ms silent pre-roll before the attack is taken from the tail (the loop period is
+unchanged) so a player that starts a frame late still lands in silence; the period is snapped to the video
+frame grid so container, audio and video agree exactly.
+
+```sh
+tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --list                 # takes in the file
+tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --take -1 --onsets     # onset table, last take
+tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --end 446.20 --preview # hear the seam, looped
+tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --end 446.20           # encode
+```
+
+Find the end point by ear (Audacity's selection bar in seconds works), audition it with `--preview`
+(tail + head of the clip, repeated), then encode once. `--end +20.3` sets an explicit loop length and
+`--end last+0.5` places it relative to the last detected onset. Details and tuning flags are in
+[tools/obs-trim/README.md](../../tools/obs-trim/README.md).
+
 ---
 
 ## If the overlay stays empty
