@@ -16,3 +16,4 @@ tools/finale-bridge/
 docs/backlog.md
 test/composer-test/out/
 handoff/
+__pycache__/

@@ -82,7 +82,9 @@ tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --end 446.20           #
 
 Find the end point by ear (Audacity's selection bar in seconds works), audition it with `--preview`
 (tail + head of the clip, repeated), then encode once. `--end +20.3` sets an explicit loop length and
-`--end last+0.5` places it relative to the last detected onset. Details and tuning flags are in
+`--end last+0.5` places it relative to the last detected onset. Onsets are read off the overlay's lattice in
+the video (a key lighting up), not the audio, so soft final notes under a decrescendo are not missed; the
+overlay-to-audio lag is measured per take. Details and tuning flags are in
 [tools/obs-trim/README.md](../../tools/obs-trim/README.md).
 
 ---

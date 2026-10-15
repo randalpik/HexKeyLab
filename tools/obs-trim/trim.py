@@ -95,6 +95,210 @@ def aubio_onsets(wav, threshold):
     return [float(x) for x in r.stdout.split()]
 
 
+# Lattice crops per OBS frame size, covering the WHOLE lattice. The overlay is opaque
+# inside its outline and the area around it in both layouts is static (black band /
+# dark backdrop), so the rectangle may extend past the outline: measured 2026-10-14,
+# no cell outside the hexes changes in >0.1% of frames. ffmpeg crop order w:h:x:y.
+LAYOUTS = {
+    (1080, 1920): "1080:420:0:950",    # vertical: lattice band y 970-1350, full width
+    (1920, 1080): "1900:520:10:560",   # horizontal: lattice parallelogram x 40-1880, y 580-1060
+}
+
+
+def probe_size(path):
+    r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height", "-of", "csv=p=0", path])
+    w, h = r.stdout.strip().split(",")[:2]
+    return int(w), int(h)
+
+
+CELL = 24          # full-res px per tracking cell (a hex is ~60 px wide, so 2-3 cells)
+CELL_THR = 10      # luma-level change of a cell mean that counts as an event (noise floor ~1-2)
+FLASH_FRAMES = 6   # HKL paints a re-struck key unselected for KEY_FLASH_MS = 60 ms (3-4 frames at
+                   # 60 fps; overlay paint cadence can add 1-2) before re-lighting it
+
+
+def lattice_events(src, crop, t0, dur, workdir, thr=CELL_THR):
+    """Per-hex key events from the lattice crop.
+
+    The crop is reduced to a grid of CELL×CELL cells (mean luma each) so a hex
+    spans a few cells. Per cell, a lightening is a key-down; a darkening that is
+    re-lit within FLASH_FRAMES is HKL's re-strike flash (apps/hkl/src/render/
+    key-flash.ts) and is a key-down at the DARKENING frame, the note-on; a
+    darkening not re-lit in time is a key-up. Key-downs in one frame merge.
+    Returns (downs [(t_abs, n_cells)], n_ups, noise = median per-frame max |dcell|)."""
+    cw, ch, cx, cy = (int(v) for v in crop.split(":"))
+    gw, gh = max(1, cw // CELL), max(1, ch // CELL)
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", f"{t0:.6f}", "-t", f"{dur:.6f}", "-i", src,
+                        "-an", "-vf", f"crop={crop},scale={gw}:{gh}:flags=area,format=gray,showinfo",
+                        "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False)
+    if r.returncode != 0:
+        die("lattice decode failed:\n" + r.stderr.decode(errors="replace").strip().splitlines()[-1])
+    times = [float(m.group(1)) + t0 for m in re.finditer(rb"pts_time:\s*([0-9.]+)", r.stderr)]
+    n = gw * gh
+    frames = [r.stdout[i * n:(i + 1) * n] for i in range(len(r.stdout) // n)]
+    if len(frames) < 2:
+        die("lattice decode produced no frames")
+    if len(times) < len(frames):   # showinfo lines can go missing from a busy stderr: extrapolate
+        step = (times[-1] - times[0]) / (len(times) - 1) if len(times) > 1 else 1 / 60
+        base = times[-1] if times else t0
+        times += [base + step * (i + 1) for i in range(len(frames) - len(times))]
+    times = times[:len(frames)]
+    pending = {}         # cell -> (frame, darkening magnitude) awaiting a flash re-light
+    downs, ups, maxd = {}, 0, []
+    for k in range(1, len(frames)):
+        prev, cur = frames[k - 1], frames[k]
+        md = 0
+        for c in range(n):
+            d = cur[c] - prev[c]
+            ad = d if d >= 0 else -d
+            if ad > md:
+                md = ad
+            pd = pending.get(c)
+            if pd is not None and k - pd[0] > FLASH_FRAMES:
+                ups += 1; pending.pop(c); pd = None
+            if ad < thr:
+                continue
+            if d > 0:
+                if pd is not None and d >= pd[1] // 2:     # re-light: the flash of a re-strike
+                    downs[pd[0]] = downs.get(pd[0], 0) + 1; pending.pop(c)
+                else:
+                    downs[k] = downs.get(k, 0) + 1
+            else:
+                if pd is not None:
+                    ups += 1
+                pending[c] = (k, ad)
+        maxd.append(md)
+    ups += len(pending)
+    maxd.sort()
+    noise = maxd[len(maxd) // 2] if maxd else 0
+    return [(times[k], cnt) for k, cnt in sorted(downs.items())], ups, noise
+
+
+class TakeAudio:
+    """Mono PCM of one take (from extract_wav) + a local onset-rise probe.
+
+    rise(t, lo, hi): over frames whose centre lies in [t+lo, t+hi], the largest
+    jump of the first-difference (high-pass) 10 ms RMS envelope above the floor of
+    the previous 20 ms, in dB; the time of that jump; and the sustain = mean level
+    over the 30 ms after the jump, above the same floor. A real attack rises by
+    several dB even under a loud ringing decay (hammer transients are broadband)
+    and holds that level, since a note has duration; a silent lattice change
+    (hover, feather touch) shows ~1 dB of envelope noise, or a click that is gone
+    within one frame (sustain ~0)."""
+    HOP, WIN = 240, 480   # 5 ms hop, 10 ms window at 48 kHz
+
+    def __init__(self, wav):
+        import array
+        import wave
+        w = wave.open(wav)
+        self.sr, ch, n = w.getframerate(), w.getnchannels(), w.getnframes()
+        raw = array.array("h"); raw.frombytes(w.readframes(n)); w.close()
+        self.ch, self.raw, self.n = ch, raw, n
+        self.duration = n / self.sr
+
+    def _mono(self, i0, i1):
+        raw, ch = self.raw, self.ch
+        if ch == 1:
+            return [raw[i] / 32768.0 for i in range(i0, i1)]
+        return [(raw[2 * i] + raw[2 * i + 1]) / 65536.0 for i in range(i0, i1)]
+
+    def rise(self, t, lo, hi):
+        import math
+        a = max(0, int((t + lo) * self.sr) - 6 * self.HOP)
+        b = min(self.n, int((t + hi) * self.sr) + self.WIN + 8 * self.HOP)
+        if b - a < self.WIN + 14 * self.HOP:
+            return -99.0, t, 0.0
+        x = self._mono(a, b)
+        d = [x[i] - x[i - 1] for i in range(1, len(x))]
+        L = []
+        for k in range(0, len(d) - self.WIN, self.HOP):
+            seg = d[k:k + self.WIN]
+            L.append(10 * math.log10(sum(v * v for v in seg) / self.WIN + 1e-14))
+        best, best_k = -99.0, None
+        for k in range(4, len(L) - 7):
+            tc = (a + k * self.HOP + self.WIN / 2) / self.sr
+            if tc < t + lo or tc > t + hi:
+                continue
+            j = L[k] - min(L[k - 4:k])
+            if j > best:
+                best, best_k = j, k
+        if best_k is None:
+            return -99.0, t, 0.0
+        floor = min(L[best_k - 4:best_k])
+        sustain = sum(L[best_k + 1:best_k + 7]) / 6 - floor
+        return best, (a + best_k * self.HOP) / self.sr, sustain
+
+
+# Physical video->audio lag range (overlay leads the captured audio; the publisher's
+# render tick adds 0-60 ms of jitter per event) and the onset-rise gates.
+LAG_LO, LAG_HI = 0.02, 0.14
+LAST_LO, LAST_HI = 0.0, 0.17   # last event: nothing follows, so widen - but never look before the key-down
+RISE_DB = 2.5          # a real attack in the high-passed envelope; silent lattice changes sit ~1 dB
+SUSTAIN_DB = 2.0       # ...and holds for 30 ms (library: real last notes >= 3.3 dB, ghosts <= 0.6 dB)
+TAIL_SOUND = 0.15      # a real last note keeps sounding at least this long after its attack
+
+
+def video_onsets(src, audio_track, crop, onset, seg_end, workdir, thr=CELL_THR, segs=None):
+    """Onsets of one take: WHICH events from the lattice video, WHEN from the audio.
+    Each lattice key-down is refined to the attack rise in [t+LAG_LO, t+LAG_HI] when
+    no other key-down is within 150 ms; crowded events take t + the take's median
+    lag. Trailing events with no rise and no sustained sound after them are silent
+    lattice changes (a hover or a feather touch after the piece) and are dropped.
+    Returns (absolute onset times, info dict)."""
+    t0 = max(0.0, onset - 0.5)
+    downs, ups, noise = lattice_events(src, crop, t0, seg_end - t0, workdir, thr)
+    if not downs:
+        die(f"no key-down seen in the lattice crop (noise {noise} luma levels)")
+    take_wav = os.path.join(workdir, "take.wav")
+    extract_wav(src, audio_track, t0, seg_end - t0, take_wav)
+    au = TakeAudio(take_wav)
+    vt = [t - t0 for t, _ in downs]                      # lattice times, take-relative
+    # sound boundaries inside the window, for the trailing-ghost test
+    silences = []
+    if segs:
+        for i in range(len(segs) - 1):
+            silences.append((segs[i][1] - t0, segs[i + 1][0] - t0))
+        silences.append((segs[-1][1] - t0, 1e9))
+
+    def sound_after(t):
+        for a, b in silences:
+            if a > t:
+                return a - t
+            if a <= t < b:
+                return 0.0
+        return 1e9
+
+    # drop trailing ghosts
+    while len(vt) > 1:
+        r, _, sus = au.rise(vt[-1], LAST_LO, LAST_HI)   # the low-level decay tail wiggles +-3 dB: never look before the key-down
+        if (r >= RISE_DB and sus >= SUSTAIN_DB) or sound_after(vt[-1] + LAG_HI) >= TAIL_SOUND:
+            break
+        vt.pop()
+    refined, offsets = [], []
+    for i, t in enumerate(vt):
+        isolated = (i == 0 or t - vt[i - 1] > 0.15) and (i == len(vt) - 1 or vt[i + 1] - t > 0.15)
+        if i == len(vt) - 1:
+            r, tr, _ = au.rise(t, LAST_LO, LAST_HI)
+        elif isolated:
+            r, tr, _ = au.rise(t, LAG_LO, LAG_HI)
+        else:
+            r, tr = -99.0, None
+        if tr is not None and r >= RISE_DB:
+            refined.append(tr); offsets.append(tr - t)
+        else:
+            refined.append(None)
+    offsets.sort()
+    lag = offsets[len(offsets) // 2] if offsets else 0.08
+    q = (lambda f: offsets[int(len(offsets) * f)]) if offsets else (lambda f: lag)
+    out = [t0 + (tr if tr is not None else t + lag) for t, tr in zip(vt, refined)]
+    if refined and refined[-1] is not None:   # lag-shifted chord-mates may not trail the audio-timed last attack
+        out = [min(o, out[-1]) for o in out[:-1]] + [out[-1]]
+    return out, dict(downs=len(downs), kept=len(vt), ups=ups, noise=noise, lag=lag, matched=len(offsets),
+                     lag_p25=q(0.25), lag_p75=q(0.75))
+
+
 def fade_filter(L, fi, fo, curve, tail_silence=0.0):
     """Declick ramps; afade t=out holds gain 0 after the ramp, which is the tail silence."""
     parts = []
@@ -110,7 +314,11 @@ def main():
     ap.add_argument("src")
     ap.add_argument("out")
     ap.add_argument("--list", action="store_true", help="print the take table and exit")
-    ap.add_argument("--onsets", action="store_true", help="print aubio onsets for the take and exit")
+    ap.add_argument("--onsets", action="store_true", help="print the take's onsets (from the lattice video) and exit")
+    ap.add_argument("--audio-onsets", action="store_true", help="use aubio on the audio instead of the lattice video")
+    ap.add_argument("--lattice", help="crop W:H:X:Y fully inside the lattice outline (default: preset by frame size)")
+    ap.add_argument("--cell-thr", type=int, default=CELL_THR, help="luma-level change of a lattice cell that counts as a key event (default 10; noise ~1-2)")
+    ap.add_argument("--crop-png", help="write the lattice crop of one frame here, to check --lattice")
     ap.add_argument("--take", type=int, default=-1, help="take index from --list (negative = from end; default -1)")
     ap.add_argument("--start", default="auto", help="'auto' = first onset of the take, or absolute seconds")
     ap.add_argument("--end", help="loop downbeat: T, +D (after onset), last+D / last-D (after/before last onset)")
@@ -161,25 +369,46 @@ def main():
         seg_end = next((b for (s, b) in segs if s <= onset < b), total)
     print(f"onset {onset:.3f}  (take ends {seg_end:.3f}, silence-to-silence length {seg_end - onset:.3f})")
 
-    # --- onsets (aubio) ------------------------------------------------------
+    # --- onsets --------------------------------------------------------------
     need_onsets = a.onsets or (a.end or "").startswith("last")
-    onsets = []
+    onsets = []  # absolute source times, audio-aligned
+    # A >1 s digital-silence rest splits a piece into two "takes"; an explicit end past the
+    # take boundary extends the analysis window to it.
+    e = (a.end or "").strip()
+    if e and not e.startswith("last"):
+        seg_end = max(seg_end, onset + float(e[1:]) if e.startswith("+") else float(e))
     if need_onsets:
-        take_wav = os.path.join(workdir, "take.wav")
-        extract_wav(a.src, a.audio_track, onset, seg_end - onset, take_wav)
-        onsets = aubio_onsets(take_wav, a.onset_threshold)
+        if a.audio_onsets:
+            take_wav = os.path.join(workdir, "take.wav")
+            extract_wav(a.src, a.audio_track, onset, seg_end - onset, take_wav)
+            onsets = [onset + t for t in aubio_onsets(take_wav, a.onset_threshold)]
+            print(f"audio onsets (aubio): {len(onsets)}")
+        else:
+            crop = a.lattice or LAYOUTS.get(probe_size(a.src))
+            if not crop:
+                die("no lattice preset for this frame size; pass --lattice W:H:X:Y (a rect inside the lattice outline)")
+            if a.crop_png:
+                run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{onset + 1.0:.3f}",
+                     "-i", a.src, "-frames:v", "1", "-vf", f"crop={crop}", a.crop_png])
+                print(f"wrote {a.crop_png}")
+            onsets, info = video_onsets(a.src, a.audio_track, crop, onset, seg_end, workdir, a.cell_thr, segs)
+            if info["noise"] > 4:
+                print(f"warning: lattice crop noise {info['noise']} luma levels — it probably includes camera; check --crop-png")
+            print(f"video onsets: crop {crop}, {info['downs']} key-down frames ({info['downs'] - info['kept']} trailing ghosts dropped) / "
+                  f"{info['ups']} key-up bursts, noise {info['noise']} levels; audio-refined {info['matched']} events, "
+                  f"video->audio lag {info['lag'] * 1000:+.0f} ms (p25 {info['lag_p25'] * 1000:+.0f}, p75 {info['lag_p75'] * 1000:+.0f})")
         if a.onsets:
             print(f"{'#':>3}  {'rel':>8}  {'abs':>9}  {'dprev':>7}")
             prev = None
             for i, t in enumerate(onsets, 1):
                 d = "" if prev is None else f"{t - prev:7.3f}"
-                print(f"{i:>3}  {t:8.3f}  {onset + t:9.3f}  {d:>7}")
+                print(f"{i:>3}  {t - onset:8.3f}  {t:9.3f}  {d:>7}")
                 prev = t
             if onsets:
-                print(f"last onset at {onset + onsets[-1]:.3f} (rel {onsets[-1]:.3f})")
+                print(f"last onset at {onsets[-1]:.3f} (rel {onsets[-1] - onset:.3f})")
             return
         if not onsets:
-            die("aubio found no onsets in the take")
+            die("no onsets found in the take")
 
     # --- end -----------------------------------------------------------------
     if not a.end:
@@ -189,7 +418,7 @@ def main():
         m = re.fullmatch(r"last([+-][0-9.]+)?", e)
         if not m:
             die(f"bad --end: {e}")
-        end = onset + onsets[-1] + (float(m.group(1)) if m.group(1) else 0.0)
+        end = onsets[-1] + (float(m.group(1)) if m.group(1) else 0.0)
     elif e.startswith("+"):
         end = onset + float(e[1:])
     else:
