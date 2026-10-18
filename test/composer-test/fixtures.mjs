@@ -5698,6 +5698,48 @@ const PHASE1 = {
     `,
   },
 
+  /* <lv> tie stub (2026-10-17): the stub's @tstamp2 had the breath mark's two
+     defects — head-meter beat unit and a flat layer scan that skipped a
+     preceding <tuplet> — so sonata III m. 89's pending tie (eighth chord after
+     a quarter triplet, 3/4) got "0m+1.5" against a note at beat 3 and Verovio
+     dropped it ("lv … is ignored, since start does not occur temporally before
+     end"). Head 2/2, measure 1 in 3/4: quarter triplet then an eighth with a
+     pending tie → "0m+3.5", and the arc must render. */
+  lv_stubTstamp2UsesEffectiveMeterAndNestedTicks: {
+    setup: `
+      m.setTimeSig(2, 2);
+      m.appendMeasure();
+      m.setMeterAt(1, 3, 4);
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '4', spanDur: '2', spanDots: 0 });
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      m.toggleTieOnCurrent('insert');  /* no next measure note → pending stub */
+      r();
+    `,
+  },
+
+  /* A stub saved with a stale @tstamp2 (every .hkc written before the fix)
+     is recomputed on load: normalizeTies runs in replaceDocument and
+     ensureLvForNote now refreshes an existing stub instead of keeping it. */
+  lv_staleStubRefreshedOnLoad: {
+    setup: `
+      m.setTimeSig(2, 2);
+      m.appendMeasure();
+      m.setMeterAt(1, 3, 4);
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '4', spanDur: '2', spanDots: 0 });
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      m.toggleTieOnCurrent('insert');
+      const xml = m.serialize().replace(/(<lv\\b[^>]*tstamp2=")[^"]*(")/, '$10m+1.5$2');
+      if (!/tstamp2="0m\\+1\\.5"/.test(xml)) throw new Error('fixture: stale tstamp2 not planted');
+      m.replaceDocument(xml);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+
   /* Fermata is the only articulation valid on a rest. */
   phase1_artic_fermata_on_rest: {
     setup: `
@@ -20949,6 +20991,48 @@ export const FIXTURE_ASSERTIONS = {
         if (!br || !nh || !bars.length) return { ok: false, detail: 'missing: breath=' + !!br + ' notehead=' + !!nh + ' bars=' + bars.length };
         const bx = br.getBoundingClientRect().x, nx = nh.getBoundingClientRect().right, barX = Math.max(...bars);
         return (bx > nx && bx < barX) ? { ok: true } : { ok: false, detail: 'breath.x=' + bx.toFixed(1) + ' lastNote.right=' + nx.toFixed(1) + ' barline.x=' + barX.toFixed(1) };
+      })()` },
+  ],
+  lv_stubTstamp2UsesEffectiveMeterAndNestedTicks: [
+    { name: 'exactly one <lv> stub on the pending-tie eighth with tstamp2 "0m+3.5" (beat 3 + half a beat in 3/4)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const lvs = [...doc.querySelectorAll('lv')];
+        if (lvs.length !== 1) return { ok: false, detail: 'lv count=' + lvs.length };
+        const stub = doc.querySelector('note[data-pending-tie="true"]');
+        if (!stub || lvs[0].getAttribute('startid') !== '#' + stub.getAttribute('xml:id')) return { ok: false, detail: 'startid=' + lvs[0].getAttribute('startid') + ' stub=' + stub?.getAttribute('xml:id') };
+        const t2 = lvs[0].getAttribute('tstamp2');
+        return t2 === '0m+3.5' ? { ok: true } : { ok: false, detail: 'tstamp2=' + t2 };
+      })()` },
+    { name: 'Verovio draws the stub (g.lv present in the measure)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const stub = doc.querySelector('note[data-pending-tie="true"]');
+        const mid = stub?.closest('measure')?.getAttribute('xml:id');
+        const g = document.querySelector('#score svg g.measure[id="' + mid + '"]');
+        const lv = g?.querySelector('g.lv');
+        return lv ? { ok: true } : { ok: false, detail: 'no g.lv rendered in measure ' + mid };
+      })()` },
+  ],
+  lv_staleStubRefreshedOnLoad: [
+    { name: 'exactly one <lv> stub on the pending-tie eighth with tstamp2 "0m+3.5" (beat 3 + half a beat in 3/4)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const lvs = [...doc.querySelectorAll('lv')];
+        if (lvs.length !== 1) return { ok: false, detail: 'lv count=' + lvs.length };
+        const stub = doc.querySelector('note[data-pending-tie="true"]');
+        if (!stub || lvs[0].getAttribute('startid') !== '#' + stub.getAttribute('xml:id')) return { ok: false, detail: 'startid=' + lvs[0].getAttribute('startid') + ' stub=' + stub?.getAttribute('xml:id') };
+        const t2 = lvs[0].getAttribute('tstamp2');
+        return t2 === '0m+3.5' ? { ok: true } : { ok: false, detail: 'tstamp2=' + t2 };
+      })()` },
+    { name: 'Verovio draws the stub (g.lv present in the measure)',
+      expr: `(() => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const stub = doc.querySelector('note[data-pending-tie="true"]');
+        const mid = stub?.closest('measure')?.getAttribute('xml:id');
+        const g = document.querySelector('#score svg g.measure[id="' + mid + '"]');
+        const lv = g?.querySelector('g.lv');
+        return lv ? { ok: true } : { ok: false, detail: 'no g.lv rendered in measure ' + mid };
       })()` },
   ],
   phase1_artic_fermata_on_rest: [

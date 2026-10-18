@@ -22,6 +22,8 @@ import { extractNoteElements } from './note-elements.js';
 import { MEI_NS, type ComposerModel, type Voice } from './index.js';
 import { pruneDanglingSlurs } from '../slurs.js';
 import { pruneDanglingArticControls } from '../articulations.js';
+import { meterForMeasure } from '../expressions.js';
+import { ticksBeforeInLayer } from './ticks.js';
 
 /** Per-voice, time-ordered sequence of atomic tie-able events (note / chord /
  *  rest), descending INTO tuplets so a tuplet's first/last notes are real
@@ -268,8 +270,16 @@ function ensureLvForNote(note: Element): void {
   const measure = note.closest('measure');
   if (!measure) return;
   const target = '#' + id;
+  const tstamp2 = computeStubTstamp2(note, doc);
   for (const child of Array.from(measure.children)) {
-    if (child.localName === 'lv' && child.getAttribute('startid') === target) return;
+    if (child.localName === 'lv' && child.getAttribute('startid') === target) {
+      /* Refresh rather than keep: the end is derived from the note's position
+         and the bar's meter, both of which editing (or a file written before
+         2026-10-17, when it was computed in the head meter) can leave stale.
+         normalizeTies runs on load, so this also repairs saved stubs. */
+      if (child.getAttribute('tstamp2') !== tstamp2) child.setAttribute('tstamp2', tstamp2);
+      return;
+    }
   }
   /* Verovio reads only @endid or @tstamp2 to resolve the end of an <lv>'s
      timespan (verified in src/timeinterface.cpp + src/preparedatafunctor.cpp
@@ -279,7 +289,6 @@ function ensureLvForNote(note: Element): void {
      giving a short hanging arc. Verovio's Lv::CalculatePosition requires
      start and end to share a measure — by construction, our tstamp2 is
      within the same measure as the note. */
-  const tstamp2 = computeStubTstamp2(note, doc);
   const lv = doc.createElementNS(MEI_NS, 'lv');
   lv.setAttribute('startid', target);
   lv.setAttribute('tstamp2', tstamp2);
@@ -287,34 +296,25 @@ function ensureLvForNote(note: Element): void {
 }
 
 /** Compute a @tstamp2 value (format "0m+B") that lands a half beat past the
- *  given note's onset, clamped to stay just inside the current measure. */
+ *  given note's onset, clamped to stay just inside the current measure. Beat
+ *  unit and bar length are the meter in effect at the note's MEASURE (not the
+ *  head scoreDef's), and the onset counts every layer child before the note's
+ *  slot — tuplets included, and a slot nested in a tuplet / beam / tremolo
+ *  wrapper — via `ticksBeforeInLayer`. (Both were wrong until 2026-10-17:
+ *  sonata III m. 89's stub, an eighth chord after a quarter triplet in a 3/4
+ *  bar of a cut-time-headed file, ended at 0m+1.5 for a note at beat 3 and
+ *  Verovio dropped it — "lv … is ignored, since start does not occur
+ *  temporally before end".) */
 function computeStubTstamp2(note: Element, doc: Document): string {
-  const sd = doc.querySelector('scoreDef');
-  const count = parseInt(sd?.getAttribute('meter.count') ?? '4', 10);
-  const unit = parseInt(sd?.getAttribute('meter.unit') ?? '4', 10);
-
+  void doc;
+  const measure = note.closest('measure');
   const layer = note.closest('layer');
-  if (!layer) return '0m+' + count;
-  /* The note may be inside a <chord>; walk up until the immediate child of
-     <layer> (which is the note/chord/rest at this timeline position). */
-  let container: Element | null = note;
-  while (container && container.parentElement !== layer) {
-    container = container.parentElement;
-  }
-  if (!container) return '0m+' + count;
-
-  /* Sum 64th-note ticks of preceding sibling content. */
-  let ticks = 0;
-  for (const c of Array.from(layer.children)) {
-    if (c === container) break;
-    if (c.localName !== 'chord' && c.localName !== 'note' && c.localName !== 'rest') continue;
-    const dur = c.getAttribute('dur');
-    const dots = parseInt(c.getAttribute('dots') ?? '0', 10);
-    const denom = dur ? parseInt(dur, 10) : NaN;
-    if (!Number.isFinite(denom) || denom <= 0) continue;
-    const base = 64 / denom;
-    ticks += dots === 1 ? base * 1.5 : dots === 2 ? base * 1.75 : base;
-  }
+  if (!measure || !layer) return '0m+4';
+  const { count, unit } = meterForMeasure(measure);
+  /* The note may be inside a <chord>: the slot on the layer's tick line is
+     the chord, not the member. */
+  const slot = note.parentElement?.localName === 'chord' ? note.parentElement : note;
+  const ticks = ticksBeforeInLayer(layer, slot) ?? 0;
 
   /* 1 beat = (64 / meter.unit) ticks. Beats are 1-indexed. */
   const ticksPerBeat = 64 / unit;

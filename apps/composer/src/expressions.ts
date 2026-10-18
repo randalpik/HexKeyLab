@@ -135,17 +135,28 @@ function measureTickInfo(doc: Document, measureIdx: number): { startTick: number
  *  is the HEAD meter only, and the sonata opens in cut time (2026-10-17: every
  *  breath mark in its 4/4 finale landed at ~beat 3). */
 export function beatTicksForMeasure(measure: Element): number {
+  return 64 / meterForMeasure(measure).unit;
+}
+
+/** Meter (count, unit) in effect at ONE measure element — the same walk as
+ *  `beatTicksForMeasure`, for callers that also clamp to the bar's length
+ *  (the `<lv>` stub). A scoreDef that touches only one of the two leaves the
+ *  other running, mirroring the model's `meterTable`. */
+export function meterForMeasure(measure: Element): { count: number; unit: number } {
   const doc = measure.ownerDocument;
+  let count = 4;
   let unit = 4;
-  if (!doc) return 64 / unit;
+  if (!doc) return { count, unit };
   for (const node of Array.from(doc.querySelectorAll('scoreDef, measure'))) {
     if (node === measure) break;
     if (node.localName === 'scoreDef') {
+      const c = parseInt(node.getAttribute('meter.count') ?? '', 10);
       const u = parseInt(node.getAttribute('meter.unit') ?? '', 10);
+      if (Number.isFinite(c) && c > 0) count = c;
       if (Number.isFinite(u) && u > 0) unit = u;
     }
   }
-  return 64 / unit;
+  return { count, unit };
 }
 
 /** Beat length in ticks (64 / the meter unit in effect) of every measure, in

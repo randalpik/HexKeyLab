@@ -30,7 +30,7 @@
 // hold for fermata, pause for breath) lives in `render/playback.ts` and
 // uses `articulationsOn(slot)` to read every kind in one call.
 
-import { realTicks } from './model/ticks.js';
+import { realTicks, ticksBeforeInLayer } from './model/ticks.js';
 import { beatTicksForMeasure } from './expressions.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -98,25 +98,6 @@ function findSibling(measure: Element, localName: string, anchorId: string): Ele
     if (c.getAttribute('data-hkl-anchor') === anchorId) return c;
   }
   return null;
-}
-
-/** Ticks from the start of `layer` to the start of `slot`, descending the
- *  <tuplet> / <beam> (/ tremolo) wrappers that hold it — a nested slot is
- *  still on the layer's tick line, and `realTicks` already scales a tuplet
- *  member and totals a wrapper that precedes it. Null when `slot` is not in
- *  `layer`. (The flat sibling scan this replaced never found a nested slot
- *  and so summed the WHOLE layer for a triplet member.) */
-function ticksBeforeInLayer(layer: Element, slot: Element): number | null {
-  let ticks = 0;
-  const walk = (parent: Element): boolean => {
-    for (const c of Array.from(parent.children)) {
-      if (c === slot) return true;
-      if (c.contains(slot)) return walk(c);
-      ticks += realTicks(c);
-    }
-    return false;
-  };
-  return walk(layer) ? ticks : null;
 }
 
 /** Compute (tstamp, staff) at the END of the given note/chord, used for

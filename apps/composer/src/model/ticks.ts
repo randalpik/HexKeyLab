@@ -161,3 +161,24 @@ export function decomposeTicks(n: number): Array<{ dur: Duration; dots: Dots }> 
   }
   return out;
 }
+
+/** Ticks from the start of `layer` to the start of `slot` (a layer-level
+ *  note / chord / rest, or one nested in a <tuplet> / <beam> / tremolo
+ *  wrapper — the walk descends into whichever child CONTAINS the slot and
+ *  sums `realTicks` of every child before it, so a preceding tuplet counts
+ *  at its sounding length and a nested slot is still on the layer's tick
+ *  line). Null when `slot` is not inside `layer`. The flat sibling scans
+ *  this replaced (breath mark, <lv> stub — 2026-10-17) never found a nested
+ *  slot and skipped tuplets outright. */
+export function ticksBeforeInLayer(layer: Element, slot: Element): number | null {
+  let ticks = 0;
+  const walk = (parent: Element): boolean => {
+    for (const c of Array.from(parent.children)) {
+      if (c === slot) return true;
+      if (c.contains(slot)) return walk(c);
+      ticks += realTicks(c);
+    }
+    return false;
+  };
+  return walk(layer) ? ticks : null;
+}

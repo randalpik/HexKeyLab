@@ -281,7 +281,7 @@ Autofilled rests are plain `<rest>` — to extend the measure later, the user de
 - **Realization** (derived):
   - `@tie ∈ {"i","m","t"}` — MEI 5 value (no compound `"ti"`/`"it"`; Verovio rejects them).
   - `data-tie-partner` — forward-only xml:id ref to the next chain member; terminals carry none.
-  - `data-pending-tie` + `<lv startid tstamp2>` — pending stub for unrealizable forward intent; renders as a laissez-vibrer arc.
+  - `data-pending-tie` + `<lv startid tstamp2>` — pending stub for unrealizable forward intent; renders as a laissez-vibrer arc. `@tstamp2` (`"0m+B"`) is half a beat past the note's onset, clamped to `count + 0.95`, with the onset from `ticksBeforeInLayer` (every layer child before the note's slot, tuplets and wrapper nesting included) and count/unit from `meterForMeasure` — the meter in effect at THAT measure. Recomputed on every `normalizeTies` (including load), so a stub saved with a stale end is repaired. Until 2026-10-17 it used the head meter and a flat sibling scan that skipped tuplets: sonata III m. 89's stub ended at 0m+1.5 for a note at beat 3 and Verovio dropped it with "lv … is ignored, since start does not occur temporally before end". Fixtures `lv_stubTstamp2UsesEffectiveMeterAndNestedTicks`, `lv_staleStubRefreshedOnLoad`.
 
 A note can hold `@tie="t"` (incoming terminus) AND `data-pending-tie` (outgoing intent) at once.
 
