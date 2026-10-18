@@ -10,9 +10,17 @@
 //                      ("Unsupported value 'fermata' for data.ARTICULATION")
 //                      — the fermata arch is a separate MEI element.
 //
-//   breath           → `<breath @startid="#noteId">` sibling of <staff>
-//                      in the measure. Same reasoning as fermata; also
-//                      semantically "after the note" rather than on it.
+//   breath           → `<breath @tstamp @staff data-hkl-anchor="noteId">`
+//                      sibling of <staff> in the measure. Same reasoning as
+//                      fermata, but Verovio draws a `@startid` breath ABOVE
+//                      its note (probed 6.3.0), so the comma is placed by
+//                      @tstamp at the END of the anchor: ticks before the
+//                      slot in its layer (descending <tuplet>/<beam>) plus
+//                      the slot's own ticks, in the meter in effect at THAT
+//                      measure (`beatTicksForMeasure`), 5% of the slot back
+//                      from its end. `data-hkl-anchor` keeps the note linkage
+//                      for toggle / prune / MusicXML export. The importer's
+//                      `<breath-mark>` goes through `addBreathAfter`.
 //
 // The xml:id-bound siblings (fermata, breath) need a dangling-prune hook
 // when their anchor note disappears — call `pruneDanglingArticControls`
@@ -23,6 +31,7 @@
 // uses `articulationsOn(slot)` to read every kind in one call.
 
 import { realTicks } from './model/ticks.js';
+import { beatTicksForMeasure } from './expressions.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
@@ -91,8 +100,28 @@ function findSibling(measure: Element, localName: string, anchorId: string): Ele
   return null;
 }
 
+/** Ticks from the start of `layer` to the start of `slot`, descending the
+ *  <tuplet> / <beam> (/ tremolo) wrappers that hold it — a nested slot is
+ *  still on the layer's tick line, and `realTicks` already scales a tuplet
+ *  member and totals a wrapper that precedes it. Null when `slot` is not in
+ *  `layer`. (The flat sibling scan this replaced never found a nested slot
+ *  and so summed the WHOLE layer for a triplet member.) */
+function ticksBeforeInLayer(layer: Element, slot: Element): number | null {
+  let ticks = 0;
+  const walk = (parent: Element): boolean => {
+    for (const c of Array.from(parent.children)) {
+      if (c === slot) return true;
+      if (c.contains(slot)) return walk(c);
+      ticks += realTicks(c);
+    }
+    return false;
+  };
+  return walk(layer) ? ticks : null;
+}
+
 /** Compute (tstamp, staff) at the END of the given note/chord, used for
- *  positioning a breath mark BETWEEN this note and its successor. */
+ *  positioning a breath mark BETWEEN this note and its successor. The beat
+ *  unit is the meter in effect at the note's measure, not the head's. */
 function computeEndOfNoteTstamp(note: Element): { tstamp: number; staff: number } | null {
   const slot = note.parentElement?.localName === 'chord' ? note.parentElement : note;
   if (!slot) return null;
@@ -101,17 +130,10 @@ function computeEndOfNoteTstamp(note: Element): { tstamp: number; staff: number 
   const staff = slot.closest('staff');
   if (!measure || !layer || !staff) return null;
   const staffN = parseInt(staff.getAttribute('n') ?? '1', 10);
-  let ticksBefore = 0;
-  for (const c of Array.from(layer.children)) {
-    if (c === slot) break;
-    if (c.localName === 'note' || c.localName === 'chord' || c.localName === 'rest' || c.localName === 'tuplet') {
-      ticksBefore += realTicks(c);
-    }
-  }
+  const ticksBefore = ticksBeforeInLayer(layer, slot);
+  if (ticksBefore === null) return null;
   const noteTicks = realTicks(slot);
-  const sd = note.ownerDocument!.querySelector('scoreDef');
-  const unit = parseInt(sd?.getAttribute('meter.unit') ?? '4', 10);
-  const ticksPerBeat = 64 / unit;
+  const ticksPerBeat = beatTicksForMeasure(measure);
   const endTicks = ticksBefore + noteTicks;
   /* MEI tstamp is 1-indexed; place the breath slightly INSIDE the
      anchor note (~5% of note length back from its end) so it visually
@@ -150,6 +172,18 @@ function addSibling(measure: Element, localName: 'fermata' | 'breath' | 'trill',
 function removeSibling(measure: Element, localName: string, anchorId: string): void {
   const el = findSibling(measure, localName, anchorId);
   if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+
+/** Append a `<breath>` after `anchorEl` (a note / chord slot with an xml:id)
+ *  to its measure — the element the `B` key produces, for the MusicXML
+ *  importer's `<breath-mark>`. No-op without an anchor id, outside a
+ *  measure, or when the slot already carries one. */
+export function addBreathAfter(anchorEl: Element): void {
+  const anchorId = anchorEl.getAttribute('xml:id');
+  const measure = anchorEl.closest('measure');
+  if (!anchorId || !measure) return;
+  if (findSibling(measure, 'breath', anchorId)) return;
+  addSibling(measure, 'breath', anchorEl);
 }
 
 /* ── public API ───────────────────────────────────────────────────────── */

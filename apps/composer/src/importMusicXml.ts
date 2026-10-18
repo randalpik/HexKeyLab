@@ -22,6 +22,7 @@ import { keySigToTonic } from './notation/accidentals.js';
 import { findTonicCoord } from './cursor/refNote.js';
 import { setLayoutReq, setHejiEnabled, setIgnoreColor, addDynam, addHairpin, addDir, addTempo, addOctave, normalizeMarkPlaces } from './expressions.js';
 import { addSlur } from './slurs.js';
+import { addBreathAfter } from './articulations.js';
 import { realTicks } from './model/ticks.js';
 import { decomposeBeatAlignedRests } from './model/restfill.js';
 import { naturalBeatGroupStarts, type TimeSigInfo } from './notation/beams.js';
@@ -107,6 +108,9 @@ interface ImpEvent {
   /** Note-attached articulations: 'stacc' | 'acc' | 'ten'. */
   artics: string[];
   fermata: boolean;
+  /** <articulations><breath-mark> → a `<breath>` sibling placed at the END of
+   *  the slot (articulations.ts `addBreathAfter`); never on a rest. */
+  breath?: boolean;
   /** <ornaments><trill-mark> → note-attached <trill> (with/without wavy-line). */
   trill?: boolean;
   /** Accidental shown above the trill (<accidental-mark>) → @accidupper. */
@@ -546,6 +550,7 @@ function mergeNotations(note: Element, ev: ImpEvent): void {
       if (a.localName === 'staccato') ev.artics.push('stacc');
       else if (a.localName === 'accent') ev.artics.push('acc');
       else if (a.localName === 'tenuto') ev.artics.push('ten');
+      else if (a.localName === 'breath-mark') ev.breath = true;
     }
   }
   if (child(notations, 'fermata')) ev.fermata = true;
@@ -692,6 +697,8 @@ interface EmitCtx {
   slurOpen: Map<number, { id: string; voice: number }>;   // number → open slur start
   slurPairs: SlurPair[];
   fermataEls: Element[];
+  /** Slots carrying a <breath-mark>; appended as <breath> in the post-pass. */
+  breathEls: Element[];
   trillRecs: TrillRec[];
   wavyOpen: Map<number, string>;    // number → trill-note id of an open wavy-line
   wavyEnd: Map<string, string>;     // trill-note id → extender end note id
@@ -716,6 +723,7 @@ function appendLayerChildren(
        <staff>s exist) — Verovio requires control events to follow staff
        content. */
     if (ev.fermata) ctx.fermataEls.push(ev.el);
+    if (ev.breath && ev.el.localName !== 'rest') ctx.breathEls.push(ev.el);
     if (ev.trill) ctx.trillRecs.push({ noteEl: ev.el, accid: ev.trillAccid });
     if (ev.wavyStart !== undefined) ctx.wavyOpen.set(key(ev.wavyStart), id);
     if (ev.wavyStop !== undefined) {
@@ -1188,7 +1196,7 @@ export function importMusicXml(xmlText: string): string {
 
   /* Emission state — slur + wavy pairing is GLOBAL (cross-staff/voice). */
   const ctx: EmitCtx = {
-    slurOpen: new Map(), slurPairs: [], fermataEls: [], trillRecs: [],
+    slurOpen: new Map(), slurPairs: [], fermataEls: [], breathEls: [], trillRecs: [],
     wavyOpen: new Map(), wavyEnd: new Map(),
   };
 
@@ -1429,6 +1437,10 @@ export function importMusicXml(xmlText: string): string {
     if (endId && endId !== id) { attrs.extender = 'true'; attrs.endid = '#' + endId; }
     measure.appendChild(el(doc, 'trill', attrs));
   }
+  /* Breath marks: the end-of-slot @tstamp needs the meter in effect at the
+     slot's measure, so this runs once every in-section <scoreDef> is in
+     place (same post-pass ordering as fermatas). */
+  for (const slotEl of ctx.breathEls) addBreathAfter(slotEl);
 
   /* Ottava brackets: one <octave> per <octave-shift> span, anchored to the
      first and last slot it covers (Verovio draws the bracket from

@@ -5641,6 +5641,63 @@ const PHASE1 = {
     setupKeys: [{ key: 'b' }],
   },
 
+  /* Breath-mark placement regressions (2026-10-17). The end-of-note tstamp
+     was computed with the HEAD scoreDef's meter unit (sonata.hkc opens in cut
+     time → every breath in the 4/4 finale landed at ~beat 3 instead of 4.95)
+     and a tick walk that never descended into <tuplet>/<beam>, so an anchor
+     inside a tuplet summed the whole layer. Head meter 2/2, measure 1 in 4/4,
+     breath on its last quarter (keystroke path). */
+  breath_endOfBarUsesEffectiveMeter: {
+    setup: `
+      m.setTimeSig(2, 2);
+      m.appendMeasure();
+      m.setMeterAt(1, 4, 4);
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      r();
+    `,
+    setupKeys: [{ key: 'b' }],
+  },
+
+  /* Breath on the LAST member of a triplet (quarter + 3 triplet eighths in
+     4/4): the anchor is nested in <tuplet>, so the walk must descend and the
+     tstamp is the tuplet's end (beat 3) minus 5% of one triplet eighth. */
+  breath_onTupletMemberCountsNestedTicks: {
+    setup: `
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      for (let i = 0; i < 3; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'c', accid: '', oct: 5, midi: 72, colorHex: '#888', velocity: 80 }], duration: '8', dots: 0 });
+      const last = m.getDoc().querySelector('tuplet > note:last-of-type');
+      window.__breathProbe = { lastId: last?.getAttribute('xml:id') ?? null, toggle: m.toggleArticulationAtCursor('insert', 'breath') };
+      r();
+    `,
+  },
+
+  /* MusicXML import: <breath-mark> was silently dropped (the notations pass
+     read only staccato/accent/tenuto/fermata — the sonata's four marks, IV
+     mm. 75 + 100, never arrived). m1 in 2/2, m2 switches to 4/4 with the mark
+     on its last quarter — the imported <breath> must carry the effective
+     meter's tstamp and the anchor id the exporter round-trips on. */
+  breath_musicxmlImportBreathMark: {
+    setup: `
+      const N = (step, oct, extra) => '<note><pitch><step>' + step + '</step><octave>' + oct + '</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type>' + (extra ?? '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Test</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>2</beats><beat-type>2</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('C', 5) + N('D', 5) + N('E', 5) + N('F', 5)
+        + '</measure><measure number="2">'
+        + '<attributes><time><beats>4</beats><beat-type>4</beat-type></time></attributes>'
+        + N('G', 5) + N('A', 5) + N('B', 5) + N('C', 6, '<notations><articulations><breath-mark/></articulations></notations>')
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+  },
+
   /* Fermata is the only articulation valid on a rest. */
   phase1_artic_fermata_on_rest: {
     setup: `
@@ -20817,6 +20874,81 @@ export const FIXTURE_ASSERTIONS = {
         const ts = parseFloat(breath?.getAttribute('tstamp') ?? '0');
         return (Math.abs(ts - 1.95) < 0.01)
           ? { ok: true } : { ok: false, detail: 'tstamp=' + ts };
+      })()` },
+  ],
+  breath_endOfBarUsesEffectiveMeter: [
+    { name: 'breath tstamp = 4.95 in the 4/4 measure (effective meter, not the 2/2 head)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const measures = [...m.getDoc().querySelectorAll('measure')];
+        const breaths = [...m.getDoc().querySelectorAll('measure > breath')];
+        if (breaths.length !== 1) return { ok: false, detail: 'breath count=' + breaths.length };
+        const b = breaths[0];
+        if (b.closest('measure') !== measures[1]) return { ok: false, detail: 'breath not in measure 1' };
+        const lastNote = [...measures[1].querySelectorAll('layer[n="1"] > note')].pop();
+        if (b.getAttribute('data-hkl-anchor') !== lastNote?.getAttribute('xml:id')) return { ok: false, detail: 'anchor=' + b.getAttribute('data-hkl-anchor') };
+        const ts = parseFloat(b.getAttribute('tstamp') ?? '0');
+        return Math.abs(ts - 4.95) < 0.01 ? { ok: true } : { ok: false, detail: 'tstamp=' + ts };
+      })()` },
+    { name: 'rendered comma sits after the last notehead and before the barline',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const measures = [...m.getDoc().querySelectorAll('measure')];
+        const mid = measures[1].getAttribute('xml:id');
+        const lastNote = [...measures[1].querySelectorAll('layer[n="1"] > note')].pop();
+        const nid = lastNote?.getAttribute('xml:id');
+        const g = document.querySelector('#score svg g.measure[id="' + mid + '"]');
+        const br = g?.querySelector('g.breath use');
+        const nh = g?.querySelector('g.note[id="' + nid + '"] g.notehead');
+        const bars = [...(g?.querySelectorAll('g.barLine path') ?? [])].map((e) => e.getBoundingClientRect().x);
+        if (!br || !nh || !bars.length) return { ok: false, detail: 'missing: breath=' + !!br + ' notehead=' + !!nh + ' bars=' + bars.length };
+        const bx = br.getBoundingClientRect().x, nx = nh.getBoundingClientRect().right, barX = Math.max(...bars);
+        return (bx > nx && bx < barX) ? { ok: true } : { ok: false, detail: 'breath.x=' + bx.toFixed(1) + ' lastNote.right=' + nx.toFixed(1) + ' barline.x=' + barX.toFixed(1) };
+      })()` },
+  ],
+  breath_onTupletMemberCountsNestedTicks: [
+    { name: 'breath anchored to the last triplet eighth with tstamp = 3 - 5% of a triplet eighth (2.983)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const probe = window.__breathProbe ?? {};
+        const breaths = [...m.getDoc().querySelectorAll('measure > breath')];
+        if (breaths.length !== 1) return { ok: false, detail: 'breath count=' + breaths.length + ' toggle=' + JSON.stringify(probe.toggle) };
+        const b = breaths[0];
+        if (!probe.lastId || b.getAttribute('data-hkl-anchor') !== probe.lastId) return { ok: false, detail: 'anchor=' + b.getAttribute('data-hkl-anchor') + ' lastTupletNote=' + probe.lastId };
+        const ts = parseFloat(b.getAttribute('tstamp') ?? '0');
+        const want = (32 - (16 / 3) * 0.05) / 16 + 1;
+        return Math.abs(ts - want) < 0.01 ? { ok: true } : { ok: false, detail: 'tstamp=' + ts + ' want=' + want.toFixed(3) };
+      })()` },
+  ],
+  breath_musicxmlImportBreathMark: [
+    { name: 'imported <breath-mark> → one <breath> in measure 2, anchored to its last note, tstamp 4.95',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const measures = [...m.getDoc().querySelectorAll('measure')];
+        const breaths = [...m.getDoc().querySelectorAll('measure > breath')];
+        if (breaths.length !== 1) return { ok: false, detail: 'breath count=' + breaths.length };
+        const b = breaths[0];
+        if (measures.length < 2 || b.closest('measure') !== measures[1]) return { ok: false, detail: 'measures=' + measures.length + ' breath in m' + measures.indexOf(b.closest('measure')) };
+        const lastNote = [...measures[1].querySelectorAll('layer[n="1"] > note')].pop();
+        if (b.getAttribute('data-hkl-anchor') !== lastNote?.getAttribute('xml:id')) return { ok: false, detail: 'anchor=' + b.getAttribute('data-hkl-anchor') + ' last=' + lastNote?.getAttribute('xml:id') };
+        if (b.getAttribute('staff') !== '1') return { ok: false, detail: 'staff=' + b.getAttribute('staff') };
+        const ts = parseFloat(b.getAttribute('tstamp') ?? '0');
+        return Math.abs(ts - 4.95) < 0.01 ? { ok: true } : { ok: false, detail: 'tstamp=' + ts };
+      })()` },
+    { name: 'rendered comma sits after the last notehead and before the barline',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const measures = [...m.getDoc().querySelectorAll('measure')];
+        const mid = measures[1]?.getAttribute('xml:id');
+        const lastNote = [...(measures[1]?.querySelectorAll('layer[n="1"] > note') ?? [])].pop();
+        const nid = lastNote?.getAttribute('xml:id');
+        const g = document.querySelector('#score svg g.measure[id="' + mid + '"]');
+        const br = g?.querySelector('g.breath use');
+        const nh = g?.querySelector('g.note[id="' + nid + '"] g.notehead');
+        const bars = [...(g?.querySelectorAll('g.barLine path') ?? [])].map((e) => e.getBoundingClientRect().x);
+        if (!br || !nh || !bars.length) return { ok: false, detail: 'missing: breath=' + !!br + ' notehead=' + !!nh + ' bars=' + bars.length };
+        const bx = br.getBoundingClientRect().x, nx = nh.getBoundingClientRect().right, barX = Math.max(...bars);
+        return (bx > nx && bx < barX) ? { ok: true } : { ok: false, detail: 'breath.x=' + bx.toFixed(1) + ' lastNote.right=' + nx.toFixed(1) + ' barline.x=' + barX.toFixed(1) };
       })()` },
   ],
   phase1_artic_fermata_on_rest: [

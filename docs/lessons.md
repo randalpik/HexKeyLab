@@ -5313,3 +5313,7 @@ test that can only be checked after rendering (the re-draw's curve search) is th
 place to discover a side was impossible. Max's rule: pitches and onsets only, global, a
 fourth's margin, and the residue goes to `Shift+L`. Do not re-propose a second render pass
 or a pre-render geometry solver for this; both were rejected on 2026-10-17 (decisions.md).
+
+## `doc.querySelector('scoreDef')` is the HEAD meter, not the meter in effect (2026-10-17)
+
+Any `@tstamp` computed from ticks must divide by the beat unit of the measure it lands in. The sonata's head `<scoreDef>` is cut time while its movements run 3/4, 4/4, 5/8 and 9/8, so a head-meter read put every breath mark in the 4/4 finale near beat 3 (half the true beat offset) and would be 4× off in the compound movements. Use `beatTicksForMeasure(measure)` (`expressions.ts`, DOM-local) or `model.meterAt(mi)`; `readMeter(doc)` / `getTimeSig()` are the head by design and only seed a walk. Second half of the same bug: a flat scan of `layer.children` for "ticks before this slot" never finds a slot nested in a `<tuplet>` (live doc) or in a `<beam>` / `<bTrem>` / `<fTrem>` (saved and importer documents) and silently sums the whole layer — descend with `contains()` and sum `realTicks` per preceding child. A fresh fixture document can't catch the meter half (its head IS 4/4): set the head elsewhere first (`setTimeSig(2, 2)` then `setMeterAt(1, 4, 4)`), as `breath_endOfBarUsesEffectiveMeter` does. Known remaining instance of both halves: `computeStubTstamp2` in `model/ties.ts`.

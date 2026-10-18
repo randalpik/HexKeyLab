@@ -128,6 +128,26 @@ function measureTickInfo(doc: Document, measureIdx: number): { startTick: number
   return { startTick: tick, ticksPerBeat: 64 / unit };
 }
 
+/** Beat length in ticks (64 / the meter unit in effect) at ONE measure
+ *  element: the nearest `<scoreDef>` meter at or before it in document order
+ *  (the head seeds, in-section overrides replace). For point events that
+ *  compute a `@tstamp` from a note's position — `doc.querySelector('scoreDef')`
+ *  is the HEAD meter only, and the sonata opens in cut time (2026-10-17: every
+ *  breath mark in its 4/4 finale landed at ~beat 3). */
+export function beatTicksForMeasure(measure: Element): number {
+  const doc = measure.ownerDocument;
+  let unit = 4;
+  if (!doc) return 64 / unit;
+  for (const node of Array.from(doc.querySelectorAll('scoreDef, measure'))) {
+    if (node === measure) break;
+    if (node.localName === 'scoreDef') {
+      const u = parseInt(node.getAttribute('meter.unit') ?? '', 10);
+      if (Number.isFinite(u) && u > 0) unit = u;
+    }
+  }
+  return 64 / unit;
+}
+
 /** Beat length in ticks (64 / the meter unit in effect) of every measure, in
  *  document order — measureTickInfo's `<scoreDef>` walk in one pass, for
  *  callers that visit every measure. */
