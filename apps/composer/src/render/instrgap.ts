@@ -57,7 +57,7 @@
 // `postProcessRendered` precedes `placePage`. Every measurement is in the
 // page-margin group's user space (`svgBox`), never screen rectangles.
 
-import { strokedBox, svgBox, type Box } from './textlayout.js';
+import { strokedBox, svgBox, inkBox, type Box } from './textlayout.js';
 
 /* ── ALWAYS ON (2026-09-09) ──
    This pass was gated behind an `ENABLED` flag while a pagination defect was
@@ -124,6 +124,19 @@ const isInk = (b: Box | null): b is Box => !!b && b.right > b.left && b.bottom >
 
 /** A staff row's line band, in the frame's user space. */
 interface Row { n: number; top: number; bottom: number }
+
+/** Undo a previous run's shifts on every system under `root` — for a RE-RUN
+ *  of the post-process (a zoom rescales every mounted page), BEFORE
+ *  `layoutBelowStaffText` measures: the text pass runs first and reads its
+ *  `INSTR_CLEAR` clamp against the other instrument's ink, so with run 1's
+ *  gap still in place it clamped nothing, `data-hkl-clamped` went unwritten,
+ *  the "unmet" term vanished and the shift decayed (sonata fixture
+ *  `pag_zoomRerunKeepsSlursAndGaps`: a viola row 30 units up after one zoom).
+ *  `layoutSystem` resets again before measuring; a second reset finds no tags. */
+export function resetInstrumentGaps(root: Element): void {
+  const systems = root.matches('g.system') ? [root] : Array.from(root.querySelectorAll('g.system'));
+  for (const sys of systems) resetSystem(sys);
+}
 
 export function layoutInstrumentGaps(root: Element, opts: InstrGapOpts): Set<Element> {
   const moved = new Set<Element>();
@@ -238,7 +251,13 @@ function inkOf(sys: Element, staffNs: ReadonlyArray<number>, frameInv: DOMMatrix
     const n = attrNum(st, 'data-n');
     if (n === null || !want.has(n)) continue;
     for (const o of Array.from(st.querySelectorAll(OBSTACLE_SEL))) {
-      const b = strokedBox(o, frameInv);
+      /* Text by its ink (tielayout's `inkBox`, as textlayout measures): after
+         `injectHejiGlyphs` every accidental is a BravuraText `<text>` whose
+         cell box is 8 units tall, and a re-run of this pass (a zoom) read
+         those cells as ink at the boundary and grew the gap again — sonata
+         p. 15's first system by 3.5 units per zoom, pushing the page's
+         systems down and the document from 29 pages to 31. */
+      const b = strokedBox(o, frameInv, inkBox(o, frameInv));
       if (isInk(b)) out.push(b);
     }
   }
@@ -248,7 +267,7 @@ function inkOf(sys: Element, staffNs: ReadonlyArray<number>, frameInv: DOMMatrix
 /** Undo a previous run: the tags, and this pass's contribution to every
  *  transform — so the whole system is measured below in ONE frame, the raw
  *  pre-shift one. A STAFF's transform is rewritten by alignStaffRows from the
- *  path text, so its shift is subtracted rather than the transform dropped.
+ *  path text, so it is dropped outright (see below).
  *  A MARK's transform belongs to textlayout (which reruns right after and
  *  composes the tag) and reads `translate(dx, dy + prev)`, so the shift is
  *  subtracted there too, leaving the `dy` that `data-hkl-vshift` records.
@@ -261,8 +280,14 @@ function resetSystem(sys: Element): void {
     const prev = parseFloat(el.getAttribute('data-hkl-ishift') ?? '0') || 0;
     el.removeAttribute('data-hkl-ishift');
     if (el.classList.contains('staff')) {
-      const { tx, ty } = translateOf(el);
-      el.setAttribute('transform', `translate(${tx}, ${ty - prev})`);
+      /* Dropped, not subtracted (2026-10-18): what is left after the shift
+         is `alignStaffRows`' device-grid phase (up to half a pixel), and a
+         re-run measuring the rows AT that phase asked for a few units less
+         than run 1 did on the phase-free rows — enough to round one grid step
+         lower, once (sonata p. 15: 330 → 320, then stable). Every caller runs
+         `alignStaffRows` after the post-process and it rewrites the row from
+         the staff-line path text, phase and shift alike. */
+      el.removeAttribute('transform');
     } else if (el.matches('g.dynam, g.dir, g.hairpin, g.tempo')) {
       /* textlayout owns the whole transform; only our term comes off. */
       if (prev) {

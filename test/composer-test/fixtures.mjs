@@ -8482,6 +8482,62 @@ const ENGRAVING = {
     setupKeys: [{ key: 'b', ctrl: true }],
     skipCursorTrace: true,
   },
+  /* A zoom RE-RUNS the post-process passes on every mounted page (rescale),
+     and the second run must be a fixed point of the first (2026-10-18, Max:
+     "I always zoom out to 50% after loading"; sonata III m. 24 LH slur grew
+     "a needlessly large bulge", p. 15's first system grew 3.5 units and the
+     document went from 29 pages to 31). The hidden state was the HEJI
+     injection at the end of run 1: every accidental becomes a BravuraText
+     `<text>` whose getBBox is the 8-unit character cell, and run 2's slur and
+     instrument-gap passes read those cells as obstacles. Material: a flipped
+     two-voice slur over flatted a5s (the flats' cells reach under the slur),
+     low flatted piano-LH notes and high flatted viola notes at the boundary
+     with a below-dynamic between them (the gap's ink floor). Asserted via
+     FIXTURE_ASSERTIONS.pag_zoomRerunKeepsSlursAndGaps. */
+  pag_zoomRerunKeepsSlursAndGaps: {
+    setup: `
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.addInstrument({ name: 'Viola', staffCount: 1 });
+      /* Lattice-consistent spellings (the render clone derives accidentals from q/r): a♭ = (-2, 1), e♭ = (-2, 2), b♭ = (-2, 3), c = (0, 0) + a fourth. */
+      const N = (p, o, midi, accid = '', q = 0, r = 0) => ({ q, r, pname: p, accid, oct: o, midi, colorHex: '#888', velocity: 80 });
+      /* Piano RH, voice 1: a slurred triplet of flatted a5s (stems up, beam +
+         numeral above); voice 2: a c4 whole note → two-voice, slur flipped below. */
+      m.setVoice(1); m.setCursor(0, 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(1, 1);
+      m.insertChordAtCursor({ notes: [N('a', 5, 80, 'f', -2, 1)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('a', 5, 80, 'f', -2, 1)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('a', 5, 80, 'f', -2, 1)], duration: '8', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N('c', 4, 60, '', 1, -1)], duration: '1', dots: 0 });
+      /* Piano LH, voice 3: low flatted quarters (ledger lines + flats below the staff). */
+      m.setVoice(3); m.setCursor(0, 3);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [N('e', 2, 39, 'f', -2, 2)], duration: '4', dots: 0 });
+      /* Viola, voice 5: high flatted quarters (ledger lines + flats above the staff). */
+      m.setVoice(5); m.setCursor(0, 5);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [N('b', 5, 82, 'f', -2, 3)], duration: '4', dots: 0 });
+      const doc = m.getDoc();
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const notes = [...doc.querySelectorAll('staff[n="1"] layer[n="1"] tuplet note')];
+      const sl = doc.createElementNS(MEI, 'slur');
+      sl.setAttribute('xml:id', 's-test-zoom-rerun'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[2].getAttribute('xml:id')); sl.setAttribute('data-voice', '1');
+      const meas = doc.querySelector('measure');
+      meas.appendChild(sl);
+      const d = doc.createElementNS(MEI, 'dynam'); d.setAttribute('xml:id', 'd-test-zoom-rerun'); d.setAttribute('tstamp', '1'); d.setAttribute('place', 'below'); d.setAttribute('staff', '2'); d.textContent = 'mf';
+      meas.appendChild(d);
+      /* Enough plain measures for several lines: the in-place rescale (the path
+         under test) stands down on a one-line document and full-renders instead. */
+      m.setVoice(1); m.setCursor(m.getVoiceLength(1), 1);
+      for (let i = 0; i < 4 * 14; i++) m.insertChordAtCursor({ notes: [N('c', 5, 72, '', 1, -1)], duration: '4', dots: 0 });
+      m.setVoice(5); m.setCursor(m.getVoiceLength(5), 5);
+      for (let i = 0; i < 4 * 14; i++) m.insertChordAtCursor({ notes: [N('c', 4, 60, '', 1, -1)], duration: '4', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      window.__hkl_composer.renderer.setZoom(100);   /* explicit start */
+      r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
   /* A zoom round-trip is visual-only: the same pages come back. */
   pag_zoomRoundTripKeepsPages: {
     setup: `
@@ -8735,6 +8791,44 @@ const ENGRAVING = {
     `,
   },
 
+  /* A slur over a tuplet numeral the numeral pass lifted (2026-10-18, sonata
+     III p. 16 mm. 31–32, piano LH): Verovio's own curve clears the "3" where
+     Verovio put it; render/tupletnums.ts then lifts the numeral 1.4 units off
+     its steep beam, into the slur, and nothing re-routed an UNFLIPPED slur (the
+     re-draw takes flipped slurs only). The lift pass (render/slurlayout.ts,
+     `liftSlursOffShiftedNumerals`) raises Verovio's control points along the
+     slur's normal until both edges clear the lifted numeral — endpoints and
+     thickness kept (Max: variant B). Material: piano LH b2 quarter + a steep
+     beamed triplet f3 b♭3 d♭4 under one slur from the b2 to the d♭4; the lower
+     voice's g2 halves sit a third under the b2 so the side pass keeps the slur
+     above (the beam side); ten plain measures after it fill the line so the
+     triplet is spaced naturally — a lone measure is justified wide, the beam
+     goes shallow and the numeral needs no lift. The assertion checks that
+     precondition. */
+  engr_slurLiftedOffShiftedNumeral: {
+    setup: `
+      const N = (p, o, midi, q, rr, accid = '') => ({ q, r: rr, pname: p, accid, oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.insertChordAtCursor({ notes: [N('b', 2, 47, 0, 2)], duration: '4', dots: 0 });
+      m.setCursor(1, 3);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(2, 3);
+      m.insertChordAtCursor({ notes: [N('f', 3, 53, -1, 0)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('b', 3, 58, -2, 3, 'f')], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('d', 4, 61, -2, 0, 'f')], duration: '8', dots: 0 });
+      m.setVoice(4); m.setCursor(0, 4);
+      m.insertChordAtCursor({ notes: [N('g', 2, 43, 0, -2)], duration: '2', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('g', 2, 43, 0, -2)], duration: '2', dots: 0 });
+      for (let i = 0; i < 10; i++) { m.setVoice(3); m.setCursor(m.getVoiceLength(3), 3); for (let k = 0; k < 4; k++) m.insertChordAtCursor({ notes: [N('c', 3, 48, 1, -1)], duration: '4', dots: 0 }); }
+      const doc = m.getDoc(); const MEI = 'http://www.music-encoding.org/ns/mei';
+      const notes = [...doc.querySelector('staff[n="2"] layer[n="1"]').querySelectorAll('note')];
+      const sl = doc.createElementNS(MEI, 'slur');
+      sl.setAttribute('xml:id', 's-test-lift'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[3].getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
+      doc.querySelector('measure').appendChild(sl);
+      m.setVoice(3); m.setCursor(0, 3);
+      r();
+    `,
+  },
   /* A flipped slur broken at a system break is re-drawn segment by segment
      (2026-09-05, sonata m. 43→44): bass staff, upper voice quarters under a
      slur that crosses a page break, lower voice whole-note chords g1+e2 (just
@@ -21807,6 +21901,36 @@ export const FIXTURE_ASSERTIONS = {
         return clear >= unit / 3 ? { ok: true, detail: 'clearance ' + clear.toFixed(1) + 'px (' + side + '), shift ' + (num.getAttribute('data-hkl-numshift') || '0') } : { ok: false, detail: 'numeral ' + clear.toFixed(1) + 'px from its beam (' + side + '), want >= ' + (unit / 3).toFixed(1) };
       })()` },
   ],
+  engr_slurLiftedOffShiftedNumeral: [
+    { name: 'the lifted numeral is clear of the slur, which keeps its side, endpoints and thickness (lifted, not re-drawn)',
+      expr: `(() => {
+        const g = document.getElementById('s-test-lift'); const path = g && g.querySelector('path');
+        const staff = document.querySelector('#score g.staff[data-n="2"]');
+        const tup = staff && staff.querySelector('g.tuplet'); const num = tup && tup.querySelector('g.tupletNum');
+        if (!path || !num) return { ok: false, detail: 'slur=' + !!path + ' numeral=' + !!num };
+        if (tup.querySelector('g.tupletBracket')) return { ok: false, detail: 'the triplet drew a bracket — not the bracketless numeral this fixture is for' };
+        const shift = num.getAttribute('data-hkl-numshift');
+        if (!shift) return { ok: false, detail: 'the numeral pass did not lift the numeral (no data-hkl-numshift): the beam is not steep enough here, the fixture material has drifted' };
+        if (g.hasAttribute('data-curvedir')) return { ok: false, detail: 'the side pass flipped the slur (data-curvedir=' + g.getAttribute('data-curvedir') + '); the fixture needs it on the beam side' };
+        const heads = [...staff.querySelectorAll('g.layer[data-n="1"] g.notehead')].map((h) => h.getBoundingClientRect());
+        const headTop = Math.min(...heads.map((h) => h.top)); const sb = g.getBoundingClientRect();
+        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur is not above its noteheads' };
+        const L = path.getTotalLength(), ctm = path.getScreenCTM(); const pts = [];
+        for (let i = 0; i <= 120; i++) { const p = path.getPointAtLength(L * i / 120); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
+        const b = num.getBoundingClientRect();
+        const inside = pts.filter((p) => p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom).length;
+        if (inside) return { ok: false, detail: inside + ' slur samples inside the lifted numeral (shift ' + shift + ', mark ' + (g.getAttribute('data-hkl-slur') || 'none') + ')' };
+        if (g.getAttribute('data-hkl-slur') !== 'lifted') return { ok: false, detail: 'expected data-hkl-slur="lifted", got ' + (g.getAttribute('data-hkl-slur') || 'none') };
+        const nums = (d) => (d.match(/-?\\d+(\\.\\d+)?/g) || []).map(Number);
+        const now = nums(path.getAttribute('d')), orig = nums(path.getAttribute('data-hkl-orig-d') || '');
+        if (now.length !== 14 || orig.length !== 14) return { ok: false, detail: 'unexpected path shape: ' + now.length + ' / ' + orig.length + ' numbers' };
+        const same = (i) => Math.abs(now[i] - orig[i]) <= 1 && Math.abs(now[i + 1] - orig[i + 1]) <= 1;
+        if (!same(0) || !same(6) || !same(12)) return { ok: false, detail: 'the lift moved an endpoint: ' + JSON.stringify(now) + ' vs ' + JSON.stringify(orig) };
+        const th = (a) => Math.hypot(a[2] - a[10], a[3] - a[11]) + Math.hypot(a[4] - a[8], a[5] - a[9]);
+        if (Math.abs(th(now) - th(orig)) > 2) return { ok: false, detail: 'the lift changed the thickness: ' + th(now).toFixed(0) + ' vs ' + th(orig).toFixed(0) };
+        return { ok: true, detail: 'numeral shift ' + shift + ', slur lifted clear of it, endpoints and thickness kept' };
+      })()` },
+  ],
   engr_slurBrokenAtBreakRedrawn: [
     { name: 'both segments are re-drawn, stay clear of the lower voice, and their open ends stay near the covered notes',
       expr: `(() => {
@@ -22182,6 +22306,46 @@ export const FIXTURE_ASSERTIONS = {
         if (JSON.stringify(pb.pageStarts()) !== startsBefore) return { ok: false, detail: 'page starts changed across the zoom' };
         if (!/^1079/.test(w || '')) return { ok: false, detail: 'card width at zoom 50 is ' + w + ', expected 1079.5px' };
         return { ok: true };
+      })()` },
+  ],
+  pag_zoomRerunKeepsSlursAndGaps: [
+    { name: 'after a zoom to 50 the flipped slur keeps Verovio\'s curve (no re-draw), every instrument-gap shift holds (within a grid step) and no system grows',
+      expr: `(async () => {
+        const H = window.__hkl_composer, r = H.renderer;
+        r.mountAllPages();
+        const norm = (d) => { const n = (d || '').match(/-?\\d+(\\.\\d+)?/g); if (!n) return null; const x0 = +n[0], y0 = +n[1]; return n.map((v, i) => Math.round(+v - (i % 2 ? y0 : x0))); };
+        const snap = () => {
+          const g = document.getElementById('s-test-zoom-rerun');
+          const path = g && g.querySelector('path');
+          return {
+            curvedir: g && g.getAttribute('data-curvedir'), mark: g && g.getAttribute('data-hkl-slur'), d: path && norm(path.getAttribute('d')),
+            systems: [...document.querySelectorAll('#score .score-page g.system')].map((s) => s.getBBox().height),
+            shifts: [...document.querySelectorAll('#score .score-page g.staff')].map((st) => parseFloat(st.getAttribute('data-hkl-ishift') || '0') || 0),
+            accidTexts: document.querySelectorAll('#score .score-page g.accid text').length,
+          };
+        };
+        const before = snap();
+        if (!before.d) return { ok: false, detail: 'slur s-test-zoom-rerun not rendered' };
+        if (before.curvedir !== 'below') return { ok: false, detail: 'the side pass did not flip the slur below (data-curvedir=' + before.curvedir + ') — the fixture needs a flipped slur' };
+        if (before.mark) return { ok: false, detail: 'the first run already re-drew the slur (' + before.mark + ')' };
+        if (!before.accidTexts) return { ok: false, detail: 'no BravuraText accidentals in the DOM — the HEJI injection did not run, so the fixture cannot exercise the re-run' };
+        if (!before.shifts.some((v) => v > 0)) return { ok: false, detail: 'no instrument-gap shift on the first run — the fixture needs a shifted system' };
+        if (document.querySelectorAll('#score .score-page g.system').length < 2) return { ok: false, detail: 'one system only — the in-place rescale needs several lines' };
+        r.clearRenderLedger();
+        r.setZoom(50); H.reRender(); await window.__waitForRender();
+        const fulls = r.renderLedger().filter((e) => e.full);
+        r.runExtentsJobNow(); r.mountAllPages();
+        const after = snap();
+        r.setZoom(100); H.reRender(); await window.__waitForRender();
+        if (fulls.length) return { ok: false, detail: 'the zoom was a full render (' + fulls.map((e) => e.deriveReason).join('; ') + '), not the in-place rescale this fixture exercises' };
+        const grid = 20;   /* user units per device pixel at zoom 50 */
+        if (after.mark) return { ok: false, detail: 'the zoom re-drew the slur (data-hkl-slur=' + after.mark + ')' };
+        if (!after.d || after.d.length !== before.d.length || after.d.some((v, i) => Math.abs(v - before.d[i]) > 1)) return { ok: false, detail: 'the slur curve changed across the zoom: ' + JSON.stringify(before.d) + ' -> ' + JSON.stringify(after.d) };
+        if (after.systems.length !== before.systems.length) return { ok: false, detail: 'system count changed ' + before.systems.length + ' -> ' + after.systems.length };
+        for (let i = 0; i < before.systems.length; i++) if (Math.abs(after.systems[i] - before.systems[i]) > grid) return { ok: false, detail: 'system ' + i + ' height changed ' + before.systems[i].toFixed(0) + ' -> ' + after.systems[i].toFixed(0) + ' user units across the zoom' };
+        if (after.shifts.length !== before.shifts.length) return { ok: false, detail: 'staff count changed' };
+        for (let i = 0; i < before.shifts.length; i++) if (Math.abs(after.shifts[i] - before.shifts[i]) > grid) return { ok: false, detail: 'instrument-gap shift on staff ' + i + ' changed ' + before.shifts[i] + ' -> ' + after.shifts[i] + ' across the zoom' };
+        return { ok: true, detail: 'slur curve, ' + before.shifts.filter((v) => v > 0).length + ' shifted staves and ' + before.systems.length + ' system heights held across the zoom' };
       })()` },
   ],
   pag_courtesyAtLineEnd: [

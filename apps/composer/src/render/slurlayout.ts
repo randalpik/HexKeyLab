@@ -47,7 +47,7 @@ import { samplePath } from './curves.js';
 // Runs before placement measures the system (a re-drawn slur hugs its notes,
 // so it only ever shrinks the extents).
 
-import { svgBox, type Box } from './textlayout.js';
+import { svgBox, inkBox, type Box } from './textlayout.js';
 
 export interface SlurLayoutOpts {
   /** SVG user units per Verovio unit (80 at unit 8). */
@@ -95,17 +95,31 @@ export const bez = (p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt => {
 export const inside = (p: Pt, b: Box): boolean => p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom;
 export const fmt = (p: Pt): string => `${Math.round(p.x)},${Math.round(p.y)}`;
 
+/** Put every slur under `root` back to Verovio's curve (this pass's re-draws
+ *  and the numeral lift's) and clear the marks. */
+function restoreSlurRedraws(root: Element): void {
+  for (const g of Array.from(root.querySelectorAll('g.slur'))) {
+    const path = g.querySelector(':scope > path');
+    const orig = path?.getAttribute('data-hkl-orig-d');
+    if (path && orig !== null && orig !== undefined) { path.setAttribute('d', orig); path.removeAttribute('data-hkl-orig-d'); }
+    g.removeAttribute('data-hkl-slur');
+  }
+}
+
 /** Re-draw the displaced flipped slurs of every system under `root`. */
 export function layoutFlippedSlurs(root: Element, opts: SlurLayoutOpts): void {
   const u = opts.unitUser;
+  /* Idempotency: measure Verovio's own curves, never a previous re-draw — and
+     restore EVERY slur (this pass's re-draws and the numeral lift's, below)
+     before measuring ANY, since a slur is an obstacle to the slurs after it
+     (a re-run that restored each at its own turn measured the later ones
+     against the earlier ones' re-draws). */
+  restoreSlurRedraws(root);
   for (const g of Array.from(root.querySelectorAll('g.slur[data-curvedir]'))) {
     const path = g.querySelector(':scope > path') as SVGPathElement | null;
     if (!path || typeof path.getCTM !== 'function') continue;
     const side = g.getAttribute('data-curvedir');
     if (side !== 'below' && side !== 'above') continue;
-    /* Idempotency: measure Verovio's own curve, never a previous re-draw. */
-    const orig = path.getAttribute('data-hkl-orig-d');
-    if (orig !== null) { path.setAttribute('d', orig); path.removeAttribute('data-hkl-orig-d'); g.removeAttribute('data-hkl-slur'); }
     const sid = (g.getAttribute('data-startid') ?? '').replace(/^#/, '');
     const eid = (g.getAttribute('data-endid') ?? '').replace(/^#/, '');
     if (!sid || !eid) continue;
@@ -183,7 +197,14 @@ export function layoutFlippedSlurs(root: Element, opts: SlurLayoutOpts): void {
     for (const st of Array.from(sys.querySelectorAll('g.staff[data-n="' + staffN + '"]'))) {
       for (const el of Array.from(st.querySelectorAll(OBSTACLE_SEL))) {
         if (endHeads.has(el) || el === path) continue;
-        const b = svgBox(el, frameInv);
+        /* Ink, not cell: once `injectHejiGlyphs` has run (the end of every
+           post-process), each accidental is a BravuraText `<text>` whose
+           `getBBox` is the character cell — 8 units tall for a 2.5-unit flat
+           — and a RE-RUN of this pass (a zoom rescales every mounted page)
+           then found Verovio's curve "through" three accidentals it clears,
+           and bulged it to clear the phantom (sonata III m. 24 LH, Max:
+           "a needlessly large bulge"). Geometry boxes are unchanged. */
+        const b = inkBox(el, frameInv);
         if (!b || b.right < lo || b.left > hi || !(b.right > b.left)) continue;
         obstacles.push({ left: b.left - pad, right: b.right + pad, top: b.top - pad, bottom: b.bottom + pad });
         tight.push(b);
@@ -258,3 +279,90 @@ export function layoutFlippedSlurs(root: Element, opts: SlurLayoutOpts): void {
     g.setAttribute('data-hkl-slur', mark);
   }
 }
+
+/* ── Slurs over a lifted tuplet numeral (2026-10-18, Max: "variant B") ──
+   `render/tupletnums.ts` lifts a bracketless numeral off a steep beam — into
+   whatever Verovio drew above it. Verovio's own curve clears the numeral where
+   Verovio put it (sonata III p. 16 mm. 31–32, piano LH: 0 of 100 samples
+   inside; `slurMargin` is 1 unit, the lift was 1.4), and nothing re-routed an
+   UNFLIPPED slur: the re-draw above takes flipped slurs only, and a stem-side
+   slur's endpoints are not the re-draw's notehead anchors anyway. So the slur
+   is LIFTED, not re-drawn: Verovio's four control points move along the
+   slur's normal, toward its bulge, a quarter unit at a time until both edges
+   clear every lifted numeral of its staff in its span by `MARGIN` — endpoints
+   and thickness kept, which is what Verovio itself would have done with the
+   numeral in its way. A slur the re-draw handled (marked) is skipped: the
+   numerals were its obstacles. Idempotent through `data-hkl-orig-d` and the
+   shared restore above; mark `data-hkl-slur="lifted"`. The alternative —
+   lifting the numeral past the slur — put the "3" 4.7 units off its beam;
+   Max chose this. Fixture `engr_slurLiftedOffShiftedNumeral`. */
+const LIFT_STEP = 0.25, LIFT_MAX = 4;   // units
+
+/** Verovio's slur path `M S C o1 o2 E C i2 i1 S` → its seven points, or null. */
+function parseSlurPath(d: string): Pt[] | null {
+  if (!/^\s*M[^MC]+C[^MC]+C[^MC]+\s*$/.test(d)) return null;
+  const n = (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+  if (n.length < 14) return null;
+  const P: Pt[] = [];
+  for (let i = 0; i < 14; i += 2) P.push({ x: n[i], y: n[i + 1] });
+  return P;
+}
+
+/** Lift every slur under `root` that runs into a numeral the numeral pass shifted. */
+export function liftSlursOffShiftedNumerals(root: Element, opts: SlurLayoutOpts): void {
+  const u = opts.unitUser, pad = MARGIN * u;
+  for (const g of Array.from(root.querySelectorAll('g.slur'))) {
+    if (g.hasAttribute('data-hkl-slur')) continue;             // re-drawn or kept: numerals were its obstacles
+    const path = g.querySelector(':scope > path') as SVGPathElement | null;
+    if (!path || typeof path.getCTM !== 'function') continue;
+    const sys = g.closest('g.system');
+    if (!sys) continue;
+    const sid = (g.getAttribute('data-startid') ?? '').replace(/^#/, '');
+    const eid = (g.getAttribute('data-endid') ?? '').replace(/^#/, '');
+    const anchor = (sid ? sys.querySelector('#' + CSS.escape(sid)) : null) ?? (eid ? sys.querySelector('#' + CSS.escape(eid)) : null);
+    const staffN = anchor?.closest('g.staff')?.getAttribute('data-n');
+    if (!staffN) continue;
+    const ctm = path.getCTM();
+    if (!ctm) continue;
+    const frameInv = ctm.inverse();
+    const P = parseSlurPath(path.getAttribute('d') ?? '');
+    if (!P) continue;
+    const S = P[0], E = P[3];
+    const lo = Math.min(S.x, E.x) - u, hi = Math.max(S.x, E.x) + u;
+    const boxes: Box[] = [];
+    for (const st of Array.from(sys.querySelectorAll('g.staff[data-n="' + staffN + '"]'))) {
+      for (const num of Array.from(st.querySelectorAll('g.tupletNum[data-hkl-numshift]'))) {
+        const b = svgBox(num, frameInv);
+        if (!b || b.right < lo || b.left > hi || !(b.right > b.left)) continue;
+        boxes.push({ left: b.left - pad, right: b.right + pad, top: b.top - pad, bottom: b.bottom + pad });
+      }
+    }
+    if (!boxes.length) continue;
+    /* Both edges of the closed path, sampled. */
+    const hit = (Q: Pt[]): boolean => {
+      for (let i = 0; i <= SAMPLES; i++) {
+        const t = i / SAMPLES;
+        const a = bez(Q[0], Q[1], Q[2], Q[3], t), b = bez(Q[3], Q[4], Q[5], Q[6], t);
+        for (const bx of boxes) { if (inside(a, bx) || inside(b, bx)) return true; }
+      }
+      return false;
+    };
+    if (!hit(P)) continue;
+    /* The normal to the chord, pointing to the side the curve bulges on. */
+    const dx = E.x - S.x, dy = E.y - S.y, len = Math.hypot(dx, dy);
+    if (!(len > 0)) continue;
+    let nx = -dy / len, ny = dx / len;
+    const mid = bez(P[0], P[1], P[2], P[3], 0.5);
+    if ((mid.x - S.x) * nx + (mid.y - S.y) * ny < 0) { nx = -nx; ny = -ny; }
+    let found: Pt[] | null = null;
+    for (let k = LIFT_STEP * u; k <= LIFT_MAX * u + 1e-6 && !found; k += LIFT_STEP * u) {
+      const Q = P.map((p, i) => (i === 0 || i === 3 || i === 6) ? p : { x: p.x + nx * k, y: p.y + ny * k });
+      if (!hit(Q)) found = Q;
+    }
+    if (!found) continue;                                        // nothing clears within LIFT_MAX: Verovio's curve stays
+    path.setAttribute('data-hkl-orig-d', path.getAttribute('d') ?? '');
+    path.setAttribute('d', `M${fmt(found[0])} C${fmt(found[1])} ${fmt(found[2])} ${fmt(found[3])} C${fmt(found[4])} ${fmt(found[5])} ${fmt(found[6])}`);
+    g.setAttribute('data-hkl-slur', 'lifted');
+  }
+}
+

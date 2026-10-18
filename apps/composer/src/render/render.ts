@@ -27,9 +27,9 @@ import { buildWindowMei } from './pagesplice.js';
 import { mergeGlyphDefs, expandForSpannersOnce, expandForEndings } from './splice.js';
 import { hiddenStavesFor, visibleStavesFor, systemMeasureIdxs, renderedStaffNs } from './hiddenstaves.js';
 import { layoutBelowStaffText } from './textlayout.js';
-import { layoutInstrumentGaps } from './instrgap.js';
+import { layoutInstrumentGaps, resetInstrumentGaps } from './instrgap.js';
 import { styleTitleBlock } from './pageheader.js';
-import { layoutFlippedSlurs } from './slurlayout.js';
+import { layoutFlippedSlurs, liftSlursOffShiftedNumerals } from './slurlayout.js';
 import { layoutCollidingTies, restoreTieRedraws } from './tielayout.js';
 import { layoutTupletNums } from './tupletnums.js';
 import { repairBarLines } from './barlines.js';
@@ -2333,6 +2333,20 @@ class Renderer {
       }
     }
     st.noteheads = performance.now() - t;
+    /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
+       glyphs (+ paren <use> swaps); plain accidentals and key signatures are
+       re-drawn in BravuraText too. No-op when none are left. Host-wide.
+       BEFORE every geometry pass (2026-10-18): the passes below measure
+       accidentals as obstacles (text marks, instrument gaps, slur and tie
+       re-draws), and a pass must measure the glyph that will be drawn. With
+       the injection last, run 1 measured Verovio's Leipzig <use> boxes and a
+       RE-RUN of the same passes (a zoom rescales every mounted page) measured
+       BravuraText ink — a different answer for the same music, so the
+       inter-instrument shift moved on every zoom (fixture
+       `pag_zoomRerunKeepsSlursAndGaps`: 390 → 350 user units). */
+    t = performance.now();
+    injectHejiGlyphs(container);
+    st.heji = performance.now() - t;
     /* Below-staff marks: keep <dir> text a dynamic's distance below a staff
        and a lone hairpin on the dynamics' line (render/textlayout.ts; inside a
        grand staff the marks are `between` and Verovio centres them — see
@@ -2349,6 +2363,12 @@ class Renderer {
       /* Refill the barline stretches Verovio erased under those marks
          (render/barlines.ts) BEFORE the marks move: a barline never breaks. */
       for (const el of targets) repairBarLines(el, pairs);
+      /* A RE-RUN (a zoom rescales every mounted page, 2026-10-18) must see
+         the geometry run 1 saw: the inter-instrument shift comes off BEFORE
+         the text pass measures, or the clamp that pass records — and the gap
+         pass's "unmet" term reads — is taken against an already-widened gap
+         and the shift decays. The gap pass resets again before measuring. */
+      for (const el of targets) resetInstrumentGaps(el);
       const dirGapUser = DIR_GAP_PER_UNIT * CRISP_PRESETS[this.zoom].unit;
       t = performance.now();
       for (const el of targets) layoutBelowStaffText(el, { dirGapUser });
@@ -2388,18 +2408,16 @@ class Renderer {
       t = performance.now();
       for (const el of targets) restoreTieRedraws(el);
       for (const el of targets) layoutFlippedSlurs(el, { unitUser });
+      /* Then every other slur a lifted numeral now runs into is lifted over
+         it, Verovio's endpoints kept (render/slurlayout.ts, 2026-10-18). */
+      for (const el of targets) liftSlursOffShiftedNumerals(el, { unitUser });
       st.slurs = performance.now() - t;
     }
-    /* Replace tagged placeholder accidentals with BravuraText HEJI / stacked
-       glyphs (+ paren <use> swaps). No-op when none are tagged. Host-wide. */
-    t = performance.now();
-    injectHejiGlyphs(container);
-    st.heji = performance.now() - t;
     /* Ties Verovio drew through another voice, re-arched over it
-       (render/tielayout.ts). AFTER the glyph injection — every accidental is a
-       BravuraText <text> from here on, measured by its ink — and after the
-       slur pass, whose final curves are obstacles. Still before placement: a
-       raised tie can grow a system's extents. */
+       (render/tielayout.ts). After the slur pass, whose final curves are
+       obstacles (every accidental is a BravuraText <text> by now, measured by
+       its ink). Still before placement: a raised tie can grow a system's
+       extents. */
     t = performance.now();
     {
       const unitUser = CRISP_PRESETS[this.zoom].unit * 10;

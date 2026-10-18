@@ -43,7 +43,7 @@
 // them again itself, so it is idempotent. A raised tie can grow a system's
 // extents; it still runs before placement measures them.
 
-import { strokedBox, svgBox, type Box } from './textlayout.js';
+import { strokedBox, svgBox, inkBox, type Box } from './textlayout.js';
 import { samplePath, ctmOf } from './curves.js';
 import { bez, fmt, MARGIN, OBSTACLE_SEL, type Pt } from './slurlayout.js';
 
@@ -136,90 +136,6 @@ function outline(path: SVGGeometryElement, frameInv: DOMMatrix, gap: number): Pt
     out.push({ x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f });
   }
   return out;
-}
-
-/* ── Ink boxes ──
-   `getBBox` is tight for geometry (Verovio's `<use>` glyphs, paths, polygons)
-   but for a `<text>` it is the CHARACTER CELL — full ascent + descent, whole
-   advance. Every accidental is a BravuraText `<text>` once injectHejiGlyphs
-   has run (plain ones too), and dynamics / directions / tempi are text, so a
-   cell box flagged ties that pass beside an accidental as colliding (Max,
-   2026-09-22: "neither of those are real collisions"). Text is measured per
-   character instead: canvas `measureText` in the element's computed font gives
-   the glyph's ink extents about its origin, placed at getStartPositionOfChar. */
-const LEAF_SEL = 'use, path, rect, polygon, polyline, ellipse, circle, line';
-let measureCtx: CanvasRenderingContext2D | null | undefined;
-const inkCache = new Map<string, { l: number; r: number; a: number; d: number }>();
-
-function charInk(font: string, ch: string): { l: number; r: number; a: number; d: number } | null {
-  const key = font + '\u0000' + ch;
-  const hit = inkCache.get(key);
-  if (hit) return hit;
-  if (measureCtx === undefined) measureCtx = document.createElement('canvas').getContext('2d');
-  if (!measureCtx) return null;
-  measureCtx.font = font;
-  const m = measureCtx.measureText(ch);
-  const v = { l: m.actualBoundingBoxLeft, r: m.actualBoundingBoxRight, a: m.actualBoundingBoxAscent, d: m.actualBoundingBoxDescent };
-  inkCache.set(key, v);
-  return v;
-}
-
-/** Ink box of one `<text>` in `frameInv`'s frame; `ok: false` when it cannot
- *  be measured (font not loaded, whitespace collapsed, surrogates) — the caller
- *  then falls back to the cell box, which only over-reports. */
-function textInk(t: SVGTextElement, frameInv: DOMMatrix): { ok: boolean; box: Box | null } {
-  let n: number;
-  try { n = t.getNumberOfChars(); } catch { return { ok: false, box: null }; }
-  if (!n) return { ok: true, box: null };
-  const ctm = ctmOf(t);
-  if (!ctm) return { ok: false, box: null };
-  const chars: Array<{ ch: string; font: string }> = [];
-  const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const cs = getComputedStyle(node.parentElement as Element);
-    const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-    if (typeof document.fonts?.check === 'function' && !document.fonts.check(font)) return { ok: false, box: null };
-    const str = node.nodeValue ?? '';
-    for (let i = 0; i < str.length; i++) {
-      const c = str.charCodeAt(i);
-      if (c >= 0xD800 && c <= 0xDFFF) return { ok: false, box: null };
-      chars.push({ ch: str[i], font });
-    }
-  }
-  if (chars.length !== n) return { ok: false, box: null };
-  const m = frameInv.multiply(ctm);
-  let box: Box | null = null;
-  for (let i = 0; i < n; i++) {
-    const ink = charInk(chars[i].font, chars[i].ch);
-    if (!ink) return { ok: false, box: null };
-    if (!(ink.l + ink.r > 0) || !(ink.a + ink.d > 0)) continue;     // no ink (a space)
-    const p = t.getStartPositionOfChar(i);
-    for (const [x, y] of [[p.x - ink.l, p.y - ink.a], [p.x + ink.r, p.y - ink.a], [p.x - ink.l, p.y + ink.d], [p.x + ink.r, p.y + ink.d]]) {
-      const q = { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f };
-      box = box
-        ? { left: Math.min(box.left, q.x), right: Math.max(box.right, q.x), top: Math.min(box.top, q.y), bottom: Math.max(box.bottom, q.y) }
-        : { left: q.x, right: q.x, top: q.y, bottom: q.y };
-    }
-  }
-  return { ok: true, box };
-}
-
-/** An element's INK box in `frameInv`'s frame: geometry boxes for its shapes,
- *  per-character ink for its text. Null when it draws nothing measurable. */
-export function inkBox(el: Element, frameInv: DOMMatrix): Box | null {
-  const texts = el.localName === 'text' ? [el] : Array.from(el.querySelectorAll('text'));
-  if (!texts.length) return svgBox(el, frameInv);
-  let box: Box | null = null;
-  const add = (b: Box | null): void => {
-    if (!b) return;
-    box = box ? { left: Math.min(box.left, b.left), right: Math.max(box.right, b.right), top: Math.min(box.top, b.top), bottom: Math.max(box.bottom, b.bottom) } : b;
-  };
-  for (const leaf of Array.from(el.querySelectorAll(LEAF_SEL))) if (!leaf.closest('text')) add(svgBox(leaf, frameInv));
-  for (const t of texts) {
-    const r = textInk(t as SVGTextElement, frameInv);
-    add(r.ok ? r.box : svgBox(t, frameInv));
-  }
-  return box;
 }
 
 /** Verovio's tie path `M S C o1 o2 E C i2 i1 S` → its six points, or null. */

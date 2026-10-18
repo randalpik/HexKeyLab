@@ -330,7 +330,9 @@ slur within a fourth of the slur's lowest note (or, for a lower voice, above it
 within a fourth of its highest), the slur stays on the engraving engine's own
 side, above the beam, rather than risk running through the other voice. Flip
 it yourself with `Shift+L` if you know better; slur and stem flips are
-independent. Two identical
+independent. A tuplet numeral that had to move off a steep beam does not land
+in a slur: the slur arcs a little higher to clear it, its ends where the
+engraving engine put them. Two identical
 rests at the same moment in a staff's two voices draw as
 one rest, and a hidden rest never nudges a visible one. A movement break
 (section header) with a new meter shows no courtesy meter at the end of the
