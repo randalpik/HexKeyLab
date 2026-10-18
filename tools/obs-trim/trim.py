@@ -77,9 +77,28 @@ def detect_segments(path, track, noise_db, gap, min_take):
 
 
 def print_segments(segs):
-    print(f"{'take':>4}  {'onset':>9}  {'end':>9}  {'len':>7}")
+    print(f"{'take':>4}  {'onset':>9}  {'end':>9}  {'len':>7}  {'gap before':>10}")
+    prev_end = None
     for i, (a, b) in enumerate(segs, 1):
-        print(f"{i:>4}  {a:9.3f}  {b:9.3f}  {b - a:7.3f}")
+        gap = "" if prev_end is None else f"{a - prev_end:9.3f}s"
+        print(f"{i:>4}  {a:9.3f}  {b:9.3f}  {b - a:7.3f}  {gap:>10}")
+        prev_end = b
+
+
+def select_take(segs, spec):
+    """'all' -> first onset..last end; 'A-B' -> onset of A..end of B; 'N' (negative from end)."""
+    spec = spec.strip().lower()
+    if spec == "all":
+        return 1, len(segs)
+    if "-" in spec[1:]:
+        a, b = spec.split("-", 1)
+        a, b = int(a), int(b)
+        a = a if a > 0 else len(segs) + 1 + a
+        b = b if b > 0 else len(segs) + 1 + b
+        return a, b
+    n = int(spec)
+    n = n if n > 0 else len(segs) + 1 + n
+    return n, n
 
 
 def extract_wav(src, track, start, length, out):
@@ -112,6 +131,9 @@ def probe_size(path):
     return int(w), int(h)
 
 
+GAP_DEFAULT = 2.0  # s of digital silence that separates takes. Library (35 kept takes): the shortest
+                   # setup pause before a legitimate take is 2.26 s (revolutionary take 20), the longest
+                   # rest inside a kept take 0.62 s; in-piece fermatas longer than 2 s (rare) need --take A-B.
 CELL = 24          # full-res px per tracking cell (a hex is ~60 px wide, so 2-3 cells)
 CELL_THR = 10      # luma-level change of a cell mean that counts as an event (noise floor ~1-2)
 FLASH_FRAMES = 6   # HKL paints a re-struck key unselected for KEY_FLASH_MS = 60 ms (3-4 frames at
@@ -215,7 +237,8 @@ class TakeAudio:
         L = []
         for k in range(0, len(d) - self.WIN, self.HOP):
             seg = d[k:k + self.WIN]
-            L.append(10 * math.log10(sum(v * v for v in seg) / self.WIN + 1e-14))
+            # floor at -75 dBFS: digital silence -> AAC pre-echo (-85 dB) must not read as a rise
+            L.append(max(-75.0, 10 * math.log10(sum(v * v for v in seg) / self.WIN + 1e-14)))
         best, best_k = -99.0, None
         for k in range(4, len(L) - 7):
             tc = (a + k * self.HOP + self.WIN / 2) / self.sr
@@ -319,7 +342,8 @@ def main():
     ap.add_argument("--lattice", help="crop W:H:X:Y fully inside the lattice outline (default: preset by frame size)")
     ap.add_argument("--cell-thr", type=int, default=CELL_THR, help="luma-level change of a lattice cell that counts as a key event (default 10; noise ~1-2)")
     ap.add_argument("--crop-png", help="write the lattice crop of one frame here, to check --lattice")
-    ap.add_argument("--take", type=int, default=-1, help="take index from --list (negative = from end; default -1)")
+    ap.add_argument("--take", default="-1", help="take from --list: N (negative = from end; default -1), a range A-B, or 'all' — "
+                    "a rest of >--gap seconds of digital silence inside one piece shows up as two takes")
     ap.add_argument("--start", default="auto", help="'auto' = first onset of the take, or absolute seconds")
     ap.add_argument("--end", help="loop downbeat: T, +D (after onset), last+D / last-D (after/before last onset)")
     ap.add_argument("--pre", type=float, default=0.025, help="silent pre-roll before the onset, taken from the tail so the loop period is unchanged (default 0.025 = one AAC/Opus frame of player slop)")
@@ -330,7 +354,7 @@ def main():
     ap.add_argument("--curve", default="hsin", help="afade curve (hsin, tri, qsin, exp...; default hsin)")
     ap.add_argument("--audio-track", type=int, default=0)
     ap.add_argument("--noise", type=float, default=-60.0, help="silence threshold dBFS (default -60)")
-    ap.add_argument("--gap", type=float, default=1.0, help="min silence between takes, seconds (default 1.0)")
+    ap.add_argument("--gap", type=float, default=GAP_DEFAULT, help=f"min silence between takes, seconds (default {GAP_DEFAULT}; a legitimate take has followed 2.26 s)")
     ap.add_argument("--min-take", type=float, default=1.0, help="ignore sound segments shorter than this")
     ap.add_argument("--onset-threshold", type=float, default=0.3, help="aubioonset -t (default 0.3)")
     ap.add_argument("--preview", action="store_true", help="render the audio seam looped and play it; no video encode")
@@ -359,11 +383,19 @@ def main():
         if not segs:
             die("no sound found above the noise threshold")
         try:
-            seg = segs[a.take - 1 if a.take > 0 else a.take]
-        except IndexError:
+            lo, hi = select_take(segs, a.take)
+            if not (1 <= lo <= hi <= len(segs)):
+                raise IndexError
+        except (IndexError, ValueError):
             print_segments(segs)
-            die(f"--take {a.take} out of range")
-        onset, seg_end = seg
+            die(f"--take {a.take} out of range (1..{len(segs)}, A-B, or all)")
+        onset, seg_end = segs[lo - 1][0], segs[hi - 1][1]
+        if lo > 1 and segs[lo - 1][0] - segs[lo - 2][1] < 3.0:
+            print(f"note: take {lo} starts {segs[lo - 1][0] - segs[lo - 2][1]:.1f}s after take {lo - 1} ends — "
+                  f"a rest inside one piece? use --take {lo - 1}-{hi} (or --take all)")
+        if hi < len(segs) and segs[hi][0] - segs[hi - 1][1] < 3.0:
+            print(f"note: take {hi + 1} starts {segs[hi][0] - segs[hi - 1][1]:.1f}s after take {hi} ends — "
+                  f"a rest inside one piece? use --take {lo}-{hi + 1} (or --take all)")
     else:
         onset = float(a.start)
         seg_end = next((b for (s, b) in segs if s <= onset < b), total)

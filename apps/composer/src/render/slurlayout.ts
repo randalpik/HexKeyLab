@@ -6,9 +6,14 @@ import { samplePath } from './curves.js';
 // else is there, and its endpoint rule treats the OTHER layer's noteheads in
 // the slur's own start / end column as part of that column: a slur told to go
 // below a descending upper-voice line whose downbeat shares its x with the
-// lower voice's chord starts BELOW that chord — sonata m. 83, start point 65 px
-// (8 units) under its own notehead, then a 100-px scoop — although the slur
-// fits under the notes and above the chord (Max: "there is room for it").
+// lower voice's chord starts BELOW that chord — sonata I m. 79 ("m. 83" below
+// and in the 2026-09-05 entries; the movement's numbering has since shifted),
+// start point 65 px (8 units) under its own notehead, then a 100-px scoop —
+// although the slur fits under the notes and above the chord (Max: "there is
+// room for it"). Since 2026-10-17 the side pass refuses a flip with any
+// other-voice head within a fourth of the slur's farthest own head (that
+// m. 79 slur among them), so a same-column shift like this is rare now; the
+// pass's working case is the slur broken at a system break, below.
 // Probed on the bare toolkit: the shift follows the chord's noteheads, not its
 // stem; `slurEndpointFlexibility` 0 (the default) still shifts; `@bezier` and
 // `@bulge` change nothing; `@startvo`/`@endvo` do move the endpoints but

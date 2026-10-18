@@ -8549,16 +8549,49 @@ const ENGRAVING = {
       r();
     `,
   },
-  /* A flipped slur Verovio carried away from its notes is re-drawn at them
-     (2026-09-05, sonata m. 83's bass staff, reproduced): upper voice two
-     beamed triplets descending d♭4 → b2 under one slur, lower voice a
-     dotted-half chord b1+b2 sharing the slur's downbeat column. Verovio
-     honours the notehead side (below) but starts the slur under the lower
-     voice's chord — 8 units below its own notehead — although a full staff
-     space lies free between the voices; render/slurlayout.ts re-draws it
-     from the noteheads. (An unstemmed whole-note chord a step or two below —
-     m. 82 — needs no re-draw: engr_slurNoteheadSideTwoVoice.) */
-  engr_slurBelowRedrawnAtNotes: {
+  /* The flip yields to the other voice (2026-10-17, sonata III mm. 71–72,
+     piano RH — Max: the flipped slur "literally colliding with the notes in
+     the other voice"): upper voice a slurred triplet a5 g5 e5 (stems up),
+     lower voice a chord g4 b4 e5 on the same beat — its top is a FOURTH under
+     the slur's start and level with its end, so no curve fits below. The side
+     pass flips only when no other-voice head whose onset lies within the
+     slur's span comes within a fourth of the slur's farthest own head on the
+     flip side (the lowest head anywhere under a below-slur); here it leaves
+     Verovio's layer side — above the beam, where Finale puts it. */
+  engr_slurKeepsLayerSideOverOtherVoice: {
+    setup: `
+      const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
+      m.setVoice(1); m.setCursor(0, 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      m.setCursor(1, 1);
+      m.insertChordAtCursor({ notes: [N('a', 5, 81)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('g', 5, 79)], duration: '8', dots: 0 });
+      m.insertChordAtCursor({ notes: [N('e', 5, 76)], duration: '8', dots: 0 });
+      m.setVoice(2); m.setCursor(0, 2);
+      m.insertChordAtCursor({ notes: [N('g', 4, 67), N('b', 4, 71), N('e', 5, 76)], duration: '4', dots: 0 });
+      m.setVoice(1);
+      const doc = m.getDoc();
+      const notes = [...doc.querySelectorAll('staff[n="1"] layer[n="1"] tuplet note')];
+      const MEI = 'http://www.music-encoding.org/ns/mei';
+      const sl = doc.createElementNS(MEI, 'slur');
+      sl.setAttribute('xml:id', 's-test-2v-keep'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[2].getAttribute('xml:id')); sl.setAttribute('data-voice', '1');
+      doc.querySelector('measure').appendChild(sl);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
+  /* The global gate: a unison with the slur's END note blocks the flip even
+     though the START has nine steps of room (2026-10-17; sonata I m. 79 —
+     "m. 83" in the 2026-09-05 entries, the first movement's numbering has
+     since shifted by four): upper voice two beamed triplets descending
+     d♭4 → b2 under one slur, lower voice a double-dotted-half chord b1+b2
+     sharing the slur's downbeat column. Until 2026-10-17 the side pass
+     flipped this slur below and render/slurlayout.ts re-drew Verovio's
+     displaced start (fixture engr_slurBelowRedrawnAtNotes); the chord's b2 is
+     level with the slur's lowest note, so the flip is now refused and the
+     slur keeps Verovio's layer side. (An unstemmed whole-note chord a
+     seventh below — sonata I m. 78 — still flips: engr_slurNoteheadSideTwoVoice.) */
+  engr_slurKeepsLayerSideUnisonInSpan: {
     setup: `
       const N = (p, a, o, midi) => ({ q: 0, r: 0, pname: p, accid: a, oct: o, midi, colorHex: '#888', velocity: 80 });
       const E = (p, a, o, midi) => m.insertChordAtCursor({ notes: [N(p, a, o, midi)], duration: '8', dots: 0 });
@@ -8578,7 +8611,7 @@ const ENGRAVING = {
       const notes = [...doc.querySelectorAll('staff[n="2"] layer[n="1"] tuplet note')];
       const MEI = 'http://www.music-encoding.org/ns/mei';
       const sl = doc.createElementNS(MEI, 'slur');
-      sl.setAttribute('xml:id', 's-test-2v-redraw'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[notes.length - 1].getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
+      sl.setAttribute('xml:id', 's-test-2v-unison'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[notes.length - 1].getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
       doc.querySelector('measure').appendChild(sl);
       m.setCursor(0, 3);
       r();
@@ -8610,13 +8643,18 @@ const ENGRAVING = {
      Verovio parks a below-slur's open ends just under the staff, so the first
      segment dives away from its notes and the continuation climbs back through
      the staff and the lower voice; both open ends are now anchored to the
-     covered noteheads. */
+     covered noteheads. The upper line a3 f3 d3 f3 (mid-staff, since
+     2026-10-17) keeps the slur's lowest note a sixth over the chord's e2, so
+     the flip holds under the global fourth gate — the original d3 b2 g2 b2
+     put g2 a third over e2, which now refuses the flip — and leaves Verovio's
+     parked open ends well away from the covered notes, so both segments are
+     displaced and re-drawn. */
   engr_slurBrokenAtBreakRedrawn: {
     setup: `
       window.__hkl_composer.renderer.setViewMode('page');
       const N = (p, o, midi) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
       m.setVoice(3); m.setCursor(0, 3);
-      const line = [['d', 3, 50], ['b', 2, 47], ['g', 2, 43], ['b', 2, 47]];
+      const line = [['a', 3, 57], ['f', 3, 53], ['d', 3, 50], ['f', 3, 53]];
       for (let i = 0; i < 8 * 4; i++) { const [p, o, mi] = line[i % 4]; m.insertChordAtCursor({ notes: [N(p, o, mi)], duration: '4', dots: 0 }); }
       m.setVoice(4); m.setCursor(0, 4);
       for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [N('g', 1, 31), N('e', 2, 40)], duration: '1', dots: 0 });
@@ -21499,32 +21537,41 @@ export const FIXTURE_ASSERTIONS = {
         return { ok: true };
       })()` },
   ],
-  engr_slurBelowRedrawnAtNotes: [
-    { name: 'the slur is below its noteheads, re-drawn at them, and clear of the lower voice',
+  engr_slurKeepsLayerSideUnisonInSpan: [
+    { name: 'the slur keeps the layer side (above, no @curvedir, untouched by the re-draw): the lower chord-top is a unison with the slur\'s lowest note',
       expr: `(() => {
         const staff = document.querySelector('#score g.measure g.staff[data-n="2"]');
-        const g = document.getElementById('s-test-2v-redraw');
+        const g = document.getElementById('s-test-2v-unison');
         if (!staff || !g) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!g };
-        const path = g.querySelector('path');
-        const heads = [...staff.querySelectorAll('g.layer:first-of-type g.notehead, g.tuplet g.notehead')].map(h => h.getBoundingClientRect());
-        const first = heads[0], last = heads[heads.length - 1];
-        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
-        const space = (Math.max(...lines) - Math.min(...lines)) / 4;
-        if (g.getAttribute('data-hkl-slur') !== 'redrawn') return { ok: false, detail: 'slur not re-drawn (data-hkl-slur=' + g.getAttribute('data-hkl-slur') + ')' };
-        /* Start / end points of the drawn path, on screen. */
-        const L = path.getTotalLength(); const toScreen = (p) => new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM());
-        const s0 = toScreen(path.getPointAtLength(0)), s1 = toScreen(path.getPointAtLength(L / 2));
-        const gapS = s0.y - first.bottom, gapE = s1.y - last.bottom;
-        if (!(gapS > 0 && gapS < 1.5 * space)) return { ok: false, detail: 'start point ' + gapS.toFixed(1) + 'px below its notehead (want 0..' + (1.5 * space).toFixed(1) + ')' };
-        if (!(gapE > 0 && gapE < 1.5 * space)) return { ok: false, detail: 'end point ' + gapE.toFixed(1) + 'px below its notehead (want 0..' + (1.5 * space).toFixed(1) + ')' };
-        /* Clear of the lower voice's chord noteheads. */
-        const lower = [...staff.querySelectorAll('g.layer:nth-of-type(2) g.notehead')].map(h => h.getBoundingClientRect());
+        if (g.hasAttribute('data-curvedir')) return { ok: false, detail: 'side pass flipped the slur (data-curvedir=' + g.getAttribute('data-curvedir') + ')' };
+        if (g.hasAttribute('data-hkl-slur')) return { ok: false, detail: 're-draw touched an unflipped slur (data-hkl-slur=' + g.getAttribute('data-hkl-slur') + ')' };
+        const heads = [...staff.querySelectorAll('g.layer[data-n="1"] g.notehead')].map(h => h.getBoundingClientRect());
+        const headTop = Math.min(...heads.map(h => h.top));
         const sb = g.getBoundingClientRect();
-        for (const h of lower) { if (sb.left < h.right && sb.right > h.left && sb.top < h.bottom && sb.bottom > h.top) {
-          /* bbox overlap: sample the path against the head box */
-          for (let i = 0; i <= 40; i++) { const p = toScreen(path.getPointAtLength(L / 2 * i / 40)); if (p.x >= h.left && p.x <= h.right && p.y >= h.top && p.y <= h.bottom) return { ok: false, detail: 'slur runs through a lower-voice notehead at (' + p.x.toFixed(0) + ',' + p.y.toFixed(0) + ')' }; }
-        } }
-        return { ok: true, detail: 'start ' + gapS.toFixed(1) + 'px, end ' + gapE.toFixed(1) + 'px below the noteheads' };
+        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur centre ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' is not above the upper-voice noteheads (top ' + headTop.toFixed(1) + ')' };
+        const path = g.querySelector('path'); const L = path.getTotalLength(); const ctm = path.getScreenCTM();
+        const pts = []; for (let i = 0; i <= 64; i++) { const p = path.getPointAtLength(L * i / 64); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
+        const boxes = [...staff.querySelectorAll('g.layer[data-n="2"] g.notehead, g.layer[data-n="2"] g.stem')].map(e => e.getBoundingClientRect());
+        for (const b of boxes) for (const p of pts) if (p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom) return { ok: false, detail: 'slur runs through a lower-voice glyph at (' + p.x.toFixed(0) + ',' + p.y.toFixed(0) + ')' };
+        return { ok: true, detail: 'slur above its voice, ' + boxes.length + ' lower-voice boxes clear' };
+      })()` },
+  ],
+  engr_slurKeepsLayerSideOverOtherVoice: [
+    { name: 'the slur keeps the layer side (above, no @curvedir) and crosses no lower-voice notehead or stem',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        const g = document.getElementById('s-test-2v-keep');
+        if (!staff || !g) return { ok: false, detail: 'staff=' + !!staff + ' slur=' + !!g };
+        if (g.hasAttribute('data-curvedir')) return { ok: false, detail: 'side pass flipped the slur (data-curvedir=' + g.getAttribute('data-curvedir') + ')' };
+        const heads = [...staff.querySelectorAll('g.layer[data-n="1"] g.notehead')].map(h => h.getBoundingClientRect());
+        const headTop = Math.min(...heads.map(h => h.top));
+        const sb = g.getBoundingClientRect();
+        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur centre ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' is not above the upper-voice noteheads (top ' + headTop.toFixed(1) + ')' };
+        const path = g.querySelector('path'); const L = path.getTotalLength(); const ctm = path.getScreenCTM();
+        const pts = []; for (let i = 0; i <= 64; i++) { const p = path.getPointAtLength(L * i / 64); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
+        const boxes = [...staff.querySelectorAll('g.layer[data-n="2"] g.notehead, g.layer[data-n="2"] g.stem')].map(e => e.getBoundingClientRect());
+        for (const b of boxes) for (const p of pts) if (p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom) return { ok: false, detail: 'slur runs through a lower-voice glyph at (' + p.x.toFixed(0) + ',' + p.y.toFixed(0) + ')' };
+        return { ok: true, detail: 'slur above its voice, ' + boxes.length + ' lower-voice boxes clear' };
       })()` },
   ],
   engr_tupletNumClearsSteepBeam: [
@@ -21554,6 +21601,7 @@ export const FIXTURE_ASSERTIONS = {
         const out = [];
         for (const [label, g, openIsEnd] of [['first', first, true], ['continuation', cont, false]]) {
           if (g.getAttribute('data-hkl-slur') === 'kept') return { ok: false, detail: label + ' segment could not be re-drawn clear (kept)' };
+          if (!/^redrawn/.test(g.getAttribute('data-hkl-slur') || '')) return { ok: false, detail: label + ' segment was not re-drawn (data-hkl-slur=' + g.getAttribute('data-hkl-slur') + ') — the flip or the displacement is gone' };
           const path = g.querySelector('path'); const sys = g.closest('g.system'); const L = path.getTotalLength();
           const toS = (p) => new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM());
           const pts = []; for (let i = 0; i <= 48; i++) pts.push(toS(path.getPointAtLength(L / 2 * i / 48)));

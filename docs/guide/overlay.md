@@ -73,6 +73,11 @@ truncated. The only fades are 5 ms declick ramps, short enough that the seam rep
 unchanged) so a player that starts a frame late still lands in silence; the period is snapped to the video
 frame grid so container, audio and video agree exactly.
 
+The short form is the `hkltrim` command (`tools/obs-trim/hkltrim`, symlink it into `~/.local/bin`):
+`hkltrim title` prints the onset table, `hkltrim title +0.5 -p` auditions the seam with the end half a
+second after the last onset, `hkltrim title +0.5` encodes `~/Videos/Lumatone/title.mp4` (refusing to
+overwrite an existing one without `-f`), and a bare number is an absolute end time. The long form:
+
 ```sh
 tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --list                 # takes in the file
 tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --take -1 --onsets     # onset table, last take
@@ -80,7 +85,8 @@ tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --end 446.20 --preview #
 tools/obs-trim/trim.py ~/Videos/obs/session.mkv out.mp4 --end 446.20           # encode
 ```
 
-Find the end point by ear (Audacity's selection bar in seconds works), audition it with `--preview`
+A rest of more than two seconds of silence inside a piece shows up as two takes (`--list` shows the gap);
+span them with `--take 1-2` or `--take all`. Find the end point by ear (Audacity's selection bar in seconds works), audition it with `--preview`
 (tail + head of the clip, repeated), then encode once. `--end +20.3` sets an explicit loop length and
 `--end last+0.5` places it relative to the last detected onset. Onsets are read off the overlay's lattice in
 the video (a key lighting up), not the audio, so soft final notes under a decrescendo are not missed; the

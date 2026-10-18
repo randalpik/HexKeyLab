@@ -5289,3 +5289,27 @@ whole-against-whole each have their own branch. Open edge: two voices a COMMA ap
 different pitches that Verovio sees as unison or not by the same token luck; if it ever matters, give
 their rows deliberately distinct first tokens rather than `@accid.ges`. Sources read at `develop`
 (6.x): `layerelement.cpp`, `accid.cpp`, `adjustaccidxfunctor.cpp`, `note.cpp`.
+
+## Sonata measure numbers restart per movement — always write the movement (2026-10-17)
+
+The 2026-09-05 slur entries say "sonata m. 82 / 83 / 84, bass staff". There are four
+m. 83s. Max looked on p. 20 (III m. 83), found nothing like it, and asked which one I meant;
+I had repeated the number from the log without checking. The fixture built from that
+measure identifies it as today's I m. 79 — and the first movement's numbering has shifted
+by four since, so even the right movement's number can go stale. Write `I m. 79` (movement
+numeral + measure), add the page when you have it, and when you build a fixture from a
+sonata measure, say so in the fixture comment so the geometry stays findable after a
+renumbering. The slur census (`cb-slurstems.js`) learned this on 09-05 for the same reason;
+the prose did not.
+
+## A forced slur side is where slur collisions come from; Verovio's own side never collides (2026-10-17)
+
+Every slur collision chased in Composer — I m. 79's scooped start, the system-break dives,
+III mm. 71–72 through the lower voice — was a slur we had flipped with `@curvedir`. Verovio
+routes a slur it places itself around everything on that side; a forced side gives it only
+the other voice's heads to route around, and its endpoint rule then shoves the endpoint past
+them. So a flip gate must prove the flip side CLEAR, not prove the natural side bad, and a
+test that can only be checked after rendering (the re-draw's curve search) is the wrong
+place to discover a side was impossible. Max's rule: pitches and onsets only, global, a
+fourth's margin, and the residue goes to `Shift+L`. Do not re-propose a second render pass
+or a pre-render geometry solver for this; both were rejected on 2026-10-17 (decisions.md).

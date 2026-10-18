@@ -33,7 +33,28 @@ and aubio (for its comparison column).
   apart and a stream-copy cut would snap to one. ~8 s per 20 s clip at
   1080×1920@60.
 
-## Workflow
+## `hkltrim` — the command
+
+`tools/obs-trim/hkltrim` wraps `trim.py` with the library layout baked in
+(`~/Videos/obs/TITLE.mkv` → `~/Videos/Lumatone/TITLE.mp4`; override with
+`HKL_OBS_DIR` / `HKL_LIB_DIR`). Install once as a global command:
+
+```sh
+ln -s ~/HexKeyLab/tools/obs-trim/hkltrim ~/.local/bin/hkltrim
+```
+
+```sh
+hkltrim title            # onset table for the last take
+hkltrim title +0.5 -p    # audition: end = last onset + 0.5 s
+hkltrim title +0.5       # encode (refused if the mp4 exists — it may be posted; -f overwrites)
+hkltrim title 446.20     # absolute end; -0.1 = last onset − 0.1 s
+hkltrim title -l         # take list; -n prints the command instead of running it
+```
+
+Anything else (`--take 1-2`, `--fade-out 0.01`, …) is passed through to
+`trim.py`.
+
+## Workflow (trim.py directly)
 
 ```sh
 T=tools/obs-trim/trim.py; S=~/Videos/obs/session.mkv
@@ -90,7 +111,14 @@ does not (`revolutionary`, `mirror`, `resurrections`, `intermezzo`,
 video→audio lag quartiles sit within 10–25 ms of each other. Run it alone — it
 decodes every matched take at full resolution.
 
-`--take` defaults to `-1` (the last take). `--end` forms:
+`--take` defaults to `-1` (the last take); `--take 1-2` spans takes, `--take
+all` is the whole file. **A rest of more than `--gap` seconds (2 s) of digital
+silence inside one piece shows up as two takes** and must be spanned by hand;
+such fermatas are rare (Op. 28 No. 4's 1.93 s pause before its closing chords
+is the longest on record and fits under 2 s). The gap cannot go higher: a
+legitimate take has followed as little as 2.26 s of setup silence. `--list`
+prints the silence gap before each take, and the tool prints a hint when the
+chosen take borders a gap under 3 s. `--end` forms:
 
 | form | meaning |
 | --- | --- |
@@ -105,9 +133,11 @@ just write the files. Iterate on `--end` / `--fade-out` here; encode once.
 
 ## Notes
 
-- Takes are separated by silences ≥ `--gap` (1 s). A piece with a true
-  digital-silence rest longer than that splits into two "takes"; use
-  `--start <seconds>` to override, or raise `--gap`.
+- Takes are separated by silences ≥ `--gap` (2 s). A piece with a true
+  digital-silence rest longer than that splits into two "takes"; span them
+  with `--take A-B` / `--take all`. Do not raise `--gap`: a legitimate take has
+  followed 2.26 s of setup silence (library minimum over 35 kept takes, 2.70 s
+  for the rest), while the longest rest inside a kept take is 0.62 s.
 - A click at the loop seam in one player but not in Audacity is the player,
   not the file: Audacity loops the wav sample-accurately. Raise `--pre` if the
   click is on the head side, `--tail-silence` (try 0.02) if on the tail side.

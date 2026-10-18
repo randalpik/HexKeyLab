@@ -324,7 +324,13 @@ both ways are made to agree (the majority wins, unless a note sits so far from
 the middle line that its stem would grow too long), so the slur lands on the
 notehead side rather than on the beams; a stem you flipped yourself (`L`), or
 one the other voice forces, decides for its group. In a two-voice passage a slur goes on the notehead side
-of its voice, never on the side of the tuplet brackets and beams. Two identical
+of its voice, never on the side of the tuplet brackets and beams — but only when
+that side is clearly free: if the other voice has a note anywhere under the
+slur within a fourth of the slur's lowest note (or, for a lower voice, above it
+within a fourth of its highest), the slur stays on the engraving engine's own
+side, above the beam, rather than risk running through the other voice. Flip
+it yourself with `Shift+L` if you know better; slur and stem flips are
+independent. Two identical
 rests at the same moment in a staff's two voices draw as
 one rest, and a hidden rest never nudges a visible one. A movement break
 (section header) with a new meter shows no courtesy meter at the end of the
