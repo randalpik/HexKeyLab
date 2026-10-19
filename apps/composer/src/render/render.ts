@@ -13,7 +13,7 @@ import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf,
 import { PageAssembler, type AssemblyHost } from './pageassembly.js';
 import type { LineRenderCtx } from './systemrender.js';
 import type { ShellGeom, ShellMeta } from './pageshell.js';
-import { ScrollSplicer, type SpliceCtx } from './splice.js';
+import { ScrollSplicer, snapshotSpanners, type SpliceCtx, type SpannerSnapshot } from './splice.js';
 import { refreshLockMarks, LOCK_SELECTOR } from './lockmarks.js';
 import { lockStartIds, type OwnerWidths } from './linebreaks.js';
 import type { LayoutSnapshot } from '../history.js';
@@ -346,6 +346,11 @@ class Renderer {
   /** Measure xml:ids in document order (captured per renderComposer) —
    *  ensureMeasureMounted's index → id map. */
   private measureIds: string[] = [];
+  /** The spanners the mounted DOM draws — the document as of the last
+   *  renderComposer. Both splicers close an edit's run over it, so a spanner
+   *  the edit removed has every segment replaced (splice.ts,
+   *  `expandForRenderedSpanners`). */
+  private spanners: SpannerSnapshot | null = null;
   /** Per-measure id of the measure that STANDS FOR it in the render: itself,
    *  or the first measure of its multimeasure-rest run (model/multirest.ts).
    *  Interior run members have no rendered `g.measure`; every DOM lookup by
@@ -1420,6 +1425,7 @@ class Renderer {
       optionsNone: this.buildOptions('none'),
       postProcess: (el: HTMLElement) => this.postProcessRendered(el),
       scale: this.currentScale(),
+      spanners: this.spanners,
     };
   }
 
@@ -1448,7 +1454,10 @@ class Renderer {
     let preMei: string | null = null;
     if (this.lastRenderedMode !== null && this.lastRenderedMode !== this.viewMode) {
       preMei = model.serialize(heji, viewStaves);
-      if (this.stashAndRestore(preMei)) return false;
+      if (this.stashAndRestore(preMei)) {
+        this.spanners = snapshotSpanners(model.allMeasures(), model.docVersion());
+        return false;
+      }
     }
     const t0 = performance.now();
     if (this.viewMode === 'scroll') {
@@ -1473,6 +1482,7 @@ class Renderer {
       this.rememberPartition(model);
       this.syncLockMarks(model);
     }
+    this.spanners = snapshotSpanners(model.allMeasures(), model.docVersion());
     this.lastRenderedMode = this.viewMode;
     return true;
   }
@@ -1536,6 +1546,7 @@ class Renderer {
                 oldPageStartIds: refill.oldPageStartIds, newPageStartIds: refill.newPageStartIds,
                 changedRun: refill.changedRun,
                 partitionOnly: refill.partitionOnly,
+                spanners: this.spanners,
               };
               if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
                 spliced = true;

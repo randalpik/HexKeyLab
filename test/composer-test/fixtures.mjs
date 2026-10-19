@@ -1856,6 +1856,57 @@ const PAGE_LINEBREAKS = {
 
 /* ── Page-view system splice (Phase C-B, render/pagesplice.ts) ─────────── */
 
+/* Cross-system spanner edits (2026-10-18). A spanner's MEI element lives in
+ * its START measure only, so removing one (delete, or undoing its add) changes
+ * the signature of that measure alone; the splicers closed the changed run over
+ * the POST-edit document's spanners, where the removed one no longer exists, so
+ * the system holding its continuation segment was never replaced and the
+ * segment stayed on the page. Shared by the pageCrossSystem* fixtures: a
+ * 200-chord document, line-break ownership engaged, endpoints in line 1's last
+ * measure and line 2's first, so the spanner crosses the 1|2 system break. */
+const CROSS_SYS_DOC = `
+  m.setCursor(0, 1);
+  const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+  for (let i = 0; i < 200; i++) {
+    const high = (Math.floor(i / 4) % 2) === 0;
+    m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+  }
+  r();
+`;
+const CROSS_SYS_PRELUDE = `
+  const H = window.__hkl_composer;
+  const m = H.model;
+  const pb = H.renderer['pageBreaks'];
+  const ps = H.renderer['pageSplicer'];
+  for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
+  await window.__waitForRender();
+  if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (lastDeriveReason=' + pb.lastDeriveReason + ')' };
+  const startIds = pb['startIds'];
+  if (startIds.length < 4) return { ok: false, detail: 'need >= 4 lines, got ' + startIds.length };
+  const meas = m.allMeasures();
+  const ids = meas.map((x) => x.getAttribute('xml:id'));
+  const chordsIn = (voice, measEl) => { const flat = m['flatChildren'](voice); const at = [];
+    for (let i = 0; i < flat.length; i++) if ((flat[i].localName === 'note' || flat[i].localName === 'chord') && flat[i].closest('measure') === measEl) at.push(i);
+    return at; };
+  const endMi = ids.indexOf(startIds[2]);
+  const startMi = endMi - 1;
+  const live = (cls) => document.querySelectorAll('#score .score-page g.' + cls).length;
+  const key = (k, mods) => document.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key: k, bubbles: true, cancelable: true }, mods || {})));
+  const errs = [];
+  const onErr = (e) => errs.push(String((e && (e.message || e.error)) || e).slice(0, 400));
+  const prevCheck = globalThis.__HKL_INDEX_CHECK;
+  /* The inline reference gate compares every touched page against a fresh
+     full render, and its residue census sees a stale continuation segment —
+     but only on pages the splice touched; the live-count checks below see it
+     wherever it is. */
+  globalThis.__HKL_INDEX_CHECK = true;
+  window.addEventListener('error', onErr);
+`;
+const CROSS_SYS_CLEANUP = `
+  globalThis.__HKL_INDEX_CHECK = prevCheck;
+  window.removeEventListener('error', onErr);
+`;
+
 const PAGE_SPLICE = {
   /* The modal edit — a mid-line content change on a line-break-owned page —
    * must land as a SYSTEM SPLICE (no full loadData): outcome 'spliced', the
@@ -2206,6 +2257,22 @@ const PAGE_SPLICE = {
       r();
     `,
   },
+
+  /* Ctrl+L on a slot under a slur that crosses a system break deletes it: both
+   * segments must leave the page (the continuation used to stay until some
+   * other edit replaced its system). Asserted via
+   * FIXTURE_ASSERTIONS.pageCrossSystemSlurDelete. */
+  pageCrossSystemSlurDelete: { skipCursorTrace: true, setup: CROSS_SYS_DOC },
+
+  /* The same removal reached through undo: Ctrl+L add, then Ctrl+Z. Undo
+   * restores the pre-add document, which the splicer sees only as a changed
+   * start measure. Asserted via FIXTURE_ASSERTIONS.pageCrossSystemSlurUndoAdd. */
+  pageCrossSystemSlurUndoAdd: { skipCursorTrace: true, setup: CROSS_SYS_DOC },
+
+  /* The tstamp-anchored sibling: a hairpin hosted in line 1's last measure
+   * whose @tstamp2 reaches into line 2, then removed. Asserted via
+   * FIXTURE_ASSERTIONS.pageCrossSystemHairpinDelete. */
+  pageCrossSystemHairpinDelete: { skipCursorTrace: true, setup: CROSS_SYS_DOC },
 
   /* Range serializer (2026-09-01): a range whose first measure begins with a
    * clef change must fold that clef into its head scoreDef. The clef itself is
@@ -16833,6 +16900,87 @@ export const FIXTURE_ASSERTIONS = {
         const clefsPrev = prevEl.querySelectorAll('g.clef').length;
         if (clefsPrev < 1) return { ok: false, detail: 'previous measure shows no clef-change glyph after the splice' };
         return { ok: true };
+      })()` },
+  ],
+  pageCrossSystemSlurDelete: [
+    { name: 'deleting a cross-system slur removes BOTH segments, by splice',
+      expr: `(async () => {
+        ${CROSS_SYS_PRELUDE}
+        try {
+          const a = chordsIn(1, meas[startMi]), b = chordsIn(1, meas[endMi]);
+          if (!a.length || !b.length) return { ok: false, detail: 'no chords at the endpoints' };
+          m.setCursor(a[a.length - 1], 1);
+          key('l', { ctrlKey: true });
+          m.setCursor(b[0], 1);
+          key('l', { ctrlKey: true });
+          await window.__waitForRender();
+          if (m.getDoc().querySelectorAll('slur').length !== 1) return { ok: false, detail: 'Ctrl+L did not add one slur (' + m.getDoc().querySelectorAll('slur').length + ')' };
+          const before = live('slur');
+          if (before !== 2) return { ok: false, detail: 'fixture cannot pose the case: the slur draws ' + before + ' segments, not 2' };
+          m.setCursor(a[a.length - 1], 1);
+          key('l', { ctrlKey: true });
+          await window.__waitForRender();
+          if (errs.length) return { ok: false, detail: 'render threw: ' + errs.join(' | ') };
+          if (m.getDoc().querySelectorAll('slur').length !== 0) return { ok: false, detail: 'Ctrl+L did not delete the slur' };
+          if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+          const after = live('slur');
+          if (after !== 0) return { ok: false, detail: after + ' stale slur segment(s) still on the page after the delete (run=' + JSON.stringify(ps.lastRun) + ', slur lines 1..2)' };
+          return { ok: true };
+        } finally { ${CROSS_SYS_CLEANUP} }
+      })()` },
+  ],
+  pageCrossSystemSlurUndoAdd: [
+    { name: 'undoing a cross-system slur add removes BOTH segments, by splice',
+      expr: `(async () => {
+        ${CROSS_SYS_PRELUDE}
+        try {
+          const a = chordsIn(1, meas[startMi]), b = chordsIn(1, meas[endMi]);
+          if (!a.length || !b.length) return { ok: false, detail: 'no chords at the endpoints' };
+          m.setCursor(a[a.length - 1], 1);
+          key('l', { ctrlKey: true });
+          m.setCursor(b[0], 1);
+          key('l', { ctrlKey: true });
+          await window.__waitForRender();
+          const before = live('slur');
+          if (before !== 2) return { ok: false, detail: 'fixture cannot pose the case: the slur draws ' + before + ' segments, not 2' };
+          key('z', { ctrlKey: true });
+          await window.__waitForRender();
+          if (errs.length) return { ok: false, detail: 'render threw: ' + errs.join(' | ') };
+          if (m.getDoc().querySelectorAll('slur').length !== 0) return { ok: false, detail: 'Ctrl+Z did not undo the slur add' };
+          if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+          const after = live('slur');
+          if (after !== 0) return { ok: false, detail: after + ' stale slur segment(s) still on the page after the undo (run=' + JSON.stringify(ps.lastRun) + ')' };
+          return { ok: true };
+        } finally { ${CROSS_SYS_CLEANUP} }
+      })()` },
+  ],
+  pageCrossSystemHairpinDelete: [
+    { name: 'deleting a cross-system hairpin removes BOTH segments, by splice',
+      expr: `(async () => {
+        ${CROSS_SYS_PRELUDE}
+        try {
+          const doc = m.getDoc();
+          const hp = doc.createElementNS('http://www.music-encoding.org/ns/mei', 'hairpin');
+          hp.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', 'hfx-cross');
+          hp.setAttribute('tstamp', '3');
+          hp.setAttribute('tstamp2', '1m+2');
+          hp.setAttribute('form', 'cres');
+          hp.setAttribute('place', 'below');
+          hp.setAttribute('staff', '1');
+          meas[startMi].appendChild(hp);
+          H.reRender();
+          await window.__waitForRender();
+          const before = live('hairpin');
+          if (before !== 2) return { ok: false, detail: 'fixture cannot pose the case: the hairpin draws ' + before + ' segments, not 2' };
+          hp.remove();
+          H.reRender();
+          await window.__waitForRender();
+          if (errs.length) return { ok: false, detail: 'render threw: ' + errs.join(' | ') };
+          if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+          const after = live('hairpin');
+          if (after !== 0) return { ok: false, detail: after + ' stale hairpin segment(s) still on the page after the delete (run=' + JSON.stringify(ps.lastRun) + ')' };
+          return { ok: true };
+        } finally { ${CROSS_SYS_CLEANUP} }
       })()` },
   ],
   rangeSerializeLeadingClefHead: [

@@ -59,6 +59,9 @@ export interface SpliceCtx {
   optionsNone: object;
   postProcess: (el: HTMLElement) => void;
   scale: number;
+  /** The spanners the mounted DOM draws (the document as last rendered), or
+   *  null when unknown — see `expandForRenderedSpanners`. */
+  spanners: SpannerSnapshot | null;
 }
 
 /** Vertical extent (top/bottom, screen px) of a g.staff's 5 staff lines. */
@@ -387,7 +390,10 @@ export class ScrollSplicer {
     if (lo > 0 && meiMeasures[lo].querySelector(':scope > staff > layer > clef')) lo--;
     // Expand the NEW run outward until no spanner crosses its endpoints, then
     // until every touched <ending> is contained whole (run AND context slots).
-    [lo, hiNew] = expandForSpanners(meiMeasures, lo, hiNew);
+    // Spanners the edit removed are gone from the live doc but still drawn, so
+    // their pre-edit extents join first.
+    [lo, hiNew] = expandForRenderedSpanners(ctx.spanners, idIdx, lo, hiNew);
+    [lo, hiNew] = expandForSpanners(meiMeasures, lo, hiNew, model.docVersion());
     [lo, hiNew] = expandForEndings(meiMeasures, lo, hiNew);
     // Mirror the expansion onto the OLD run. Measures BEFORE the run align 1:1
     // (common prefix), and measures AFTER it align 1:1 (common suffix, shifted by
@@ -781,6 +787,8 @@ export function mergeGlyphDefs(defsEl: Element, host: ParentNode, fresh: Element
 interface SpannerExtents {
   /** [minMeasure, maxMeasure] of every spanner that resolves to a range. */
   spans: Array<[number, number]>;
+  /** Host measure (the one holding the element) of each `spans` entry. */
+  hosts: number[];
   /** Measure has a note whose @tie marks it a tie TERMINUS ('t' or 'm'). */
   tieT: boolean[];
   /** Measure has a note whose @tie marks it a tie INITIAL ('i' or 'm'). */
@@ -879,6 +887,7 @@ function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
     return noteMeasure.has(id) ? noteMeasure.get(id)! : null;
   };
   const spans: Array<[number, number]> = [];
+  const hosts: number[] = [];
   for (const [sp, mIdx] of pending) {
     const a = refMeasure(sp.getAttribute('startid'));
     const b = refMeasure(sp.getAttribute('endid'));
@@ -894,8 +903,54 @@ function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
     if (t2m && Number(t2m[1]) > 0) ends.push(mIdx, mIdx + Number(t2m[1]));
     if (!ends.length) continue;
     spans.push([Math.max(0, Math.min(...ends)), Math.min(n - 1, Math.max(...ends))]);
+    hosts.push(mIdx);
   }
-  return { spans, tieT, tieI };
+  return { spans, hosts, tieT, tieI };
+}
+
+/** The spanners the mounted DOM draws: the extents of the document as last
+ *  rendered, with the measure ids they index. Taken after every render and
+ *  held across the next edit — by then the live document no longer has the
+ *  spanners that edit removed. Immutable once taken. */
+export interface SpannerSnapshot {
+  readonly ids: readonly string[];
+  readonly ext: SpannerExtents;
+}
+
+export function snapshotSpanners(meiMeasures: Element[], docVer: number | null): SpannerSnapshot {
+  return { ids: meiMeasures.map(idOf), ext: spannerExtents(meiMeasures, docVer) };
+}
+
+/** Close [lo..hi] (NEW measure indices) over the spanners the DOM DRAWS, so a
+ *  removed spanner's segments are all replaced (2026-10-18).
+ *
+ *  A spanner's element lives in its host measure, so deleting or retargeting
+ *  one changes that measure's signature and nothing else, and the post-edit
+ *  extents `expandForSpanners*` read no longer reach the far end. Deleting a
+ *  slur that crossed a system break replaced the start system only; the
+ *  continuation segment stayed on the page (same for an undone add, and for a
+ *  hairpin — fixtures pageCrossSystem*). So every pre-edit spanner hosted in
+ *  the run, or whose host measure the edit deleted, contributes its pre-edit
+ *  extent, mapped by measure id (deleted measures drop out). One pass; an
+ *  unchanged spanner hosted in the run is already covered by the post-edit
+ *  pass, so only removed and retargeted ones widen anything. */
+export function expandForRenderedSpanners(
+  snap: SpannerSnapshot | null, idIdx: ReadonlyMap<string, number>, lo: number, hi: number,
+): [number, number] {
+  if (!snap) return [lo, hi];
+  const { ids, ext: { spans, hosts } } = snap;
+  let a = lo, b = hi;
+  for (let k = 0; k < spans.length; k++) {
+    const h = idIdx.get(ids[hosts[k]]);
+    if (h !== undefined && (h < lo || h > hi)) continue;
+    for (let i = spans[k][0]; i <= spans[k][1]; i++) {
+      const j = idIdx.get(ids[i]);
+      if (j === undefined) continue;
+      if (j < a) a = j;
+      if (j > b) b = j;
+    }
+  }
+  return [a, b];
 }
 
 /** ONE containment pass: every spanner with an end inside [lo..hi] is covered

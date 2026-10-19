@@ -56,7 +56,7 @@ import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { pageFrameOf } from './pageheader.js';
 import { drawPageHeader, type ShellMeta } from './pageshell.js';
 import type { ComposerModel } from '../model/index.js';
-import { expandForSpannersOnce, expandForEndings, mergeGlyphDefs } from './splice.js';
+import { expandForSpannersOnce, expandForRenderedSpanners, expandForEndings, mergeGlyphDefs, type SpannerSnapshot } from './splice.js';
 import { injectPins } from './linebreaks.js';
 
 import { measureExtents, type SysExtents } from './pagefit.js';
@@ -326,6 +326,10 @@ export interface SpliceRequest {
   /** Measure run the edit changed (NEW measure indices), or null when nothing
    *  in the document changed (a pure move). */
   changedRun: { lo: number; hi: number } | null;
+  /** The spanners the mounted DOM draws (pre-edit), so a run that removed one
+   *  replaces every line its segments are on. Absent = the edit changed no
+   *  content (a partition-only move). */
+  spanners?: SpannerSnapshot | null;
   /** The document is unchanged and only the partition moved (the section
    *  balancer's idle job, 2026-09-05). There is no edit line that must be
    *  mounted: a hunk whose first line is on an unmounted page is deferred
@@ -499,7 +503,8 @@ export class PageSystemSplicer {
          without needing the pre-edit measure. */
       let cLo = Math.min(changedRun.lo, ids.length - 1);
       if (cLo > 0 && meiMeasures[cLo].querySelector(':scope > staff > layer > clef')) cLo--;
-      let [rLo, rHi] = expandForSpannersOnce(meiMeasures, cLo, Math.min(changedRun.hi, ids.length - 1), docVer);
+      let [rLo, rHi] = expandForRenderedSpanners(req.spanners ?? null, idIdx, cLo, Math.min(changedRun.hi, ids.length - 1));
+      [rLo, rHi] = expandForSpannersOnce(meiMeasures, rLo, rHi, docVer);
       [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
       [rLo, rHi] = model.renderUnits(ctx.viewStaves).snap(rLo, rHi);   // a multimeasure rest is one rendered measure
       a2 = lineOf(rLo); b2 = lineOf(rHi);
