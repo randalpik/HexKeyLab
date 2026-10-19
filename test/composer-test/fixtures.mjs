@@ -848,6 +848,28 @@ const VISUAL = {
 
 /* ── HEJI accidentals + arbitrary stacks (render-time injection) ───────── */
 
+/* MusicXML builders for the accidental-display fixtures: N(step, oct, alter,
+   divisions, type, { chord, voice, acc, tieStart, tieStop }) → one <note>;
+   SCORE(fifths, [measureBody, …]) → a one-part 4/4 treble score at 24
+   divisions/quarter. Interpolated into setups (runs in-page). */
+const ACCID_XML = `
+  const N = (s, oct, alter, dur, type, o = {}) => '<note>' + (o.chord ? '<chord/>' : '')
+    + '<pitch><step>' + s + '</step>' + (alter ? '<alter>' + alter + '</alter>' : '') + '<octave>' + oct + '</octave></pitch>'
+    + '<duration>' + dur + '</duration>'
+    + (o.tieStop ? '<tie type="stop"/>' : '') + (o.tieStart ? '<tie type="start"/>' : '')
+    + '<voice>' + (o.voice ?? 1) + '</voice><type>' + type + '</type>'
+    + (o.acc ? '<accidental>' + o.acc + '</accidental>' : '')
+    + ((o.tieStop || o.tieStart) ? '<notations>' + (o.tieStop ? '<tied type="stop"/>' : '') + (o.tieStart ? '<tied type="start"/>' : '') + '</notations>' : '')
+    + '</note>';
+  const SCORE = (fifths, measures) => '<?xml version="1.0"?><score-partwise version="3.0">'
+    + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+    + measures.map((body, i) => '<measure number="' + (i + 1) + '">'
+      + (i === 0 ? '<attributes><divisions>24</divisions><key><fifths>' + fifths + '</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>' : '')
+      + body + '</measure>').join('')
+    + '</part></score-partwise>';
+`;
+
 const HEJI = {
   /* Mode D, HEJI on: C#↓ at (1,0) → single combined glyph U+E2C3
      (sharp + one down arrow). */
@@ -998,6 +1020,66 @@ const HEJI = {
       m.setCursor(0, 2);
       m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
     `,
+  },
+
+  /* Accidental restated after a tie across the barline (2026-10-19; sonata
+     mvt II m45, III m32, III m70, IV m82). A tie destination hides its
+     accidental but does not establish it for the new bar, so the next struck
+     note at that position redraws it (m2 beat 2) — only when the pitch
+     differs from the key signature (m3–m4: a tied-in diatonic G5 adds
+     nothing), and only for a tie crossing INTO the bar (m5: a chain drawn
+     inside the bar elides as before). m2 beat 4's F♮ is the unchanged
+     baseline case. Asserted in FIXTURE_ASSERTIONS.accid_restate_after_tie. */
+  accid_restate_after_tie: {
+    setup: `${ACCID_XML}
+      window.__composerImportMusicXml(SCORE(0, [
+        N('G', 4, 0, 48, 'half') + N('F', 5, 1, 48, 'half', { acc: 'sharp', tieStart: true }),
+        N('F', 5, 1, 24, 'quarter', { tieStop: true }) + N('F', 5, 1, 24, 'quarter', { acc: 'sharp' })
+          + N('F', 5, 1, 24, 'quarter') + N('F', 5, 0, 24, 'quarter', { acc: 'natural' }),
+        N('G', 4, 0, 48, 'half') + N('G', 5, 0, 48, 'half', { tieStart: true }),
+        N('G', 5, 0, 24, 'quarter', { tieStop: true }) + N('G', 5, 0, 24, 'quarter') + N('A', 5, 0, 48, 'half'),
+        N('F', 5, 1, 24, 'quarter', { acc: 'sharp', tieStart: true }) + N('F', 5, 1, 24, 'quarter', { tieStop: true })
+          + N('F', 5, 1, 24, 'quarter') + N('G', 5, 0, 24, 'quarter'),
+      ]));
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+    visualBaseline: 'accid_restate_after_tie',
+  },
+
+  /* Chromatic pair at one pitch position in one chord (2026-10-19; sonata
+     mvt I m122 RH, B♭5 + B♮5 in B♭ major). Both draw — the B♭ matched the
+     key signature and was hidden, engraving a bare B5 beside ♮B5. The carry
+     after the pair is ambiguous, so the next B redraws its natural even
+     though it repeats the last accidental drawn.
+     Asserted in FIXTURE_ASSERTIONS.accid_chromatic_cluster_chord. */
+  accid_chromatic_cluster_chord: {
+    setup: `${ACCID_XML}
+      window.__composerImportMusicXml(SCORE(-2, [
+        N('G', 5, 0, 24, 'quarter') + N('B', 5, -1, 24, 'quarter', { chord: true })
+          + N('B', 5, 0, 24, 'quarter', { chord: true, acc: 'natural' })
+          + N('B', 5, 0, 24, 'quarter', { acc: 'natural' }) + N('B', 5, 0, 24, 'quarter')
+          + N('B', 5, -1, 24, 'quarter', { acc: 'flat' }),
+      ]));
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+    visualBaseline: 'accid_chromatic_cluster_chord',
+  },
+
+  /* Same clash across voices: voice 1 B♭5 (key) against voice 2 B♮5 on one
+     beat. Both draw; voice 1's next B♭ restates (unchanged), the third elides.
+     Asserted in FIXTURE_ASSERTIONS.accid_chromatic_cluster_two_voices. */
+  accid_chromatic_cluster_two_voices: {
+    setup: `${ACCID_XML}
+      window.__composerImportMusicXml(SCORE(-2, [
+        N('B', 5, -1, 24, 'quarter') + N('B', 5, -1, 24, 'quarter', { acc: 'flat' })
+          + N('B', 5, -1, 24, 'quarter') + N('G', 5, 0, 24, 'quarter')
+          + '<backup><duration>96</duration></backup>'
+          + N('B', 5, 0, 24, 'quarter', { voice: 2, acc: 'natural' }) + N('D', 5, 0, 24, 'quarter', { voice: 2 })
+          + N('D', 5, 0, 48, 'half', { voice: 2 }),
+      ]));
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+    visualBaseline: 'accid_chromatic_cluster_two_voices',
   },
 
   /* HEJI accidentals are ON by default in a fresh document (a missing
@@ -10775,6 +10857,28 @@ function unisonMergeExpr(glyphs) {
   })()`;
 }
 
+/** Rendered accidental glyphs per note, model-doc order: measures joined by
+ *  '|', notes by ','; each token is s/f/n (SMuFL sharp/flat/natural), '-' for
+ *  none, '+'-joined when a note draws several. */
+function accidGlyphsExpr(want) {
+  return `(() => {
+    const MAP = { e262: 's', e260: 'f', e261: 'n' };
+    const out = [], desc = [];
+    for (const meas of window.__hkl_composer.model.getDoc().querySelectorAll('measure')) {
+      const g = [], d = [];
+      for (const n of meas.querySelectorAll('note')) {
+        const cps = [...document.querySelectorAll('#score svg g.note[id="' + n.getAttribute('xml:id') + '"] g.accid text')]
+          .map((t) => t.textContent.codePointAt(0).toString(16));
+        const tok = cps.length ? cps.map((c) => MAP[c] ?? c).join('+') : '-';
+        g.push(tok); d.push(n.getAttribute('pname') + n.getAttribute('oct') + ':' + tok);
+      }
+      out.push(g.join(',')); desc.push(d.join(','));
+    }
+    const want = ${JSON.stringify(want)};
+    return out.join('|') === want ? { ok: true } : { ok: false, detail: 'got ' + desc.join(' | ') + '; want ' + want };
+  })()`;
+}
+
 export const FIXTURE_ASSERTIONS = {
   /* Page-size factor scales the page rectangle, not the content: at a fixed
    * zoom, the page SVG grows ~linearly with pageScale while a notehead's device
@@ -13153,6 +13257,18 @@ export const FIXTURE_ASSERTIONS = {
   accid_unison_two_voices_plain: [
     { name: 'noteheads merged; both notes carry the sharp, superimposed',
       expr: unisonMergeExpr(['e262']) },
+  ],
+  accid_restate_after_tie: [
+    { name: 'struck note after a tied-in chromatic note redraws; diatonic and in-bar chains do not',
+      expr: accidGlyphsExpr('-,s|-,s,-,n|-,-|-,-,-|s,-,-,-') },
+  ],
+  accid_chromatic_cluster_chord: [
+    { name: 'B♭5 and B♮5 in one chord both draw; the next B restates its natural',
+      expr: accidGlyphsExpr('-,f,n,n,-,f') },
+  ],
+  accid_chromatic_cluster_two_voices: [
+    { name: 'voice-1 B♭5 and voice-2 B♮5 on one beat both draw',
+      expr: accidGlyphsExpr('f,f,-,-,n,-,-') },
   ],
   heji_default_on: [
     { name: 'a fresh document has HEJI on; an explicit off survives a reload',

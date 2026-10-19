@@ -16,11 +16,17 @@
 //      voices on the same staff.
 //   2. At a bar line, state resets to the key signature.
 //   3. Tie destinations (@tie="t" or "m") are always hidden, but they DO
-//      update carry state.
+//      update carry state. A tie INTO the bar (the destination is the first
+//      event at its position) carries the pitch without establishing its
+//      accidental: the next struck note there redraws it unless it matches
+//      the key signature.
 //   4. Two layers sounding one written pitch at one tick (a cross-voice
 //      unison) BOTH draw the accidental. Verovio superimposes identical
 //      accidentals at one Y, so it reads once; hiding one side instead
 //      desynchronises the pair (see the unison-partner branch below).
+//   5. Two DIFFERENT pitches at one position and tick (B♭+B♮ in a chord or
+//      across layers) both draw, and leave the carry ambiguous: the next
+//      struck note at that position redraws whatever it is.
 
 import { realTicks } from '../model/ticks.js';
 import { hejiCommasFor } from '@hkl/shared/heji.js';
@@ -185,8 +191,10 @@ function identityEq(a: AccidIdentity, b: AccidIdentity): boolean {
   return a.alter === b.alter && a.syn5 === b.syn5 && a.sept7 === b.sept7;
 }
 /** Carry-state entry: the identity implied at (pname:oct), the layer-relative
- *  tick of the note that established it, and whether that note DREW it. */
-interface CarryEntry { id: AccidIdentity; tick: number; shown: boolean; }
+ *  tick of the note that established it, and whether that note DREW it.
+ *  `tiedIn`: set by a tie destination carried in from the previous bar (rule
+ *  3); `ambiguous`: set by a same-tick clash of different pitches (rule 5). */
+interface CarryEntry { id: AccidIdentity; tick: number; shown: boolean; tiedIn?: boolean; ambiguous?: boolean; }
 
 export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji?: HejiDisplayCtx): void {
   /* Per-measure key signature: walk the section's in-order <scoreDef>/<measure>
@@ -245,14 +253,29 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
         return hejiCommasFor(heji.mode, q, r);
       };
 
+      const events: Array<{ note: Element; startTick: number; pname: string; key: string; alter: number; id: AccidIdentity }> = [];
       for (const { note, startTick } of allNotes) {
         const pname = note.getAttribute('pname');
         const oct = note.getAttribute('oct');
         if (!pname || !oct) continue;
-        const key = pname + ':' + oct;
         const alter = heji ? noteAlter(note) : getNoteAlter(note);
-        const { syn5, sept7 } = commasOf(note);
-        const id: AccidIdentity = { alter, syn5, sept7 };
+        events.push({ note, startTick, pname, key: pname + ':' + oct, alter, id: { alter, ...commasOf(note) } });
+      }
+
+      /* Rule 5: (tick|pname:oct) groups holding more than one identity. */
+      const clashes = new Set<string>();
+      {
+        const first = new Map<string, AccidIdentity>();
+        for (const { startTick, key, id } of events) {
+          const k = startTick + '|' + key;
+          const f = first.get(k);
+          if (!f) first.set(k, id);
+          else if (!identityEq(f, id)) clashes.add(k);
+        }
+      }
+
+      for (const { note, startTick, pname, key, alter, id } of events) {
+        const clash = clashes.has(startTick + '|' + key);
         const cur: CarryEntry | undefined = local[key];
         const expected: AccidIdentity = cur
           ? cur.id
@@ -274,14 +297,23 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
              sharp/flat, breaking serialize→load→serialize equality. */
           const parenAlter = noteAlter(note);
           showAlterAsParenChild(note, parenAlter);
-          local[key] = { id, tick: startTick, shown: true };
+          local[key] = { id, tick: startTick, shown: true, ambiguous: clash };
           continue;
         }
 
         if (isTieDestination) {
-          /* Hide (chain initiator already showed it); update carry. */
+          /* Hide (chain initiator already showed it); update carry. With no
+             earlier event at this position in the bar (or only a tied-in
+             unison partner), the tie crossed the barline — rule 3. */
           hideAlter(note, alter);
-          local[key] = { id, tick: startTick, shown: false };
+          const tiedIn = !cur || (!!cur.tiedIn && identityEq(cur.id, id));
+          local[key] = { id, tick: startTick, shown: false, tiedIn, ambiguous: clash || !!cur?.ambiguous };
+          continue;
+        }
+
+        if (clash) {
+          showAlter(note, alter);
+          local[key] = { id, tick: startTick, shown: true, ambiguous: true };
           continue;
         }
 
@@ -299,6 +331,12 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, heji
              relation. The symmetric encoding keeps them merged. */
           if (cur && cur.shown && cur.tick === startTick) {
             showAlter(note, alter);
+          } else if (cur && (cur.ambiguous
+              || (cur.tiedIn && !identityEq(id, { alter: keyAlters[pname] ?? 0, syn5: 0, sept7: 0 })))) {
+            /* First strike after a tie into the bar (rule 3) or a clash
+               (rule 5): restate, then carry normally. */
+            showAlter(note, alter);
+            local[key] = { id, tick: startTick, shown: true };
           } else {
             hideAlter(note, alter);
           }
