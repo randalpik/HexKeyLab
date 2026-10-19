@@ -7215,6 +7215,30 @@ const PHASE1 = {
     `,
   },
 
+  /* MusicXML import — <accidental parentheses="yes"> (2026-10-18): the
+     importer read only <alter>, so all 23 of the sonata's parenthetical
+     accidentals were dropped. A plain F#5, a parenthesized F#5 (bare note),
+     a C5+E5 chord with a parenthesized natural on E5 only, and a plain G5.
+     Asserted in FIXTURE_ASSERTIONS.phase5_musicxml_paren_accidental. */
+  phase5_musicxml_paren_accidental: {
+    setup: `
+      const N = (s, oct, alter, acc, chord) => '<note>' + (chord ? '<chord/>' : '')
+        + '<pitch><step>' + s + '</step>' + (alter ? '<alter>' + alter + '</alter>' : '') + '<octave>' + oct + '</octave></pitch>'
+        + '<duration>24</duration><voice>1</voice><type>quarter</type>' + (acc ?? '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('F', 5, 1, '<accidental>sharp</accidental>')
+        + N('F', 5, 1, '<accidental parentheses="yes">sharp</accidental>')
+        + N('C', 5, 0) + N('E', 5, 0, '<accidental parentheses="yes">natural</accidental>', true)
+        + N('G', 5, 0)
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+
   /* Pizz/arco (§14.3): piano + violin; a "pizz." <dir> on the violin staff
      switches its notes to a pizzicato timbre until an "arco" cue reverts them.
      The violin has NO own pizz variant, so it falls back to the library's
@@ -12747,6 +12771,30 @@ export const FIXTURE_ASSERTIONS = {
         if (cl.previousElementSibling?.localName !== 'tuplet' || cl.nextElementSibling?.localName !== 'tuplet')
           return { ok: false, detail: 'clef not between tuplets: prev=' + cl.previousElementSibling?.localName + ' next=' + cl.nextElementSibling?.localName };
         return { ok: true };
+      })()` },
+  ],
+  phase5_musicxml_paren_accidental: [
+    { name: 'exactly the 2nd F#5 (bare) and the chord E5 carry @hkl-paren-caut="true"',
+      expr: `(() => {
+        const notes = [...window.__hkl_composer.model.getDoc().querySelectorAll('layer[n="1"] note')];
+        if (notes.length !== 5) return { ok: false, detail: 'noteCount=' + notes.length };
+        const desc = (n) => n.getAttribute('pname') + n.getAttribute('oct') + (n.parentElement.localName === 'chord' ? '@chord' : '');
+        const flagged = notes.filter((n) => n.getAttribute('hkl-paren-caut') === 'true');
+        const got = flagged.map(desc).join(',');
+        return got === 'f5,e5@chord' && flagged[0] === notes[1]
+          ? { ok: true } : { ok: false, detail: 'flagged=' + got + ' all=' + notes.map(desc).join(',') };
+      })()` },
+    { name: 'flagged notes render paren glyphs (E26A + E26B); the plain F#5 does not',
+      expr: `(() => {
+        const notes = [...window.__hkl_composer.model.getDoc().querySelectorAll('layer[n="1"] note')];
+        const cps = (n) => [...document.querySelectorAll('#score svg g.note[id="' + n.getAttribute('xml:id') + '"] g.accid text')]
+          .map((t) => t.textContent.codePointAt(0).toString(16));
+        const parens = (n) => { const c = cps(n); return c.includes('e26a') && c.includes('e26b'); };
+        const flagged = notes.filter((n) => n.getAttribute('hkl-paren-caut') === 'true');
+        if (flagged.length !== 2) return { ok: false, detail: 'flagged=' + flagged.length };
+        const bad = flagged.filter((n) => !parens(n));
+        if (bad.length) return { ok: false, detail: 'no parens on ' + bad.map((n) => n.getAttribute('pname') + ' cps=' + JSON.stringify(cps(n))).join('; ') };
+        return parens(notes[0]) ? { ok: false, detail: 'plain F#5 drew parens: ' + JSON.stringify(cps(notes[0])) } : { ok: true };
       })()` },
   ],
 

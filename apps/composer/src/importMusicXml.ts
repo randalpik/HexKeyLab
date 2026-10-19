@@ -93,6 +93,9 @@ interface ImpNote {
    *  (`<notehead filled="no">`) → `@head.fill="void"`. Finale writes a
    *  measured tremolo as two beamed hollow 32nds under a 1:8 tuplet. */
   voidHead?: boolean;
+  /** `<accidental parentheses="yes">` → `@hkl-paren-caut="true"` (the same
+   *  flag voice-mode `P` toggles; accidentals.ts draws the parens). */
+  parenCaut?: boolean;
 }
 
 interface ImpEvent {
@@ -614,6 +617,7 @@ function impNoteFromXml(note: Element, centerQ: number, centerR: number, octDelt
   const noteheadEl = child(note, 'notehead');
   const harmonic = noteheadEl?.textContent?.trim() === 'diamond';
   const voidHead = !harmonic && noteheadEl?.getAttribute('filled') === 'no';
+  const parenCaut = child(note, 'accidental')?.getAttribute('parentheses') === 'yes';
   return {
     spec: {
       q, r,
@@ -623,7 +627,7 @@ function impNoteFromXml(note: Element, centerQ: number, centerR: number, octDelt
       midi: coordToMidi(q, r),
       colorHex: '#000000',
     },
-    tieStart, tieStop, harmonic, voidHead,
+    tieStart, tieStop, harmonic, voidHead, parenCaut,
   };
 }
 
@@ -655,6 +659,7 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
         c.getAttribute('data-q') === String(im.spec.q) && c.getAttribute('data-r') === String(im.spec.r));
       if (match) {
         applyTie(match, im);
+        if (im.parenCaut) match.setAttribute('hkl-paren-caut', 'true');
         if (im.harmonic) applyHarmonic(element, match);
         else if (im.voidHead) match.setAttribute('head.fill', 'void');
       }
@@ -662,6 +667,7 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
   } else {
     element = buildNoteElement(doc, ev.notes[0].spec, ev.dur, ev.dots);
     applyTie(element, ev.notes[0]);
+    if (ev.notes[0].parenCaut) element.setAttribute('hkl-paren-caut', 'true');
     if (ev.notes[0].harmonic) applyHarmonic(element, element);
     else if (ev.notes[0].voidHead) element.setAttribute('head.fill', 'void');
   }
