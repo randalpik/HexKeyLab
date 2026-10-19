@@ -1019,6 +1019,9 @@ discover; check them before re-deriving:
    SMuFL codepoint parsed from the `<use>` href; HEJI ones at the U+E2C0+
    combined codepoint) — so accidentals are uniformly Bravura while rests,
    clefs, and noteheads stay on Leipzig. "Bravura accidentals only."
+   (Since 2026-10-18 the C-clef family is Bravura too, by a per-glyph custom
+   font rather than the global option — see "Mixing music fonts per glyph"
+   below.)
 
 Tagging for the post-process swap: put the target in `@type` — Verovio emits it
 both as `data-type` AND as a CSS class on the rendered `<g class="accid …">`,
@@ -1028,6 +1031,45 @@ loaded first or it renders tofu — gate injection on `document.fonts.load`.
 Glyph size: Verovio renders accidentals at `scale(0.72)` on 1000-unit symbols =
 em 720 user units = 4 staff spaces (the SMuFL standard); read the placeholder
 `<use>`'s transform for the per-note scale + staff-Y baseline.
+
+### Mixing music fonts per glyph in Verovio: a custom font + fallback (2026-10-18)
+
+**Leipzig's C clef is designed that way.** Its bowls end flat and two straight
+arms meet at the centre line, leaving 0.84 staff spaces between the bowls
+(Bravura 0.42, Leland 0.33). The outline Verovio 6.3 emits is the upstream
+`rism-digital/leipzig` `uniE05C` coordinate for coordinate, at the same scale as
+every other font — nothing in Verovio or HKL distorts it.
+
+**Verovio falls back per glyph.** `Resources::GetGlyph(code)` looks in the
+current font, then in `fontFallback` (Leipzig or Bravura; default Leipzig). A
+custom font holding a handful of glyphs, set as `font`, therefore swaps exactly
+those glyphs, and LAYOUT uses their own bounding boxes. Facts that cost probing:
+- In the WASM build `fontAddCustom` takes **base64 zip data**, not a path
+  (`ZipFileReader::Load` decodes it under `__EMSCRIPTEN__`). The font's name is
+  the stem of the zip's root `.xml` (bounding boxes); glyphs are
+  `<name>/<code>.xml`; `<name>.css` is the `@font-face` Verovio embeds for SMuFL
+  text in that font. Format = Verovio's own `data/` directory.
+- The font stays loaded in the toolkit across `setOptions`, `loadData` and
+  `resetOptions` — but `resetOptions()` sets the CURRENT font back to stock
+  Leipzig, so `font` has to be in every option set that follows a reset.
+- **`<rend glyph.auth="smufl">` never falls back** (`view_text.cpp` DrawRend:
+  `SetSmuflWithFallback(false)`): the text is tagged with the CURRENT font's
+  family even when that font lacks the glyph. Every other SMuFL-text path
+  (dynamics, symbols) does fall back and is tagged `Leipzig`. So a custom font
+  must carry a text face for whatever `<rend>` glyphs it will be asked for — ours
+  ships Leipzig's woff2 under its own family name.
+- Swapping a glyph's `<defs>` path in the rendered SVG instead is NOT
+  equivalent: Verovio reserved the old glyph's width (Bravura's C clef is 0.37
+  space wider, so the clef–key-signature gap would drop from 1.0 to ~0.63
+  space), and every measuring post-pass would have to run after the swap.
+
+**Composer page shells drop Verovio's `@font-face`.** Verovio writes two
+`<style>`s per SVG: the scoped CSS rules, then (only when SMuFL text is drawn)
+the `@font-face`. `styleTextOf` (`render/systemrender.ts`) copies only the first
+into the page shell, so in page view no music-text face exists in the document
+and a metronome mark's note glyph draws blank — "( = 96)" (found 2026-10-18,
+present since the Composer-drawn shells of 2026-10-08). Scroll view and HKL's
+frame keep Verovio's whole SVG and are unaffected.
 
 ### Bravura SMuFL glyphs render much smaller than Unicode equivalents at the same px size
 

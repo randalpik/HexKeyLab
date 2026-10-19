@@ -8110,6 +8110,37 @@ const ENGRAVING = {
     `,
   },
 
+  /* The C-clef family draws in Bravura (2026-10-18): Leipzig's C clef leaves a
+     0.84-space gap between its bowls (Bravura 0.42). The custom Verovio font
+     "LeipzigHkl" (@hkl/notation music-font.ts) carries only Bravura's E05C /
+     E05D / E07B; every other glyph falls back to Leipzig. Viola alto clef with a
+     key signature (spacing), an in-measure change to tenor (E07B, cClefChange),
+     a metronome mark (SMuFL <rend> text, which Verovio tags with the custom
+     font's family), and a piano G/F pair that must stay Leipzig. */
+  engr_cClefIsBravura: {
+    setup: `
+      const N = (s, o, staff, voice) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>4</duration><voice>' + voice + '</voice><type>quarter</type>'
+        + (staff ? '<staff>' + staff + '</staff>' : '') + '</note>';
+      const W = (s, o, staff, voice) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>16</duration><voice>' + voice + '</voice><type>whole</type>'
+        + (staff ? '<staff>' + staff + '</staff>' : '') + '</note>';
+      const key = '<key><fifths>-3</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>Viola</part-name></score-part><score-part id="P2"><part-name>Piano</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1"><attributes><divisions>4</divisions>' + key + '<clef><sign>C</sign><line>3</line></clef></attributes>'
+        + '<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>96</per-minute></metronome></direction-type><sound tempo="96"/></direction>'
+        + N('C', 4, 0, 1) + N('D', 4, 0, 1)
+        + '<attributes><clef><sign>C</sign><line>4</line></clef></attributes>'
+        + N('E', 4, 0, 1) + N('F', 4, 0, 1) + '</measure></part>'
+        + '<part id="P2"><measure number="1"><attributes><divisions>4</divisions>' + key + '<staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>'
+        + W('E', 5, 1, 1) + '<backup><duration>16</duration></backup>' + W('C', 3, 2, 5) + '</measure></part>'
+        + '</score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1);
+      r();
+    `,
+    visualBaseline: 'engr_cclef_bravura',
+  },
+
   /* A saved file in the OLD shape (root group braced + bar-through, nested
      piano group bare) is normalized on load: brace + bar.thru move to the
      grand staff. */
@@ -21857,6 +21888,44 @@ export const FIXTURE_ASSERTIONS = {
         if (root.hasAttribute('symbol')) return { ok: false, detail: 'root symbol=' + root.getAttribute('symbol') };
         const n = document.querySelectorAll('#score g.grpSym').length;
         return n === 0 ? { ok: true } : { ok: false, detail: 'grpSym count=' + n };
+      })()` },
+  ],
+  engr_cClefIsBravura: [
+    /* Outline starts copied from Verovio version-6.3.0 data (Bravura/<code>.xml)
+       and the Leipzig font (uni<code>): the drawn glyph, not the font name. */
+    { name: 'C clefs (opening E05C + in-measure E07B) draw Bravura outlines; G/F clefs stay Leipzig',
+      expr: `(() => {
+        const WANT = { E05C: 'M230 482', E07B: 'M102 317', E050: 'M441 -245', E062: 'M582 -120' };
+        const seen = {};
+        for (const u of document.querySelectorAll('#score g.clef use')) {
+          const href = u.getAttribute('xlink:href') || u.getAttribute('href') || '';
+          const code = href.slice(1, 5);
+          const p = document.querySelector(href + ' path');
+          const d = p ? p.getAttribute('d') : '(no def)';
+          if (WANT[code] && !d.startsWith(WANT[code])) return { ok: false, detail: code + ' outline starts ' + d.slice(0, 14) + ', want ' + WANT[code] };
+          seen[code] = (seen[code] || 0) + 1;
+        }
+        const missing = Object.keys(WANT).filter(c => !seen[c]);
+        return missing.length ? { ok: false, detail: 'no rendered ' + missing.join('/') + ' clef; seen ' + JSON.stringify(seen) } : { ok: true };
+      })()` },
+    { name: 'viola clef → key signature gap ≥ 0.9 staff space (layout reserved the Bravura width)',
+      expr: `(() => {
+        const st = [...document.querySelectorAll('#score g.staff')].find(s => s.querySelector(':scope > g.clef') && s.querySelector(':scope > g.keySig'));
+        if (!st) return { ok: false, detail: 'no staff with an opening clef + key signature' };
+        const ys = [...st.querySelectorAll(':scope > path')].map(p => p.getBBox()).filter(b => b.height < 1).map(b => b.y).sort((a, b) => a - b);
+        if (ys.length < 5) return { ok: false, detail: 'staff lines found: ' + ys.length };
+        const space = (ys[4] - ys[0]) / 4;
+        const c = st.querySelector(':scope > g.clef').getBBox(), k = st.querySelector(':scope > g.keySig').getBBox();
+        const gap = (k.x - (c.x + c.width)) / space;
+        return gap >= 0.9 ? { ok: true } : { ok: false, detail: 'gap=' + gap.toFixed(2) + ' staff spaces' };
+      })()` },
+    { name: 'metronome SMuFL text: every font-family it names has an @font-face on the page',
+      expr: `(() => {
+        const spans = [...document.querySelectorAll('#score g.tempo tspan[font-family]')];
+        if (!spans.length) return { ok: false, detail: 'no SMuFL tspan in the tempo mark' };
+        const css = [...document.querySelectorAll('#score style')].map(s => s.textContent).join('\\n');
+        const bad = [...new Set(spans.map(t => t.getAttribute('font-family')))].filter(f => !new RegExp("font-family:\\\\s*'" + f + "'").test(css));
+        return bad.length ? { ok: false, detail: 'no @font-face for ' + bad.join(', ') } : { ok: true };
       })()` },
   ],
   engr_legacyRootBraceNormalizedOnLoad: [

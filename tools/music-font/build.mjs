@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+// Builds packages/notation/src/music-font-data.ts — the "LeipzigHkl" custom
+// Verovio font: Bravura's C-clef glyphs, with everything else falling back to
+// Verovio's stock Leipzig (see packages/notation/src/music-font.ts for why and
+// how it is installed). Run after changing CODES or the pinned Verovio tag:
+//
+//   node tools/music-font/build.mjs
+//
+// The zip layout is what Verovio's Resources::AddCustom reads (resources.cpp):
+//   LeipzigHkl.xml        bounding boxes (font name = this file's stem)
+//   LeipzigHkl.css        @font-face for SMuFL <text> drawn in this font
+//   LeipzigHkl/<code>.xml one glyph each
+// Sources are Verovio's own font data at a pinned tag (Bravura + Leipzig, both
+// SIL OFL 1.1). The output is deterministic (fixed timestamps, sorted entries).
+
+import { crc32, deflateRawSync } from 'node:zlib';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const VEROVIO_TAG = 'version-6.3.0';
+const RAW = `https://raw.githubusercontent.com/rism-digital/verovio/${VEROVIO_TAG}/data`;
+/* Must match MUSIC_FONT in music-font.ts. */
+const FONT = 'LeipzigHkl';
+/* The C-clef family as Verovio draws it (clef.cpp GetClefGlyph): cClef,
+   cClef8vb, and cClefChange (used for a clef change inside a measure). */
+const CODES = ['E05C', 'E05D', 'E07B'];
+
+const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../packages/notation/src/music-font-data.ts');
+
+async function get(rel) {
+  const res = await fetch(`${RAW}/${rel}`);
+  if (!res.ok) throw new Error(`${rel}: HTTP ${res.status}`);
+  return res.text();
+}
+
+/* Minimal deflate zip writer (store dates fixed at 1980-01-01 for determinism). */
+function zip(entries) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, text] of entries) {
+    const nameBuf = Buffer.from(name, 'utf8');
+    const raw = Buffer.from(text, 'utf8');
+    const data = deflateRawSync(raw, { level: 9 });
+    const crc = crc32(raw);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);            // version needed
+    local.writeUInt16LE(0x0800, 6);        // flags: UTF-8 names
+    local.writeUInt16LE(8, 8);             // deflate
+    local.writeUInt16LE(0, 10);            // time
+    local.writeUInt16LE(0x21, 12);         // date 1980-01-01
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);          // version made by
+    central.writeUInt16LE(20, 6);          // version needed
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0x21, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(raw.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt32LE(offset, 42);     // local header offset (extra/comment/disk/attrs stay 0)
+    locals.push(local, nameBuf, data);
+    centrals.push(central, nameBuf);
+    offset += local.length + nameBuf.length + data.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cd.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+
+const bboxes = await get('Bravura.xml');
+const boxLines = CODES.map((c) => {
+  const m = bboxes.match(new RegExp(`<g c="${c}"[^>]*?(?:/>|>[\\s\\S]*?</g>)`));
+  if (!m) throw new Error(`Bravura.xml has no bounding box for ${c}`);
+  return '  ' + m[0];
+});
+const glyphs = await Promise.all(CODES.map((c) => get(`Bravura/${c}.xml`)));
+/* Verovio tags SMuFL text in a <rend glyph.auth="smufl"> (our metronome marks)
+   with the CURRENT font's family and never falls back for it (view_text.cpp
+   DrawRend: SetSmuflWithFallback(false)), so this font has to carry a face for
+   that text. It is Leipzig's own woff2 under our name — the text glyphs render
+   exactly as they did with stock Leipzig. */
+const leipzigCss = await get('Leipzig.css');
+const css = leipzigCss.replace(/font-family:\s*'Leipzig'/, `font-family: '${FONT}'`);
+if (css === leipzigCss) throw new Error('Leipzig.css: font-family declaration not found');
+
+const xml = `<?xml version='1.0' encoding='UTF-8'?>\n<bounding-boxes font-family="${FONT}" units-per-em="1000">\n${boxLines.join('\n')}\n</bounding-boxes>\n`;
+const entries = [[`${FONT}.xml`, xml], [`${FONT}.css`, css], ...CODES.map((c, i) => [`${FONT}/${c}.xml`, glyphs[i]])];
+const b64 = zip(entries).toString('base64');
+
+writeFileSync(OUT, `// GENERATED by tools/music-font/build.mjs — do not edit.
+// Custom Verovio font "${FONT}" (zip, base64): Bravura ${CODES.join(' ')} from
+// Verovio ${VEROVIO_TAG} data, plus Leipzig's woff2 under the "${FONT}" family.
+// Bravura and Leipzig are licensed under the SIL Open Font License 1.1.
+
+export const MUSIC_FONT_ZIP = '${b64}';
+`);
+console.log(`wrote ${path.relative(process.cwd(), OUT)}: ${entries.length} entries, ${b64.length} base64 chars`);

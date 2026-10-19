@@ -9,6 +9,7 @@
 import './verovio-types.js';
 import type { VerovioToolkit } from './verovio-types.js';
 import { injectHejiGlyphs } from './heji-render.js';
+import { installMusicFont, MUSIC_FONT_OPTIONS } from './music-font.js';
 import { ensureNotationThemeStyle } from './notation-theme.js';
 import { SANCTIONED_LIGHT, sanctionedLightForInk } from '@hkl/shared/colors.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge, type CrispPreset, type ZoomLevel } from './render-presets.js';
@@ -44,6 +45,8 @@ const ADDITIONAL_ATTRS = ['note@data-q', 'note@data-r', 'note@color', 'note@data
 
 const INSET_OPTIONS = {
   svgAdditionalAttribute: ADDITIONAL_ATTRS,
+  /* Bravura C clefs, as in Composer (music-font.ts); after resetOptions(). */
+  ...MUSIC_FONT_OPTIONS,
   footer: 'none',
   header: 'none',
   breaks: 'none',
@@ -82,6 +85,7 @@ const INSET_OPTIONS = {
 function scrollOptions(preset: CrispPreset): Record<string, unknown> {
   return {
     svgAdditionalAttribute: ADDITIONAL_ATTRS,
+    ...MUSIC_FONT_OPTIONS,
     footer: 'none',
     header: 'none',
     breaks: 'none',
@@ -180,7 +184,10 @@ export function loadVerovioToolkit(): Promise<VerovioToolkit> {
     const bind = (): void => {
       const v = window.verovio;
       if (!v) { reject(new Error('Verovio global missing after load')); return; }
-      v.module.onRuntimeInitialized = () => resolve(new v.toolkit());
+      v.module.onRuntimeInitialized = () => {
+        const tk = new v.toolkit();
+        installMusicFont(tk).then(() => resolve(tk), reject);
+      };
     };
     if (window.verovio) { bind(); return; }
     const tag = document.createElement('script');

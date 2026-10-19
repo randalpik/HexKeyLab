@@ -8,6 +8,7 @@ import '@hkl/notation/verovio-types.js';
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
+import { installMusicFont, MUSIC_FONT_OPTIONS } from '@hkl/notation/music-font.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, type DistributeOpts, alignStaffRows } from './pagefit.js';
 import { PageAssembler, type AssemblyHost } from './pageassembly.js';
@@ -256,11 +257,13 @@ const BASE_OPTIONS = {
      render pays that parse — and the live DOM carries no whitespace text nodes.
      Nothing in the composer walks whitespace-sensitive siblings. */
   svgFormatRaw: true,
-  /* Keep Verovio's default Leipzig font for the score (rests, clefs,
-     noteheads). Accidentals are re-rendered in BravuraText by injectHejiGlyphs
-     so they're uniform with the injected HEJI glyphs — but ONLY accidentals;
-     a global font:'Bravura' would restyle the rests, which read worse. See
-     docs/lessons.md. */
+  /* Leipzig for the score (rests, noteheads, G/F clefs), Bravura for the C-clef
+     family: the custom "LeipzigHkl" font (@hkl/notation music-font.ts),
+     registered on each toolkit by installMusicFont. Accidentals are re-rendered
+     in BravuraText by injectHejiGlyphs so they're uniform with the injected HEJI
+     glyphs; a global font:'Bravura' would restyle the rests, which read worse.
+     See docs/lessons.md. */
+  ...MUSIC_FONT_OPTIONS,
 };
 
 class Renderer {
@@ -441,7 +444,10 @@ class Renderer {
     v.module.onRuntimeInitialized = () => {
       this.tk = new v.toolkit();
       this.spliceTk = new v.toolkit();   // isolated toolkit for splicer offscreen renders
-      resolve();
+      /* Before the first render: both toolkits draw score SVG (see BASE_OPTIONS). */
+      Promise.all([installMusicFont(this.tk), installMusicFont(this.spliceTk)])
+        .catch((e) => console.error('[composer] music font install failed; C clefs fall back to Leipzig', e))
+        .finally(resolve);
     };
   }
 
