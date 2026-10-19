@@ -733,8 +733,11 @@ export class ScrollSplicer {
  *  "#E0A4-<mainsalt>". Match by codepoint (id up to the first '-'): remap each
  *  <use> to the persistent glyph when its codepoint already exists (the common
  *  case — the spliced content uses glyphs the full render already emitted),
- *  else copy the sub-render's glyph def over. */
+ *  else copy the sub-render's glyph def over. The window's music-text font
+ *  faces come along too (adoptFontFaces): every path that moves window output
+ *  into a live page or the persistent scroll SVG comes through here. */
 export function mergeGlyphDefs(defsEl: Element, host: ParentNode, fresh: Element[]): void {
+  adoptFontFaces(defsEl.ownerDocument, host);
   const cpOf = (id: string) => id.split('-')[0];
   const setHref = (use: Element, val: string): void => {
     if (use.hasAttribute('xlink:href')) use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', val);
@@ -766,6 +769,29 @@ export function mergeGlyphDefs(defsEl: Element, host: ParentNode, fresh: Element
         }
       }
     }
+  }
+}
+
+/** Carry a window render's `@font-face` rules into the document <head>, once
+ *  per family. Verovio writes the face for SMuFL text (a metronome mark's note
+ *  glyph, drawn as `<text>` in the music font) into a second `<style>` of the
+ *  window's own SVG, and only when that window draws such text. A page shell
+ *  copies just the first `<style>` (styleTextOf) and a splice imports only
+ *  systems, so without this the glyph drew in no font at all — blank, "( = 96)"
+ *  (2026-10-19). The <head> is the record: `style[data-hkl-font-face]` names
+ *  the family each adopted rule declares. */
+export function adoptFontFaces(doc: Document, host: ParentNode): void {
+  const head = doc.head;
+  if (!head) return;
+  for (const style of Array.from(host.querySelectorAll('style'))) {
+    const css = style.textContent ?? '';
+    if (!css.includes('@font-face')) continue;
+    const family = /font-family:\s*['"]?([^'";]+)/.exec(css)?.[1]?.trim();
+    if (!family || head.querySelector(`style[data-hkl-font-face="${CSS.escape(family)}"]`)) continue;
+    const el = doc.createElement('style');
+    el.setAttribute('data-hkl-font-face', family);
+    el.textContent = css;
+    head.appendChild(el);
   }
 }
 

@@ -1063,13 +1063,20 @@ those glyphs, and LAYOUT uses their own bounding boxes. Facts that cost probing:
   space wider, so the clef–key-signature gap would drop from 1.0 to ~0.63
   space), and every measuring post-pass would have to run after the swap.
 
-**Composer page shells drop Verovio's `@font-face`.** Verovio writes two
-`<style>`s per SVG: the scoped CSS rules, then (only when SMuFL text is drawn)
-the `@font-face`. `styleTextOf` (`render/systemrender.ts`) copies only the first
-into the page shell, so in page view no music-text face exists in the document
-and a metronome mark's note glyph draws blank — "( = 96)" (found 2026-10-18,
-present since the Composer-drawn shells of 2026-10-08). Scroll view and HKL's
-frame keep Verovio's whole SVG and are unaffected.
+**A music-text `@font-face` lives only in the window that drew the text.**
+Verovio writes two `<style>`s per SVG: the scoped CSS rules, then (only when
+that render draws SMuFL text) the `@font-face`. `styleTextOf`
+(`render/systemrender.ts`) copies only the first into a page shell, and a splice
+imports only systems — so a metronome mark's note glyph drew in no font at all,
+blank: "( = 96)" (page view since the Composer-drawn shells of 2026-10-08; scroll
+view too when the mark arrived by a splice into a render that had no such text).
+Fixed 2026-10-19: `adoptFontFaces` (`render/splice.ts`, called by
+`mergeGlyphDefs`, which every window→page path goes through) copies each
+window's face rules into `<head>` once per family, recorded as
+`style[data-hkl-font-face]`. A drawn glyph has real ink, so the text and gap
+passes measure it differently from the blank — re-check layout baselines that
+contain a metronome mark. HKL's frame keeps Verovio's whole SVG and never had
+the problem.
 
 ### Bravura SMuFL glyphs render much smaller than Unicode equivalents at the same px size
 

@@ -1907,6 +1907,36 @@ const CROSS_SYS_CLEANUP = `
   window.removeEventListener('error', onErr);
 `;
 
+/* Music-text font faces (2026-10-19). Verovio writes the @font-face for SMuFL
+ * text (a metronome mark's note glyph) into the SVG of the window that draws
+ * it; Composer carries it into <head> as style[data-hkl-font-face]
+ * (splice.ts adoptFontFaces). The suite does not reload between fixtures, so a
+ * face adopted by an earlier fixture would satisfy a later one — clear them
+ * right before the path under test. The check asks the browser itself:
+ * document.fonts.load resolves to no faces when nothing declares the family. */
+const CLEAR_ADOPTED_FONT_FACES = `
+  for (const st of document.querySelectorAll('style[data-hkl-font-face]')) st.remove();
+`;
+const METRONOME_FONT_CHECK = `
+  const mmSpans = [...document.querySelectorAll('#score g.tempo tspan[font-family]')];
+  if (!mmSpans.length) return { ok: false, detail: 'no SMuFL tspan in any tempo mark' };
+  for (const t of mmSpans) {
+    const fam = t.getAttribute('font-family');
+    const faces = await document.fonts.load('20px "' + fam + '"', t.textContent);
+    if (!faces.length) return { ok: false, detail: 'no font face for "' + fam + '" (U+' + t.textContent.codePointAt(0).toString(16).toUpperCase() + ')' };
+  }
+`;
+/* Ctrl+Shift+T → instant tempo, ♩ = 96 shown (the phase2_tempo_mm_shown form). */
+const ADD_METRONOME_VIA_MODAL = `
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  const tdlg = document.getElementById('textEntryDialog');
+  tdlg.querySelector('[data-field="kind"]').value = 'instant';
+  tdlg.querySelector('[data-field="bpm"]').value = '96';
+  tdlg.querySelector('[data-field="showMm"]').checked = true;
+  tdlg.querySelector('form').requestSubmit(tdlg.querySelector('.te-ok'));
+  await window.__waitForRender();
+`;
+
 const PAGE_SPLICE = {
   /* The modal edit — a mid-line content change on a line-break-owned page —
    * must land as a SYSTEM SPLICE (no full loadData): outcome 'spliced', the
@@ -2273,6 +2303,21 @@ const PAGE_SPLICE = {
    * whose @tstamp2 reaches into line 2, then removed. Asserted via
    * FIXTURE_ASSERTIONS.pageCrossSystemHairpinDelete. */
   pageCrossSystemHairpinDelete: { skipCursorTrace: true, setup: CROSS_SYS_DOC },
+
+  /* A metronome mark added by an edit draws its note glyph (2026-10-19). The
+   * glyph is SMuFL text whose @font-face Verovio writes only into the SVG of a
+   * window that draws such text; the page shells kept just the window's first
+   * <style>, so the glyph drew blank — "( = 96)". The fix carries the face from
+   * every window whose output enters the page (mergeGlyphDefs). Here the edit
+   * is a page splice into line 3 of a document with no metronome glyph before it.
+   * Asserted via FIXTURE_ASSERTIONS.pageMetronomeFontAfterSplice. */
+  pageMetronomeFontAfterSplice: { skipCursorTrace: true, setup: CROSS_SYS_DOC },
+
+  /* The scroll-view twin: the persistent scroll SVG came from a full render
+   * with no SMuFL text, so its own <style>s declare no face either; the mark
+   * arrives by a scroll splice. Asserted via
+   * FIXTURE_ASSERTIONS.scrollMetronomeFontAfterSplice. */
+  scrollMetronomeFontAfterSplice: { skipCursorTrace: true, setup: "window.__hkl_composer.renderer.setViewMode('scroll');" + CROSS_SYS_DOC },
 
   /* Range serializer (2026-09-01): a range whose first measure begins with a
    * clef change must fold that clef into its head scoreDef. The clef itself is
@@ -8148,6 +8193,7 @@ const ENGRAVING = {
       const W = (s, o, staff, voice) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>16</duration><voice>' + voice + '</voice><type>whole</type>'
         + (staff ? '<staff>' + staff + '</staff>' : '') + '</note>';
       const key = '<key><fifths>-3</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>';
+      ${CLEAR_ADOPTED_FONT_FACES}
       const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
         + '<part-list><score-part id="P1"><part-name>Viola</part-name></score-part><score-part id="P2"><part-name>Piano</part-name></score-part></part-list>'
         + '<part id="P1"><measure number="1"><attributes><divisions>4</divisions>' + key + '<clef><sign>C</sign><line>3</line></clef></attributes>'
@@ -17008,6 +17054,44 @@ export const FIXTURE_ASSERTIONS = {
         } finally { ${CROSS_SYS_CLEANUP} }
       })()` },
   ],
+  pageMetronomeFontAfterSplice: [
+    { name: 'a metronome mark added by a page splice draws its note glyph in a loaded face',
+      expr: `(async () => {
+        ${CROSS_SYS_PRELUDE}
+        try {
+          if ([...m.getDoc().querySelectorAll('tempo rend')].some((e) => e.getAttribute('glyph.auth') === 'smufl')) return { ok: false, detail: 'fixture cannot pose the case: a tempo already draws a metronome glyph' };
+          const at = chordsIn(1, meas[endMi]);
+          if (!at.length) return { ok: false, detail: 'no chord on line 3' };
+          ${CLEAR_ADOPTED_FONT_FACES}
+          m.setCursor(at[0], 1);
+          ${ADD_METRONOME_VIA_MODAL}
+          if (errs.length) return { ok: false, detail: 'render threw: ' + errs.join(' | ') };
+          if (![...m.getDoc().querySelectorAll('tempo rend')].some((e) => e.getAttribute('glyph.auth') === 'smufl')) return { ok: false, detail: 'the modal wrote no metronome glyph' };
+          if (ps.lastOutcome !== 'spliced') return { ok: false, detail: 'expected a splice, got "' + ps.lastOutcome + '" (' + ps.lastSkipReason + ')' };
+          ${METRONOME_FONT_CHECK}
+          return { ok: true };
+        } finally { ${CROSS_SYS_CLEANUP} }
+      })()` },
+  ],
+  scrollMetronomeFontAfterSplice: [
+    { name: 'a metronome mark added by a scroll splice draws its note glyph in a loaded face',
+      expr: `(async () => {
+        const H = window.__hkl_composer, m = H.model, r = H.renderer;
+        if (r['viewMode'] !== 'scroll') return { ok: false, detail: 'view=' + r['viewMode'] };
+        if ([...m.getDoc().querySelectorAll('tempo rend')].some((e) => e.getAttribute('glyph.auth') === 'smufl')) return { ok: false, detail: 'fixture cannot pose the case: a tempo already draws a metronome glyph' };
+        const flat = m['flatChildren'](1);
+        const i = flat.findIndex((e, k) => k >= 80 && (e.localName === 'note' || e.localName === 'chord'));
+        if (i < 0) return { ok: false, detail: 'no chord past index 80' };
+        ${CLEAR_ADOPTED_FONT_FACES}
+        m.setCursor(i, 1);
+        ${ADD_METRONOME_VIA_MODAL}
+        if (![...m.getDoc().querySelectorAll('tempo rend')].some((e) => e.getAttribute('glyph.auth') === 'smufl')) return { ok: false, detail: 'the modal wrote no metronome glyph' };
+        const last = r.renderLedger().slice(-1)[0] ?? {};
+        if (last.full) return { ok: false, detail: 'expected a scroll splice, got a full render (' + (last.skipReason || last.deriveReason) + ')' };
+        ${METRONOME_FONT_CHECK}
+        return { ok: true };
+      })()` },
+  ],
   pageCrossSystemSlurUndoAdd: [
     { name: 'undoing a cross-system slur add removes BOTH segments, by splice',
       expr: `(async () => {
@@ -21967,13 +22051,10 @@ export const FIXTURE_ASSERTIONS = {
         const gap = (k.x - (c.x + c.width)) / space;
         return gap >= 0.9 ? { ok: true } : { ok: false, detail: 'gap=' + gap.toFixed(2) + ' staff spaces' };
       })()` },
-    { name: 'metronome SMuFL text: every font-family it names has an @font-face on the page',
-      expr: `(() => {
-        const spans = [...document.querySelectorAll('#score g.tempo tspan[font-family]')];
-        if (!spans.length) return { ok: false, detail: 'no SMuFL tspan in the tempo mark' };
-        const css = [...document.querySelectorAll('#score style')].map(s => s.textContent).join('\\n');
-        const bad = [...new Set(spans.map(t => t.getAttribute('font-family')))].filter(f => !new RegExp("font-family:\\\\s*'" + f + "'").test(css));
-        return bad.length ? { ok: false, detail: 'no @font-face for ' + bad.join(', ') } : { ok: true };
+    { name: 'metronome mark (page assembly): its SMuFL note glyph draws in a loaded face',
+      expr: `(async () => {
+        ${METRONOME_FONT_CHECK}
+        return { ok: true };
       })()` },
   ],
   engr_legacyRootBraceNormalizedOnLoad: [

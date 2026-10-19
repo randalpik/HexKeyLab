@@ -49,7 +49,10 @@ export const STYLE_ROOT_TOKEN = '#__HKL_PAGE_ROOT__';
  *  Verovio scopes every rule by the root's id (`#p1g180gl path {stroke:…}`),
  *  so the text is only useful under a root that carries the token's id:
  *  without the rewrite no stroke rule matched and every staff line,
- *  barline and stem on an assembled page lost its stroke (2026-10-08). */
+ *  barline and stem on an assembled page lost its stroke (2026-10-08).
+ *  Only the FIRST `<style>` (the scoped rules): the `@font-face` one Verovio
+ *  adds for SMuFL text goes to the document <head> (splice.ts adoptFontFaces,
+ *  via mergeGlyphDefs). */
 export function styleTextOf(host: Document): string {
   const root = host.querySelector('svg');
   const text = host.querySelector('svg > style')?.textContent ?? '';
