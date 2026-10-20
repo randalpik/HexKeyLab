@@ -320,10 +320,11 @@ Selection is a cursor mode (`'select'`, `selection/selection.ts`):
   all or nothing, and the selection follows the music (so it is its own
   inverse).
 - **Clipboard**: an `<hkl:clipboard>` MEI fragment (beat kind: content and
-  duration; measure kind: measures plus dynamics and hairpins), written and
-  read only through DOM `copy`/`cut`/`paste` events — `navigator.clipboard`
-  is unreliable in Firefox. Paste snaps to a beat (or replaces whole
-  measures), clears the destination and reselects what was pasted.
+  duration; measure kind: measures, their meters, and their dynamics and
+  hairpins), written and read only through DOM `copy`/`cut`/`paste` events —
+  `navigator.clipboard` is unreliable in Firefox. Paste snaps to a beat (or
+  replaces whole measures — each copied bar only onto a bar of the same
+  meter), clears the destination and reselects what was pasted.
 - **Overlay** (`selectionOverlay.ts`): one rect per system the selection
   touches; beats over empty space fall back to staff-height rects at the
   cursor's edge.

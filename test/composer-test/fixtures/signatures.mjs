@@ -6,6 +6,24 @@ import {
   A_NOTE,
 } from './_helpers.mjs';
 
+/** A full 4/4 bar of quarters, then an empty 6/8 bar 2 (tick 64, 48 ticks)
+ *  with the cursor at its start; `N` in scope for further inserts. */
+const METER_68_BAR2 = `
+  const N = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+  m.setCursor(0, 1);
+  for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [N], duration: '4', dots: 0 });
+  m.appendMeasure();
+  m.setMeterAt(1, 6, 8);
+  m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+`;
+/** Assertion expr: bar 2's voice-1 content as "kind:dur[.]" tokens. */
+const meterBar2Expr = (want) => `(() => {
+  const layer = window.__hkl_composer.model.allMeasures()[1].querySelector('staff[n="1"] layer[n="1"]');
+  const got = [...layer.children].filter((c) => c.localName !== 'space')
+    .map((c) => c.localName + ':' + (c.getAttribute('dur') ?? c.getAttribute('num') + '/' + c.getAttribute('numbase')) + '.'.repeat(+(c.getAttribute('dots') ?? 0))).join(',');
+  return got === ${JSON.stringify(want)} ? { ok: true } : { ok: false, detail: 'bar 2 = ' + got + '; want ' + ${JSON.stringify(want)} };
+})()`;
+
 export const FIXTURES = {
 
   /* ── Time-sig / key-sig changes ──────────────────────────────────── */
@@ -370,6 +388,40 @@ export const FIXTURES = {
       m.setPickupAt(0, 4); /* pickup pushes everything; tempo (mid-piece) stays at its measure */
       r();
     `,
+  },
+
+  /* ── A mid-piece meter: everything that aligns to beats uses the measure's own
+     meter (2026-10-19). A 4/4 piece whose second bar is 6/8: beat-aligned rests
+     there group in dotted quarters, not quarters, and a 4/4 bar does not paste
+     into it. Each of these read the head <scoreDef> until 2026-10-19. ── */
+  meter_fillIncomplete_usesMeasureMeter: {
+    setup: `${METER_68_BAR2} m.insertChordAtCursor({ notes: [N], duration: '8', dots: 0 });
+      m.fillIncompleteMeasures(); r();`,
+  },
+  meter_partialCut_usesMeasureMeter: {
+    setup: `${METER_68_BAR2}
+      for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [N], duration: '8', dots: 0 });
+      m.clearBeatRange(1, 64 + 8, 64 + 40); r();`,
+  },
+  meter_pasteLeadingGap_usesMeasureMeter: {
+    setup: `${METER_68_BAR2} m.insertChordAtCursor({ notes: [N], duration: '8', dots: 0 });
+      const t = m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '4' });
+      if (!t.ok) throw new Error('tuplet: ' + t.reason);
+      const r8 = m.getDoc().createElementNS('http://www.music-encoding.org/ns/mei', 'rest');
+      r8.setAttribute('dur', '8');
+      const res = m.pasteBeatContent(1, 64 + 32, [r8], 8);
+      if (!res.ok) throw new Error('paste: ' + res.reason);
+      r();`,
+  },
+  meter_measurePaste_refusesOtherMeter: {
+    setup: `${METER_68_BAR2} m.setCursor(1, 1); r();`,
+    setupKeys: [{ key: 'ArrowDown', shift: true }, { key: 'c', ctrl: true }],
+  },
+  meter_ottavaSpan_usesMeasureMeter: {
+    setup: `${METER_68_BAR2}
+      for (let i = 0; i < 6; i++) m.insertChordAtCursor({ notes: [N], duration: '8', dots: 0 });
+      m.setCursor(m.getVoiceLength(1), 1); r();`,
+    setupKeys: [{ key: '8', ctrl: true }],
   },
 };
 
@@ -770,6 +822,46 @@ export const ASSERTIONS = {
         return JSON.stringify(sizes) === JSON.stringify(want)
           ? { ok: true }
           : { ok: false, detail: 'beam sizes=' + JSON.stringify(sizes) + ' want=' + JSON.stringify(want) };
+      })()` },
+  ],
+
+  meter_fillIncomplete_usesMeasureMeter: [
+    { name: 'the 6/8 bar fills as quarter + dotted quarter after an eighth', expr: meterBar2Expr('note:8,rest:4,rest:4.') },
+  ],
+  meter_partialCut_usesMeasureMeter: [
+    { name: 'a cut of ticks 8–40 in a 6/8 bar refills as two quarters', expr: meterBar2Expr('note:8,rest:4,rest:4,note:8') },
+  ],
+  meter_pasteLeadingGap_usesMeasureMeter: [
+    { name: 'the gap before the paste (ticks 8–32 of a 6/8 bar) fills as quarter + eighth', expr: meterBar2Expr('note:8,rest:4,rest:8,rest:8') },
+  ],
+  meter_measurePaste_refusesOtherMeter: [
+    { name: 'a copied 4/4 bar is refused by the 6/8 bar and leaves it empty',
+      expr: `(async () => {
+        const m = window.__hkl_composer.model;
+        const dt = new DataTransfer();
+        document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }));
+        const text = dt.getData('text/plain');
+        if (!text.includes('kind="measure"')) return { ok: false, detail: 'copy produced: ' + text.slice(0, 120) };
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+        const dt2 = new DataTransfer();
+        dt2.setData('text/plain', text);
+        document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt2, bubbles: true, cancelable: true }));
+        await new Promise((res) => setTimeout(res, 50));
+        const bar2 = m.allMeasures()[1].querySelectorAll('note, chord, rest').length;
+        const status = document.getElementById('composerStatus').textContent || '';
+        return bar2 === 0 && status.includes('Cannot paste')
+          ? { ok: true }
+          : { ok: false, detail: 'bar 2 holds ' + bar2 + ' elements; status "' + status + '"' };
+      })()` },
+  ],
+  meter_ottavaSpan_usesMeasureMeter: [
+    { name: "the ottava's tick span is the beat it was placed on", expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const oct = m.getDoc().querySelector('octave');
+        if (!oct) return { ok: false, detail: 'no <octave> written; status "' + (document.getElementById('composerStatus').textContent || '') + '"' };
+        const t0 = parseFloat(oct.getAttribute('data-hkl-t0')), t1 = parseFloat(oct.getAttribute('data-hkl-t1'));
+        return t0 === 96 && t1 === 112 ? { ok: true } : { ok: false, detail: 't0=' + t0 + ' t1=' + t1 + ' (want 96, 112: the last head-meter beat of the 6/8 bar)' };
       })()` },
   ],
 };

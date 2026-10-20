@@ -70,6 +70,13 @@ export function readTimeSig(doc: Document): TimeSigInfo {
   return timeSigInfo(count, unit, groups);
 }
 
+/** The meter in effect at every `<measure>` of `doc`. Anything that aligns to
+ *  beats outside the render clone needs THIS, not `readTimeSig`, which is the
+ *  head `<scoreDef>` only — wrong for every measure after a meter change. */
+export function measureTimeSigs(doc: Document): Map<Element, TimeSigInfo> {
+  return perMeasureTimeSig(doc, readTimeSig(doc));
+}
+
 /** Map each `<measure>` to the meter in effect there, walking in-section
  *  `<scoreDef>` meter overrides seeded by `head`. Doc-local (mirrors the same
  *  walk used for per-measure ticks/keys). */

@@ -13,7 +13,7 @@
  * (<dynam>/<hairpin>) anchored to those measures with matching staff are
  * also removed. */
 
-import { readTimeSig } from '../notation/beams.js';
+import { readTimeSig, measureTimeSigs } from '../notation/beams.js';
 import { realTicks } from './ticks.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { normalizeTies } from './ties.js';
@@ -29,7 +29,7 @@ export function clearBeatRange(
   if (tHiAbs <= tLoAbs) return;
   const measures = model.allMeasures();
   const doc = model.getDoc();
-  const ts = readTimeSig(doc);
+  const tsOf = measureTimeSigs(doc);
   for (let mi = 0; mi < measures.length; mi++) {
     const cap = model.measureTicksAt(mi);
     const measureStart = model.measureStartTick(mi);
@@ -83,7 +83,7 @@ export function clearBeatRange(
        went, in which case the layer is left bare and `normalizePlaceholders`
        below turns it into the empty cell. */
     if (!clearsWholeMeasure) {
-      const rests = decomposeBeatAlignedRests(tLoIn, removedTicks, ts);
+      const rests = decomposeBeatAlignedRests(tLoIn, removedTicks, tsOf.get(measures[mi]) ?? readTimeSig(doc));
       const insertBefore = model.contentChildren(layer)[insertIdx] ?? null;
       for (const r of rests) {
         const restEl = el(doc, 'rest', {

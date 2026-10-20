@@ -71,6 +71,11 @@ Run these after any change to the refill, splicer, partition or pagination.
   padlock: derive reason must be empty and undo byte-identical.
 - **`governed-range-edits.js`** — key, clef and meter changes far from their
   next reset, each with its undo; `check=1` under the reference gate.
+- **`balance-consistency.js`** — one delete + undo on a fresh load (`--arg
+  "mi=<n>"`): line and page starts as sets before, after and after undo, the
+  balancer's report, and whether the undone document is byte-identical. The
+  reproduction and acceptance check for the load-vs-edit balance defect
+  (`docs/composer-partition-consistency-spec.md`).
 - **`undo-reversibility-gate.js`** — delete + undo at several sites: the undo
   must restore partition and geometry exactly (`geomAfterUndo.changed` 0).
   The edit itself may reflow its section.

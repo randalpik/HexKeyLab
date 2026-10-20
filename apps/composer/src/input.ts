@@ -1637,23 +1637,27 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return true;
     }
     // Measure paste.
-    const destTs = (() => {
-      const ts = model.getTimeSig();
-      return ts.count + '/' + ts.unit;
-    })();
-    if (contents.sourceTimeSig !== destTs) {
-      hooks.setStatus?.(
-        'Cannot paste: source time-sig ' + contents.sourceTimeSig
-        + ' ≠ destination ' + destTs + '.',
-        'error',
-      );
-      return false;
-    }
     const voice = model.getCurrentVoice();
     const mDest = model.getCursorMeasureIdx(voice);
     if (mDest < 0) {
       hooks.setStatus?.('No measure at cursor.', 'error');
       return false;
+    }
+    /* Every copied bar must land on a bar of its own meter (a measure past
+       the end is appended with the last measure's meter). */
+    const allM = model.allMeasures();
+    for (let i = 0; i < contents.measures.length; i++) {
+      const mi = Math.min(mDest + i, allM.length - 1);
+      const mt = model.meterAt(mi);
+      const dest = mt.count + '/' + mt.unit;
+      if (contents.sourceMeters[i] !== dest) {
+        hooks.setStatus?.(
+          'Cannot paste: copied bar ' + (i + 1) + ' is in ' + contents.sourceMeters[i]
+          + ', measure ' + (allM[mDest + i]?.getAttribute('n') ?? String(mDest + i + 1)) + ' is in ' + dest + '.',
+          'error',
+        );
+        return false;
+      }
     }
     const result = model.pasteMeasureContent(
       mDest,
@@ -2276,12 +2280,12 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       e.preventDefault();
       if (hooks.isPlaybackActive()) return;
       const doc = model.getDoc();
-      const { unit } = model.getTimeSig();
-      const ticksPerBeat = 64 / unit;
+      /* tstamps count beats of the measure's own meter (absoluteTickForMoment
+         reads them back that way), not the head meter's. */
       const tickToMoment = (absTick: number): Moment => {
         const measureIdx = model.measureIdxAtTick(absTick);
         const inMeasure = absTick - model.measureStartTick(measureIdx);
-        return { measureIdx, tstamp: 1 + inMeasure / ticksPerBeat };
+        return { measureIdx, tstamp: 1 + inMeasure / (64 / model.meterAt(measureIdx).unit) };
       };
       let voice: Voice;
       let tLo: number;

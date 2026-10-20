@@ -25,7 +25,7 @@
 // .hkc file. MEI ignores unknown attributes.
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
-import { regroupBeams, readTimeSig } from '../notation/beams.js';
+import { regroupBeams, readTimeSig, measureTimeSigs, type TimeSigInfo } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
 import { fillEmptyMeasureRests } from '../notation/measurerests.js';
 import { duplicateTempiAcrossParts, settleFermataSides } from '../notation/parts.js';
@@ -2007,6 +2007,15 @@ export class ComposerModel {
 
   /** The score-default meter descriptor (head `<scoreDef>`), incl. symbol +
    *  beat-groups. The head fallback for `meterAt` out-of-range queries. */
+  /** The meter in effect at measure `mi` as beaming/rest-alignment info —
+   *  what anything aligning to beats must use (`readTimeSig` is the head
+   *  `<scoreDef>` only). O(measures); callers looping over measures should
+   *  take `measureTimeSigs(doc)` once instead. */
+  timeSigAt(mi: number): TimeSigInfo {
+    const m = this.allMeasures()[mi];
+    return (m && measureTimeSigs(this.doc).get(m)) || readTimeSig(this.doc);
+  }
+
   getMeterInfo(): MeterInfo {
     const headSd = this.doc.querySelector('scoreDef');
     const { count, unit } = this.getTimeSig();
@@ -3483,7 +3492,7 @@ export class ComposerModel {
    *  reanchors per voice via the look-forward survival list. */
   fillIncompleteMeasures(): { measuresAffected: number } {
     const measures = this.allMeasures();
-    const ts = readTimeSig(this.doc);
+    const tsOf = measureTimeSigs(this.doc);
     let measuresAffected = 0;
     /* Per-voice cursor preservation: snapshot the look-forward anchors
        before mutating. */
@@ -3508,6 +3517,7 @@ export class ComposerModel {
         for (const c of Array.from(layer.children)) {
           if (isPlaceholder(c)) layer.removeChild(c);
         }
+        const ts = tsOf.get(measures[mi]) ?? readTimeSig(this.doc);
         for (const r of decomposeBeatAlignedRests(total, cap - total, ts)) {
           layer.appendChild(buildRestElement(this.doc, { duration: r.dur, dots: r.dots }));
         }
@@ -4103,7 +4113,7 @@ export class ComposerModel {
     for (const c of Array.from(layer.children)) {
       if (isPlaceholder(c)) layer.removeChild(c);
     }
-    const ts = readTimeSig(this.doc);
+    const ts = this.timeSigAt(measureIdx);
     for (const r of decomposeBeatAlignedRests(total, cap - total, ts)) {
       layer.appendChild(buildRestElement(this.doc, { duration: r.dur, dots: r.dots }));
     }
@@ -4976,9 +4986,9 @@ export class ComposerModel {
        the paste's source-content, fill it with beat-aligned rests first. */
     if (effectiveLo < tLoAbs) {
       const leadingTicks = tLoAbs - effectiveLo;
-      const ts = readTimeSig(this.doc);
-      /* tLo within its measure for beat alignment. */
+      /* tLo within its measure for beat alignment, in that measure's meter. */
       const measureIdxLeading = this.measureIdxAtTick(effectiveLo);
+      const ts = this.timeSigAt(measureIdxLeading);
       const inMeasureLo = effectiveLo - this.measureStartTick(measureIdxLeading);
       const restPieces = decomposeBeatAlignedRests(inMeasureLo, leadingTicks, ts);
       for (const p of restPieces) {
@@ -5002,8 +5012,8 @@ export class ComposerModel {
     const afterSrc = tLoAbs + srcDurationTicks;
     if (effectiveHi > afterSrc) {
       const trailingTicks = effectiveHi - afterSrc;
-      const ts = readTimeSig(this.doc);
       const measureIdxTrailing = this.measureIdxAtTick(afterSrc);
+      const ts = this.timeSigAt(measureIdxTrailing);
       const inMeasureLo = afterSrc - this.measureStartTick(measureIdxTrailing);
       const restPieces = decomposeBeatAlignedRests(inMeasureLo, trailingTicks, ts);
       for (const p of restPieces) {
