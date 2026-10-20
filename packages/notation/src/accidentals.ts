@@ -52,6 +52,16 @@ export function tokenFromAlter(alter: number): string | null {
   return sign > 0 ? 'ts' : 'tf';
 }
 
+/** The @accid.ges token for an alteration. Same as `tokenFromAlter` except
+ *  the double sharp: MEI's data.ACCIDENTAL.GESTURAL has `ss` and no `x` (`x`
+ *  is a WRITTEN glyph choice, × rather than ##; a gestural value draws
+ *  nothing). Writing `x` here made Verovio warn "Unsupported value 'x' for
+ *  data.ACCIDENTAL.GESTURAL" on every hidden double sharp (2026-10-20). */
+export function gesturalTokenFromAlter(alter: number): string | null {
+  const t = tokenFromAlter(alter);
+  return t === 'x' ? 'ss' : t;
+}
+
 /** True alteration for a note, derived from its lattice coordinate (q, r) so
  *  any magnitude is represented (the @accid token caps at ±3). Falls back to
  *  the @accid token when no coordinate is present (e.g. MusicXML-imported

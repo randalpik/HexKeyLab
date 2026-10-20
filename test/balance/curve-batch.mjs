@@ -44,7 +44,7 @@ export const pick = (rows, gamma) => rows.reduce((best, r) => {
   return s > b + 1e-12 ? r : best;
 }, rows[0]);
 
-if (import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const report = [];
   for (const f of files) {
     let D; try { D = JSON.parse(readFileSync(f, 'utf8')); } catch (e) { console.log(`\n### ${basename(f)}: unreadable dump (${e.message.slice(0, 80)})`); continue; }

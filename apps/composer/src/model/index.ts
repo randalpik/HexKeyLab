@@ -817,11 +817,14 @@ export class ComposerModel {
     }
     /* Migrate older .hkc files that used @accid="ss" for double sharps —
        Verovio renders that as a precomposed "##" glyph, not the canonical
-       × (which is @accid="x"). Rewrite for visual consistency. */
+       × (which is @accid="x"). Rewrite for visual consistency. The GESTURAL
+       token goes the other way: data.ACCIDENTAL.GESTURAL has `ss` and no `x`,
+       so files the display pass wrote with @accid.ges="x" (until 2026-10-20)
+       are repaired to "ss". */
     for (const note of Array.from(this.doc.querySelectorAll("note"))) {
       if (note.getAttribute("accid") === "ss") note.setAttribute("accid", "x");
-      if (note.getAttribute("accid.ges") === "ss")
-        note.setAttribute("accid.ges", "x");
+      if (note.getAttribute("accid.ges") === "x")
+        note.setAttribute("accid.ges", "ss");
     }
     /* Tuplet brackets follow Verovio's default — drawn unless the tuplet is
        wholly under one beam (Max, 2026-09-05: numbers alone on full beams).

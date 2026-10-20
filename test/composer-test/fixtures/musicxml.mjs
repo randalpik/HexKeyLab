@@ -533,6 +533,43 @@ export const FIXTURES = {
     `,
   },
 
+  /* ── MusicXML import: slurs pair in document order (2026-10-20, Max) ──
+     The importer paired a slur's start and stop as the layers were emitted
+     and took a note's starts before its stops. A note that ends slur 1 and
+     starts the next slur 1 (legal MusicXML: 164 in 43 MuseScore files)
+     paired with itself — a zero-length slur, and the slur ending there lost;
+     and a slur written end-first across voices (the stop's voice written
+     first, its start earlier in time: 31 in the sample) lost its stop and
+     its start paired with a later slur's stop, backwards in time. Pairing is
+     now per part in document order, a note's stop first, a stop with no open
+     start waiting for a start in its measure that is no later in time. */
+  musicxml_import_slur_chain_same_note: {
+    setup: `
+      const N = (st, o, slurs) => '<note><pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type>'
+        + (slurs ? '<notations>' + slurs + '</notations>' : '') + '</note>';
+      const S = (t) => '<slur type="' + t + '" number="1"/>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0"><part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('C', 5, S('start')) + N('D', 5) + N('E', 5, S('start') + S('stop')) + N('F', 5) + '</measure>'
+        + '<measure number="2">' + N('G', 5, S('stop')) + N('A', 5) + N('B', 5) + N('C', 6) + '</measure>'
+        + '</part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+    `,
+  },
+  musicxml_import_slur_end_first: {
+    setup: `
+      const N = (st, o, v, dur, ty, slur) => '<note><pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>' + dur + '</duration><voice>' + v + '</voice><type>' + ty + '</type>'
+        + (slur ? '<notations><slur type="' + slur + '" number="1"/></notations>' : '') + '</note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0"><part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('C', 5, 1, 24, 'quarter') + N('D', 5, 1, 24, 'quarter') + N('E', 5, 1, 24, 'quarter', 'stop') + N('F', 5, 1, 24, 'quarter')
+        + '<backup><duration>96</duration></backup>'
+        + N('A', 4, 2, 24, 'quarter', 'start') + N('B', 4, 2, 24, 'quarter') + N('G', 4, 2, 48, 'half')
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+    `,
+  },
+
   /* ── MusicXML import: invisible playback notes are dropped (2026-10-20, Max) ──
      Finale writes a timpani roll as one visible note (single tremolo) plus a
      run of print-object="no" notes that only play; they imported as visible
@@ -1146,6 +1183,20 @@ export const ASSERTIONS = {
       expr: `(() => { const d = window.__hkl_composer.model.getDoc();
         const t = d.querySelector('titleStmt title')?.textContent, notes = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('pname') + n.getAttribute('oct'));
         return t === 'Après un rêve' && notes.join() === 'c5,e5' ? { ok: true } : { ok: false, detail: JSON.stringify({ t, notes }) }; })()` },
+  ],
+  musicxml_import_slur_chain_same_note: [
+    { name: 'two slurs, C5→E5 and E5→G5; none zero-length',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc();
+        const pn = (id) => { const n = [...d.querySelectorAll('note')].find((x) => x.getAttribute('xml:id') === id); return n ? n.getAttribute('pname') + n.getAttribute('oct') : '?'; };
+        const sl = [...d.querySelectorAll('slur')].map((s) => pn(s.getAttribute('startid').slice(1)) + '→' + pn(s.getAttribute('endid').slice(1))).sort();
+        return sl.join() === 'c5→e5,e5→g5' ? { ok: true } : { ok: false, detail: JSON.stringify(sl) }; })()` },
+  ],
+  musicxml_import_slur_end_first: [
+    { name: 'the end-first cross-voice slur imports forward in time: A4 (voice 2, beat 1) → E5 (voice 1, beat 3)',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc();
+        const pn = (id) => { const n = [...d.querySelectorAll('note')].find((x) => x.getAttribute('xml:id') === id); return n ? n.getAttribute('pname') + n.getAttribute('oct') : '?'; };
+        const sl = [...d.querySelectorAll('slur')].map((s) => pn(s.getAttribute('startid').slice(1)) + '→' + pn(s.getAttribute('endid').slice(1)));
+        return sl.join() === 'a4→e5' ? { ok: true } : { ok: false, detail: JSON.stringify(sl) }; })()` },
   ],
   musicxml_import_invisible_dropped: [
     { name: 'no invisible note survives: bar 1 voice 2 holds no note, D3/B3/C3-head are gone',

@@ -31,7 +31,7 @@
 import { realTicks } from '../model/ticks.js';
 import { hejiCommasFor } from '@hkl/shared/heji.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
-import { tokenFromAlter, noteAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
+import { tokenFromAlter, gesturalTokenFromAlter, noteAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
 
 const SHARP_ORDER: ReadonlyArray<string> = ['f', 'c', 'g', 'd', 'a', 'e', 'b'];
 const FLAT_ORDER:  ReadonlyArray<string> = ['b', 'e', 'a', 'd', 'g', 'c', 'f'];
@@ -104,7 +104,7 @@ function showAlter(note: Element, alter: number): void {
 function hideAlter(note: Element, alter: number): void {
   clearAccidals(note);
   if (alter === 0) return;
-  const token = tokenFromAlter(alter);
+  const token = gesturalTokenFromAlter(alter);
   if (token) note.setAttribute('accid.ges', token);
 }
 

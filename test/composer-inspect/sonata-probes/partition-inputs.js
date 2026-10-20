@@ -10,7 +10,9 @@ const pb = r['pageBreaks'];
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const waitFor = async (fn, ms = 90000, step = 20) => { const t0 = performance.now(); while (performance.now() - t0 < ms) { if (fn()) return true; await sleep(step); } return false; };
 const badgeHidden = () => { const b = document.getElementById('renderBusy'); return !b || b.hidden; };
-await waitFor(() => pb['startIds'] !== null);
+/* A document that never takes ownership (one line) keeps startIds null; stop
+   waiting once the render has settled anyway (test/corpus/batch-import.mjs runs hundreds). */
+await waitFor(() => pb['startIds'] !== null || (!r.assemblyPending() && badgeHidden()));
 /* Pages are committed by the assembler after the partition (setPageStarts). */
 await waitFor(() => !r.assemblyPending(), 120000, 50); await waitFor(badgeHidden, 90000, 40);
 const meas = model.allMeasures();

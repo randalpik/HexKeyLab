@@ -75,6 +75,25 @@ function accidGlyphsExpr(want) {
 }
 
 export const FIXTURES = {
+  /* ── A hidden double sharp's gestural token is `ss` (2026-10-20, Max) ──
+     The display pass hides a carried accidental by moving its token into
+     @accid.ges, and wrote the WRITTEN token there: `x` for a double sharp,
+     which MEI's data.ACCIDENTAL.GESTURAL does not allow (Verovio: "Unsupported
+     value 'x' for data.ACCIDENTAL.GESTURAL" — 765 times in 10 of 450 MuseScore
+     files). The visible double sharp stays `x` (×, not ##). */
+  accidental_double_sharp_gestural_ss: {
+    setup: `${ACCID_XML}
+      window.__composerImportMusicXml(SCORE(0, [N('F', 5, 2, 24, 'quarter', { acc: 'double-sharp' }) + N('F', 5, 2, 24, 'quarter') + N('G', 5, 0, 48, 'half')]));
+    `,
+  },
+  /* Files the bug wrote carry accid.ges="x"; loading one migrates it to `ss`
+     (the load migration used to turn a correct "ss" INTO "x"). */
+  accidental_legacy_ges_x_migrated: {
+    setup: `${ACCID_XML}
+      window.__composerImportMusicXml(SCORE(0, [N('F', 5, 2, 24, 'quarter', { acc: 'double-sharp' }) + N('F', 5, 2, 24, 'quarter') + N('G', 5, 0, 48, 'half')]));
+      window.__composerLoadHkc(m.serialize().replace(/accid\.ges="ss"/g, 'accid.ges="x"'));
+    `,
+  },
 
   /* ── HEJI accidentals + arbitrary stacks (render-time injection) ───────── */
   /* Mode D, HEJI on: C#↓ at (1,0) → single combined glyph U+E2C3
@@ -287,6 +306,18 @@ export const FIXTURES = {
 };
 
 export const ASSERTIONS = {
+  accidental_double_sharp_gestural_ss: [
+    { name: 'the visible F𝄪 keeps @accid="x"; the carried one is @accid.ges="ss" in the serialized MEI',
+      expr: `(() => { const d = new DOMParser().parseFromString(window.__hkl_composer.model.serialize(), 'application/xml');
+        const fs = [...d.querySelectorAll('layer note')].filter((n) => n.getAttribute('pname') === 'f');
+        const got = fs.map((n) => (n.getAttribute('accid') ?? '-') + '/' + (n.getAttribute('accid.ges') ?? '-'));
+        return got.join() === 'x/-,-/ss' ? { ok: true } : { ok: false, detail: JSON.stringify(got) }; })()` },
+  ],
+  accidental_legacy_ges_x_migrated: [
+    { name: 'a loaded accid.ges="x" becomes "ss" in the live document',
+      expr: `(() => { const ges = [...window.__hkl_composer.model.getDoc().querySelectorAll('note')].filter((n) => n.hasAttribute('accid.ges')).map((n) => n.getAttribute('accid.ges'));
+        return ges.length > 0 && ges.every((g) => g === 'ss') ? { ok: true } : { ok: false, detail: JSON.stringify(ges) }; })()` },
+  ],
   /* HEJI injection. */
   heji_sharp_arrow: [
     { name: 'C#↓ injected as one U+E2C3 glyph',

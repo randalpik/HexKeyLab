@@ -51,6 +51,41 @@ export const FIXTURES = {
       { key: 'l', ctrl: true },
     ],
   },
+  /* ── Ctrl+L at a slur's ends (2026-10-20, Max) ──
+     Deletion happens only where the cursor visually bisects a slur (an
+     interior note). On a slur's LAST note Ctrl+L starts a new slur, so a note
+     can end one slur and begin the next (MusicXML chains them; import pairs
+     them). On a slur's FIRST note it closes a pending slur there; with nothing
+     pending it still deletes. Closing onto the very same two notes is refused. */
+  slur_ctrlL_end_starts_new: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true }, { key: 'ArrowRight' }, { key: 'l', ctrl: true },   // note0 → note1
+      { key: 'l', ctrl: true }, { key: 'ArrowRight' }, { key: 'l', ctrl: true },   // note1 → note2
+    ],
+  },
+  slur_ctrlL_start_closes_pending: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'ArrowRight' }, { key: 'l', ctrl: true }, { key: 'ArrowRight' }, { key: 'l', ctrl: true },   // note1 → note2
+      { key: 'ArrowLeft' }, { key: 'ArrowLeft' }, { key: 'l', ctrl: true },                              // pending at note0
+      { key: 'ArrowRight' }, { key: 'l', ctrl: true },                                                    // closes on note1
+    ],
+  },
+  slur_ctrlL_start_no_pending_deletes: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true }, { key: 'ArrowRight' }, { key: 'l', ctrl: true },   // note0 → note1
+      { key: 'ArrowLeft' }, { key: 'l', ctrl: true },                              // on its first note, nothing pending
+    ],
+  },
+  slur_ctrlL_duplicate_refused: {
+    setup: SLUR_3Q_V1,
+    setupKeys: [
+      { key: 'l', ctrl: true }, { key: 'ArrowRight' }, { key: 'l', ctrl: true },   // note0 → note1
+      { key: 'l', ctrl: true }, { key: 'ArrowLeft' }, { key: 'l', ctrl: true },    // pending at note1, close on note0
+    ],
+  },
   /* Two Ctrl+L on the same slot → no-op + error; zero slurs. */
   slur_sameNote_noop: {
     setup: SLUR_3Q_V1,
@@ -206,6 +241,27 @@ export const ASSERTIONS = {
         const n = document.querySelectorAll('g.slur').length;
         return n === 1 ? { ok: true } : { ok: false, detail: 'g.slur=' + n };
       })()` },
+  ],
+  slur_ctrlL_end_starts_new: [
+    { name: 'two slurs: note0→note1 and note1→note2',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc(); const ids = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('xml:id'));
+        const sl = [...d.querySelectorAll('slur')].map((s) => ids.indexOf(s.getAttribute('startid').slice(1)) + '→' + ids.indexOf(s.getAttribute('endid').slice(1))).sort();
+        return sl.join() === '0→1,1→2' ? { ok: true } : { ok: false, detail: JSON.stringify(sl) }; })()` },
+  ],
+  slur_ctrlL_start_closes_pending: [
+    { name: 'two slurs: note0→note1 (closed on the first note of note1→note2) and note1→note2',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc(); const ids = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('xml:id'));
+        const sl = [...d.querySelectorAll('slur')].map((s) => ids.indexOf(s.getAttribute('startid').slice(1)) + '→' + ids.indexOf(s.getAttribute('endid').slice(1))).sort();
+        return sl.join() === '0→1,1→2' ? { ok: true } : { ok: false, detail: JSON.stringify(sl) }; })()` },
+  ],
+  slur_ctrlL_start_no_pending_deletes: [
+    { name: 'the slur is deleted', expr: `(() => { const n = window.__hkl_composer.model.getDoc().querySelectorAll('slur').length; return n === 0 ? { ok: true } : { ok: false, detail: 'slurs=' + n }; })()` },
+  ],
+  slur_ctrlL_duplicate_refused: [
+    { name: 'still exactly one slur, note0→note1',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc(); const ids = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('xml:id'));
+        const sl = [...d.querySelectorAll('slur')].map((s) => ids.indexOf(s.getAttribute('startid').slice(1)) + '→' + ids.indexOf(s.getAttribute('endid').slice(1)));
+        return sl.join() === '0→1' ? { ok: true } : { ok: false, detail: JSON.stringify(sl) }; })()` },
   ],
   slur_delete_interior: [
     { name: 'Ctrl+L on interior note removes the whole slur',

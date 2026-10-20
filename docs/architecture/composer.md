@@ -709,7 +709,11 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   accidental, `H` hide rest, `/` beam break, `L` / `Shift+L` stem / slur
   direction.
 - **Slurs** (`slurs.ts`, `Ctrl+L` twice): `<slur @startid @endid>` between two
-  slots; `Ctrl+L` under an existing slur deletes it; slurs whose endpoint
+  slots. `Ctrl+L` deletes a slur only where the cursor bisects it (an interior
+  slot) or from its first slot with nothing pending; on its last slot it starts
+  a new slur, and with a slur pending it closes it there — so one slot can end
+  a slur and begin the next (`input.ts` `slurContactAt`); closing onto an
+  existing slur's two slots is refused. Slurs whose endpoint
   disappeared are pruned with the ties. Playback (HKL's `computeLegatoPlan`): an
   overlapping release on instruments that replay on transpose, a glide
   handoff on sustained ones, an overlap when the pedal is down.
@@ -788,7 +792,11 @@ sent).
   in `buildEvents`: an invisible onset becomes hidden time, merged and emitted
   like a voiced `<forward>`, so every later note keeps its beat; an invisible
   chord member vanishes; a visible member of a chord with an invisible head
-  takes its place.
+  takes its place. Slurs pair per part in source document order (`pairSlurs`):
+  a note's stop before its start (a note may end slur N and begin the next
+  slur N), a stop with no open start waiting for a start in its measure that
+  is no later in time (a slur written end-first across voices), every pair
+  oriented forward in time.
 - **MusicXML export** (`exportMusicXml`): one `<part>` per instrument, voices
   separated by `<backup>`, divisions 16 or its LCM with tuplet numbers,
   colour on noteheads, every tempo written into every part (`<sound tempo>`

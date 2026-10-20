@@ -615,6 +615,33 @@ function findSlurCovering(model: ComposerModel, voice: Voice, index: number): El
   return null;
 }
 
+/** How the cursor slot stands to this voice's slurs, for Ctrl+L (Max,
+ *  2026-10-20): strictly INSIDE one — between its endpoints, where the cursor
+ *  visually bisects it — or on its START or END slot. A cross-staff slur
+ *  (endpoints in different voices) has no single-voice interior; only its
+ *  endpoint slots count, each in its own voice. The first slur found takes
+ *  each role. (`findSlurCovering` stays inclusive: Shift+L flips any slur
+ *  touching the cursor.) */
+function slurContactAt(model: ComposerModel, voice: Voice, index: number):
+    { inside: Element | null; startsHere: Element | null; endsHere: Element | null } {
+  let inside: Element | null = null, startsHere: Element | null = null, endsHere: Element | null = null;
+  for (const s of collectSlurs(model.getDoc())) {
+    const a = model.findElement(s.startId);
+    const b = model.findElement(s.endId);
+    if (!a || !b) continue;
+    if (a.voice === voice && b.voice === voice) {
+      const lo = Math.min(a.index, b.index), hi = Math.max(a.index, b.index);
+      if (index > lo && index < hi) inside ??= s.el;
+      else if (index === lo) startsHere ??= s.el;
+      else if (index === hi) endsHere ??= s.el;
+    } else {
+      if (a.voice === voice && a.index === index) startsHere ??= s.el;
+      if (b.voice === voice && b.index === index) endsHere ??= s.el;
+    }
+  }
+  return { inside, startsHere, endsHere };
+}
+
 /* Delete the selected mark only — each coincident mark is its own stop, and a
    placeholder (including one inside a hairpin's span) selects nothing. */
 function deleteSelectedExpression(model: ComposerModel, hooks: InputHooks): boolean {
@@ -2506,10 +2533,14 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
 
     /* Ctrl+L: slur entry (pending-state toggle). First press marks the start
-       slot; second press (after navigating) closes the slur; Ctrl+L on a slot
-       already under a slur deletes that slur. Switching voices exits the
-       pending state (handled at the arrow-nav call sites). preventDefault is
-       critical — Ctrl+L focuses the browser address bar. */
+       slot; second press (after navigating) closes the slur. A slur is
+       deleted only where the cursor visually bisects it (an interior slot),
+       or from its first slot when nothing is pending. On a slur's LAST slot
+       Ctrl+L starts a new slur, so one note can end a slur and begin the next;
+       with a slur pending it closes it here, even on another slur's first
+       slot (Max, 2026-10-20). Switching voices exits the pending state
+       (handled at the arrow-nav call sites). preventDefault is critical —
+       Ctrl+L focuses the browser address bar. */
     if (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
       e.preventDefault();
       if (state.cursorMode !== 'voice') {
@@ -2523,8 +2554,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         hooks.setStatus?.('Place the cursor on a note to slur.', 'error');
         return;
       }
-      /* Delete: cursor anywhere under an existing slur in this voice. */
-      const covering = findSlurCovering(model, voice, ref.index);
+      /* Delete: the cursor bisects a slur, or sits on a slur's first slot
+         with nothing pending. */
+      const contact = slurContactAt(model, voice, ref.index);
+      const covering = contact.inside ?? (state.pendingSlur ? null : contact.startsHere);
       if (covering) {
         withHistory('slur', () => { removeSlur(covering); return true; });
         state.pendingSlur = null;
@@ -2564,6 +2597,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       const startId = startFirst ? pending.startId : ref.id;
       const endId = startFirst ? ref.id : pending.startId;
       const ownerVoice = startFirst ? startLoc.voice : voice;
+      if (collectSlurs(model.getDoc()).some((sl) => sl.startId === startId && sl.endId === endId)) {
+        hooks.setStatus?.('That slur already exists.', 'error');
+        hooks.onStateChange();
+        return;
+      }
       let added = false;
       withHistory('slur', () => {
         added = addSlur(model.getDoc(), startId, endId, ownerVoice) !== null;

@@ -100,6 +100,12 @@ interface ImpNote {
 
 interface ImpEvent {
   kind: 'note' | 'chord' | 'rest';
+  /** Source position, for pairing slurs in document order: the index of the
+   *  <note> among its <measure>'s children, its onset in quarter notes, and
+   *  (set by the caller) the measure's index in the part. */
+  srcChild?: number;
+  onsetQ?: number;
+  srcMeasure?: number;
   notes: ImpNote[];   // empty for rest
   dur: Duration;
   dots: Dots;
@@ -471,7 +477,9 @@ function buildEvents(
     }
     hiddenDiv = 0;
   };
+  let childIdx = -1;
   for (const node of Array.from(measureEl.children)) {
+    childIdx++;
     if (node.localName === 'forward') {
       /* Only an explicitly voiced forward is unambiguous per-voice; a voiceless
          one applies to the global position we don't track here, so skip it. */
@@ -552,6 +560,8 @@ function buildEvents(
       notes: im ? [im] : [],
       dur, dots, artics: [], fermata: false, slurStart: [], slurStop: [],
     };
+    ev.srcChild = childIdx;
+    ev.onsetQ = divisions > 0 ? posDiv / divisions : 0;
     if (oct.spanIdx !== undefined) { ev.octSpanIdx = oct.spanIdx; ev.octPosDiv = posDiv; }
     if (isMeasureRest) ev.measureRest = true;
     /* Source beam-start for the diff-based beam pass: <beam number="1"> value
@@ -737,13 +747,18 @@ function applyHarmonic(slot: Element, noteEl: Element): void {
 }
 
 interface SlurPair { startId: string; endId: string; voice: number }
+/** One slur endpoint as written: paired after emission (pairSlurs). */
+interface SlurEnd {
+  key: number; type: 'start' | 'stop'; id: string; voice: number;
+  measure: number; child: number; onsetQ: number;
+}
 interface TrillRec { noteEl: Element; accid?: string }
 
 /** Shared emission state. Slur AND wavy-line pairing are GLOBAL (keyed by
  *  number across all voices/staves), not per-voice, so cross-staff slurs and
  *  trill extenders that span voices pair correctly. */
 interface EmitCtx {
-  slurOpen: Map<number, { id: string; voice: number }>;   // number → open slur start
+  slurEnds: SlurEnd[];
   slurPairs: SlurPair[];
   fermataEls: Element[];
   /** Slots carrying a <breath-mark>; appended as <breath> in the post-pass. */
@@ -751,6 +766,40 @@ interface EmitCtx {
   trillRecs: TrillRec[];
   wavyOpen: Map<number, string>;    // number → trill-note id of an open wavy-line
   wavyEnd: Map<string, string>;     // trill-note id → extender end note id
+}
+
+/** Pair the collected slur endpoints (2026-10-20, Max). MusicXML pairs a
+ *  slur's start and stop by number in the order the part's notes are WRITTEN,
+ *  so pairing runs per part in document order (measure, then child index) —
+ *  not in emission order (measure → staff → layer), which met a cross-voice
+ *  slur's stop before its start. On one note a stop belongs to the slur
+ *  already open: a note may end slur N and begin the next slur N (164 such
+ *  notes in 43 of 450 MuseScore files paired with themselves when starts went
+ *  first, and the slur ending there was lost). A stop with no open start
+ *  waits for a start in its own measure that is no later in time — a slur
+ *  written end-first, its stop's voice ahead of its start's (31 in the same
+ *  sample). Every pair runs forward in time; one that would not is flipped. */
+function pairSlurs(ctx: EmitCtx): void {
+  const ends = ctx.slurEnds.slice().sort((x, y) => x.measure - y.measure || x.child - y.child
+    || (x.type === y.type ? 0 : x.type === 'stop' ? -1 : 1));
+  const open = new Map<number, SlurEnd>(), waiting = new Map<number, SlurEnd>();
+  const later = (a: SlurEnd, b: SlurEnd): boolean => a.measure > b.measure || (a.measure === b.measure && a.onsetQ > b.onsetQ);
+  const pair = (s: SlurEnd, e: SlurEnd): void => {
+    if (s.id === e.id) return;
+    const [a, b] = later(s, e) ? [e, s] : [s, e];
+    ctx.slurPairs.push({ startId: a.id, endId: b.id, voice: a.voice });
+  };
+  for (const e of ends) {
+    if (e.type === 'stop') {
+      const s = open.get(e.key);
+      if (s) { open.delete(e.key); pair(s, e); } else waiting.set(e.key, e);
+      continue;
+    }
+    const w = waiting.get(e.key);
+    waiting.delete(e.key);
+    if (w && w.measure === e.measure && !later(e, w)) pair(e, w);
+    else open.set(e.key, e);
+  }
 }
 
 /** Append a layer's events (wrapping tuplet runs in <tuplet>), attaching
@@ -779,11 +828,9 @@ function appendLayerChildren(
       const s = ctx.wavyOpen.get(key(ev.wavyStop));
       if (s) { ctx.wavyEnd.set(s, id); ctx.wavyOpen.delete(key(ev.wavyStop)); }
     }
-    for (const n of ev.slurStart) ctx.slurOpen.set(key(n), { id, voice });
-    for (const n of ev.slurStop) {
-      const o = ctx.slurOpen.get(key(n));
-      if (o) { ctx.slurPairs.push({ startId: o.id, endId: id, voice: o.voice }); ctx.slurOpen.delete(key(n)); }
-    }
+    const at = { id, voice, measure: ev.srcMeasure ?? 0, child: ev.srcChild ?? 0, onsetQ: ev.onsetQ ?? 0 };
+    for (const n of ev.slurStart) ctx.slurEnds.push({ key: key(n), type: 'start', ...at });
+    for (const n of ev.slurStop) ctx.slurEnds.push({ key: key(n), type: 'stop', ...at });
   };
 
   let i = 0;
@@ -1275,7 +1322,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
 
   /* Emission state — slur + wavy pairing is GLOBAL (cross-staff/voice). */
   const ctx: EmitCtx = {
-    slurOpen: new Map(), slurPairs: [], fermataEls: [], breathEls: [], trillRecs: [],
+    slurEnds: [], slurPairs: [], fermataEls: [], breathEls: [], trillRecs: [],
     wavyOpen: new Map(), wavyEnd: new Map(),
   };
 
@@ -1430,6 +1477,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
         if (pm) {
           const voice = voiceFor(g, layer);
           const evs = buildEvents(pm, part, localStaff, layer, center.q, center.r, div, runCount, runUnit, octSpansFor(g, mi));
+          for (const e of evs) e.srcMeasure = mi;
           if (evs.length === 1 && evs[0].measureRest) {
             if (pickupTicks != null) {
               /* Pickup exception: an empty voice shows a rest sized to the
@@ -1495,6 +1543,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
 
   /* Resolve slurs (global pairing → cross-staff slurs pair correctly) now that
      all note elements are attached to the document. */
+  pairSlurs(ctx);
   for (const p of ctx.slurPairs) addSlur(doc, p.startId, p.endId, p.voice);
 
   /* Fermatas + trills: appended after the measure's <staff>s (Verovio
