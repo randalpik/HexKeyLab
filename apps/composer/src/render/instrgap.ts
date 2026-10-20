@@ -9,7 +9,7 @@
 // staff a mark belongs to and wrong relative to the NEXT instrument: III m. 10
 // stacks the viola's `mf` under its triplet numerals, 3.6 spaces below the
 // viola, and the piano is then packed to one space below the mf. Census over
-// the sonata (test/composer-inspect/phasec/cb-instrgap.js): of 151 marks at the
+// the sonata (sonata-probes/instrument-gap-census.js): of 151 marks at the
 // viola/piano boundary, 59 sit NEARER the piano than their own staff and 33
 // within one space of piano ink.
 //
@@ -65,19 +65,19 @@ import { strokedBox, svgBox, inkBox, type Box } from './textlayout.js';
    page 31 came back EMPTY, 442 of its 446 measures rendered, because page divs
    are Verovio's castoff at `loadData` and predate anything this pass grows
    (lessons.md "The page-div count is frozen at the initial castoff").
-   Pagination is owned now — `cb-pagegrowth.js` reports paginationOwned with
+   Pagination is owned now — a sonata probe (since deleted) reported paginationOwned with
    446/446 measures, 113 systems, 31 page divs, no empty pages and a 16-step
    cascade resolved entirely arithmetically — so the flag is gone and the pass
    is unconditional.
 
-   Gated on the sonata (cb-instrgap.js, 2026-09-09): marks nearer the OTHER
+   Gated on the sonata (instrument-gap-census.js, 2026-09-09): marks nearer the OTHER
    instrument than their own staff 59 -> 29, marks within one space of the
    other instrument's ink 33 -> 12, systems with unmet demand 48 -> 11; 43
    systems shifted, each one's system-start line lengthened, none bailing on an
    unattributable element.
 
    Still owed: no FIXTURE asserts that every measure of a multi-page document
-   renders. `cb-pagegrowth.js` is a probe, not a gate. */
+   renders. */
 
 /** What the pass needs from the document. */
 export interface InstrGapOpts {

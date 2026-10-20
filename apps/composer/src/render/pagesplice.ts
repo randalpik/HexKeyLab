@@ -1,4 +1,4 @@
-// Page-view system splice (Phase C-B, docs/composer-page-splice-design.md).
+// Page-view system splice (docs/architecture/composer.md, Page view).
 //
 // After the line-break owner (render/linebreaks.ts) recomputes the partition
 // for an edit, the full-render path still costs a whole-doc loadData (~1.25 s
@@ -8,7 +8,7 @@
 // full document at all.
 //
 // Why the gates are shaped the way they are (probes 2026-08-30, sonata,
-// test/composer-inspect/phasec/cb-structure.js + cb-window.js):
+// since deleted):
 //   - A pin-anchored window (synthetic mRest leader + <sb> pins, page
 //     geometry, tall page, breaks:'line') reproduces mid-score systems
 //     PIXEL-EXACTLY — per-measure x/width, inter-staff gaps, hanging extents,
@@ -206,7 +206,7 @@ function pageHeaders(pageEl: HTMLElement): PageHeaders {
 
 /** Where a full re-engrave would put the replaced systems, and what that does
  *  to everything below them. Every number is MEASURED from the window's own
- *  spacing chain (probe cb-window.js: delta 0.0 against a full pinned render)
+ *  spacing chain (a since-deleted probe: delta 0.0 against a full pinned render)
  *  — the splicer never models Verovio's stacker.
  *
  *  Only ONE page can have followers: a replaced system that is not its page's
@@ -246,7 +246,7 @@ function consolidate(el: SVGGElement): { tx: number; ty: number } {
  *  measure's bbox includes spanners overhanging into its neighbours and, on a
  *  system's first measure, the brace (144 units left of the staff).
  *
- *  Proven equivalent where it matters (`cb-pathprofile.js`, every sonata line
+ *  Proven equivalent where it matters (a since-deleted probe, every sonata line
  *  + governed-range key changes): against the bbox reading, the staff top, the
  *  placement dx/dy and the context-gate verdicts were identical on every splice
  *  (gate deltas ≤ 3 units under both — the live right-edge snap moving a
@@ -364,7 +364,7 @@ export class PageSystemSplicer {
    *  far). Diagnostics for the probes; the splice itself consumes it inline. */
   lastVertical: VerticalPlan | null = null;
   /** NEW-line range the last attempt needed to REPLACE (diagnostics: a refusal
-   *  names a reason, but not which lines it wanted — `cb-sweep.js` needs that
+   *  names a reason, but not which lines it wanted — `splice-sweep.js` needs that
    *  to tell a not-mounted line from a not-mounted spanner-expanded run). */
   lastRun: { a: number; b: number } | null = null;
   /** Pages whose hunk lines the last splice DEFERRED (2026-09-02): outside the
@@ -498,7 +498,7 @@ export class PageSystemSplicer {
          C clef; deleting the chord ahead of it moved the clef onto the previous
          line and re-justified that whole line (dW 89..329), which the context
          check correctly refused as "unchanged context that changed"
-         (`cb-ctxdiverge.js`, m-cy6). Any layer clef in the run's first measure
+         (a since-deleted probe, m-cy6). Any layer clef in the run's first measure
          pulls its predecessor into the run: cheap, and covers both directions
          without needing the pre-edit measure. */
       let cLo = Math.min(changedRun.lo, ids.length - 1);
@@ -662,8 +662,8 @@ export class PageSystemSplicer {
        spanners, and on real music that graph is a chain: the sonata's ordinary
        legato phrasing — 2-measure slurs each ending where the next begins —
        walked one seed 17 slurs deep, over 24 measures and 6 lines, purely
-       through lines nobody was re-rendering. See `cb-spanchain.js` /
-       `cb-window-walk.js` and the design doc.
+       through lines nobody was re-rendering (measured 2026-08-31 by probes since
+       deleted; decisions.md, Phase C-B entries).
 
        There are no CONTEXT lines any more (Phase 3, 2026-09-03). They had
        three jobs and all three are gone: the vertical spacing chain went with
@@ -699,14 +699,14 @@ export class PageSystemSplicer {
        beyond the window begins with a clef/key/meter change, the window's last
        line would render without a courtesy the live page draws — width-only,
        43-347 units on the sonata, and 9 of the 11 context-check refusals
-       measured by `cb-sweep.js`. Only that line's FIRST measure generates the
+       measured by `splice-sweep.js`. Only that line's FIRST measure generates the
        courtesy, so it is appended as a pinned one-measure STUB system — the
        same partial-absorber idea as the leader and trailer: discarded, never
        compared, never imported, never chained from. Until 2026-09-02 the whole
        line was pulled in, bounded at two lines because the sonata has runs of
        consecutive meter changes; a stub has no such chain (its own courtesy is
        nobody's business) and costs one measure instead of a line (4-10 on the
-       sonata, ~25 % of the window where it fired). Proof: `cb-courtesystub.js`
+       sonata, ~25 % of the window where it fired). Proof: a since-deleted probe
        on both code states. */
     let stubId: string | null = null;
     if (wHi + 1 < M && beginsSignatureChange(meiMeasures[spans[wHi + 1][0]])) stubId = newStartIds[wHi + 1];
@@ -1054,7 +1054,7 @@ export class PageSystemSplicer {
 
        `renderToSVG` is NOT IDEMPOTENT for the running page header: rendering a
        page a SECOND time from the same loaded document moves its `pgHead` text
-       (`cb-hdrdet.js` — pages 1-5 render at y 371/195/194/194/197 on the first
+       (a since-deleted probe — pages 1-5 render at y 371/195/194/194/197 on the first
        pass and 371/197/197/197/197 on the second; a fresh loadData plus a
        single render is perfectly deterministic at 194). It is not order
        dependence and not instance specific. Our pages go through a variable
@@ -1072,7 +1072,7 @@ export class PageSystemSplicer {
 
        Everything we DO control is exact: per-measure relX, per-measure width
        and the live page's placement self-consistency are all 0 across the
-       sonata (`cb-exact.js`, 338 pairs), and 317 of 338 pairs are exact
+       sonata (`splice-exactness-census.js`, 338 pairs), and 317 of 338 pairs are exact
        outright. Do not raise this to hide a regression — the last three
        proposals to widen it were each concealing a real defect.
 
@@ -1304,7 +1304,7 @@ const SECTION_TITLE_BAND = 900;
  *  element ahead of any event in ANY of its staves.
  *
  *  Two holes closed 2026-09-01, each a sonata movement boundary the first
- *  version walked straight past (`cb-ctxdiverge.js`):
+ *  version walked straight past (a since-deleted probe):
  *  - the scoreDef may sit BEHIND a break element — the importer and
  *    `setSectionHeaderAt` emit `scoreDef > sb[section] > measure`, so the
  *    measure's immediate previous sibling is the `<sb>`, not the scoreDef

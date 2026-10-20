@@ -191,7 +191,7 @@ const BASE_OPTIONS = {
        every element of a system to an instrument. Staves carry `staff@n` and
        the text marks carry `@staff`, but a TIE is ambiguous by geometry — of
        the sonata's 290, 131 sit in the piano's band, 43 in the viola's, 72 in
-       the inter-instrument gap and 44 above every staff (cb-instrgap.js) — so
+       the inter-instrument gap and 44 above every staff (instrument-gap-census.js) — so
        it needs its start note. fermata/trill/lv are note-anchored in our MEI
        (`@startid`, no `@staff` — probed) so they resolve the same way; <octave>
        does carry `@staff`. (grpSym and label are unambiguous by band, and
@@ -251,7 +251,7 @@ const BASE_OPTIONS = {
      staves and left the collision case unchanged. */
   defaultBottomMargin: DEFAULT_BOTTOM_MARGIN,
   /* No indentation / inter-element newlines in the SVG string (A9, 2026-09-01).
-     Whitespace-only: element count and rendering are identical (`cb-svgopts.js`:
+     Whitespace-only: element count and rendering are identical (a since-deleted probe:
      18 055 nodes either way), but the string is ~40% smaller and the browser's
      `innerHTML` / DOMParser parse ~36% faster — every window, naturals and page
      render pays that parse — and the live DOM carries no whitespace text nodes.
@@ -342,7 +342,7 @@ class Renderer {
    *  (2026-09-02). The refill is command-agnostic — it diffs the document, not
    *  the command that changed it — but nothing ASSERTED that a given user
    *  command splices, and two paths were found deriving silently on one guard
-   *  (`cb-commands.js`: Ctrl+M insert-measure, section headers). The suite's
+   *  (`command-splice-inventory.js`: Ctrl+M insert-measure, section headers). The suite's
    *  splice invariant reads this, so "this edit quietly full-rendered" is a
    *  test failure instead of a latency mystery. */
   private ledger: Array<{ full: boolean; outcome: string; skipReason: string; deriveReason: string; ms: number }> = [];
@@ -395,7 +395,7 @@ class Renderer {
    *  path's `willSplice` heuristic: evidence-based, and a wrong guess only
    *  means one un-badged slow render. */
   private lastPageSpliced = false;
-  /** Page-view line-break ownership (Phase C, docs/composer-page-splice-design.md):
+  /** Page-view line-break ownership (docs/architecture/composer.md, Page view):
    *  the partition is adopted from each derive render and re-derived locally on
    *  edits (greedy refill + rebalance), pinned into the render MEI. The owner
    *  finds what changed via its own per-measure signature baseline — the
@@ -403,7 +403,7 @@ class Renderer {
    *  lifecycle can swallow an earlier mutation's 'all' under batch-mutate-
    *  then-render flows, e.g. the test runner's doc reset). */
   private pageBreaks = new PageLineBreaks();
-  /** Page-view system splice (Phase C-B, docs/composer-page-splice-design.md):
+  /** Page-view system splice (docs/architecture/composer.md, Page view):
    *  when a refill's edit is provably local, replace only the affected
    *  systems in the mounted page SVGs from a windowed offscreen render —
    *  skipping the full-doc loadData entirely. Stateless: everything it needs
@@ -518,7 +518,7 @@ class Renderer {
 
          End-of-section parity (2026-09-05): a section-final line is not "the
          last system" to Verovio, so it justifies at ANY fill (measured on a
-         two-section document, `cb-lastjustify2.js`: section-final 18790,
+         two-section document, a since-deleted probe: section-final 18790,
          document-final 4290). The section balancer (render/balance.ts, driven
          from linebreaks.ts) is what closes that gap — a section-final line
          below MIN_FILL is redistributed into its section, so the lines Verovio
@@ -564,7 +564,7 @@ class Renderer {
    *  a replaced line under different options than the page it was spliced into,
    *  and the gate compared the result against a reference nobody had painted.
    *  Found 2026-09-03 by that gate, once Phase 3's context-line comparison
-   *  stopped refusing such splices for unrelated reasons (`cb-p3mei.js`
+   *  stopped refusing such splices for unrelated reasons (a since-deleted probe
    *  reported `optDiff = breaks: stored 'encoded' vs live 'line'`).
    *
    *  Page ownership still governs what it should: whether a pagination REPAIR
@@ -598,7 +598,7 @@ class Renderer {
    *  layout effect at all. That requires re-deriving the zoom-75 crisp preset
    *  to keep unit 9 (staff spacing 9 × scale/100 = 7 px needs scale 77.78,
    *  fractional), which is a change to the crispness scheme and its fixtures.
-   *  See docs/composer-page-splice-design.md. */
+   *  See docs/architecture/composer.md (Page view). */
   /** Scale a page-geometry block (pageWidth/pageHeight + the four margins) by the
    *  current pageScale AND the zoom's unit compensation. Dimensions round to
    *  integers (Verovio units); margins stay float (the top one is re-crisped by
@@ -757,7 +757,7 @@ class Renderer {
        its crisp device phase FIRST, so `measureExtents` reads geometry nothing
        will move again. Doing this after placement — which is what the separate
        `snapStaffLinesToGrid` pass did — invalidated the very extents placement
-       had consumed. See docs/composer-page-splice-design.md ("Ownership extends to the staff") and lessons.md. */
+       had consumed. See docs/architecture/composer.md (Page view, vertical placement) and lessons.md. */
     this.alignPageStaves(ps.margin, ps.systems);
     const mp = this.measureAndPlace(ps.systems, { distribute: true, pageNo: Number(pageEl.dataset.page) });
     if (!mp) {
@@ -1568,7 +1568,7 @@ class Renderer {
               }
             }
             if (!spliced) {
-              /* Every edit is a splice (composer-pagination-design.md,
+              /* Every edit is a splice (decisions.md "Composer draws the pages",
                  2026-10-08): the lines the refill's changed run reaches are
                  re-engraved one window each, every other system is reused, and
                  pages re-fit from the first affected page — also for a change
@@ -2455,7 +2455,7 @@ class Renderer {
   }
 
   /** Per-pass wall of the last `postProcessRendered` call (diagnostics for
-   *  `cb-splicecost.js`; A8). */
+   *  `edit-cost-attribution.js`; A8). */
   lastPostStats: { pin: number; snapBar: number; snapEdge: number; noteheads: number; text: number; instr: number; tuplets: number; slurs: number; ties: number; heji: number; theme: number; total: number; scoped: boolean; targets: number } | null = null;
 
   /** Page mode: mount the page holding this measure so rectForId / the cursor
@@ -2469,7 +2469,7 @@ class Renderer {
   }
 
 
-  /* ── page assembly (composer-pagination-design.md, 2026-10-08) ──────────── */
+  /* ── page assembly (decisions.md "Composer draws the pages", 2026-10-08) ──────────── */
 
   /** True while pages are still being assembled after a render (idle slices). */
   assemblyPending(): boolean {
@@ -2674,7 +2674,7 @@ class Renderer {
     }
   }
 
-  /** Probe API (kept for the phasec probes): is the line's extent known? */
+  /** Probe API (kept for the sonata probes): is the line's extent known? */
   extentsKnown(startId: string): boolean {
     return this.extents.get(startId) !== undefined;
   }

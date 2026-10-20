@@ -1,4 +1,4 @@
-// One line → one measured system (composer-pagination-design.md, 2026-10-08).
+// One line → one measured system (decisions.md "Composer draws the pages", 2026-10-08).
 //
 // Page view no longer paints Verovio pages: every system is rendered from a
 // ONE-LINE window — the system splicer's recipe (leader / trailer stubs so a

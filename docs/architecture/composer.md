@@ -1,633 +1,829 @@
 # HKL Composer — Architecture Reference
 
-Keyboard-driven, Verovio-backed score editor that uses HKL as its input device. **For how to *use* Composer — the keystroke reference and feature walkthrough — see the [Composer guide](../guide/composer.md).** Part of [the HexKeyLab architecture](../architecture.md); tuning/coordinate concepts live there, audio playback in [engine.md](engine.md).
+A keyboard-driven score editor that uses HKL as its input device. MEI is the
+document and Verovio engraves it; Composer owns everything Verovio does not —
+the cursor model, the line partition and pagination, engraving rules applied
+before and after the engrave, and incremental re-rendering. How to *use* it is
+in the [Composer guide](../guide/composer.md); tuning and coordinates are in
+[architecture.md](../architecture.md), audio in [engine.md](engine.md). This
+document describes what is. Why it is that way, and every dead end, is in
+[decisions.md](../decisions.md) and [lessons.md](../lessons.md).
 
-The "Phase N" labels on some sections below are historical (the order features were built), not a roadmap — every one is shipping.
+## Overview
 
-Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. They run as separate browser tabs and share no module imports beyond the bridge protocol.
+Composer and HKL run as two tabs on one origin and share nothing but the
+`@hkl/bridge` `BroadcastChannel`. Composer holds the score; HKL holds tuning,
+audio and the Lumatone. Composer works standalone (open, edit, save); entering
+held chords and playback need HKL. Composer depends on `@hkl/bridge`,
+`@hkl/notation` and `@hkl/shared` only — never on HKL's audio, MIDI, state or
+Lumatone code (`pnpm check:boundaries`).
 
-## Two-tab architecture
+One edit, end to end:
 
-- **HKL tab** (`apps/hkl/index.html`) — Lumatone input, audio engine, tuning state, lattice rendering. Unchanged by Composer's existence.
-- **Composer tab** (`apps/composer/index.html`) — MEI model, Verovio render, cursor overlay, keyboard input, playback orchestration. Imports `@hkl/bridge` plus pure helpers from `@hkl/shared` (incl. `notes.js`). Does NOT import HKL's audio / midi / state / lumatone code.
+1. **Input** (`input.ts`) turns a key into a model command, wrapped in an undo
+   entry.
+2. **Model** (`model/`) mutates the live MEI `Document`, normalizes it
+   (placeholders, ties) and records the measures it dirtied.
+3. **Serialize for render** clones the document and applies render-only
+   transforms — accidental display, HEJI, beaming, clef relocation, part
+   filtering, engraving conventions. The saved document never sees them.
+4. **Engrave**. Scroll view splices the changed measures into one persistent
+   system. Page view re-engraves the changed lines, re-places the touched
+   pages and re-paginates from one page before them. Nothing else is
+   re-engraved.
+5. **Post-process**: the DOM passes (HEJI glyphs, text and mark layout,
+   instrument gaps, slur and tie re-draws), then placement.
+6. **Overlays**: cursor, selection and padlocks redraw.
 
-Composer is openable standalone (`.hkc` load/save/edit works without HKL); held-chord entry requires HKL connected. Toolbar `#connStatus` badge: `no HKL` (red) pre-handshake, `connected` (green) after `hkl-hello`, `standalone` (yellow) after 1 s with no hello.
+Playback is a separate path: `buildPlayback` turns the model into timed events
+and sends them to HKL.
 
-## Bridge protocol (`@hkl/bridge`)
+### Module map
 
-Two `BroadcastChannel`s, both built on the generic `BridgeChannel<In, Out>` (channel name via constructor):
+Paths are under `apps/composer/src/` unless noted.
 
-- `'hkl-composer-bridge'` — HKL ↔ Composer (this doc).
-- `'hkl-analyzer-bridge'` — HKL ↔ Analyzer (see main architecture §8).
-
-Per-channel protocol modules define independent `In`/`Out` unions. HKL instantiates both in `apps/hkl/src/bridge/hkl-side.ts`.
-
-**HKL → Composer** (`HklEvent`):
-- `hkl-hello`, `hkl-bye` — lifecycle.
-- `held-keys` — array of `ResolvedNote` `{q, r, pname, accid, oct, midi, colorHex, lightColorHex, velocity}`. Broadcast on every `selection.selectedKeys` change (RAF-polled, signature-diffed). `colorHex` is the ink-on-white variant (light theme); `lightColorHex` is the bright on-screen variant (dark theme) — see decisions.md "Two notehead color variants over the bridge".
-- `playback-position` — `{meiId, timeMs}` per chord onset; final has `meiId: null`.
-- `playback-finished`, `tuning-changed` — `{mode, description}` informational.
-
-**Composer → HKL** (`ComposerEvent`):
-- `composer-hello` / `composer-bye` / `request-state` — handshake. Composer re-broadcasts `composer-hello` on every inbound `hkl-hello` so HKL learns it's alive when HKL boots second.
-- `set-score-ref` (the **key-signature tonic at Composer's current position**) / `set-reference-note` (cursor's prior note, sent only when non-null) — HKL's two ref-tier channels via `apps/hkl/src/state/reference.ts`. Selection-tier wins over the score-ref fallback, but a `composer`-source selection is gated on outline mode = `'piano'`. The score-ref is **derived, never stored**: `computeSongKeyRefAt(model, measureIdx)` places the tonic on the qm=0 Pythagorean spine at the octave nearest C4, so it tracks mid-score key changes; while a transport runs it follows the *sounding* position instead of the editing cursor. Sent on cursor moves, edits, Setup save, file load, hello, and transport steps — all diff-gated. When HKL's "Sync to Composer" is on, a `set-score-ref` also clears the selection tier so the lattice matches the score exactly; sync off leaves the user's selection. → decisions.md "Ref note derives from the key signature at the cursor".
-- `layout-req-changed` — score's pinned tuning (tuning only; the ref is not part of the pinned layout); applied when "Sync layout" on.
-- `play-score` — `{events: PlaybackEvent[]}`, per-event `{atMs, durationMs, notes, meiId?}`.
-- `stop-playback`.
-- `composer-active-instrument` / `composer-instruments` — cursor instrument + full instrument set (multi-instrument cursor-follow).
-- `composer-score` / `composer-cursor` — drive HKL's read-only "Composer view" frame: the cursor instrument's single-instrument MEI (on content/instrument change) + the editing cursor (on cursor move). `composer-cursor` carries a render-agnostic `VoiceCursorAnchor` (`@hkl/shared/cursor-geom`) — the resolved case (right-of-element / measure-start / tuplet / past-end / overwrite-box) — so HKL draws a cursor PIXEL-IDENTICAL to Composer's via the shared `computeVoiceCursorRect`. Composer's own `cursor.ts` uses the same resolver + geometry fn. See decisions.md "Composer view in HKL streams MEI, not SVG".
-
-`ResolvedNote` is fully resolved by HKL (pname/accid/oct/midi/colorHex derived from `(q, r)` + tuning), so Composer never needs HKL's tuning to render. `accid` is count-form (`''`, `'s'`, `'ss'`, …, `'f'`, …, `'n'`); not clamped at the bridge.
-
-→ see decisions.md "Composer entry-time playback removed" (a `play-chord`-per-keypress message was dropped — its scheduled `noteOff` cut still-held Lumatone notes short).
-
-### HKL-side glue (`apps/hkl/src/bridge/hkl-side.ts`)
-
-RAF-polled loop resolves each `selectedKeys` `(q, r)` and broadcasts on signature change. Inbound `play-score` dispatches via `audio.noteOn`/`noteOff`. During playback:
-- `playbackActive` flag suppresses the held-keys broadcast (else Composer echoes its own playback back as input).
-- `playbackOwnedKeys: Set<KeyId>` tracks which `selectedKeys` playback added; only those are removed on noteOff/abort, so user-held keys survive.
-- `playbackVoiceCount: Map<KeyId, number>` refcounts how many playback voices light each coord (two instruments on one `(q, r)`, or a re-attack whose predecessor's off hasn't fired yet); the highlight drops only on the final 1→0. **Every event that lights a coord must unlight it exactly once** — including when its off handler skips the *audio* teardown because a later event re-articulated the voice (the `voiceSeq` guard). The audio there belongs to the successor, but the light does not: skipping the unlight strands the key lit forever. → lessons.md "A per-event light and a per-voice note-off are different lifetimes".
-- **Teardown is swept, not trusted**: both finish and abort end a run by force-offing whatever is still in `pb.heldKeys`. Every scheduled off has fired by `lastEndMs + 50`, so anything left there is an orphan — a `noOff` glide predecessor whose successor fell back to a plain attack (its `canGlide` re-check at tick time found no voice in `activeOscs`, e.g. an instrument that failed to load), or an off handler that threw into `logPlaybackError`. `sweepOrphanedVoices` releases them and `console.warn`s, since reaching it means a scheduling bug upstream.
-- `draw()` after each onset/offset so the lattice highlights what's sounding.
-
-## MEI model (`apps/composer/src/model/index.ts`)
-
-The MEI document is a `Document` (DOMParser XML). Initial doc: one measure, two staves (grand staff, `bar.thru="true"`), two layers per staff. Metadata (`<titleStmt>`, `<scoreDef>`, `<tempo>`) lives on the document. Mutations are direct DOM ops; the doc re-serializes to a string for Verovio's `loadData()` every render.
-
-Voice numbering (top-to-bottom) for the default single-piano doc:
-
-| Voice | Staff | Layer |
-|---|---|---|
-| 1 | 1 (treble) | 1 |
-| 2 | 1 (treble) | 2 |
-| 3 | 2 (bass) | 1 |
-| 4 | 2 (bass) | 2 |
-
-**Multi-instrument (Phase 5):** `Voice` is a flat `number` index over **all** instruments, not capped at 4. An **instrument table** (`instrumentTable()` — cached, invalidated alongside the meter table) walks the head `<scoreDef>`'s root `<staffGrp>` and maps each flat voice → `(instrument, global staff @n, layer @n)`. The default doc is one implicit 2-staff "Piano" instrument (root staffGrp with direct `<staffDef>`s — never rewritten on load); adding an instrument nests one `<staffGrp>` per instrument (1–2 staves, 2 layers each) carrying a `<label>` — the instrument's **name**, which is its sole identity (HKL resolves the name to a timbre; see Multi-instrument → Instrument identity). Every staff/layer lookup routes through `model.staffForVoice(v)` / `layerForVoice(v)` / `instrumentOf(v)` / `voicesForInstrument(i)` / `totalVoices()` / `totalStaves()` — there is no `voice<=2?1:2` ternary anymore. `addInstrument`/`removeInstrument` (promote/demote, staff renumber + `@staff` remap) live on the model; the Setup dialog's "Instruments" Add/Remove buttons drive them. The above table is exactly `instrumentOf`'s output for the single 2-staff instrument.
-
-Each voice has its own cursor in `cursors` (keyed by the flat voice index, seeded `1..totalVoices()`), indexing the **linear flat stream** (concatenated `chord|note|rest|space-placeholder` across all measures, in order). Multi-measure traversal is transparent to the cursor.
-
-- `switchVoice`/layer-exit delegate to `setVoicePreservingMeasure`, which **selects the target voice's element sounding at the source note's onset**: take the current element's absolute onset (`getCursorAbsoluteTicks − realTicks(flat[c])`), find the target element with `onset ≤ srcOnset < onset+dur`, and put the cursor PAST it (its flat index) so it becomes the current element. Moving vertically between voices thus lands ON the note at the same moment, not at its left edge / the bar start. A zero-duration current element (measure-start wrapper / past-end) has no note to select → positional `findCursorByTickPosition` fallback; a wrong visual measure → `getFirstVisualCursorInMeasure`. → decisions.md "voice switch selects the target element sounding at the source note's onset".
-- Two locator helpers, deliberately different boundary semantics: `locateCursor` (insertion point, strict `<` so cursor=N at a boundary lands in the NEXT measure at `withinIdx=0`) vs `locateFlatElement` (element-at-index, strict-decrement walker for `deleteAtCursor`).
-
-Every `<note>` carries `data-q`/`data-r` (lattice identity survives roundtrip; MEI ignores unknown attrs so `.hkc` opens in other viewers) and `xml:id` set via `setAttributeNS(XML_NS, …)` so `[*|id]` selectors resolve. Every `<staff>`/`<measure>` also carries `xml:id` for cursor-overlay rect lookup. → see decisions.md "Manually-set xml:id without setAttributeNS".
-
-## Render & cursor overlay
-
-`apps/composer/src/render/render.ts` owns the Verovio toolkit lifecycle. WASM is CDN-loaded via script injection (no npm dep; ~6–8 MB gzipped, 200–800 ms first render). Engraving options:
-- `svgViewBox: false`, `scale: 100` — intrinsic-size render, no fit-to-container scaling.
-- Page mode: `pageWidth: 2159`/`pageHeight: 2794` (US Letter, 1/100 mm), breaks `'auto'`. Scroll mode: `pageWidth: 100000`/`pageHeight: 400`, breaks `'none'`.
-- **Page size (`pageScale`)** — a per-document percentage (60–160, default 100; Setup dialog "Page size"; stored as `page-scale` on `<hkl:config>`, so it rides the `.hkc` and the PDF export). In **page mode only** it scales `pageWidth`/`pageHeight` + the four margins; `scale`/`unit`/line-widths stay at the crisp zoom preset, so the notation keeps its on-screen size while the paper rectangle grows/shrinks and bars-per-system reflow — i.e. it changes score size *relative to the page*, orthogonal to zoom (which sizes the content). Crispness is preserved because the scaled top margin still flows through `crispMarginTop()`. Scroll mode ignores it. `renderer.setPageScale(model.getPageScale()/100)` is synced once in `reRender()`. → decisions.md "Score size relative to page = page-dimension scaling, not unit/scale".
-- `header: 'auto'` in page view (Verovio's title block on page 1 — restyled BEFORE placement by `render/pageheader.ts` `styleTitleBlock`, run from `postProcessRendered`: the title leaf at `TITLE_FONT_PX` 600 px (Verovio's x-large is 540) with its em-box top kept, the subtitle leaf at `SUBTITLE_FONT_PX` 360 — the credit's size, the two lines reading as a pair (Verovio's small is 288) — and the subtitle's positioned tspan SET so its box sits `SUBTITLE_GAP` below the title's box, which is **0**: the subtitle takes the next line rather than the one after a blank one, so the two em-boxes meet (Verovio's own `<lb/>` steps the subtitle by the OUTER rend's line height, less than the title's size, which made them overlap instead; the position is set outright rather than clamped against that step, which at gap 0 would silently reinstate it), and the **composer credit** drawn INSIDE `g.pgHead` (right-aligned to the page's real column, `CREDIT_FONT_PX` 360, its box `CREDIT_GAP` — a full line of its own size — below the title block; a title-less document with a composer gets a synthesized `g.pgHead` holding just the credit); the header's bbox grows and `firstContentTop` puts the first system under the whole band (2026-09-06). Nothing in the block is MEASURED: every edge is the nominal em-box of a (baseline, font-size) pair (`ASCENT` 0.891 / `DESCENT` 0.216, quantized to whole CSS pixels — `definition-scale` makes 1 px = 10 user units). It used to read `getBBox()` off the `<tspan>`s, which Gecko does not answer, so on Firefox the whole restyle silently bailed and the credit landed on the title's line; the quantization matters because the band feeds `headBottomOf` → `firstContentTop`, where 3 stray units cross a device-grid snap and move every system and section header a whole pixel. → decisions.md "Title block is computed, not measured". The credit used to be injected by main.ts AFTER placement, anchored to the first system's top, which put it beside the title with the two text boxes overlapping vertically — the line Max calls the subtitle. A Setup apply now `forceFullRerender`s: title, subtitle and composer live in Verovio's header, which the refill/splice paths keep, so the Setup subtitle used to appear only after a reload. On pages 2+ its autogenerated "– N –" is restyled by main.ts `styleRunningHeader` into an **outer-corner page number** — even pages left, odd pages right — plus a **centred running title**, both at `RUNNING_HEADER_FONT_PX` 320 px (the footer's size, 2026-09-06) on the header's own baseline, the original band recorded first so placement is unchanged; 2026-09-04), `footer: 'none'` (Composer draws its own footer in the bottom margin); `dynamDist: 4.5` and `defaultBottomMargin: 2.0` (see [Expression layer](#expression-layer-dynamics-hairpins) and [Multi-instrument](#multi-instrument-specialization-phase-5)); `svgAdditionalAttribute` exposes `note@data-q`/`data-r`/`color`/`hkl-paren-caut`, `rest@data-tuplet-placeholder`/`visible`, `accid@type`, plus `staff@n` and `dynam`/`dir`/`hairpin`/`tempo` `@staff`/`@place` (for the text layout passes) onto the SVG (Verovio prefixes a `data-`, so e.g. `data-data-tuplet-placeholder`, `data-n`, `data-staff`). Every injected page text — footer, composer credit, section titles, running header — is positioned from the page's REAL column (`pageFrameOf`, now in `render/pageheader.ts`: the `definition-scale` viewBox minus the `page-margin` translate), so it follows the document's page size; the US-Letter constants are only a fallback. In **scroll view** the option is `header: 'none'` and the **credit is suppressed with it** — `postProcessRendered` passes an empty composer string, so `styleTitleBlock` takes its removal path. There is no title block for the credit to sit under there, and the synthesized credit-only `g.pgHead` right-aligned the name to the frame's width, which in scroll view IS the single continuous system: the composer's name was drawn at the far END of the piece (Max, backlog Layout, 2026-09-17; fixture `engr_scrollNoComposerCredit`). The footer and the running header are page-only for the same reason (main.ts `injectHeaderFooter`). Page-view renders at scroll GEOMETRY — the line-break owner's naturals windows, `buildOptions('none', 'scroll')` — are unaffected: they measure through the toolkit and never post-process a DOM.
-
-**Virtualized page view (T2.1, [composer-render-perf.md](../composer-render-perf.md))**: the model-aware render path draws real SVG only for pages near the viewport — page 1 (its measured SVG box sizes the placeholders), viewport±1 pages, and the cursor's page; every other page is a fixed-size `.score-page-pending` div, lazy-mounted as it scrolls near — the IntersectionObserver (root `#score`, ±100 % margin) only WAKES a mount pump (`pumpMounts`, 2026-09-11): one animation frame mounts ONE page that intersects the viewport (nearest the viewport top first), pages merely inside the band are left to the idle mount window (`updateMountWindow`, one page per idle slice), pages that left the band are dropped, and nothing mounts while `viewportMoving()` (scroll-event samples: more than 0.5 viewport of travel over 400 ms, settled 120 ms after the last event) — so a scrollbar drag shows placeholders and draws its landing page ~120 ms after the thumb stops instead of mounting every page it swept through (probe `test/composer-inspect/phasec/mount-drag.js`; decisions.md same date) — (and by `ensureMeasureMounted(mi)` when the cursor / scroll-into-view / a playback bar targets it — the cursor measure being the ACTIVE layer's: in the expression / pedal / tempo layers the layer's moment (`momentAtCurrentCursor`), not the parked voice cursor, so a layer action never scrolls the view back to the voice cursor's page (`visualCursorMeasure`, 2026-09-05) — with a DOM-presence fast path, since locating an unmounted measure needs the layout back in the toolkit, which a scroll engrave or PDF export may have replaced: `pageVirt.tkCurrent` tracks that, reloading once on demand). Page-scoped injections (header/footer, section headers, volta styling) run via the renderer's `onPageMounted` hook — exactly once per mounted page, never as a whole-container pass (section-header translation isn't idempotent). Virtualization state survives view-switch stash/restore. The rebuild preserves #score's scroll position explicitly (captured before the innerHTML swap, restored after placeholder sizing in the same synchronous block — the momentarily-collapsed extent would otherwise clamp scrollTop to ~page 1 on every edit; lessons.md 2026-08-30). The string-entry `render()` (tests/tooling) still renders every page.
-
-**Heavy-render deferral + coalescing (T2.2)**: `reRender` consults `renderer.predictNextRenderHeavy` (recorded full-engrave durations, 250 ms threshold, mirrors the splice test — small docs and scroll splices stay fully synchronous). **Page mode asks whether a local refill is on the table** (`pageBreaks.canAttemptRefill()`), the structural analogue of the scroll branch's `canSplice()`, rather than extrapolating this render's PATH from what the last one cost: document cost carries between renders, the path does not (2026-09-14 — see decisions.md). `forceFullRerender()` invalidates the owner, so zoom / open / HEJI / page-scale still fall through to the cost threshold and keep their badge. A heavy render defers one frame (double-rAF + timeout) so the static `#renderBusy` badge paints before the engrave freezes the thread, and re-render requests arriving meanwhile coalesce into ONE render of the latest model state (burst keystrokes during a freeze no longer stack engraves). Post-render DOM readers (scroll-into-view, overlay refreshes at call sites) go through `afterRender()`. File load/import handlers show the badge across their parse.
-
-**Page-view line-break ownership (Phase C-A, `apps/composer/src/render/linebreaks.ts`)**: in page view Composer — not Verovio's castoff — decides which measure starts each system. A derive (doc load, zoom, page-scale, staff-filter, any fallback) seeds the partition from Composer's own natural widths — a greedy fill of each section at cap 1.0 (`PageLineBreaks.seedPartition`, 2026-10-08) — and the balancer then computes the partition from measured widths (see Section balancing) before the first paint. Nothing of Verovio's is adopted: until 2026-10-08 Verovio's castoff was the seed, and although its LINES were discarded its page starts were carried onto the balanced lines by line index, which made the castoff a second authority for pagination after all (lessons.md "Page-view pagination is Verovio's castoff count transplanted by line index"; the fix is the Page-view pagination paragraph below). An edit re-lays only the affected lines: the owner diffs the live doc against its own per-measure signature baseline (never the model's `renderDirty` hint — see lessons.md), measures natural widths for the changed window via an offscreen `breaks:'none'` sub-render (spanner/ending-complete), carries the partition across the edit by line MEMBERSHIP and REPAIRS only the lines the edit made illegal (fill outside [MIN_FILL 0.65, FIT_MAX 1.45]; one measure moves per repair step, user breaks are never moved), and injects `<sb xml:id="hklpin-N">` pins into the render-time MEI only — the live doc, saves, undo and history never contain a pin. `MIN_FILL` also governs the LAST system's justification: Verovio's `minLastJustification` is driven from that same constant (0.65, less `LAST_JUSTIFY_SLACK` 0.05 because our naturals fill and Verovio's own justification ratio disagree by a few percent at the boundary — a balanced line at 0.657 by ours drew unjustified under the bare constant) in page geometry rather than left at its 0.8 default, so a final line is justified exactly when it is a legal line and left at its natural width when it is too sparse to be one — one rule rather than two thresholds. Scroll keeps Verovio's default deliberately: it renders the score as ONE system against a 100 000-unit page, and the naturals windows measure NATURAL widths at that geometry, where justification would corrupt the measurement the partition is built from. **Section balancing** (`render/balance.ts`) is the **partition authority**: not the repair loop, and not castoff. For each section (the lines between two hard starts) the line COUNT is `greedyLines` — the fewest lines keeping every line at or under `BALANCE_SOFT_MAX` 1.00, i.e. "never compress a line past its natural width" — and the ARRANGEMENT at that count is the minimum-variance partition (`dpPartition`, minimising Σ(fill−mean)² subject to MIN_FILL ≤ fill ≤ FIT_MAX, trying N, N+1, N−1). Both depend only on the widths, and `BALANCE_LAMBDA` is **0**, so the partition is a PURE FUNCTION OF CONTENT: the partition a derive computes and the one an edit-triggered rebalance computes for the same document are the same partition (Max's single-authority ruling, 2026-09-17 — "non-alignment is exactly what leads to unexpected rebalancing which prevents serious layout work"). Being history-free it also has no threshold hysteresis, which is what the earlier "never re-derived" rule was protecting: an undone edit restores the layout because the layout is a function of the document alone. The earlier merge rule, N−1 fallback and `MERGE_MAX` are gone — choosing N from the content subsumes them. λ is retained as the only tuning surface but is 0 everywhere; at 0.02 the sonata moved ≤ 12 boundaries per inserted bar but the edit path disagreed with a fresh derive on 8 of 23 bar counts and let fills spread 0.32, and it was what froze a composing section's first line at a barely-legal 0.70 while its last sprawled to 1.42 (the `4,5,5,5,5,9` defect, 2026-09-17). **Rule 2** survives only as the short-section edge case: when no candidate line count is feasible — a section whose content cannot fill even one legal line — `balanceSection` returns null, the caller keeps what it had, and the stub renders unjustified (`minLastJustification`). It runs in exactly two places: synchronously over the WHOLE document before the pinned paint (`balanceInitialBand`, after `warmAllNaturals`), and inside `repartition` for the sections an edit touched. **Every touched section rebalances, unconditionally** (2026-09-19): there is no "already fine" gate, because with λ = 0 the balance is idempotent — re-balancing unchanged content reports `changed = 0` and returns, so a gate saves nothing and can only freeze a stale partition on screen. This replaces the earlier rule (a measure-count or line-lock change rebalanced its section; a sub-measure edit held its divisions unless its section-final line fell below MIN_FILL — Max, 2026-09-17), under which only the MIN was ever checked: widening measures IN PLACE (note entry, the common case) tripped nothing, so a line compressed to fill 1.433 across 26 consecutive keystrokes while a fresh derive wanted another line from the 4th on, escaping only when FIT_MAX tripped the REPAIR loop — and undo then appeared to break its contract because the layout on screen had never been the one the content implied. Measured cost of dropping the gate on the sonata: ≤ 1.8 ms on the 139-bar movement against a 342 ms edit, and zero boundaries moved across a 16-edit battery (the feasibility bounds prune `dpPartition` to O(M·band·N), not its O(M²·N) worst case). Fixture `pageBalanceSubMeasureWiden`. The idle balance job is **gone** (2026-09-18): balancing to completion pre-paint left it unreachable, and it was a latent second authority. **Widths** (all three corrected 2026-09-18, each a real defect): the budget is *computed* from page geometry, `(pageWidth − marginLeft − marginRight) × 10` (`Renderer.pageBudgetW`) — never measured from a laid-out system, whose bbox carries ~222 units of ink overhang the per-measure naturals do not have, which made every fill ~1.2 % too small and disqualified legal partitions by fractions of a percent; the DOCUMENT's first line pays **no** leading clef+key block, because that block is drawn inside measure 0 and is already inside its natural width (double-counting it cost that line a measure); and the first line instead pays the **instrument-name indent** (`measureLabelIndent` — the first system's staff left edge, 1342–2009 units, up to 10.7 % of the budget), carried through `OwnerWidths` so a partition-cache restore cannot blank it. Computing the budget also removes the bootstrap: the partition no longer needs a laid-out page to exist. Sonata: line counts per movement 36/21/22/37, identical to castoff's own, reached by our function without consulting it; fills 0.73–1.04. The pinned doc renders with `breaks:'line'` (every `<sb>` honored verbatim, pages still broken automatically by height — probed; `'smart'` can override pins, `'encoded'` doesn't paginate) or `'encoded'` for docs with user `<pb>`. Reflow semantics (superseding the 2026-08-30 "never re-derived" ruling, which a pure-function partition satisfies better than a conservative repair did): the layout is a function of the document, so the same content always engraves the same way, undo restores it exactly, and a derive and an edit never disagree. The cost, accepted explicitly (Max, 2026-09-18), is that an edit may move more than its own line — appending a bar can re-flow its whole section, because "the last line must always be justified, not alternating between justified and stub depending on its context". Everything unprovable derives, loudly. This is the structural base for the Phase C system-splice (every boundary a hard anchor) — full design + status in [composer-page-splice-design.md](../composer-page-splice-design.md). **Manual line breaks (2026-09-11/12, `linebreakCommands.ts`, `render/lockmarks.ts`)** are the deferred "move-measure-between-systems" commands, with one ruling over everything (Max, 2026-09-12): **the layout never holds state the document cannot reproduce after a reload.** A lock is a plain `<sb>` in the live doc (no `data-hkl-section`; `model.setLineLockAt` / `hardBreakBefore`) and nothing else — it is a hard start and a reflow-section boundary by the existing rules, saves in the `.hkc`, exports as `<print new-system="yes"/>`, and the owner handles a lock change exactly like a measure insert, never a derive: `computeUserBreakSig` emits `lock:`/`sb:`/`pb:` entries and only an `sb:`/`pb:` difference still bails to derive; a `lock:` diff becomes `repartition`'s `edit` (added locks split their line), after which the ordinary carry/repair/section-balance runs. No natural is invalidated by a lock edit (an `examine` range is repaired without re-measuring); a pure lock edit's `changedRun` is the moved-line hunk (`partitionHunk`, `partitionOnly` to the splicer); an unlock is pin-removed-only (the partition stays; the render is a signature no-op). Alt+Shift+↓ locks the break before the cursor measure; whether the remainder before it then folds into the previous system is the balancer's call (merge rule / section rebalance), never a forced move: there is deliberately no directive that dissolves a soft start or keeps a line over-tight, no manual reflow command, and no Alt+Shift+↑ — under this rule a "pull" was exactly ↓ one measure later plus an unlock, because the document can say where a break MUST be, never where one must NOT be (dropped 2026-09-12). Undo/redo of a line-break command restores the exact pre/post partition from a `LayoutSnapshot` on the history entry (`Renderer.captureLayout`/`restoreLayout` → `replacePartition`, which re-baselines WITHOUT dropping the width caches, then a partition-only splice), guarded by the layout key — a zoom or page-scale change in between hands the decision back to the ordinary refill. Padlocks (`g.hkl-lock` in `g.page-margin`, drawn by the placement pass and after every splice; `syncLockMarks` on the no-op render) mark every system whose successor line starts at a lock; a click on one unlocks. **Zoom is visual-only**: the renderer's partition cache carries the owner's width caches (`OwnerWidths`: naturals + leading-signature widths, both in Verovio's logical units and identical across zoom presets and page scales) and a cache-hit restore hands them back — a round-trip leaves the owner knowing exactly what it knew (2026-09-12; before this the caches went cold and the balancer declined every section-final defect with 'naturals incomplete').
-
-**Page-view system splice (Phase C-B v1, `apps/composer/src/render/pagesplice.ts`)**: when a refill's edit is provably local, the affected systems are re-engraved in a windowed offscreen render (pin-anchored, page geometry, and the SAME `breaks` strategy the mounted pages were painted with — `Renderer.paintedBreaks()`, `'encoded'` whenever a line partition is pinned, so a replaced line is never engraved under different options than the page it lands in — with synthetic mRest leader + trailer lines absorbing the sub-document's score-start and end-of-score artifacts) and spliced into the mounted page SVGs — no full-doc `loadData` at all (~400–630 ms wall on the sonata vs 1.6–3.1 s full renders). The splicer is stateless (everything it needs lives in the DOM + the refill result) and gated hard: changed lines mounted (a placeholder page is mounted from the pre-edit layout, B5), spanner/`<ending>`-closed windows (closed over the spanners the DOM DRAWS as well as the post-edit ones: `Renderer` snapshots the extents by measure id after every render and both splicers union the pre-edit extent of every spanner hosted in the changed run — `expandForRenderedSpanners`, `render/splice.ts` — so deleting, retargeting or undoing a spanner that crosses a system break also replaces the line holding its continuation segment; 2026-10-18), and every touched page is re-placed by Composer's rule after surgery (nothing vertical is read from the window since the vertical-ownership plan's Phase 1, next paragraph); the replaced set is clipped to the band of MOUNTED pages around the edit and everything beyond it is deferred (marked stale, redrawn from the pins when it mounts, warmed by the idle extents job), so an edit costs what is on screen rather than what the changed run spans — anything the gates cannot prove falls back to the full refill render, loudly, with the reason on the splicer. Volta brackets ride inside `g.system` in page mode, so whole-system splices carry them for free. A signature-identical render request skips DOM work entirely (guards: interior scoreDef signature, credits in the head signature). No zone is excluded by NAME — line 0 and section-header lines were until 2026-09-01, and both proved to be stale guards rather than design (a header's title is drawn at the band the placement pass stamps on its system). Since Phase 3 of the vertical-ownership plan (2026-09-03) the window carries NO context lines: it is leader? + the spanner/`<ending>`-closed hunk lines + the courtesy stub? + trailer?, and nothing in it is compared against the mounted page. The live neighbours are still read, but only as DOM structure (which page a target line belongs to, the insertion anchor, the partition-drift detectors). The old live comparison — L−1 and L+1 re-rendered in the window and matched against the page on per-measure x/width plus signature glyphs — was a fallback that masked a subset of the splicer's own replaced-set defects and detected nothing the reference gate does not, so the stub rules ARE the cross-measure dependency list now, made executable (decisions.md 2026-09-03). Measured on the sonata at the default position: the window fell from 3 lines / 15 measures to 1 line / 7, its Verovio cost from 74.6 ms to 36.1, and a steady one-note edit from 173.6 ms to 127.7. Under `HKL_INDEX_CHECK` every splice is verified against an offscreen full render of the same pinned MEI — per-measure x/width, staff tops against the placement rule, signature glyph codepoints, and (Phase 3) a per-measure glyph-CLASS census plus a per-system RESIDUE census, the latter because Verovio draws a spanner's continuation segment across a system break as a direct `g.system` child, outside every measure, where a per-measure census could not see it go missing — and that gate now actually fails the run: its throw used to be caught into a status-bar string by `doReRender`, which is fixed (always logs, re-throws under the check). Pagination is owned too (`<pb>` pins + `breaks:'encoded'`, C-B2a). B2 (2026-09-02) made the replaced set a line HUNK — N old systems give way to M new ones, each placed on the page the owned pagination assigns it — so line-count changes (a new final line while composing, a line whose measures were all deleted), moved page starts, page collapses and the overflow cascade (a page's spilled tail moves onto the next page as a page-first splice; a full last page spawns a new page from the window's own page SVG; an emptied page is removed and the rest renumbered) all land as splices. Page legality is overflow-only, predicted from the placed extents after surgery and after every mount (measured cross-check under the flag). The repair covers a ONE-page document too (`paginationRepairable()`, not `paginationOwned()`): such a document pins no `<pb>` yet still paints `'encoded'`, which never paginates by height, so gating on the pin question made page growth unreachable from a one-page score — composing into an empty song never produced page 2 (2026-09-18, decisions.md). Since Phase 2 of the vertical-ownership plan (2026-09-02) the cascade runs on the model: a step is a DOM TRANSPLANT (the spilled systems and their titles move to the head of the next mounted page, both pages re-placed by the rule — nothing rendered), a CREATED page when the last page spills (the spilling page's own shell, page number bumped — except when that page's head is the TITLE block, i.e. the 1→2 growth of a one-page score: a created page is never a header page, and page 1's shell cannot supply the running page-number header, so the new page is appended as a placeholder and DRAWS ITSELF from the pins, matching a derived page exactly), ARITHMETIC when the receiving page is a placeholder that cannot be mounted cheaply but whose lines' extents are known (pins move, pages marked stale, its fold predicted from the `ExtentsStore`, nothing drawn), and a PARK only when they are not; an idle EXTENTS JOB measures the unmounted pages after every render so parks become the exception. `Renderer.lastCascade` records the step kinds; the sweep's `parkedSteps` counter must be 0. The paper is fixed and the scale pinned at the box: a section header is a component with a reserved height in the page's vertical budget (a band above its system in the placement rule), so a page that no longer fits below its headers spills into the same cascade, its title travelling with the moved system. Since 2026-09-04 each page also DISTRIBUTES its slack within that budget (rule v2 — next paragraph). See [docs/composer-page-splice-design.md](../composer-page-splice-design.md).
-
-**Page-view vertical ownership (vertical-ownership plan Phase 1, `apps/composer/src/render/pagefit.ts`, 2026-09-02)**: Composer owns height the way it owns the partition and the pagination. The paper is fixed (the page box, one size for every page, the scale pinned at the box — drawn by Composer since 2026-10-08, `render/pageshell.ts`, in exactly a Verovio page's nesting) and its components are the page header (Composer's `g.pgHead`: the title block on page 1, the page number and running title elsewhere, at Verovio's own header geometry, its ink bottom recorded analytically from the nominal em-boxes so no host ever measures a header), the systems (extents: content above the first staff line and below the last, from the post-processed bbox; the staff frame from the staff-line path text) and the section headers (a fixed reserve band above the system holding the header's measure). `Renderer.placePage` places every system on a page by ONE rule — first content top = header bottom + 2 units (5.25 units without a header); then `max(below, F) + G + max(above, F)` between systems with F = 6 and G = 4 units (a unit is 80 SVG user units at `unit: 8`, zoom-invariant) — on every mount and after every splice, stamps `data-hkl-band-top` on header systems for the title injector (which only draws), and records extents per line in the `ExtentsStore` — the pagination's source of truth (Page-view pagination, below). Verovio's own stacking is never read: a derived page and a spliced page agree by construction; the splice window is ONE page with no `<pb>` pins; the fold is predicted by `foldIndex` over the read-only placement (`placeFor`) against the paper bottom from the inner `definition-scale` viewBox; and under `HKL_INDEX_CHECK` the reference gate checks absolute staff tops against the rule applied to the reference render plus the live page's self-consistency (fixtures `pagePlacementOwned`, `pagePlacementTextTopped`, `pageSpliceNoPbPins`). The rule restates Verovio 6.3's clearance, so pages moved only where Verovio's text metrics and the browser's bbox disagree (sonata: 92 of 116 systems within 1 unit of the old placement, max 5.1). Since Phase 3.5 (2026-09-03) that ownership extends to the STAFF: `alignStaffRows` spaces a system's staff rows a whole number of device pixels apart RELATIVE to the system's first row (pure intra-system geometry, so identical in any render of the same music), and `placeSystems` carries the crisp PHASE — it nudges each system so its first row lands on the device grid, and the rows below follow. That nudge is applied ONCE per system, as the emitted translate; positions accumulate down the page UNSNAPPED and the distribution level is solved on unsnapped geometry, so no system's rounding is ever another system's premise (2026-09-04 — it had been, and two units of noise became a two-pixel staircase). Both run BEFORE `measureExtents`, so placement reads geometry nothing will move again and `above` is a property of the music rather than of the render's origin; the separate post-placement `snapStaffLinesToGrid` pass no longer has anything to do on the page path (it still crisps scroll view, the frame and the inset, which are single-system and margin-parity aligned). Before that, placement ran first and the snap moved staves afterwards, invalidating the extents placement had just consumed — a page was `snap(place(x))` while re-measuring said `place(snap(x))`, which is why the reference gate needed a 30-unit tolerance. It is now 10 (one device pixel): per-measure relX, per-measure width and placement self-consistency are exactly 0 across the sonata, and only the staff top still deviates, never by more than a pixel. Since 2026-09-04 the clearances above are MINIMUMS and each page then distributes what it has left (**rule v2**): the gaps that equalize are the inter-system gaps AND the gap between the last system and the bottom of the content column, their sum being fixed by the systems' own heights, so an ordinary page divides it evenly — the level is the L solving `Σ max(gap_k, L) + L = C` rather than `C / n`, because a gap already wider than L by its own clearance cannot be compressed. It is capped at `maxGap` 14 units, which is what leaves a page too sparse to fill looking sparse rather than smeared across the paper; the page-header → first-system gap is not an ordinary participant but a last resort, opening only when the level clamped at `maxGap` AND the bottom gap still exceeds it, to at most `topMax` 10 units, and never on page 1 (whose first system keeps its distance to the title block). The running footer lives in the BOTTOM MARGIN (`FOOTER_Y` in main.ts), so the content column's bottom is the column's bottom and adding or removing a footer cannot change pagination; the fold limit is that same line, which is what Verovio's castoff always used. Pagination is judged on the minimum-clearance placement and only then is the page distributed, so `placeSystems` takes the distribution as an argument that `placePage` and the reference gate pass and the fold predictors do not. The consequence to respect: placement is NON-LOCAL within a page, so any path that changes a page's system set must re-place the whole page. Reasoning: decisions.md "Composer owns height", "Composer owns the STAFF, not just the system" and "Rule v2: a page distributes its own slack"; the staff-quantization residual is in lessons.md.
-
-**Page-view pagination — pages assembled from measured systems** (`render/pageassembly.ts` `PageAssembler`, `render/systemrender.ts`, `render/pageshell.ts`, `render/pagefit.ts` `firstFitLines`; design in [composer-pagination-design.md](../composer-pagination-design.md), approved by Max 2026-10-08). Composer owns which systems share a page, and no page is ever painted from a guess. Verovio is asked for ONE thing: a line window (`renderLineSystem` — the system splicer's recipe: leader/trailer stubs, the window closed over spanners and endings, the next line's first measure as a pinned courtesy stub when it begins a clef/key/meter change, the view's staff subset minus the line's hidden staves, `breaks:'encoded'` with the line's own `<sb>` pins). On a load the assembler renders line 0 into a hidden page shell, runs the post passes on it where it sits, measures its extents into the `ExtentsStore`, and asks whether the next line fits under the MINIMUM placement (rule v1 — the fold is judged on v1, never on the distributed page; a user `<pb>` is a hard page start); when it does not, the page is closed — placed by rule v2, revealed, its furniture injected (`onPageMounted`), its page start committed with `PageLineBreaks.setPageStarts` — and the next page opens with that system moved in. Synchronous until the page holding the cursor closes, then idle slices (40 ms); `renderer.assemblyPending()` is part of `renderPending`. First-fit is a pure function of the extents (push and pull are one predicate read in both directions), so a page's membership depends only on the lines before it and the document reproduces its own pages. Every expected page has a sized placeholder card from the first paint (the same document's previous count on zoom or page scale, the cached pagination's count, or page 1's estimate made inside the synchronous burst); the open page takes over its placeholder in place and is hidden (`score-page-building`) until it closes placed, and the count is corrected only when the assembly ends with a different total. A closed page out of the mount window is PARKED (its root detached, a sized placeholder left), and mounting re-attaches it — no render; an unbuilt card stays blank until the assembly reaches it (the scroll path never builds synchronously; the cursor's page, an edit and the export do). A ZOOM renders nothing (2026-10-09): the inner SVG is identical at every zoom, so `PageAssembler.rescale` resizes the shells, re-runs the post passes and the placement on every built page (parked pages on mount) and scales the kept scroll with the cards; the partition comes back from the DOM and the zoom-independent width cache (`rescaleForZoom`), and the ledger says `rescaled`. Page scale still assembles (its geometry changes the layout budget). The mount pump, the mount window and the IntersectionObserver are unchanged in shape. An edit: the splicer re-engraves its hunk into the pages the refill's provisional (membership-carried) pagination names, `placePage` records the hunk's new extents, and `repaginateFrom` runs first-fit from one page BEFORE the first touched page over the store (a touched line that starts its page may have shrunk enough to return to the page before; nothing further back can change) and rebuilds ONLY the pages whose membership — start AND end — came out different, trimmed from both ends of the old and new page lists; the pages past that window are kept, renumbered when the window's count changed — systems move between shells with their glyph defs (`moveSystems`), pages are created or removed, later pages renumbered, and only the rebuilt pages re-placed. Since the second round of 2026-10-08 ("Every edit is a splice") that rebuild is `PageAssembler.applyPartition(oldLines, changedLineIds, touched)`, of which `repaginateFrom` is the no-render case: the refill always returns a partition (a page break or section header is carried like a lock; a signature range is measured in chunks), and when the splicer's hunk path refuses — or the change is a page break with no line change — the lines the changed run reaches are engraved one window each into a staging shell, measured there, and every other system is reused; pages first-fit from one page before the first affected line. The section balance is bounded to the suffix of a touched section from the first line of the edit's page, so no page before an edit ever moves. Setup apply redraws the shells' headers and re-fits from page 1 (`refreshPageHeaders`); the mount hook re-runs on every page a splice touched. Add instrument is the one all-lines edit and still goes through the (lazy) assembly. Pages the splice deferred (outside the mounted band) are marked for rebuild and re-rendered from their committed lines on mount, followed by a first-fit from them. Gone with it: the castoff pass and its page starts, the pinned `breaks:'encoded'` page paint, the "toolkit holds the page layout" warm reloads, stale pages, the idle extents job and the overflow-only cascade (`foldOf` / `overflowingPage` survive as assertions). The reference gate draws the Composer header onto its Verovio page so the two hosts anchor alike. Gate: the suite's universal `assertPaginationFirstFit` (every mounted page neither overflows nor leaves room for the next page's first system) and the `pag_*` fixtures (hide-empty no hole, shrink pulls, grow pushes, user `<pb>`, zoom round-trip, spill-then-pull-back).
-
-Post-render SVG processing: each note's `<g class="notehead">` is moved to last sibling so the colored notehead draws on top of the (black) stem; CSS forces stems/flags/accidentals/ledgers/dots black (only the notehead carries lattice color). All strokes use `shape-rendering: geometricPrecision` (consistent stem widths, correct bar-line overhang, zoom-safe). → see decisions.md "geometricPrecision over crispEdges".
-
-Cursor overlay (`apps/composer/src/cursor/cursor.ts`) is a separate `<svg>` appended in `#score` after each render, sized to match Verovio's dimensions. Two modes:
-- **Editing** — bar/box at the active voice's cursor. Insert mode anchors to the RIGHT edge of `flat[cursor-1]`; overwrite draws a translucent box around `flat[cursor]`. Empty-voice / at-placeholder cases anchor on the active staff. Shows a `V<n>` voice label (or `T`/`E`/`P` in the tempo/expr/pedal layers).
-- **Playback** — per-voice bars, editing cursor hidden. Toggled via `setPlaybackMode`.
-
-The cursor resets its refs in `attach()` because Verovio's `loadData()+renderToSVG()` rewrites `#score` innerHTML, orphaning the prior overlay. → see decisions.md "Stale DOM refs across innerHTML rewrites".
-
-## Input model (keyboard-driven)
-
-`apps/composer/src/input.ts`. Keyboard-first (Speedy-Entry flow, Finale bindings); a single mouse handler (`click.ts`, see [Click-to-position](#click-to-position-appscomposersrcclickts)) places the cursor:
-
-| Key | Action |
+| Area | Modules |
 |---|---|
-| `1`–`7` | duration (1=64th … 5=quarter … 7=whole). Held keys → chord; none → rest. Held keys with `|alter|>±3` filtered before commit. |
-| `.` | cycle dots (0→1→2→0) on current note/chord/rest. Overflow auto-ties across the bar. |
-| `=` | toggle tie on current note/chord (per-pitch; see [Ties](#ties)). |
-| `↑`/`↓` | switch voice / layer; voice stops land on the target's note at the same moment (`setVoicePreservingMeasure`, see above). The cycle is a stop list built from the instrument table (`buildVoiceStopList`): `tempo → (per instrument: its voices, its expr layer between/above its staves, its pedal below — 2-staff instruments only)`. A single piano = `tempo↔1↔2↔expr↔3↔4↔pedal`. Expr + pedal are per-instrument; tempo is score-global. Entering an expr/pedal/tempo layer snaps to the **nearest existing mark** (not moment 0). |
-| `←`/`→` | move cursor within voice. In an expr/pedal/tempo layer, plain `←`/`→` step the layer's stops (every mark, plus a placeholder at each onset without one — see [Expression layer](#expression-layer-dynamics-hairpins)); **`Ctrl+←`/`Ctrl+→` jump mark-to-mark** (skipping placeholders; each coincident mark and each hairpin END is a stop). |
-| `Home`/`End` | jump to voice start/end. |
-| `Backspace` | voice mode: delete element before cursor (skips placeholders; removes a measure if a delete empties it across all voices, unless it's the only one). Selection mode: delete-and-exit (no clipboard write). |
-| `Delete` | voice mode: delete element after cursor. Selection mode: delete-and-exit. |
-| `Insert` | toggle insert / overwrite. |
-| `Space` | toggle playback; bound at top of dispatcher with `preventDefault`; works in any cursor mode. |
+| Wiring | `main.ts` (startup, the `window.__hkl_composer` handle, render orchestration, injected page text, transport), `input.ts` (key dispatch, `InputState`), `click.ts`, `keybindings.ts` (help catalog) |
+| Model | `model/index.ts` (`ComposerModel`), `cursor-location.ts`, `voice-index.ts`, `insertion-plan.ts`, `placeholders.ts`, `ties.ts`, `tuplet-ops.ts`, `measure-ops.ts`, `clef-slot.ts`, `empty-flags.ts`, `multirest.ts`, `note-elements.ts`, `restfill.ts`, `ticks.ts` |
+| Control events | `expressions.ts` (dynamics, hairpins, text, tempo, tstamp math, `<hkl:config>`), `pedal.ts`, `slurs.ts`, `articulations.ts` |
+| Render-clone rules | `notation/`: `accidentals.ts`, `beams.ts`, `measurerests.ts`, `restlayout.ts`, `parts.ts`, `sectionRestart.ts`, `slurSides.ts`, `slurStems.ts`, `unstack.ts`, `staffpos.ts`; edit helpers `retune.ts`, `scTranspose.ts` |
+| Renderer | `render/render.ts` (`Renderer`: toolkits, both views, post-processing, mounting) |
+| Scroll view | `render/splice.ts` (`ScrollSplicer`), `render/scrollbox.ts` |
+| Page view | `render/linebreaks.ts` (`PageLineBreaks`), `balance.ts`, `sigranges.ts`, `pagesplice.ts` (`PageSystemSplicer`), `pagefit.ts` (placement, `ExtentsStore`), `pageassembly.ts` (`PageAssembler`), `systemrender.ts`, `pageshell.ts`, `pageheader.ts`, `hiddenstaves.ts`, `lockmarks.ts` |
+| DOM layout passes | `render/textlayout.ts`, `instrgap.ts`, `barlines.ts`, `tupletnums.ts`, `slurlayout.ts`, `tielayout.ts`, `curves.ts` |
+| Overlays | `cursor/cursor.ts`, `cursor/expressionCursor.ts`, `cursor/refNote.ts`, `selection/selection.ts`, `selectionOverlay.ts`, `clipboard.ts` |
+| Playback | `render/playback.ts`, `render/performance.ts` |
+| Files | `save.ts` (`.hkc`, MusicXML export, PDF), `importMusicXml.ts`, `files.ts` |
+| Dialogs | `setupDialog.ts`, `instrumentsDialog.ts`, `sigDialog.ts`, `clefDialog.ts`, `tempoDialog.ts`, `tupletDialog.ts`, `pickupDialog.ts`, `helpDialog.ts`, `ui/textEntryModal.ts` |
+| Undo | `history.ts` |
+| `packages/notation/src` | `mei-build.ts` (the `.hkc` dialect), `heji-render.ts`, `render-presets.ts`, `music-font.ts`, `notation-theme.ts`, `verovio.ts`, `chord-mei.ts`, `scroll-follow.ts`, `accidentals.ts`, `coord-spelling.ts` |
 
-Arrow keys suppressed during playback (`isPlaybackActive` short-circuits navigation).
+## Bridge
 
-**Statusline** `#composerStatus` — the sole feedback surface for keystroke actions. `setStatus(text, kind)` toggles a CSS class; four kinds, picked by intent (does it mutate the model?), not message content:
-- `error` (red) — failures + blocked attempts / no-op reasons.
-- `state` (blue) — genuinely persistent context that must survive keystrokes: `held: A3 C4`, pending hairpin/slur/tuplet prompts, selection-span readout.
-- `action` (purple) — confirmation of a real **undoable model edit**; every purple call site must accompany one (audited). Non-mutating "actions" (layer/mode switch, nav, zoom, view-filter, rewind, save/load/export, copy, cancels) are `info`, not purple.
-- `info` (gray) — `Ready.` default, transient progress, benign "nothing happened", and all non-mutating feedback.
+`packages/bridge/src/protocol.ts` is the source of truth for both message
+unions (with doc comments). The channel is `'hkl-composer-bridge'`
+(`PROTOCOL_VERSION` 1), built on `BridgeChannel` by `createHklBridge()` /
+`createComposerBridge()`. HKL also runs `'hkl-analyzer-bridge'` and
+`'hkl-orchestrator-bridge'`; all three are created in
+`apps/hkl/src/bridge/hkl-side.ts`.
 
-`clearStatusIfTransient()` fires at the top of every non-modifier keydown and clears **everything except `state`** (and the resting `Ready.` default) — info/action/error are all transient. State (blue) survives the keystroke and clears via its own context change. Held-keys echoes clear via a source-tagged `clearStatusIfHeldKeys()`. Voice switching emits NO statusline message (the top-bar `#voiceIndicator` shows voice / E / P / T live). Connection events go to the `#connStatus` badge only. → decisions.md "status-message taxonomy".
+- **HKL → Composer**: `hkl-hello`/`hkl-bye`; `held-keys` (an array of
+  `ResolvedNote`); `player-note-struck` (performance mode); `playback-position`
+  (`{meiId, timeMs, voice?}` — a null `meiId` with a voice clears that voice's
+  bar); `playback-finished`; `tuning-changed`; `hkl-layout-state`;
+  `footprint-changed`; `import-score` (a transcription handed to Composer).
+- **Composer → HKL**: `composer-hello`/`composer-bye`/`request-state`;
+  `play-score` (`{events, pedalEvents?}`) / `stop-playback`;
+  `start-performance`/`stop-performance`; `set-reference-note` /
+  `set-score-ref`; `layout-req-changed` / `apply-layout` (tuning mode only);
+  `composer-active-instrument` / `composer-instruments`; `composer-score` /
+  `composer-cursor` / `composer-playback` / `composer-zoom` (HKL's read-only
+  Composer-view frame).
+- **`ResolvedNote`** `{q, r, pname, accid, oct, midi, colorHex, lightColorHex,
+  velocity}` is fully resolved by HKL from `(q, r)` and the tuning, so
+  Composer never needs the tuning to render. `accid` is count-form (`''`,
+  `'s'`, `'ss'`, `'f'`, …, `'n'`), unclamped. `colorHex` is the ink variant
+  (light theme), `lightColorHex` the light-source variant (dark theme).
+- **Handshake**: Composer answers `hkl-hello` with `composer-hello` only on a
+  fresh connection (answering every hello loops). The `#connStatus` badge
+  reads `no HKL`, `HKL connected`, or `standalone` after 1 s without a hello.
+- **HKL's broadcasts are event-driven**, from the effects fan-outs, and
+  signature-diffed; `held-keys` is suppressed while HKL is playing Composer's
+  score, or Composer would record its own playback.
+- **Reference notes**: `set-reference-note` carries the note before the
+  cursor (sent only when there is one). `set-score-ref` carries the
+  key-signature tonic at the cursor's measure — or the sounding measure while
+  a transport runs — on the Pythagorean spine nearest C4
+  (`computeSongKeyRefAt`, `cursor/refNote.ts`). It is derived, never stored,
+  and diff-gated. In HKL a Composer-sourced selection wins only in the `piano`
+  outline mode; with "Sync to Composer" on, a score ref clears the selection.
+- **Composer view in HKL**: `composer-score` carries the cursor instrument's
+  MEI; `composer-cursor` carries a render-agnostic `VoiceCursorAnchor` that
+  both sides draw with the shared `computeVoiceCursorRect`
+  (`@hkl/shared/cursor-geom`), so HKL's cursor matches Composer's exactly;
+  `composer-playback` does the same for playback bars.
 
-### Click-to-position (`apps/composer/src/click.ts`)
+**HKL-side playback** (`hkl-side.ts`): a lookahead scheduler plays `play-score`
+through the engine. `playbackOwnedKeys` means only keys playback lit are
+unlit; `playbackVoiceCount` refcounts each coordinate, and every light is
+unlit exactly once, even when a later event re-articulated the voice's audio.
+Finish and abort sweep whatever is still held (`sweepOrphanedVoices`, which
+warns — reaching it means a scheduling bug).
 
-A single `click` listener on `#score`. **Every** click resolves — a global nearest-target search (point-to-bounding-box distance, 0 when inside) over three first-class target kinds; the closest wins:
-- **note/chord/rest glyph** → voice mode; cursor lands *on* the glyph (`= flat index`, which the INS cursor draws at its right edge) when the click is at/right of its left edge, else *before* it (`index − 1`). A click in the gap between two notes resolves to the left note either way.
-- **empty-measure staff region** (a `<g class="staff">` with no real glyph — placeholder-only) → voice mode at that measure's start stop (resolved via the staff's xml:id → measure → first voice on that staff → `getMeasureStartCursor`).
-- **dynam/hairpin/pedal/dir/tempo control** → its expression-family layer (`onSelectLayerElement` → `selectLayerElementById`).
+## Document model
 
-Replaced the old point-hit-test (which no-op'd on whitespace clicks). Each click logs a `[click]` line (coords, candidate counts, chosen kind/distance, action) for debugging. → decisions.md "Click-to-position: global nearest-target".
+`ComposerModel` (`model/index.ts`) holds a live MEI `Document` (DOMParser XML)
+and mutates it directly. A new document (`mei-build.ts`) is one measure, a
+braced grand staff (staff 1 treble, 2 bass), two layers per staff, a `<tempo>`
+in measure 1, and `<meiHead><extMeta><hkl:config>` (namespace
+`https://hexkeylab.com/ns/mei`) holding the tuning requirement, the dynamic →
+velocity map and the document flags (`heji`, `ignore-color`, `page-scale`).
+`.hkc` is this MEI, saved as is.
 
-## Playback orchestration (`apps/composer/src/render/playback.ts`)
+**Identity.** Every `<note>` carries `data-q`/`data-r` (its lattice cell — the
+pitch's source of truth); every note, staff and measure has an `xml:id`, set
+with `setAttributeNS(XML_NS, …)` so `[*|id]` selectors resolve. MEI ignores
+unknown attributes, so `.hkc` opens in other viewers.
 
-`buildPlayback(model)` walks every measure of every voice; each chord/note emits a `PlaybackEvent` with cumulative `atMs` per voice and `durationMs` from `elementDurationTicks` at the score tempo (`<tempo>` in measure 1, fallback 120 BPM). Rests/placeholders advance the clock but don't emit. Tied chains coalesce: `@tie="i"` emits ONE event with the chain's total duration; `m`/`t` pieces don't re-attack. Events sorted by `atMs`.
+**Instruments and voices.** `Voice` is a flat index over all instruments.
+`instrumentTable()` (cached) walks the head `<staffGrp>`: a root group with
+direct `<staffDef>`s is one implicit "Piano"; otherwise each nested group is
+an instrument of one or two staves whose `<label>` is its name and sole
+identity (HKL resolves the name against its instrument dropdown, falling back
+to Piano). Each staff has two voices (layers 1, 2); staff `@n` is global.
+Everything routes through `staffForVoice`, `layerForVoice`, `instrumentOf`,
+`voicesForInstrument`, `totalVoices`, `totalStaves`. `addInstrument` promotes
+the implicit shape to nested groups and `removeInstrument` demotes back; the
+staged Instruments dialog applies its edits on Setup Save
+(`reconcileInstruments`). Single-instrument documents are byte-identical to
+before multi-instrument support.
 
-`startPlayback` (in `main.ts`): snapshot editing cursor → send `play-score` → `setPlaybackMode(true)`. On each `playback-position`: look up voice via `findElement(meiId)`, call `setPlaybackPosition` (editing cursor model state untouched — bars are pure overlay). On `playback-finished`/`stop-playback`: `finalizePlaybackEnd()` exits, restores the snapshot.
+**Loading** (`replaceDocument`) normalizes: braces and `bar.thru` only on
+groups of two or more staves (`normalizeStaffGroupConventions`), mark places
+(`normalizeMarkPlaces`), expression defaults, placeholders (which strips any
+stored `<mRest>`), ties.
 
-### Performance mode — input-driven playback (`apps/composer/src/render/performance.ts`)
+### Cursor and stops
 
-The **inverse** of clock-driven playback: the player performs the part live on the Lumatone and the per-voice bars advance as the matching notes are struck — for recording polished scrolling-score videos to one's own performance. Single-instrument only (`model.instruments().length === 1`); Composer sends **no** `play-score` — audio is the live instrument.
+Each voice has a cursor into its **flat stream**, `flatChildren(voice)`
+(cached, invalidated by DOM mutation): every stop across all measures. Cursor
+`c` means "past `flat[c]`" — the insert bar draws at `flat[c]`'s right edge.
+Stops are the layer's `chord`/`note`/`rest`/`fTrem`/`bTrem`, a tuplet's wrapper
+plus its inner stops, and the measure **wrapper** (the `<measure>` element):
 
-**Transport mutual-exclusion** (clock playback and Performance mode never run together):
-- **Space** (`spaceTransport`): stops whichever transport is running; if neither, starts clock playback.
-- **Shift+Space** (`shiftSpaceTransport`): starts Performance mode **only if neither** transport is running; otherwise a no-op (Space is the stop key).
-- The **◑ `#btnPlay` / ◉ `#btnPerform` buttons** are *switch-to-this-transport* controls (deliberately NOT the same as the keys): each shows the STOP glyph while its own transport runs, and pressing one while the other is active deactivates the other and activates this one (e.g. Play during performance → stop performance AND start playback).
-- → decisions.md "Transport mutual-exclusion: keys stop-or-start, buttons switch".
-
-- **Wire**: Composer sends `start-performance`/`stop-performance`; HKL forwards every live note-on as `player-note-struck { ResolvedNote }` (gated to perf mode, suppressed during a `play-score`; emitted from `apps/hkl/src/midi/handler.ts` via `broadcastPlayerNote`).
-- **Matcher** (`PerformanceMatcher`): built from `buildPlayback(model)` (reused for per-voice ordered attacks, sounding coords post-8va, tie-chain coalescing, rest-skipping) — filtered to `notes.length > 0`, grouped per voice, same-onset attacks merged into one step. Each step holds the expected notes as identity keys. A step expects only the notes that **attack** on it: a chord member tied in from the previous chord emits no attack (`buildPlayback` coalesces it into its predecessor's duration), so it is absent from the expected set and the player advances by striking the new members alone.
-- **Match identity** = exact frequency, expressed as `(note name, octave)` + color (`pitchKey = noteName(q,r) | keyOctave(q,r)`; name/octave via `@hkl/shared`, color from the written `<note>`'s `@color` for expected / `ResolvedNote.colorHex` for played — both are `darkColorHex(q,r)`, octave-invariant). The expected color is looked up **by octave-invariant lattice class** `(q mod 3, r)` — an octave being `q ± 3` at the same `r` — never by position among the element's `<note>` children, because `buildPlayback`'s `event.notes` do **not** zip 1:1 with them (a tie continuation is absent; a partial-tie chord splits into several same-onset events that each restart at index 0). A sounding coord with no written note at its class (a string harmonic, a trill's alternation cell) gets `color: null` = *any color*, so an underdetermined color degrades to a pitch-only match instead of a never-matching one that would wedge the voice. Fixture `perfPartialTieChord`. Distinguishes enharmonic/comma variants in Equal/JI; in the duplicate-key modes **Pythagorean (`P`) / Semiditonal (`D`)** a `freqAt` fallback additionally accepts any same-pitch variant.
-- **Strict matching**: a voice advances only when its current step's full set has been struck since it became current; voices advance **independently** (melody runs ahead of a held bass); a struck note matching no current-frontier voice is silently **ignored** — it corrupts no state, but it also advances nothing.
-- **Earliest onset wins** (2026-09-20): one strike may satisfy several voices, but only those whose pending step shares the **earliest onset** among the voices that would match it (`Step.atMs`, compared for ordering only). Two voices expecting the pitch at the *same* onset both take it — they converge on one real key press, which is what a shared note between voices *is*. A voice expecting it *later* does not, so playing bar 1 no longer consumes the beat-4 entry of a voice that hasn't come in yet. This is the measure gate carried down to onset resolution, and it is the within-measure residue of the bug `perfLateVoiceDormant` pins at measure resolution. Deliberately a **tiebreak, not a gate**: a lone matcher still takes the strike whatever its onset, so nothing is rejected merely for arriving out of written order (a tuplet grid against a straight one, a spread voicing). The stricter alternative — a global onset gate letting only voices at the earliest *pending* onset match at all — was rejected for exactly that: it converts conflict resolution into rejection and invents new stalls. Implemented as a dry-run pass over the listening voices followed by a commit pass at the minimum onset (satisfying mutates, so it can't be match-and-undo). Fixtures `perfEarliestOnsetWins` (verified to fail without the tiebreak), `perfSameOnsetUnisonBoth`.
-- **INVARIANT — the score is performed correctly, in order; a deviation HALTS the follow, by design** (Max, 2026-09-20). Performance mode exists so the score follows a *recorded take*. A missed or wrong note means the take is discarded and re-played, so halting is the **desired** behavior, not a robustness hole: it surfaces the mistake. The explicit rejection is auto-recovery/resync — a matcher that quietly re-syncs after a deviation would let a wrong note the player didn't notice pass unseen, which is strictly worse than stopping. "Stall recovery" is playing the note that should have been played. Note the halt is total and intended: a stalled voice holds `currentOcc()` back, so every other voice's later steps stop listening at the next barline and the whole follow stops. **Do not propose recovery, resync, tolerance or soft-failure behavior for this, and do not weigh a design against how it degrades under a dropped note — that path is closed.** → decisions.md "Performance mode halts on deviation, by design".
-- **Measure gate — voices are expected only where they exist** (2026-09-17): the **current measure** is the measure of the earliest *pending* step across unfinished voices (pending, not last-played, so the instant m19's last note is consumed the current measure becomes m20 and a voice entering on the m20 downbeat is already listening when that downbeat is struck — including simultaneously with another voice's). Two rules follow from it: **`listening(V)`** = V's pending step is in the current measure — the only voices a strike is matched against; **`barVisible(V)`** = V has content in the current measure (`model.isMeasureEmptyInVoice`, which counts *written* rests as content, so a voice notated tacet for a bar keeps its bar and only a truly empty layer — invisible placeholders / `<mRest>` — hides it). They differ on purpose: a voice can be on stage without being listened to, having already consumed its notes in that measure. Within a measure nothing changes (all its voices expected, independent advance, one strike still satisfying every voice holding that note). Steps carry a measure **occurrence** ordinal, not a measure index — assigned in one pass over `buildPlayback`'s globally atMs-sorted stream, incrementing whenever the measure changes — so a repeated measure is a distinct occurrence and the gate is repeat-safe. Before this, the matcher discarded `atMs` and kept no position at all: a voice entering at m20 was matchable, and drew a bar, from m1, and so was the far side of every mid-piece rest. Fixtures `perfLateVoiceDormant`, `perfVoiceRestGapHidesBar`, `perfWrittenRestKeepsBar`.
-- **Ornaments — collapse + deferred advance** (2026-09-20): `buildPlayback` expands a trill/tremolo into N alternation attacks whose count derives from `TRILL_NOTE_MS`, an audio constant, so requiring N strikes made *leaving* an ornament depend on the player matching a nominal trill speed. The matcher **collapses the run to one step** satisfied by a single strike of **any** constituent (upper-auxiliary starts are normal practice). Detected two ways: structurally — the same `meiId` at more than one onset is `emitAlternation`'s signature and nothing else produces it — and from the model (`<trill>` `@startid`, `<fTrem>`/`<bTrem>` ids), which also catches an ornament short enough to expand to a single attack.
-  That leaves the real problem: when the note **after** the trill is one of the trill's own pitches (a resolution — common), no pitch-only rule can separate "still trilling" from "moved on"; a listener uses timing, which this matcher deliberately has none of. So the decision is **deferred** rather than guessed. When the post-ornament step is satisfied *entirely* by strikes drawn from the ornament's pitch set **P**, its advance is **owed** instead of emitted: the bar stays on the ornament and the voice stops advancing (**the cap**), though its notes keep accumulating — the cap suppresses *advancing*, not *matching*, so a following chord mixing P and non-P members is immune to intra-chord arrival order (dropping its P member would leave it permanently one note short). The shadow **lifts** on the first match — in **any** voice — whose strike is outside P **and** whose step is at or after the owed step's onset (`Step.atMs`, compared only for ordering, never measured). Both halves carry weight: outside-P rules out a trill continuation, at-or-after rules out an unrelated voice's *earlier* note, which would otherwise jump the bar mid-trill. With no such evidence the bar simply **lags** — never runs ahead, the benign direction given the bar trails by design — so a single-voice texture lags to the next non-P note, the irreducible cost of having no clock. The mechanism is **inert** unless the resolution lies wholly inside P, since otherwise its non-P member must be struck and the advance lands exactly there. An owed advance flushes once every voice is finished, or a voice ending inside a shadow would park a note short for good. The measure gate and the shadow hand off to each other rather than one subsuming the other: the gate keeps a voice deaf only while some voice still owes the trill's measure. Fixtures `perfTrillSoloLags`, `perfTrillLiftsAtResolution`, `perfTrillChordCapDFirst`/`FFirst`, `perfTrillResolutionNonP`, `perfTrillFinalResolution`, `perfTrillCrossBarHandoff`.
-- **The bar TRAILS the player** (2026-09-14): on an advance it parks on the **right edge of the step just completed** — the same `+CURSOR_HPAD` offset the voice cursor uses after entering a note — rather than on the left edge of the step now expected. So it tracks what was played instead of pointing at what's next, and, the score being played in order, its x never decreases, which keeps the follow-scroll monotonic. Only the pre-first-strike position is a left edge (nothing played yet → the bar sits before the voice's first note). Carried as a `PlaybackBarEdge` (`'left'` = sounding now, clock playback / `'right'` = just played) on `setPlaybackPosition`, `computePlaybackBarRect`, and the `composer-playback` bridge + overlay `bars` entries (absent → `'left'`), so HKL's Composer-view frame and the OBS overlay draw the identical bar.
-- **Reaching the end does NOT exit** (2026-09-14): the last step consumed leaves every bar parked past its voice's final note (at the end of the score there are no pending steps, hence no current measure, so the measure gate above freezes every bar rather than hiding any) and only says so once (`'End of score — Performance mode still on'`). Exit is manual — the ◉ button, Space, or switching transports — so finishing a take never yanks the view back to the pre-performance cursor. `restoreEditingTransport` still does that restore, on the manual exit.
-- **Known v1 limits**: a run of pure-P notes right after a trill can put the bar up to one element further ahead than the player when the shadow lifts (bounded by the cap); harmonics (sounding ≠ written by a non-octave interval, so no written note carries the sounding class — matched on pitch alone) and play-ahead of the current frontier aren't followed; mid-piece start isn't supported (whole score from the top). A voice that ends mid-piece now loses its bar once the current measure has no content for it — the 2026-09-14 "finished voice keeps its bar" behavior survives only at the end of the score.
-- → decisions.md "Performance mode is input-driven playback".
-
-### Hidden staves and multimeasure rests (2026-09-11)
-
-Both are renderings of the empty-cell flags `data-hkl-hide-empty` / `data-hkl-multirest` on `<staff>` (see the Ctrl+H / Ctrl+M bullet above); neither touches playback, the flat cursor index, or the saved document.
-
-**Multimeasure rests — render-time collapse over render units** (`model/multirest.ts`). In a view with exactly ONE staff after the single-part filter (a one-staff instrument's part, or a one-staff score) a **run** of ≥2 consecutive measures whose cell is flagged and still empty is engraved as one measure holding `<multiRest num="N"/>` (Verovio native; `multiRestStyle: 'block'` in `BASE_OPTIONS`). The representative is the run's first measure: it keeps its `xml:id`, `@n`, control events, `@left` and its `<staff>`/`<layer>` ids (click and cursor geometry map rendered ids back through them), takes the last measure's `@right`, and its layer 1 becomes the `<multiRest>`; measures 2..N are removed from the render clone only. A run never crosses a hard boundary — same parent (`<section>` or the same `<ending>`) and adjacent siblings (any `<scoreDef>`/`<sb>`/`<pb>` between two measures breaks it), no section start or pickup inside, interior measures without control events *that concern the staff* (by `@staff`, or by the staff of the event's `@startid`/`@endid` note — a piano slur or dynamic under a viola rest is invisible in the viola's view and does not break its run; an event with neither, a score-global tempo say, concerns every staff) or `@left`/`@right`, and no such `@tstamp2="Nm+…"` spanner covering an interior measure — so the line-break owner's hard-start ids and user-break signature stay truthful and a run is one rendered measure that can never straddle a system. `ComposerModel.renderUnits(viewStaves)` (cached per view × docVersion; `unitsForView()` for the current render view, which the renderer stamps via `setRenderView`) is the **single source of truth**: the collapse pass (last step of `applyRenderConventions`) *takes* its runs, and every consumer maps measure indices through it — `Renderer.renderIds`/`renderIdForMeasure` (page/mount lookups, the HKL cursor frame's `meiId`, scroll-into-view), the cursor overlay (`resolveVoiceCursorAnchor` anchors an interior measure on the representative and offers no placeholder ids for a collapsed one), the selection overlay, and `serializeRangeForRender`, which **snaps its range outward to unit edges** so no window can cut a run (the collapse pass throws under `HKL_INDEX_CHECK` if one does). Navigation: ←/→ (`input.ts moveCursorOverUnrendered`) step over the interior measures' wrapper stops — the flat index stays a pure model quantity, the run is one stop at its first measure; a measure selection grows and shrinks by whole units (`selection.ts moveMeasureMovable` — encoding: `movableSide 'unset'` = exactly the anchor unit, anchor at its first measure and movable at its last; `enterMeasureSelection`/`promoteBeatToMeasure` snap likewise; `cursorAtMovable` exits past the whole run); Backspace/Delete on the collapsed stop removes the whole run when every member is empty on every staff (`deleteAtCursor`), else skip-left. **Splicing works with runs** (no derive): the refill snaps its changed and redraw runs to unit edges, interior measures carry natural width 0 so a run's width rides on its representative, `repartition` carries and moves line starts by unit (a line can only start at a unit's first measure), and section balancing treats a unit as one atom (`balanceSectionLines`); the page splicer snaps its changed run and window likewise. Only the scroll splicer is gated (`renderScroll`: a one-staff *document* with an active run re-engraves in scroll view; part views never spliced there). Fixtures `mrest_*`, `mrest_toggle_splices`.
-
-**Hide empty staves — per-system substitution** (`render/hiddenstaves.ts`, `Renderer.substituteHiddenStaffSystems`; since 2026-10-08 the load renders every line's window with its hidden staves already removed — `renderLineSystem` — so substitution only ever meets a system the splicer imported with every staff). Page view only. A staff is omitted from a system when **every** measure of that system carries the flag for it (`hiddenStavesFor`; the top staff is kept when all would hide). Verovio's own optimizer cannot do this — `ScoreDefOptimizeFunctor` is note-driven and score-global (a staffDef hides on a system when no measure on it has a `<note>`; `condense`'s `auto` default even switches itself on for any scoreDef with two group symbols), so `condense` is pinned to `'none'` and Composer does it per system: wherever a page's SVG lands in the DOM (`finishPageMount`, the non-virtual `renderPage` loop, and the page splicer's `postProcess` for imported systems — the index-check reference host goes through the same wrapper) each system with a non-empty hidden set is re-rendered ALONE from a window MEI built by `buildWindowMei(model, wLo, wHi, starts, leader, trailer, null, ∅, view ∖ H)` — the splicer's own recipe with leader/trailer stubs, the window expanded over spanners and endings (`expandForSpannersOnce`/`expandForEndings`, extra measures on the right pinned as their own line) so a tie or slur into the system keeps its segment — rendered on `spliceTk` with the live window options, and its `g.system` swapped in (glyph defs merged) BEFORE `postProcessRendered` and `placePage`, so every height the vertical rule measures is the reduced one and pagination folds accordingly. `filterToStaves` drops a grand staff's brace and `bar.thru` when one staff of the pair is filtered away (Verovio draws a brace on a lone staff otherwise; Finale's default). `instrgap.ts` applies the inter-instrument rule to the instruments actually present on the system. Navigation: `Renderer.isCellRendered(mi, staffN)` (page view; true for unmounted pages and in scroll view) feeds `moveCursorOverUnrendered` (←/→ pass over a hidden staff's wrapper stops), `cycleVoice` (↑/↓ never land on a hidden staff) and the post-toggle snap (`snapCursorOutOfHiddenCell` via `hooks.afterRender`). Rescue paths: scroll view (never hides), a note entered into a hidden cell (drops the flag — the staff returns by splice), or a page-view selection spanning the hidden bars + Ctrl+H. PDF export is the page DOM (`mountAllPages`), so print inherits the result. Fixtures `hide_*`.
-
-**MusicXML** (`importMusicXml.ts`, `save.ts`): import reads `<staff-details number="k" print-object="no"/"yes">` ranges (Finale's encoding of hidden staves; no `@number` = every staff of the part) onto empty cells as `data-hkl-hide-empty`, and `<measure-style><multiple-rest>N` of a ONE-staff part onto its N cells as `data-hkl-multirest`; export writes both back the same way (multiple-rest is part-wide in MusicXML, so never for a two-staff part). The Sonata (Max's Op. 12, Finale v25 export) hides both piano staves for m95–103 this way. Fixture `phase5_musicxml_flags_roundtrip`. `<notations><articulations><breath-mark>` → `<breath>` after the slot (2026-10-17 — dropped until then: the sonata's four, IV mm. 75 and 100 in both parts, never arrived; a mark on a rest is skipped, as the editor refuses one); export writes `<breath-mark/>` back from `data-hkl-anchor`. Fixture `breath_musicxmlImportBreathMark`. `<accidental parentheses="yes">` → `@hkl-paren-caut="true"` on that note, bare or chord member (2026-10-18 — the importer read only `<alter>`, so all 23 of the sonata's parenthetical accidentals were dropped); export does not write `<accidental>` yet, so the flag does not survive a MusicXML round-trip. Fixture `phase5_musicxml_paren_accidental`.
-
-## Save / load / export (`apps/composer/src/save.ts`, `files.ts`)
-
-- **`.hkc`** — canonical. MEI XML string incl. `data-q`/`data-r`. `hkcBlob` serializes, `loadHkcFromFile` parses → new `ComposerModel`.
-- **Where files go — `files.ts`** (2026-09-28). `save.ts` builds bytes and names; `files.ts` decides the destination, **per action** (nothing probes localhost at page load):
-  - **Local host up** (the overlay host's `/fs/*` bridge, client `@hkl/bridge/local-fs.ts`; wire protocol + security gates in `apps/overlay-host/src/fs-bridge.mjs`, → [overlay.md](overlay.md#local-file-bridge--fs)): Load / Import open a **native dialog the host spawns** and read by path; Save writes **in place**. Firefox has no File System Access API, so this is the only way a Composer tab can learn a file's path or write outside Downloads.
-  - **No host** (or a host with no dialog tool): the browser `<input type=file>` + a download.
-  - **Binding (`DocFile`: `path`, `mtimeMs`, `dir`, `base`)** is app state, never MEI (a path is machine-local). `applyLoadedDocument` resets it (so an HKL transcription import is a new, unbound doc); the opener sets it after the swap. Host Load → `path`+`mtime`: Save = `write ifMtime` (409 → `window.confirm` → unconditional overwrite). Host Import MusicXML → `dir`+`base` only: first Save = `write unique` of `<dir>/<base>.hkc` → `<base> (1).hkc`, … (never the source), then bound. Unbound → Save = Save As: host dialog suggesting `<base or title>.hkc` in the last-used dir (`localStorage.hklComposerLastDir`). Browser-loaded files keep their name for the download.
-  - **Names**: `fileBaseFromTitle` (reserved chars → space, collapse, trim dots; empty → `Untitled`) whenever there is no file base — downloads were `hkc-<timestamp>` before.
-  - **Exports** (PDF, MusicXML) always go through the host's save dialog (suggesting `<base>.<ext>` beside the doc) and are never written silently — after an Import the suggestion is the source's own name, and a lossy export must not replace it unasked. The dialog comes before `make()`, so a cancel costs no PDF render.
-  - One file op at a time (`exclusive`): a second Ctrl+S while a dialog is up answers "already in progress".
-  - Keys: **Ctrl+S** save, **Ctrl+O** open `.hkc` (`InputHooks.fileCommand`, browser default suppressed). Toolbar: **Save As…**, `#fileName` (bound file, full path in the tooltip).
-  - Tests: `test/composer-test` FILES group drives the real buttons/keys against an in-page `LocalFs` mock (`__hkl_composer.__setLocalFs`); `__testReset` sets the client to `null`, so no fixture can reach a live host. `test/fs-bridge/run.mjs` is the host gate + real-host end-to-end.
-- **`.musicxml` export** — `<score-partwise>` with **one `<part>` per instrument** (`<part-list>` of `<score-part>` named from each `<label>`; part-local staff/voice renumbering — a single-instrument doc degenerates to one part), per-voice `<note>`/`<chord>`/`<rest>`, `<backup>` to align voices, `<notehead color>` for lattice color, per-measure meter/key/clef, ties and tuplets. `divisions: 16` (or `LCM(16, tuplet @num values)` when tuplets present).
-
-  **Tempo markings** (2026-09-09): every `<tempo>` is exported, at its own moment, into **every part** — matching Finale, which writes a tempo direction into each part, and matching what the render clone draws (`notation/parts.ts`). It used to export only `model.getTempo()` — the document's FIRST `<tempo>` — into the first part, so on the sonata all 17 mid-piece markings ("Poco più mosso", "Tempo I", …) were dropped on the way out. Directions are written at the measure head, so a mark off beat 1 carries an `<offset>` in divisions (the same encoding the importer reads back since 2026-09-08). `<metronome>` is written only where the score SHOWS one (`data-hkl-mm-shown`), while a bpm always travels as `<sound tempo>` — so a DAW gets the tempo even where nothing is drawn, and a round-trip reproduces the `showMm` state instead of forcing the metronome on. A mark with neither text nor a visible metronome (the seed document's playback-only tempo, an imported hidden `<sound tempo>`) becomes a bare `<sound>`, since an empty `<direction-type>` is invalid. Gradual rit./accel. and "a tempo" export as **italic `<words>` with no tempo value**: MusicXML has no gradual-tempo element and italic words are what Finale writes — they re-import as per-part expressive text, visually identical but no longer gradual marks (`.hkc` is the lossless format). `model.setTempo` is now dead code and `getTempo()` unused. Fixture `phase5_musicxml_tempo_every_part`.
-
-  **Coverage** — measured on the sonata by `test/composer-inspect/phasec/cb-xmlexport.js` (feature counts model vs XML), `cb-xmldur.js` (every measure of every part sums to its budget in every voice; no dangling spanner endpoints) and `cb-xmlroundtrip.js` (export → re-import → compare the model against itself). As of 2026-09-09 the sonata round-trips with **one** difference, and it is a representation shift the format cannot express: 20 `<space>` elements come back as `<rest visible="false">` — MusicXML has a single encoding (`<forward>`) for invisible time. Everything else is at parity: 9 099 notes, 922 slurs, 513 tuplets, 504 tied notes, 484 articulations, 150 dynamics, 135 expressive texts, 18 tempi, 15 double bars, 13 hairpins, 4 fermatas, 3 trills, 3 tremolos, 2 ottavas, 2 voltas, 1 repeat pair, 1 pickup, 3 section boundaries. Exported: notes/chords/rests, ties, tuplets (brackets on rests included), beams, stems, slurs, articulations, fermatas, trills with their wavy-line extender and accidental, tremolos (single and fingered), diamond noteheads, lattice color, dynamics, hairpins, expressive text, pedal, ottavas, tempo, key/meter/clef (mid-piece included) with the cut / common meter SYMBOL (`meter.sym` — a cut-time score used to export as a plain 2/2), pickups, repeat barlines, double bars, voltas, instrument `<part-abbreviation>` from each group's `<labelAbbr>`, and manual page / system breaks as `<print>` (one-way: the importer does not read `<print>` back, but an external editor honours it).
-
-  Getting there needed five fixes beyond the missing emitters, each found by measurement rather than reading:
-
-  - **Beamed tuplets were dropped whole.** `gatherEventsFromDoc`'s tuplet branch filtered the tuplet's CHILDREN for note/chord/rest, and `regroupBeams` puts a beamed tuplet's members inside a `<beam>` child — 500 of 513 tuplets and 1 453 of 9 099 notes, plus 6 more inside an `<fTrem>`, for an exact 1 459-note shortfall. `collectSlots` now flattens `<beam>`, `<fTrem>` and `<bTrem>` at both levels, carrying the beam and tremolo roles out with the slots.
-  - **Pickups exported as full bars.** The per-voice trailing-rest fill padded every measure to `meter.count`; `measureTicksOf` now takes the measure's own budget from `model.measureTicksAt` (which is pickup-aware) and a reduced measure is marked `implicit="yes"`.
-  - **Ottava pitches were an octave off.** MEI stores the WRITTEN pitch under an `<octave>` (the importer shifts a bracketed note when it builds the span); MusicXML's `<pitch>` is the SOUNDING pitch with `<octave-shift>` saying how it is printed. `unshiftOttavaPitches` undoes the shift before emission — without it the export sounded wrong and a re-import shifted a second time.
-  - **Directions are interleaved into the note stream**, not parked at the measure head with an `<offset>`. `<offset>` is advisory and a reader may ignore it — our own importer deliberately does for `<octave-shift>`, whose stream span decides which notes get rewritten, so a head-parked ottava contained in one measure spanned nothing and was dropped. Each staff's directions ride in the first voice of that staff with content, with a residual `<offset>` (possibly negative, which MusicXML allows) when the anchor falls between two onsets.
-  - **Slur numbers are assigned by DOCUMENT position, not musical time.** A measure is written one voice at a time separated by `<backup>`, so a slur ending late in voice 3 appears after one starting early in voice 1, and a reader pairing numbered spanners in document order saw the same number opened twice. `streamKeyOf` orders by (measure, voice-index-in-part, tick) and the interval colouring runs on that.
-
-  Also corrected: `<note>` children were out of DTD order (`<dot>` before `<type>`, `<staff>` before `<notehead>`); a tuplet beginning or ending on a rest got no bracket tag (134 of the sonata's); an empty voice was written as a measure-long rest rather than omitted; and a part silent for a whole measure now writes one `<rest measure="yes">` so its timeline cannot drift.
-
-  **Still not exported**: grace notes (the model has none), and a section's TITLE text. The title is not un-representable — Finale writes movement titles as page-level `<credit>` (`<credit page="10"><credit-words … font-size="20.4" halign="center">II</credit-words>`, alongside `<movement-title>`, the composer credit, and a page-number + running-title credit per page) — but a `<credit>` is anchored to a PAGE and absolute coordinates, with no link to a measure, so reading or writing one means mapping pages to measures and telling a movement title from a header by size and repetition. Declined as fragile (Max, 2026-09-09): the *structure* survives regardless, since a section boundary is a mid-piece `light-heavy` barline that the importer reads back as a section start, and the importer SYNTHESIZES the numeral (II, III, IV…) rather than reading it — which is why the sonata's titles come out right, our convention and Finale's numbering agreeing. Only a title typed by hand (`Ctrl+Shift+H`) is lost, coming back as its Roman numeral. HEJI commas remain unrepresentable (W3C #263).
-
-## View modes + theme
-
-Two top-bar `<select>`s (persisted to `localStorage`): **view mode** (`#viewModeSelect`, Page/Scroll — both `svgViewBox: false`, `scale: 100`, differing in `pageWidth`/`pageHeight`/`breaks`) and **theme** (`#themeSelect`, Light/Dark/Transparent).
-
-- **View-mode toggles restore stashed DOM when possible.** `renderComposer` stashes the outgoing mode's container nodes (detached real nodes, so the scroll splicer's refs survive) keyed on serialize output + zoom + pageScale; switching back with an unchanged document re-attaches them instead of re-engraving (~0.7 s vs multiple seconds on the sonata). A key miss forces a full engrave — never a splice into DOM the other mode owns. `renderComposer` returns `fresh: boolean` so main.ts skips the page-only injections + crisp snap on a restore. Cache cleared by `forceFullRerender()` (zoom, page scale, view filter, doc load) and the string-entry `render()`. → decisions.md 2026-08-29 (Tier-1 render-latency fixes); levers doc: [composer-render-perf.md](../composer-render-perf.md).
-- **Scroll view: the splicer owns the SVG box and the system's vertical frame.** Verovio emits the root `<svg>` + nested `svg.definition-scale` viewBox once per full engrave, sized to the content, and `pinExactScale` derives the root's px dims from it; the scroll splicer edits measures *inside* that box, so it has to maintain it. `render/scrollbox.ts` captures the box↔content offsets at each full render (`padRight` is exactly 290 user units) and re-fits the **width** from one last-measure bbox per splice — O(1), exact in both directions, so a delete shrinks the extent rather than ratcheting. Measuring `g.system` per keystroke would be correct and O(document), i.e. the cost splicing exists to avoid. Vertically, `dy` comes from **staff-line geometry** (`staffFrameOf`), not the anchor's ink bbox — the anchor is the unchanged left-context measure `lo - 1`, or the score start when `lo === 0`, so editing bar 1 makes it the *edited* measure and an ink-derived `dy` is garbage. When the sub-render seats its staves lower (the range wants headroom the system lacks) its frame is the correct one: the fresh run lands at `dy = 0` and every other direct child of `g.system` — untouched measures, the brace, the system's left line, milestones, downstream volta brackets — is migrated by `dyFrame`, matching a full re-engrave exactly. Adoption is **grow-only**: a shallower sub frame says nothing about the document (the sub-render only sees `[cLo..cHi]`), so the persistent frame wins and the fresh run is seated onto it. A change in *inter-staff spacing* is not a uniform displacement — the staff-spanning verticals must lengthen — so disagreeing per-staff deltas refuse to a full re-engrave until `render/instrgap.ts`'s per-row machinery is reused here. → decisions.md "The scroll splicer owns the SVG box, and adopts the system's vertical frame" (2026-09-13); guarded by `window.__test.assertScrollSystemCoherent()` and the `scroll*` fixtures that **enter scroll view before editing**.
-- **Scroll view: the score start belongs to whichever measure is first.** Verovio draws the system-initial clef, key and meter INSIDE the first measure's `g.staff` and gives that measure the staff lines reaching back to the system origin; every later measure is drawn without them. The furniture is therefore a property of the POSITION, not of the measure — so any splice whose run starts at index 0 has to re-engrave the incoming first measure, and the run is widened to cover it (`lo === 0 && nN > 0` → `hiNew = max(hiNew, 0, nN - oN)`; the `countDelta` mirror then carries the OLD run back over old index 0 so the outgoing one is removed, and `nN - oN` handles the prepend direction, where the DEMOTED measure must lose its furniture). The anchor splits there too: the sub-render's anchor is its own first measure (frame at the origin) while the persistent anchor must be `this.order[0]`, the measure carrying the origin's frame TODAY — the same id for an ordinary content edit at measure 0 and a different one exactly when the edit changes which measure starts the score. Reading both from `newOrder[0]` would anchor the incoming first measure on the position it occupies while still second. Found via Max's report (2026-09-17): backspace at the very beginning of a piece with a pickup deleted the pickup and the prefix/suffix diff produced old `[0..0]` / new EMPTY — remove one measure, import none — so the promoted measure kept its mid-system rendering and the score opened on blank paper, the brace and the system's left line (system-level children, untouched by measure surgery) stranded at the origin. Page view was unaffected because its splice unit is the SYSTEM, so the first line is re-engraved whole. `assertScrollSystemCoherent` was all Y checks and saw none of it; it now also asserts the first measure carries a clef and that the run-up from the system edge to the staff lines is narrower than the first measure. Fixture `scrollPickupDeleteKeepsScoreStart`.
-- **Theme changes repaint in place — no re-render.** `setTheme` is a pure state setter; the handler calls `Renderer.applyThemeToRendered()`, which re-runs `@hkl/notation` `applyNotationTheme` (fully reversible: dark/transparent tag `#score` `data-notation-theme="dark"` so the shared notation-theme CSS recolors staff/ink/HEJI and noteheads inline-paint to their `data-light-color` variant; light removes the tag + inline paints) — on the `#score` container AND on every mounted page wrapper / spliced system, each of which `postProcessRendered` tags on its own (a page mounted under dark and left tagged after the switch kept the dark ink rules live on that page and painted its noteheads white until the next re-render, 2026-09-05; fixture `engr_themeLightSwitchClearsPageTags`) plus the `.theme-transparent` class toggle (drops all background fills, for export/overlay/HKL import). Fresh renders still theme via `postProcessRendered`; a stashed mode's DOM re-themes on restore if the theme changed while stashed. → decisions.md "Dark notation theming is a shared, light-is-no-op mechanism" + 2026-08-29.
-
-## Build / bundling
-
-Composer is its own workspace package (`@hkl/composer`) with its own Vite config; Verovio WASM is CDN-loaded (not bundled). Under `pnpm dev` it's served at `/composer/` on the shared `:5170` origin (same origin as HKL — required for the bridge). Build via `pnpm -r build`.
-
-## Document Setup modal (`apps/composer/src/setupDialog.ts`)
-
-A native `<dialog>` opened by the "Setup…" button:
-- **Title** → `<titleStmt><title>`; **Composer** → `<persName role="composer">`.
-- **Key signature** → `<scoreDef key.sig>` + `<scoreDef mode="major|minor">` (defaults `'major'`). A **minor** checkbox switches displayed labels major↔relative-minor (the `sig` value is shared); drives `computeSongKeyRefAt`, i.e. the reference note HKL centers on. MusicXML emits `<mode>`. `setKeySigAt` diff-elides on the **(sig, mode) pair**: a same-sig mode flip (D major → B minor) writes `mode` alone onto the override `<scoreDef>`, so the tonic moves without rendering a redundant courtesy key signature.
-- **Time signature** → `<scoreDef meter.count meter.unit>` (num 1–16, denom 1/2/4/8/16).
-- **Tempo** → `<tempo>` first child of measure 1 (`mm`, `mm.unit`, `mm.dots`, `midi.bpm`, optional text).
-
-Applied in dependency order on save (title/composer/keysig/tempo first, time signature last as it can trigger truncation). Time-sig change confirms only when the new meter is *smaller* AND the score has content.
-
-## Measure nav-stop model
-
-Each (voice, measure) contributes cursor stops mirroring the [tuplet](#tuplets) pattern: a **wrapper** stop (the `<measure>` element) and one stop per real content child (tuplets inline their stops). Placeholders (`<space data-placeholder>`) are never stops — the fill point of a partial layer is simply "past its last content". A synthetic **past-end** stop sits at `flatChildren.length` for a voice whose last measure is partial; inserting there appends a measure via `appendMeasure` (when the last measure is full, "past its last content" already overflows into a new measure, so no past-end stop exists — `getVoiceLength`). Inline `<clef>`/`keySig`/`meterSig` children are never stops and never shift a flat index (a clef-only measure is an empty measure to the cursor).
-
-| Layer state of Mₖ | Stops emitted |
+| Measure k, for this voice | Stops |
 |---|---|
-| Empty (any) | `[wrapper]` (doubles as delete target — unless the measure holds a clef change) |
-| Partial (content + space) | `[wrapper, ...content]` ("past last content" = the fill point) |
-| Full (content = cap) | `[wrapper, ...content]` |
-| Collapsed (Mₖ₋₁ full + Mₖ has content) | `[...content]` (wrapper omitted) |
-| Past end (synthetic, last measure partial) | one stop at index `flat.length` |
-
-**Wrapper collapse** (`shouldEmitWrapper`): emit Mₖ's wrapper iff (a) Mₖ is empty for this voice, or (b) k>0 AND Mₖ₋₁ is *partial*. Otherwise omit — three collapse cases (M₁-with-content; Mₖ-with-content + Mₖ₋₁-full; Mₖ-with-content + Mₖ₋₁-empty) each make the wrapper redundant with an adjacent stop.
-
-**Insertion per stop kind:**
-
-| Stop | `loc.withinIdx` | Effect |
-|---|---|---|
-| Wrapper | `0` | insert at layer front, "before measure" |
-| Content | element position in `contentChildren` | standard insert |
-| Fill-anchor | `contentChildren.length` | insert at back, extends partial measure |
-| Past-end synthetic | fresh empty layer, `0` | applier creates the missing measure |
-
-The user picks extend-vs-enter explicitly via fill-anchor-of-Mₖ (extends) vs wrapper-of-Mₖ₊₁ (enters) — distinct visual positions (before/after the bar line); no boundary re-aim heuristic.
-
-**Backspace** (mirrors tuplets):
-- On fill-anchor of an empty tuplet → delete the tuplet.
-- On wrapper of an empty measure → delete the measure (unless it's the last).
-- Target is a placeholder / tuplet wrapper / measure wrapper → skip-left, no deletion.
-- Target is real content → delete it. Content-emptied measures are NOT auto-removed; user backs into the wrapper for the explicit second backspace.
-
-**Cursor rendering** (`cursor/cursor.ts`): wrapper / past-end stops use a fallback chain `findSigEndXForStaff` (past clef/keysig/timesig) → first content left edge → first placeholder left edge → `measure.rect.left + 30`. Y/height from the voice's single staff bbox (not the grand staff). "Before a wrapper" anchors INSIDE the wrapper's measure (`anchorAtMeasureLeft`). Past-end of a full last measure merges with "right of last content" (a full measure can't be extended). Fill-anchor anchors right of last real content (`anchorPastLayerContent`).
-
-The `<space data-placeholder>` children stay in the DOM so Verovio reserves measure width and accidental computation works. `normalizePlaceholders` keeps each layer's `<space>` summing to `measureTicks − realTicks(content)`. → see decisions.md "past-end has no +1 redundant index".
-
-### Autofill rests
-
-`autofillAllAndReanchor(voice)` runs from every mutation and navigation entry point. It walks every measure of the voice except the cursor's current one, calling `autofillMeasure`, a no-op unless the measure qualifies:
-- Skip if the layer has no real content (empty layers stay placeholders, still navigable).
-- Skip if no content in any strictly-later measure (don't pad the trailing tail).
-- Skip if already full.
-- Else replace trailing placeholder space with `decomposeBeatAlignedRests(startTick, remaining, timeSig)`.
-
-Autofilled rests are plain `<rest>` — to extend the measure later, the user deletes them. Triggering on every mutation (not just measureIdx change) catches the common abandonment pattern at insert time. Re-anchoring captures the cursor's target element before the sweep and snaps to its new flat-index after.
-
-## Ties
-
-**Intent vs. realization.** Tie state on each `<note>` splits in two:
-- **Intent** (persisted): `wantsForward` — wants to tie to the next same-pitch note in flat order. Encoded as `@tie ∈ {"i","m"}` OR `data-pending-tie="true"`.
-- **Realization** (derived):
-  - `@tie ∈ {"i","m","t"}` — MEI 5 value (no compound `"ti"`/`"it"`; Verovio rejects them).
-  - `data-tie-partner` — forward-only xml:id ref to the next chain member; terminals carry none.
-  - `data-pending-tie` + `<lv startid tstamp2>` — pending stub for unrealizable forward intent; renders as a laissez-vibrer arc. `@tstamp2` (`"0m+B"`) is half a beat past the note's onset, clamped to `count + 0.95`, with the onset from `ticksBeforeInLayer` (every layer child before the note's slot, tuplets and wrapper nesting included) and count/unit from `meterForMeasure` — the meter in effect at THAT measure. Recomputed on every `normalizeTies` (including load), so a stub saved with a stale end is repaired. Until 2026-10-17 it used the head meter and a flat sibling scan that skipped tuplets: sonata III m. 89's stub ended at 0m+1.5 for a note at beat 3 and Verovio dropped it with "lv … is ignored, since start does not occur temporally before end". Fixtures `lv_stubTstamp2UsesEffectiveMeterAndNestedTicks`, `lv_staleStubRefreshedOnLoad`.
-
-A note can hold `@tie="t"` (incoming terminus) AND `data-pending-tie` (outgoing intent) at once.
-
-**`normalizeTies()`** is the single source of truth, run after every structural mutation; idempotent:
-1. Snapshot per-note `wantsForward`.
-2. Strip ALL realization attrs and remove every `<lv>`.
-3. Forward-walk each voice: realize `@tie` + `data-tie-partner` where intent has a same-pitch successor; set `data-pending-tie` + `<lv>` where it can't. → see decisions.md "normalizeTies replaces ad-hoc tie passes".
-
-The forward walk uses a per-voice **`tieEventSequence`** (not `flatChildren`): a time-ordered list of atomic note/chord/rest events that **descends into `<tuplet>`s** (so a tuplet's first/last notes are real adjacency endpoints — ties crossing a tuplet boundary realize correctly) and emits no `<measure>` wrappers. A measure where the voice has zero content pushes a barrier slot so an empty measure still breaks a tie chain; measures with content never do, so cross-barline ties survive.
-
-- **`toggleTieOnCurrent`** (`=`) flips `wantsForward` on every note in the chord, then `normalizeTies` derives the result. Dropping demotes `@tie="m"→"t"` to preserve an incoming arc; `"i"`→cleared; pending→cleared. Setting adds `data-pending-tie`.
-- **Auto-tie-on-overflow**: `insertWithSplit` decomposes via `decomposeTicks` (greedy by 64ths through dotted forms), tags each piece with intent `@tie`; the caller's `normalizeTies` computes partners.
-- **Deletion**: just remove the element + `normalizeTies` — survivors re-tag consistently (i-t with `i` deleted → `t` demotes to pending; i-m-t with `m` deleted → i-t).
-
-**Planner + applier** (`planInsert` + `insertWithSplit`): one walker simulates the new sequence (inserted pieces + post-cursor items), assigning `(measureIdx, offset)`, enforcing three invariants — surfaced via `canInsertHere` (same planner, dry-run, so status matches apply):
-- **Measures never exceed length.** Content landing past the cursor's measure requires that target layer empty, else reject `Insertion would overflow into next measure's content.`
-- **Tuplets stay atomic.** A tuplet that won't fit moves wholesale to the next measure (gap autofilled later); if that target isn't empty, reject `Insertion would push tuplet across bar line.`
-- **Existing post-cursor items keep identity.** Only the fresh note splits with ties; existing items shift wholesale, preserving tie wiring (xml:id + `data-tie-partner` invariant under a DOM move).
-
-## Time-signature change: per-measure truncation
-
-`setTimeSig` → `truncateOverflowingMeasures()`. Per measure × layer:
-- Sum 64th-note ticks; find the FIRST overflowing element; `remaining = cap − running`.
-- `remaining > 0`: shorten its `@dur`/`@dots` to `decomposeTicks(remaining)[0]` (pitches/ties/color/coords preserved).
-- `remaining === 0`: drop the overflowing element via `orphanTiePartners + removeChild`.
-- Drop every element after the truncation point.
-
-Then `normalizePlaceholders()`, `setBarlines()`, and clamp each voice's cursor. Measure count preserved (no reflow); enlarging is a no-op modulo placeholder re-norm; crossing tied chains unwind via orphan logic. → see decisions.md "Per-measure truncation over rebuild-and-reflow".
-
-## Accidentals: HEJI-aware carry-state + render-time glyph injection
-
-`apps/composer/src/notation/accidentals.ts` runs `computeAccidentalDisplay` at serialize-time on the *cloned* doc (live doc untouched). Per measure × per staff (treble/bass independently; accidentals carry across voices within a staff):
-- Authoritative alteration is `noteAlter(note)` from `(q, r)` via `noteName()` (any magnitude; `@accid` token caps at ±3 as a display cache only). Falls back to `@accid` for coordinate-less imported notes.
-- Carry-state keys on the full **HEJI identity** `{alter, syn5, sept7}`, not just the integer alteration — with HEJI on, F♯ vs F♯↑ are distinct and both show; a comma-bearing natural is forced visible. With HEJI off, `syn5`/`sept7` stay 0 (classic conventional carry). Commas from `hejiCommasFor(mode, q, r)`.
-- **Cross-voice unisons draw the accidental on BOTH notes** (2026-10-05). Carry entries record `{id, tick, shown}`; a note whose identity matches an entry set at the *same tick* by a note that *drew* it draws too, instead of being hidden as redundant. Verovio superimposes identical accidentals at one Y across layers, so it still reads once — but it decides notehead unison by MIDI pitch, which it derives from each note's FIRST `<accid>` child: with only one voice carrying a HEJI placeholder row (`transformDocForHeji`) and the other `@accid.ges`, the placeholder token (`su` for a hook, `s` for any flat-family glyph) disagreed and the pair was drawn as two offset noteheads. → lessons.md "Verovio reads a note's pitch from its FIRST `<accid>` child"; fixtures `heji_unison_two_voices_hook` (visual), `heji_unison_two_voices_flat_arrow`, `accid_unison_two_voices_plain`.
-- Matched identity → hide via `@accid.ges`; tie destination → hide but update carry; else → show + update carry.
-- **Restatement after a tie into the bar** (2026-10-19). A tie destination that is the first event at its `pname:oct` in the bar (the tie crossed the barline) carries its pitch but marks the carry `tiedIn`: the next struck note there redraws its accidental when it matches the tied-in identity and that identity differs from the key signature (a tied-in diatonic note adds nothing; a chain drawn inside the bar elides as before). Fixture `accid_restate_after_tie` (visual).
-- **Same-position clash** (2026-10-19). Two different identities at one `pname:oct` and one tick — B♭5 + B♮5 in a chord or across layers — both draw (the key-matching one used to be hidden, leaving a bare notehead beside ♮B); a pre-pass collects the clashing `tick|pname:oct` groups. The carry after a clash is `ambiguous`: the next struck note at that position redraws whatever it is. Tie destinations in a clash stay hidden. Fixtures `accid_chromatic_cluster_chord`, `accid_chromatic_cluster_two_voices` (both visual).
-- **Not a rule: restating after a mid-bar clef change.** The carry keys on pitch, not staff position, so a clef change does not reset it; a restatement there is the user's explicit `P` parenthetical (Max, 2026-10-19).
-
-**No ±3 clamp** anywhere in capability — `(q, r)` is the source of truth; the entry/transpose/retune clamps are gone. `@accid` still stores a clamped canonical token as a display cache only.
-
-**HEJI / arbitrary-stack rendering** (`packages/notation/src/heji-render.ts`) — Verovio can't draw EHE glyphs (`@glyph.num` is a no-op in 6.x) and collapses repeated same-token `<accid>` siblings. Render-only workaround (never touches `.hkc`):
-1. **`transformDocForHeji`** (from `model.serialize({ hejiEnabled })`, after `computeAccidentalDisplay`): for any note needing more than one ≤±3 glyph, replace `@accid` with DISTINCT placeholder `<accid>` children (distinct tokens force a real horizontal slot each), tagged `@type="hklg-<seq>-<family>-<hex>"`. MEI order reversed from visual (MEI-first renders rightmost, nearest the notehead).
-2. **`injectHejiGlyphs`** (from `render/render.ts` after `renderToSVG`, gated on `document.fonts.load('BravuraText')`; since 2026-10-18 at the HEAD of `postProcessRendered`'s geometry passes — before marks, instrument gaps, slurs and ties measure, because a pass must measure the glyph that will be drawn, and a RE-RUN of the passes (a zoom rescales every mounted page) must find the obstacles run 1 found): redraws *every* accidental as a BravuraText `<text>` — placeholders become combined U+E2C0+ glyphs; native ones redraw at their SMuFL codepoint. Size `1000 × scale`. Vertical placement = `nativeTy + baselineCorrection(fontSize) + FAMILY_Y_OFFSET[family]·fontSize`; `ACCID_BASELINE_CORRECTION_SPACES = 1.6` is a deliberate, empirically-tuned downward house-offset (Verovio's default reads slightly high) that centers accidentals on the staff line, and `FAMILY_Y_OFFSET.septimal = 0.05` brings the septimal hook down to match. → decisions.md "deliberate downward house-offset", lessons.md (`getBBox` em-box trap).
-
-Net: accidentals are uniformly Bravura, rest of the score stays on Leipzig (Bravura rests read worse) — except the C-clef family, which Verovio draws from Bravura through the custom font `LeipzigHkl` (`packages/notation/src/music-font.ts`; decisions.md 2026-10-18). Comma math in `@hkl/shared` `heji.ts`, shared by lattice (with readability collapse) and Composer (full chain, no collapse). The HEJI toggle is a setup-dialog checkbox on `<extMeta>/<hkl:config> @heji`, independent of HKL's `hejiEnabled`, and **on by default** (2026-10-05): a missing attribute reads as on, only an explicit `heji="false"` (checkbox unticked, or MusicXML import) is off, so documents that never touched the checkbox come up with HEJI on. The suite's reset pins the shared fixture document OFF (`test/composer-test/lib/runner-core.mjs`) so the baselines authored under the old default keep their meaning; `heji_default_on` probes a fresh instance. MusicXML `<alter>` from `noteAlter` (lossy on commas; no MusicXML HEJI standard).
-
-## Intelligent beaming (`apps/composer/src/notation/beams.ts`)
-
-Computed at serialize-time on the cloned doc (live doc has no `<beam>` wrappers). `regroupBeams(doc, timeSig)` removes existing beams, re-wraps consecutive beamable elements (`dur ≥ 8`, not a rest) per beat group:
-- **Additive** (`hkl:beat-groups` present, e.g. 7/8 = 2+2+3): each group is N denominator-notes wide, laid end to end — **authoritative**, overriding the simple/compound/4-4 logic (no 4/4 downgrade). `TimeSigInfo.beatGroups` is read by `perMeasureTimeSig` (reset whenever a `<scoreDef>` touches meter) and consumed first in `beatGroupBoundaries`.
-- **Simple** (n/{1,2,4}): one denominator-note per group.
-- **Compound** (n/{8,16}, n divisible by 3, ≥6): three per group.
-- **4/4 special**: each half-measure (beats 1–2, beats 3–4) is a super-group **only when its members are exactly four eighth notes** (no rests, every `@dur === '8'`). 8 eighths → two beams of 4; mixed rhythms (e.g. `E E 16 16 E E E E`) fall back to per-beat groups. The two halves are evaluated independently.
-
-Rests and durations ≥ quarter break the run; singletons stay unwrapped; an element belongs to the group containing its startTick.
-
-## Clef changes render before the barline (`relocateInitialClefs`)
-
-A clef change effective at the START of a measure is a **measure-initial** inline `<clef>` (first child of a layer) in the live doc — that's where the model, cursor, and clef modal expect it. But Verovio draws a measure-initial clef *after* the barline, whereas the engraving convention (Gould) is *before* it. So a render-clone pass `relocateInitialClefs` (model/index.ts, run in both `serialize` and `serializeRangeForRender` before `regroupBeams`) moves each measure-initial `<clef>` to the end of the same staff+layer in the **previous** measure — a courtesy clef change before the barline. This is **global**: it applies to native clef edits and imports alike, and the live doc is untouched (clefs stay at measure heads for editing). Invariant: **a barline is never immediately followed by a clef.** In a range sub-render (splice), the first measure's leading clef belongs to the out-of-range (already-rendered) previous measure, so it is dropped (`dropFirstMeasure`) — and **folded into the range's head scoreDef** by `runningScoreDefContext` (2026-09-01: dropping without folding rendered the whole sub-render in the OLD clef; the page splicer's context check caught it by 11 units of ledger-line drift — fixture `rangeSerializeLeadingClefHead`). The relocation is also a **cross-measure render dependency**: an edit that makes a mid-measure clef measure-initial (or stops it being so) re-engraves the measure BEFORE the edited one, so both splicers extend their changed run one measure left when its first measure holds a layer clef (fixture `pageSystemSpliceRelocatedClef`). Guard: composer-test `phase5_musicxml_boundary_clef` asserts the render output has no measure-initial clef. **Section starts are the exception** (2026-09-06): a measure carrying `data-hkl-section-title` keeps its leading clef in place and `applySectionRestarts` folds it into the boundary run's third scoreDef (see [Engraving conventions](#engraving-conventions-on-the-render-clone-2026-09-0405)), so the movement's final barline carries no courtesy clef and the new movement simply begins in its clef (fixture `engr_sectionBreakNoCourtesyClef`). **Signature changes govern ranges** (2026-09-01, `render/sigranges.ts`): a clef, key or meter change re-engraves the measures from that point to the next change of the same kind on the same staff, in both splicers — the head/interior scoreDef key and meter parts and per-staff inline clef tags are captured with the per-measure signature baseline, and their differences become ranges unioned into the changed run before partition repair. Only structural changes (staffDefs, elements before the first measure, credits) still derive or full-render. Before this a clef edit re-drew one line and left the rest of the staff in the old clef, mid-piece key/meter changes derived the whole document, and a mid-piece key change in scroll view rendered nothing (fixtures `page{Key,Meter,Clef}ChangeSplicesGovernedRange`, `scroll{Key,Clef}ChangeSplicesGovernedRange`; probe `cb-clefprop.js`).
-
-## Bar lines + grand staff
-
-- A brace + `bar.thru="true"` mark a **grand staff** and nothing else (2026-09-04): they sit on the root `<staffGrp>` of an implicit two-staff (piano) document and on each nested two-staff instrument group. The root group of a multi-instrument score carries neither (barlines never run between instruments) and a one-staff group carries neither (Verovio draws a brace on any group that asks, a lone staff included). `normalizeStaffGroupConventions` (model) enforces this on every load — older files and pre-fix MusicXML imports braced the root — and the importer emits the shape directly. Fixtures: `engr_importTwoPartsBraceOnPianoOnly`, `engr_importSoloStaffNoBrace`, `engr_legacyRootBraceNormalizedOnLoad`.
-- `@right="end"` on the last measure → final thin+thick barline (`"dbl"` would render a regular double bar).
-- All strokes `shape-rendering: geometricPrecision`.
-
-## Engraving conventions on the render clone (2026-09-04/05)
-
-`serialize(forRender)` and `serializeRangeForRender` end with `applyRenderConventions` (model/index.ts): seven passes on the clone, never on the saved document, one module each under `apps/composer/src/notation/`. They run in every render path (page, scroll, splice windows, naturals, PDF), so a full render and a splice agree by construction.
-
-- **`measurerests.ts`** — `fillEmptyMeasureRests` (2026-09-22, Max: an empty measure frame on a staff is never wanted): every staff cell with no musical content — each layer only `<space>` placeholders / `<mSpace>` / nothing, plus at most a `<clef>` — gets its conventional rest in its lowest-numbered layer, replacing that layer's placeholders: an `<mRest>` for a full bar in ANY meter (Verovio centres the whole-rest glyph between the barlines), and for a pickup (`hkl:pickup-ticks`) a rest of the pickup's length, since a whole rest would claim a bar the anacrusis doesn't have: ONE rest whenever a single value up to two dots spells it (half, dotted quarter, double-dotted half …), else the fewest values largest first (`decomposeTicks`, moved to `model/ticks.ts` for this — the notation pass must not import the model at runtime). Beat-aligned rests were the first cut and rejected the same day (Max: two quarters for a half-bar pickup widened the bar and displaced its barline). The other layers keep their placeholders; the pass runs before `settleRestLocations`, which then pins the rest at its single-layer place (the default doc's two layers per staff make that the common case). **Cosmetic**: the live and saved documents keep their placeholders, so the cursor's measure-start stop, the empty-cell flags, playback, `.hkc` and MusicXML export are untouched; the cursor never stops on the rest (it reads the model), `<mRest>` renders as `g.mRest`, which click hit-testing never collects, and the pickup rests carry `data-hkl-cosmetic` (→ `data-data-hkl-cosmetic` via `svgAdditionalAttribute`), which `click.ts` skips — a click on either still lands on the empty staff. Ids derive from the layer's (`<layer>-mrest`, `<layer>-prest<k>`), so an unchanged cell renders identically. This pass is the **only** source of a whole-bar rest (2026-09-28): the document never stores an `<mRest>` — the MusicXML importer writes an empty layer for `<rest measure="yes"/>`, and `normalizePlaceholders` (`model/placeholders.ts`) strips a stored one from an older file on load or on any edit to its layer. A collapsed `<multiRest>` is left alone; `collapseMultiRests` runs later and clears the layer anyway. Fixtures `erest_empty_cells_whole_rest`, `erest_any_meter`, `erest_pickup_sized_rests`, `erest_pickup_split_fewest`, `erest_click_cosmetic_rest`.
-- **`restlayout.ts`** — `settleRestLocations`: in a two-layer staff, a visible rest whose span meets nothing visible in the other layer (hidden rests, `<space>`, `<mSpace>`, nothing) is pinned to its single-layer `@loc` (6 for whole rests and `<mRest>`, 4 otherwise), and a rest meeting exactly one identical visible rest is pinned too, so the pair coincides and draws as ONE rest. A rest against NOTES or CHORDS in the other layer (2026-09-06, sonata p. 17 m. 35) is kept ON THE STAFF when their predicted ink leaves room: voice 1's rest at the conventional raised spot (loc 6; whole rests hang from the top line) or higher until its glyph clears the other layer's ink top by half a location, voice 2's at loc 2 or lower against the ink bottom — heads from pitch + clef (`notation/staffpos.ts`, shared with `slurStems.ts`) with a head's ink box 1.1 locations either side of its centre (measured on the bare toolkit — the 0.5 first assumed left an eighth rest touching a chord topping at the middle line, Max's regression the same day), stems on the layer's side (an explicit `@stem.dir` wins, so `unifySlurStems` now runs first) 3.5 spaces long and at least to the middle line, a beam at its group's farthest stem, 2.5 locations for an accidental or an articulation; half and whole rests snap to a line; the clearance kept is half a space; a rest that would leave the staff by more than one location, a tremolo, an unpitched note or a rest in the other layer leaves the placement to Verovio, whose two-voice offsets are keyed to the other note's DURATION rather than its ink (m. 30's rest against a low half note sat inside the staff, m. 35's against a low quarter was lifted clear of it into its tuplet bracket). This rule also reaches rests inside tuplets and beams (placeholders excepted); the two others touch direct layer children only. Pinning `@loc` was chosen over converting the twin to `<space>` because it keeps every rest's element and xml:id: cursor, click hit-testing and the selection overlay work unchanged (a `g.space` has an empty bbox). Verovio ignores `@visible` on rests (the CSS hides the glyph) but honors `@loc`, and two rests at one `@loc` and moment render at one x (probed). Fixtures: `engr_identicalRestsMerge`, `engr_hiddenRestNeutral`, `engr_tupletRestOnStaffTwoVoice`, `engr_twoVoiceRestClearsChordHead`.
-- **`parts.ts`** — two part-aware rules keyed on the head `<scoreDef>`'s `<staffGrp>` partition (`instrumentStaffSets`, a DOM-only mirror of the model's instrument table; nested groups are the instruments, a flat root group the single implicit one). `settleFermataSides` (2026-09-09, backlog Layout "Fermata should default to the outside on a grand staff"): Verovio places a fermata above the note's OWN staff, so on a grand staff the lower staff's lands in the inter-staff gap (probed on the default piano: staff 2's fermata at y 451–471 between a staff 1 ending at 433 and a staff 2 starting at 488) — a fermata belongs outside the braced pair, so an instrument's TOP staff gets `@place="above"` and its BOTTOM staff `@place="below"`, where Verovio picks the inverted glyph (E4C1) by itself. Single-staff instruments, the middle staff of a three-staff one, and any fermata already carrying an explicit `@place` are left to Verovio. `duplicateTempiAcrossParts` is the other rule but does NOT run here — see [Pedal, tempo & expressive-text layers](#pedal-tempo-expressive-text-layers-phase-2). Fixture `engr_fermataOutsideGrandStaff`; whole-document probe `test/composer-inspect/phasec/cb-partmarks.js`.
-- **`sectionRestart.ts`** — `applySectionRestarts`: a section (movement) break draws neither a courtesy key nor a courtesy meter, nor restated instrument names (2026-09-04/05). On the render clone the boundary `<scoreDef>` is wrapped in a content-less nested `<section restart="true">` (the scoreDef must be the restart section's first child; the wrapper holds no measure, so every measure stays a direct child of the outer section — what the break/splice pipeline assumes). The restart makes Verovio drop the KEY courtesy (`SetCautionaryScoreDefFunctor(…, restart)` disables it for every staff the restart scoreDef does not name — so that scoreDef stays childless) and redraw clef + key + meter at the section's first measure. The METER courtesy is blanked separately: `meter.form="invis"` on the scoreDef plus a visible layer-level `<meterSig>` in layer 1 of each staff of the first measure. The LABELS a restart would restate are neutralised through `ScoreDef::ReplaceDrawingLabels`, which a restart applies to any `<staffGrp>` whose `@n` matches a head group: each labelled head `<staffGrp>` gets an `@n` (`hkl1`, `hkl2`, … on the clone when absent), and a SECOND scoreDef — in a second, plain nested `<section>` right after the wrapper — carries a matching `<staffGrp n>` with `<label>` = the group's `<labelAbbr>` text (or nothing) and a `<staffDef n>` naming the group's first real staff. The plain section matters: `ScoreDef::IsSectionRestart` is "the nearest preceding section milestone has `@restart`", so a second scoreDef inside (or right after) the restart section would itself count as a restart and its staffDefs would re-enable the key courtesy, while a staffDef naming no real staff (or none at all) draws a Verovio console warning; the restart flag itself persists until the next measure, so the labels are still replaced. `View::DrawLabels` reserves no width for an empty label, so the restart system draws exactly what any continuation system draws, with the same indent. **Clef** (2026-09-06): a section-start clef change — a layer-initial `<clef>` in the section's first measure, which `relocateInitialClefs` leaves alone there — is removed from the layers and written as `<staffGrp><staffDef n clef.shape clef.line/></staffGrp>` into a THIRD scoreDef in a third plain nested `<section>` after the labels (an attribute-less restart scoreDef is created when the boundary changes neither key nor meter). Why a later scoreDef: `ScoreDefSetCurrentFunctor::VisitScoreDef` runs the cautionary pass on the previous measure at the RESTART scoreDef (it only clears the key), and `VisitMeasure`'s system-break cautionary is gated on `!m_restart`, which stays set until that measure — so a clef arriving in a later scoreDef of the same run sets `DrawClef` on the upcoming staffDef with no courtesy ever drawn, and the restart's `REDRAW_ALL` draws it as the new system's clef (sonata II→III: the piano's right hand to bass clef, formerly a courtesy clef before the movement's double bar). → lessons.md "Verovio courtesy signatures", "A Verovio section restart restates the instrument labels — unless …". Fixtures: `engr_sectionBreakNoCourtesySigs`, `engr_sectionRestartMatchesContinuationSystems`, `engr_sectionBreakNoCourtesyClef`.
-- **`slurSides.ts`** — `settleSlurSides`: a slur is never on the tuplet-bracket side and avoids the beam side (Max's invariant). Verovio draws brackets and beams on the stem side and, in a single-voice staff, the slur opposite the stems — but in a two-voice staff it places the slur by LAYER (1 above, 2 below) regardless of stems, so the upper voice's slur lands on its own beams and brackets (sonata I m. 78, m. 80 — "m. 82 / m. 84" in the 2026-09-05 entries; the first movement's numbering has since shifted by four). The pass sets `@curvedir` to the notehead side for a slur whose start or end meets non-space content in the other layer at its moment — Verovio's own per-moment criterion for layer-based stems (probed: notes, rests, even hidden rests count; `<space>` does not) — using Verovio's stem rule (layer 1 up, layer 2 down; an explicit `@stem.dir` wins). Staff and layer are compared by NUMBER, so a slur across a barline (its endpoints in two `<staff>` elements of one staff) is a same-voice slur (p. 17, 2026-09-05). **The gate (2026-10-17, Max)**: Verovio's own side never collides — forced sides are where slur collisions come from — so the flip carries the burden of proof and happens only when it is provably clear from pitches and onsets: take the slur's farthest own head in the bulge direction (the lowest head anywhere under a below-slur, chord members included, across barlines); every other-layer head whose onset lies within the slur's span — endpoint columns included — must sit MORE than a fourth beyond it (`BLOCK_STEPS` = 3 diatonic steps, inclusive, refuses the flip, as does any head inside the slur's own range; a note that began before the slur has its head to the left and does not count). Otherwise the slur keeps Verovio's side — above the beam for an upper voice, which is Finale's fallback as well. The test is GLOBAL (one extreme for the whole slur) and pitch-only by decision: a local per-column test passes I m. 79, whose chord-top is nine steps under the slur's start but a unison with its end; span and slope would tell a long gentle slur from a short steep one, but the wide margin does that job and Max prefers the simpler rule (residue: the manual slur / stem flips). Sonata census 2026-10-17: 190 two-voice slurs, 179 flipped; the former gate (an other-voice note STARTING in an endpoint's column within a THIRD of that endpoint) flipped 186, and every slur the new one stops was tight or wrong — III mm. 71–72 RH beat 3 (chord-top a fourth under the start, level with the end: no curve fits below and the flipped slur ran through the lower voice), I m. 79, III m. 83→84 viola (an a♭4 inside the slur's range; a displaced start the import had hidden). Verovio honours the side but routes the slur around whatever else is there — including the other layer's noteheads in the slur's own start column, which carry its start point BELOW them instead of letting it begin between the voices (sonata I m. 79 — "m. 83" in the 2026-09-05 entries: 8 units under its notehead, then a 100-px scoop, although the slur fits under the notes and above the chord — Max: "there is room for it"; since the 2026-10-17 gate that slur is no longer flipped, and such same-column shifts are rare — the re-draw's working case is the system break; probed on the bare toolkit: `slurEndpointFlexibility` 0 still shifts, `@bezier`/`@bulge` change nothing, `@startvo`/`@endvo` do move the endpoints but would have to be predicted before the render). `render/slurlayout.ts` (`layoutFlippedSlurs`, in `postProcessRendered`) therefore re-draws, in place, every flipped slur whose rendered endpoint sits more than 2 units from its notehead: endpoints ¾ unit past the start / end noteheads on the slur side, a cubic Bézier bulging 0.12 × span (1.25–3.5 units) away from the notes, the bulge growing to 6 units until the sampled curve clears every glyph box of the staff in its span by half a unit (own notes, other voice, beams, numerals, brackets, other slurs); a curve that cannot clear keeps Verovio's routing (`data-hkl-slur="kept"`). The path is rewritten as Verovio's own shape (two cubics, `stroke-width` 0.1 unit, 0.6-unit midpoint thickness); `data-hkl-orig-d` keeps the original for idempotency — every flipped slur is restored BEFORE any is measured, since a slur is an obstacle to the ones after it — and obstacle boxes are INK (`inkBox`, shared from `textlayout.ts`, 2026-10-18): a BravuraText accidental's `getBBox` is an 8-unit character cell, and the zoom's re-run of this pass found Verovio's curves "through" accidentals they clear and bulged them to get past the phantom (sonata III m. 24 LH, Max: "a needlessly large bulge"); `svgAdditionalAttribute` surfaces `slur@curvedir/@startid/@endid` for it. **Slurs over a lifted numeral** (`liftSlursOffShiftedNumerals`, 2026-10-18, sonata III p. 16 mm. 31–32 piano LH): `tupletnums.ts` lifts a bracketless numeral off a steep beam into whatever Verovio drew above it — Verovio's curve cleared the "3" where Verovio put it, and nothing re-routed an UNFLIPPED slur (the re-draw takes flipped slurs only, and a stem-side slur's endpoints are not its notehead anchors). Every slur the re-draw left alone whose Verovio curve comes within `MARGIN` of a shifted numeral of its staff is LIFTED: the four control points move along the chord's normal toward the bulge, a quarter unit at a time up to 4 units, until both edges clear the numeral — endpoints and thickness kept, mark `data-hkl-slur="lifted"`, same `data-hkl-orig-d` restore (all slurs are restored before any is measured). Max chose this over lifting the numeral past the slur (4.7 units off its beam). Fixture `engr_slurLiftedOffShiftedNumeral` — ten plain measures after the triplet, because a lone measure is justified wide and its beam goes too shallow to need the numeral lift. A slur broken at a SYSTEM BREAK is two segments (the continuation is `class="slur id-<id> spanning"`, no id, same data attributes); Verovio parks each open end at a fixed staff-relative spot — just under the bottom line for a below-slur — so a flipped bass slur dived away from its notes at the break and the continuation climbed back through the staff and the lower voice (sonata m. 43→44, m. 52→53, m. 88→89). The pass treats an open end like any endpoint: anchored `END_GAP + OPEN_DROP` past the covered notehead of the slur's own layer nearest the break (`layer@n` is surfaced for that), at Verovio's own open-end x, then the same curve and clearance search per segment; a segment is also re-drawn when Verovio's own curve runs through a glyph, and an open end that cannot clear (the lower voice right under it) moves back toward the covered notes half a unit at a time (`OPEN_LIFT_MAX`); a last attempt shrinks the end gap and margin (`END_GAP_TIGHT`, `MARGIN_TIGHT`, mark `redrawn-tight`). Ledger lines are not obstacles — a slur's own end hangs at the level of the ledger line under its notehead. Sonata: 44 broken slurs, 7 segments re-drawn, 0 collisions (were 3). Fixture `engr_slurBrokenAtBreakRedrawn`. A pitch-based gate on the flip (skip when the other voice is near) was tried the same day and withdrawn: it moved slurs above tuplet brackets that fit below; the 2026-10-17 gate above is pitch-based again, but global with a fourth's margin, and accepts that cost by Max's ruling. Single-voice slurs, cross-staff and cross-layer slurs are left to Verovio. Importing Finale's `<stem>` directions was tried first and reverted (Max: correct placement of elements relative to each other, not Finale replication). Fixtures: `engr_slurNoteheadSideTwoVoice` (flipped: the other voice a seventh below), `engr_slurKeepsLayerSideOverOtherVoice` (III mm. 71–72: refused, chord-top a fourth under the start), `engr_slurKeepsLayerSideUnisonInSpan` (I m. 79: refused, a unison with the end note; replaces `engr_slurBelowRedrawnAtNotes`).
-- **`slurStems.ts`** — `unifySlurStems` (2026-09-05, Max: a slurred group should make all its stems face one way): in a single-voice staff Verovio stems each note, chord and beam by its own pitch against the middle line, so a slur over a line crossing the middle covers stems both ways and Verovio then puts the slur ABOVE — on the beams and brackets of the up-stemmed notes (sonata: 104 of 918 measured slurs, 71 on a beam and 22 on a bracket; after the pass 8 stay mixed, all past the cap, and 11 slurs sit on a beam side, 1 on a bracket). The pass runs on the render clone after beaming and before `settleSlurSides`; per slur, longest first (a phrase slur decides for the shorter slurs under it), it predicts each covered unit's natural direction from pitch — a note: down at or above the middle; a chord, a beam or a tremolo: by its notes farthest above and below the middle, down when the top is at least as far as the bottom (Verovio's rule, calibrated on the sonata's single-voice material: 899/899 beams, 655/655 chords, 860/860 notes; a mean rule for beams missed 8); ties down — takes the majority over the covered notes (a tie goes to the note farthest from the middle) and writes `@stem.dir` on every note and chord of the group's units, the whole beam included when it reaches past the slur (probed: Verovio ignores `@stem.dir` on `<beam>` and flips the beam when every member carries it); Verovio then places the single-voice slur opposite the unified stems, so no `@curvedir` is written. The middle line is tracked per staff from the head and interior `staffDef` clefs (`clef.dis` included) and per layer from inline `<clef>`s. A covered note in a TWO-VOICE moment (non-space content in another layer at its moment) has its stem forced by Verovio's layer rule (layer 1 up, layer 2 down), and that forced direction is a fixed vote for the group — sonata III m. 3→4 LH: a single-voice triplet slurred across the barline to a note the second voice forces up had kept its down stems under a slur the side pass flipped below, i.e. a slur through the stems (Max: unacceptable under any circumstance). Left alone: cross-staff and grace notes, slurs with an explicit `@curvedir`, unpitched staves, and groups whose minority notes sit more than `CAP_STEPS` (5 steps = 2.5 spaces) off the middle line on the stem side — their forced stems would be too long (`hkl-stems="capped"`) — except when a fixed vote decides the group, since leaving it mixed puts the slur through the disagreeing stems. An explicit `@stem.dir` (the `L` key), a direction a longer slur already fixed, or the layer-forced direction decides the group; a group whose fixed directions disagree is left (`"fixed"`). The slur's `@hkl-stems` (`data-hkl-stems` in the SVG, via `svgAdditionalAttribute`) is read by the census probe `test/composer-inspect/phasec/cb-slurstems.js`. Fixtures `engr_slurUnifiesMixedStems`, `engr_slurStemsFollowForcedVoice`.
-- **`unstack.ts`** — `separateSameMomentMarks` (2026-09-09; Max on the sonata's p. 21 second system, mm. 94–99): two control events sharing `@tstamp`, `@staff` and `@place` are drawn by Verovio at ONE x, stacked vertically, **and the inter-staff gap is sized to hold that stack** — m. 99's `p` + `dim.` kept the piano's own gap at 13.25 staff spaces where 7.75 does. `render/textlayout.ts` had un-stacked such a pair in the DOM since 2026-09-08, which is powerless vertically: the reserved row survives any post-engrave move. This pass nudges each following `<dir>`'s clone tstamp `NUDGE_BEATS` (0.25) past its `<dynam>` anchor, chained for several movers, so Verovio engraves one row and sizes the gap for one row (measured 2120 → 1240 user units, system height 7129 → 6249; the ceiling, with the `<dir>` deleted outright, is 1160). Runs LAST in `applyRenderConventions` — it only moves floating control events, so nothing above depends on it. **Clone only**: the nudge decouples the rendered anchor from the musical one, which is safe precisely because nothing downstream of engraving reads a `<dir>`'s tstamp (playback reads `<dynam>`/`<hairpin>` off the LIVE doc; `<dir>` has no playback role) and the saved document is never this clone — the same liberty the importer takes with `<offset>`. A group with no room left in its measure (`BAR_MARGIN`) or whose nudge would land on another mark of the same row is left sharing its tstamp, and textlayout's original rule takes it as the documented fallback. Each mover carries `hkl-unstack` (→ `data-hkl-unstack`, via `svgAdditionalAttribute`) naming its anchor, because the pair no longer shares the `data-tstamp` that rule keys on; textlayout uses it to set the CLEARANCE (`UNSTACK_GAP`, one staff space — x is not knowable before the engrave) and, last of all, to put each mover's centre back on its anchor's line, which separation would otherwise lose (a lone `<dir>` goes to the `dirGapUser` line while the dynamic keeps `dynamDist`). `@ho` and `@vgrp` were both measured and rejected — see decisions.md and lessons.md "Verovio reserves an inter-staff row at ENGRAVE time". Fixtures `engr_sameMomentDynamAndDirSideBySide`, `engr_unstackReclaimsGrandStaffGap`; probe `test/composer-inspect/phasec/cb-unstack.js`.
-
-**Ties** (`render/tielayout.ts`, `layoutCollidingTies`, 2026-09-22) are a DOM pass, not a clone rule: Verovio places a tie from its two noteheads alone (side from `@curvedir`, else the layer's stem direction; a fixed shape; its only obstacles are its own start note's dots and flag, the staff lines and an enharmonic partner — `src/tie.cpp` at 6.3.0-425dd7b, lessons.md), so a voice crossing the tie's pitch is drawn straight through (Max's repro: V1 A4 dotted half tied to a quarter, V2 quarter rest + C5). Flipping the side was rejected (it follows voice order, and in the real case — an arpeggio under a long tie — the other side collides too). Every tie whose drawn outline — both edges of Verovio's filled path, parsed from its `d` — overlaps something in its system is re-arched in place: same endpoints, side, control-point x and thickness, the control points raised in 0.25-unit steps from Verovio's own height; the first arch whose edges clear every obstacle by the slur pass's `MARGIN` (0.5 unit) wins — the lowest clear one — provided its outer height stays within the tie's width (Max: never taller than wide); otherwise Verovio's tie stays (`data-hkl-tie="kept"`; re-drawn ones carry `"redrawn"` + `data-hkl-orig-d`; both carry `data-hkl-tie-hit`, the first obstacle hit, for probes). **Obstacles** are the whole system's glyphs within the span (the slur pass's set plus `g.dynam`, `g.dir`, `g.tempo`, `g.fermata`), less the two tied notes (the start note is `data-startid`, the end the nearest notehead to the path's end in that staff and layer), CSS-hidden rests and the tie itself (stems measured with `strokedBox`, their fill box being zero-wide — 2026-09-29); barlines and staff / ledger lines are not obstacles — a tie crosses them by nature. Three measurement rules, each found on the sonata: (1) **ink boxes** (`inkBox`) — a `<text>`'s `getBBox` is its character cell, and every accidental is a BravuraText `<text>` once `injectHejiGlyphs` has run (a sharp's cell is 4 staff spaces tall, its ink 2.3), so text is measured per character with canvas `measureText` in the element's computed font, placed at `getStartPositionOfChar`; geometry (`<use>`, paths, polygons) keeps `getBBox`, which is tight; (2) **curves are outlines**, not boxes — a slur's box is the whole region under its arc — tested by point-to-polyline distance; (3) **everything is measured in the system's frame**: `render/instrgap.ts` translates an instrument's staves and ties first, so each tie's points are mapped through its own CTM and back. Contact within min(1.5 units, a fifth of the span) of an endpoint is excused, but only as close as Verovio drew it: a raise may never bring an edge nearer an obstacle there than the original was at that sample (excusing any original contact let a chord's inner tie be lifted into its sibling). **Order**: the pass runs after `injectHejiGlyphs` (it must measure the glyphs actually drawn) and after `layoutFlippedSlurs` (whose final curves are obstacles); the slur pass must see Verovio's ties, so `restoreTieRedraws` puts them back before it, and the tie pass restores them itself too — idempotent. A raised tie can grow a system's extents; it still runs before placement. Sonata census (`test/composer-inspect/phasec/cb-ties.js`, which takes its boxes from `inkBox`): 309 ties, none re-drawn, none kept, 0 collisions left; ~12 ms on a full mount. Fixtures `engr_tieArchesOverOtherVoice`, `engr_tieKeptWhenTallerThanWide`, `engr_tieClearUntouched`.
-
-The DOM-side counterpart is `render/textlayout.ts` (see [Expression layer](#expression-layer-dynamics-hairpins)). PDF export reads the live page DOM (2026-09-05), so it inherits this pass and every other, along with the injected texts and the page-size factor — see [PDF export](#pdf-export-appscomposersrcsavets-pdfkit).
-
-## Expression layer (dynamics + hairpins)
-
-A navigable virtual layer in the ↑/↓ cycle (see [Input model](#input-model-keyboard-driven) — the cycle is built from the instrument table; for a single piano it sits between voices 2 and 3), with its own cursor stepping through STOPS: one per mark (a hairpin contributes its start and its end) plus a placeholder at every note onset across the instrument's voices that carries no mark. **Per-instrument in multi-instrument scores** (`state.exprInstrIdx`; new marks attach to the active instrument's top staff). Pedal/tempo/expressive-text are sibling layers — see [Pedal, tempo & expressive-text layers](#pedal-tempo-expressive-text-layers-phase-2). `apps/composer/src/expressions.ts` (CRUD + tstamp helpers + doc defaults), `apps/composer/src/cursor/expressionCursor.ts` (stop list + navigation + render order; shared by all three layers).
-
-**Anchoring by `@tstamp`/`@tstamp2`, not `@startid`/`@endid`.** Dynamics/hairpins are siblings of `<staff>` in their measure; an expression survives deletion of any nearby note. Trade-off: re-barring doesn't carry expressions. → see decisions.md / MEMORY "Expression-layer tstamp anchoring trade-off". Verovio draws a `@tstamp` **at the note glyph** for that beat (not the bar-grid x), so a mark on beat 1 sits on the downbeat note — provided the moment is expressed in the right measure: `momentAtVoiceAnchor` normalizes a bar-line anchor to the cursor's **visual measure** (`model.cursorMeasureIdx`), so a mark on a measure's first note anchors to `{thatMeasure, beat 1}` rather than `{prevMeasure, beat count+1}` (which Verovio would draw ON the bar line). → see decisions.md "Expression moment anchors to the cursor's visual measure" + lessons.md "@tstamp aligns to the note glyph, not the bar grid".
-
-- **Voice cycle**: ArrowUp/Down steps the instrument-table stop list (single piano: `tempo → 1 → 2 → expr → 3 → 4 → pedal`); indicator shows `T`/`E`/`P` for tempo/expr/pedal. `InputState.cursorMode: 'voice' | 'expr' | 'pedal' | 'tempo' | 'select'` (alongside `mode: 'insert' | 'overwrite'`).
-- **Stop list** (`buildLayerStops(doc, 'expr' | 'pedal' | 'tempo', staves)`, 2026-09-30): every mark (`dynam`/`dir`/`hairpin` start + end; `pedal`; `tempo`) is a `LayerStop` with a `MarkRef` (xml:id, kind, hairpin `edge`, `@staff`); every note/chord onset (tie-initial only, walking into `<beam>`/`<tuplet>`) whose moment carries no mark is a PLACEHOLDER stop. Every stop records the first onset id at its moment (the placeholder's x anchor). Onset tstamps use EACH MEASURE's beat unit (`beatTicksByMeasure`) — they used the head meter's, so after a 4/4→6/8 change the onset stops sat at 1, 1.5, 2… against marks at 1, 2, 3…. Sorted by moment; coincident marks ordered **top to bottom as rendered** (`orderStopsByRender`, run before every layer navigation step through the `layerMarkRect` input hook; level tops left to right; type order — hairpin ends, dynamic, text, hairpin starts; pedal up, down — until rendered). After an edit, `relocate` keeps the cursor on the same mark (id + edge), else the same position among that moment's stops. A stop selects exactly its own mark: a placeholder — even inside a hairpin's span — selects nothing, so concurrent marks inside a wedge don't multiply the stops (Max, 2026-09-30). → decisions.md "Layer cursors step through marks".
-- **Input** — voice mode: `Shift+1..8` (`!@#$%^&*`) enter fff…ppp at the cursor anchor (1=loudest); `<`/`>` mark hairpin start/end. Expr mode: `1..8` dynamics, `<`/`>` hairpins, arrows step stops, `Backspace`/`Delete` remove the SELECTED mark only (pedal and tempo likewise), `Escape` cancels pending. A dynamic, expressive text or a closed hairpin entered in the layer moves the cursor onto it (a hairpin's end stop). Hairpins are two-step in either mode (start moment, then a later end; pressing the other form re-starts; same-moment close rejected).
-- **Visual** (`cursor/cursor.ts` `layerBarRect`, one path for expr/pedal/tempo): voice bar hidden. A MARK stop draws the bar flush right of the mark's rendered box (`MARK_GAP` 1 px) at its height — so it follows `@place`, textlayout lifts and render-clone placement; a hairpin START sits flush LEFT of the wedge, its END flush right of the LAST piece (a wedge broken across systems renders as the `<g id>` plus id-less `class="hairpin id-<xml:id> spanning"` continuations — lessons.md); a tempo anchors to its original, not the `-p<n>` copies. A PLACEHOLDER (or a mark not drawn) draws a fixed `PLACEHOLDER_H` (28 px) bar at the onset's notehead centre, centred on the previous mark — its offset from its staff's LINES (not the `g.staff` bbox, which grows with ledger notes) reapplied to that staff in the placeholder's measure, so it holds across a system/page break — else the layer default: between a grand staff's staves / below a single staff (expr), below the bottom staff (pedal), above the top drawn staff (tempo). The bar is hidden only when neither can be located. The selected mark's pieces get `.expr-selected` / `.pedal-selected` / `.tempo-selected` (all continuation pieces; tempo copies too). Until 2026-09-30 the bar was a staff-gap band at a coincident note's centre, found by a SECOND layer walk that skipped `<tuplet>`/`<beam>` — tuplet onsets were stops it couldn't place, so the bar vanished there.
-- **Playback** (`render/playback.ts`): a per-tick velocity timeline built before walking voices. `collectDynams`/`collectHairpins` resolve moments to absolute 64th ticks via `absoluteTickForMoment`. Per onset: most-recent dynam at-or-before (default `mf=85`); the latest-started containing hairpin adds linear interpolation to the next explicit dynam or a synthesized ±25 endpoint. Each event gets `velocity`; HKL's `dispatchChord` reads `ev.velocity ?? keyVelocity[k] ?? 80`. MVP: held notes spanning a hairpin don't continuously change loudness (only newly-struck notes pick up interpolated levels).
-- **Doc defaults**: dynamic→velocity map in `<meiHead><extMeta><hkl:config><hkl:dynamicMap>` (ns `https://hexkeylab.com/ns/mei`), seeded at creation, edited via Setup ("Dynamics → velocity"). Round-trips through `XMLSerializer`; `<extMeta>` is the MEI 5 extension point. `replaceDocument` calls `ensureExpressionDefaults` so older `.hkc` get defaults seeded.
-- **Vertical placement** (2026-09-04, rewritten 2026-10-07): Verovio owns the grand-staff gap, this pass owns the one-staff rules. A dynamic / hairpin / expressive text under the UPPER staff of a grand staff is `@place="between"` (`expressions.ts` `defaultMarkPlace`, applied by the insert helpers, the MusicXML importer and every load via `normalizeMarkPlaces` — a mark `above` the LOWER staff of a grand staff is the same gap and becomes `between` on the upper staff; decisions.md 2026-10-07), and Verovio's own between pass centres it: the mark's reference point sits at the midpoint between the staves (a glyph box lands ~0.3 space low), lifted clear of the lower staff's overflow, and the gap is reserved for it. Under any other staff a mark is `@place="below"` and Verovio's `dynamDist: 4.5` puts a dynamic's top 1.2 staff spaces below its staff (the option's effect only starts past 2 — probed glyph tops 1→40, 2→40, 3→72, 4→152 user units at unit 8, i.e. 80·d − 168; 3.5 read as "still a few px", Max 2026-09-05; it never governs `<dir>`). The DOM pass `render/textlayout.ts` (`layoutBelowStaffText`, run by `postProcessRendered` on every rendered system BEFORE placement measures it) then keeps a `<dir>` under a one-staff instrument at the dynamics' clearance (`DIR_GAP_PER_UNIT`) and puts a `<hairpin>` standing alone ON the dynamics' line, up or down (its top `HAIRPIN_LIFT` = a quarter unit above the clearance, Verovio's own hairpin-to-dynamic alignment offset): Verovio gives hairpins no `dynamDist` — a lone hairpin hugs the staff 0.3 space down at any setting — and aligns one to a neighbouring dynamic only sometimes, so in the sonata's viola (mm. 49–52) the crescendo sat 15 px below the `f` that follows it and the decrescendo 16 px above the `p` (Max: "a bumpy look", 2026-09-05). A cluster holding a DYNAMIC is left where Verovio put it — `dynamDist` is the dynamics' baseline and Verovio already aligned any hairpin or text touching a dynamic to it. A push DOWN toward ANOTHER instrument stops `INSTR_CLEAR` (one staff space) short of its line and ink (2026-09-06; p. 21 m. 99's "dim." sat 0.45 space above the piano), and what that clamp refused is tagged `data-hkl-clamped` for `render/instrgap.ts` to grant. The pass does ONE thing to a `between` mark: Verovio's between pass never looks at the upper staff, so over tall left-hand stems a 2.5-space word ended 2 px into the right hand's bottom line with the gap unchanged (sonata p. 6 m. 90 "cresc."); such a mark is pushed down to a quarter unit under its staff as far as the lower staff's content allows. Until 2026-10-07 the imported marks were `below` and this pass centred them in the grand-staff gap itself (`center` mode, `grandPairs` option; obstacles measured with `strokedBox` because a stem's `getBBox` is zero-wide — lessons.md) — a re-implementation of `between`, deleted. Horizontally overlapping marks move as one block (a dynamic keeps its hairpin, a stacked dynamic + text keeps its order) — **except when they share an anchor** (2026-09-08, backlog Layout: "vertical overlap of elements that should be horizontally adjacent"), where the block rule would preserve Verovio's stack forever: Verovio draws two marks at one `@tstamp` at one x and stacks them vertically, so the DYNAMIC keeps its place (it anchors the cluster) and the `<dir>`s follow to its right, centred on its line. `dynam@tstamp`/`dir@tstamp` in `svgAdditionalAttribute` (hence `data-tstamp`) gate it, so only a genuinely identical anchor qualifies and two marks a beat apart whose boxes merely touch stay stacked; a run that would cross the measure's barline or reach the next cluster is abandoned, Verovio's stack being the honest answer when there is no room. The sonata has exactly three such groups — each a dynamic plus one word, all three carrying the `default-x`/`relative-x` that separated them in Finale and that the importer deliberately drops (correct placement relative to each other, not Finale replication). **Since 2026-09-09 this DOM rule is the FALLBACK**: separating the pair here leaves the inter-staff row Verovio reserved for the stack, so the grand staff keeps a gap holding nothing (Max, p. 21: "far too much vertical space within the grand staff"). `notation/unstack.ts` now separates the group on the render clone instead — see [Engraving conventions](#engraving-conventions-on-the-render-clone-2026-09-0405) — and this rule keeps only the groups it had no room to separate. What stays here either way is the CLEARANCE, `UNSTACK_GAP` (one staff space) rather than `PAD` (a quarter space, 4 px at scale 100 — Max: too tight on m. 99's `p dim.`). Fixtures `engr_sameMomentDynamAndDirSideBySide`, `engr_unstackReclaimsGrandStaffGap`; reads and writes are two-phase, and every measurement is in the SVG's own user space (`getBBox` mapped through `getCTM`, whole-unit shifts) — never screen rectangles, which differ between the live page and the splice/reference hosts by their sub-pixel phase and flipped rule v2's quantization by a pixel on re-placed pages (gated sonata sweep, 2026-09-04); idempotent via `data-hkl-vshift`. ABOVE a staff, text (`<dir>`, `<dynam>`, `<tempo>` — hence `tempo@staff/@place` in `svgAdditionalAttribute`) clears the staff's slurs and ties (2026-09-06): Verovio's positioners avoid the notes but not the curves, so a slur arching over a high run passed through the piano's "rit." (p. 21 m. 94). Every curve whose sampled outline dips below the mark's top (so it is anchored at the mark's staff or lower) and whose top within the mark's horizontal range reaches the mark's box lifts the mark, stacked marks above it with it, until the box clears the curve by half a unit — limited by the staff above, always another instrument's now, and its content (`INSTR_CLEAR`): m. 94's "rit." stops one space under the viola and still grazes the slur, which only more inter-instrument space can fix (the open Layout item). Relies on `data-staff`/`data-place`/`data-n` from `svgAdditionalAttribute`. Reaches the PDF too, which is exported from the live page DOM (2026-09-05). Fixtures: `expr_dynamicInsertBetweenOnGrandStaff`, `expr_dynamicInsertBelowOnSingleStaff`, `expr_loadNormalizesMarkPlaces`, `engr_dynamicCenteredInGrandStaff` (Verovio's centring, half a space), `engr_dirClearanceBelowSingleStaff`, `engr_hairpinAloneOnDynamicsLine`, `engr_dirAboveClearsSlur`, `engr_dirCenteredClearsChordStem` (the between clamp).
-- **Inter-instrument clearance** (`render/instrgap.ts`, `layoutInstrumentGaps`, 2026-09-08; backlog Layout: "the `mf` dynamic on the viola part reads as part of the piano part"). Verovio widens a collision-driven distance only by the colliding boxes plus one staff space, which is right relative to the staff a mark BELONGS to and wrong relative to the NEXT instrument: III m. 10 stacks the viola's `mf` 3.6 spaces below the viola and then packs the piano one space below the `mf`. Census (`test/composer-inspect/phasec/cb-instrgap.js`): of 151 marks at the sonata's viola/piano boundary, **59 sat nearer the piano than their own staff** and 33 within one space of piano ink. The pass runs AFTER `textlayout` (it measures what is actually drawn, and it has to release textlayout's `INSTR_CLEAR` clamp), then re-runs `textlayout` on the systems it moved — one extra round suffices by construction, since widening only ever loosens a clamp. It shifts the lower instrument down by `max(0, min(dOwn, CAP) − dOther)` over both sides of every boundary, plus a bare ink floor (ink boxes via `strokedBox`, so a chord's stem counts — 2026-09-29; text by its ink through `inkBox`, since every accidental is a BravuraText `<text>` whose cell is 8 units tall — 2026-10-18) and whatever `data-hkl-clamped` records that textlayout asked for and could not have. The shift is quantized UP to a whole device pixel (rule v2 quantizes each system's translate, so a fractional extent flips systems by a pixel on re-placed pages), and it is recorded as **`data-hkl-ishift`** rather than written as a raw `g.staff` translate, because `pagefit`'s `alignStaffRows` rewrites every staff transform from the staff-line path text and runs FIRST — it ADDS the tag to its own phase correction. **Re-runs are fixed points** (2026-10-18 — the zoom rescales every mounted page through the same passes, and Max zooms to 50 % after every load): `resetInstrumentGaps` takes the previous shift off BEFORE `textlayout`'s first round (the clamp that round records, which this pass reads as unmet demand, is then taken against the unshifted gap as on run 1), a staff's transform is dropped rather than reduced by the shift (the device-grid phase left behind made the re-run measure a few units less and round one grid step lower, once: p. 15 330 → 320), and the one run-to-run change left is the shift's re-quantization to the new grid (±10 user units at 50 %). Before this the sonata's p. 15 first system grew 3.5 units per zoom. Fixture `pag_zoomRerunKeepsSlursAndGaps`. Everything else in a system is attributed EXPLICITLY (`data-staff`; `data-startid` → the note's staff for ties/slurs/fermatas — hence `tie@startid` etc. in `svgAdditionalAttribute`; the instrument band for `grpSym`/`label`; `mNum`/`ending`/`voltaBracket` ride the top staff), a barline crossing the boundary is LENGTHENED rather than moved, and a system holding anything unattributable is left unshifted with a console warning — a silent guess here is a displaced glyph. Gated (re-measured 2026-09-09, after the centring fix and the same-moment separation): marks nearer the other instrument 59 → 29, within one space 33 → 12, systems with unmet demand 48 → 11, 43 systems shifted, none bailing. **A mark's transform stays textlayout's** — instrgap only tags it — which makes the composition contract load-bearing: textlayout must MEASURE a tagged mark in the post-shift frame too (`markBox`), or the `dy` it derives already contains the shift and `translate(dx, dy + ish)` applies it twice. It did, until 2026-09-09: every mark on a shifted instrument sat a whole shift low (p. 9 m. 131's `pp` on the staff below it, p. 17 m. 37's `dim.` in a tuplet bracket), 79 of 115 grand-staff marks off centre by a median 130 user units with 27 collisions, against 31 / median 2 / 9 after. Fixture `engr_instrGapCenteredDynamic`; whole-document inventory `cb-markplace.js` (`cb-instrgap.js` measures only BOUNDARY marks and is blind to this class). See lessons.md "A deferred transform must be MEASURED in the frame it will be written in". **Unconditional since 2026-09-09**: the pass was gated behind an `ENABLED` flag while a pagination defect was open (a grown system pushed the sonata's tail past the last page div, leaving page 31 empty with 442 of 446 measures rendered — page divs are Verovio's castoff at `loadData` and predate anything the pass grows, lessons.md "The page-div count is frozen at the initial castoff"). Pagination is owned now, so the flag is gone: `cb-pagegrowth.js` reports paginationOwned with 446/446 measures, 113 systems, 31 page divs, no empty pages and a 16-step cascade resolved entirely arithmetically. Still owed — no FIXTURE asserts that every measure of a multi-page document renders; `cb-pagegrowth.js` is a probe, not a gate.
-- **Barlines and measure boundaries** (2026-09-05): a barline never breaks, and no text mark sits on one (backlog, Correctness — m. 90). Verovio erases the stretch of a `bar.thru` barline that a `<dynam>`/`<dir>`/`<tempo>` box overlaps (`View::DrawBarLine` → `FindAllIntersectionPoints`, draw-time only, no option), and the vertical pass then moved the mark away — leaving the hole where the mark had been and the mark on the barline further down (sonata m. 89|90). Two rules in `postProcessRendered`, both before placement: `render/barlines.ts` (`repairBarLines`) reads each grand-staff barline's own `M x y L x y2` segments and adds a sibling path (`data-hkl-barfill`) over every uncovered stretch of the inter-staff gap — draw-only, no layout read, only for gaps the barline actually enters (the separation between two instruments carries none); and `layoutBelowStaffText` first moves a `<dynam>`/`<dir>` whose box overlaps one of its measure's barlines (its right barline, or the previous measure's) to the near side INSIDE its own measure, half a unit clear (`data-hkl-hshift`; a mark wider than its measure stays; hairpins are exempt). Verovio centres a dynamic at tstamp beats+1 exactly on the barline — Finale exports end-of-measure dynamics that way — so such a mark now lands just before the barline, where Finale had nudged it. Fixture: `engr_barlineUnbrokenUnderDynamic` (+ visual baseline `engr_barline_unbroken`).
-- **Save/load**: `<dynam>`/`<hairpin>` are just extra `<measure>` siblings; survive serialize/load with no special handling.
-
-## Slurs
-
-*Implemented.* Note-attached via `@startid`/`@endid` (a slur's identity IS its two endpoint slots, so it stays note-attached, NOT in the tstamp expression layer). `apps/composer/src/slurs.ts` (`addSlur` / `removeSlur` / `collectSlurs` / `pruneDanglingSlurs`).
-
-- **Endpoints** are SLOT elements — a bare `<note>` or `<chord>`, both id-bearing; the `<slur>` is appended as a measure child after `<staff>` (like `<hairpin>`/`<dynam>`) with `data-voice` (1–4).
-- **Entry** (voice mode, `Ctrl+L`): first press marks the start slot (pending, status feedback only); a second `Ctrl+L` after navigating closes the slur (endpoints ordered low→high by flat-slot index; same slot → no-op + error). `Ctrl+L` on any slot under an existing slur's span deletes that whole slur. Switching voices / entering select mode / Esc / undo exits pending.
-- Verovio renders the arc natively (no SVG injection); round-trips through serialize/`.hkc` untouched.
-- **Dangling cleanup**: `pruneDanglingSlurs` runs inside `normalizeTies` (shared post-mutation hook) and in `applyRetune`. Retune rewrites kept notes in place, so xml:ids — and slurs — survive; only dropped endpoints prune.
-- **Playback**: `buildPlayback` stamps each event with `voice` and `slurredToNext`. Realization is instrument-dependent, chosen HKL-side in `playScore` via `computeLegatoPlan(events, glideMode)` with `glideMode = !instrReplaysOnTranspose()`:
-  - **Decay + replay-on-transpose instruments** (overlap mode): a slurred note's release is delayed by `SLUR_OVERLAP_FRACTION` (12%) of its duration (note-proportional legato; `offMs` override).
-  - **Sustained loopers** (glide mode, the "transpose effect"): a single-note slurred transition hands one voice off via portamento (`SLUR_GLIDE_MS` = 70 ms, clamped to half the note) instead of re-attacking. Predecessor sets `noOff`; successor sets `glideFromKey`; `dispatchChord` calls `glideVoices` (shared voice-handoff primitive in `audio/engine.ts`) migrating bookkeeping old→new. Chord-involved joins fall back to abutting playback (v1). Verified by ear, not the headless harness.
-
-## Tuplets
-
-Single-measure, non-nested `<tuplet>`. `Ctrl+N` (N=2..7) opens a pending-tuplet state; the next duration digit completes by inserting a `<tuplet>` at the cursor. A tuplet never straddles a barline (it's the atomic unit of fit), but `insertWithSplit` may push an *existing* tuplet wholesale across a barline (see [Ties](#ties) planner).
-
-**Ratio table** (`Ctrl+N` then duration digit `d`):
-
-| N | num:numbase | span | atomic written-dur |
-|---|---|---|---|
-| 2 | 2:3 | dotted-d | d ÷ 2 |
-| 3 | 3:2 | d | d ÷ 2 |
-| 4 | 4:6 | dotted-d | d ÷ 4 |
-| 5 | 5:4 | d | d ÷ 4 |
-| 6 | 6:4 | d | d ÷ 4 |
-| 7 | 7:8 | d | d ÷ 8 |
-
-E.g. `Ctrl+3,5` = triplet (3:2) of 8ths in a quarter. `num`/`numbase` written to MEI directly; Verovio draws the numeral (count form) and — with `@bracket.visible` left unset — a bracket only when the tuplet is not wholly under one beam (a beamed triplet of eighths shows its number alone; Max, 2026-09-05). `replaceDocument` strips the `bracket.visible="true"` older files carry; an imported `bracket="no"` keeps its `"false"`. A bracketless numeral that Verovio sets INTO a steep beam (p. 17: 7.7 px in, where every other numeral cleared by 4 px) is moved clear by `render/tupletnums.ts` (`layoutTupletNums`, in `postProcessRendered` before the slur re-draw): the true clearance to each beam polygon of its staff at the numeral's x — the polygon's edge, not its bounding box, which a sloped beam fills only diagonally — brought to half a unit; numerals inside a bracket are left with their bracket; idempotent via `data-hkl-numshift`. Fixture `engr_tupletNumClearsSteepBeam`.
-
-**Placement** (`model/tuplet-ops.ts` `resolveTupletTarget`, 2026-09-18). A tuplet is atomic: it lands whole in exactly ONE measure and needs free room there, so it never routes through `planInsert` (whose bounded overflow exists to split a NOTE across the bar line and tie it — a tuplet can do neither). Two rules:
-
-1. **The end-of-full-measure stop is re-read as the head of the next measure.** That stop is ambiguous by construction: `shouldEmitWrapper` suppresses M+1's wrapper stop exactly when M is full ([Cursor model](#cursor-model)), so "past M's last element" also means "before M+1's first element" — pressing `→` from it lands inside M+1's content. The M-side reading has ZERO remaining capacity and can therefore never host anything, so the M+1 reading is the only viable one. The target measure is created (`appendMeasure`) only AFTER the fit test passes, so a rejected tuplet leaves no stray empty measure. This is what makes tuplets enterable back to back across a bar line without touching the cursor.
-2. **The fit test counts post-cursor content**: `usedBefore + span + postTicks > cap` rejects. Measuring only cursor→barline (as the pre-2026-09-18 gate did) accepted a mid-measure tuplet in a FULL bar and silently produced an overfull measure.
-
-**Displacement is not creation** (Max's ruling, 2026-09-18). `insertWithSplit` may push an EXISTING tuplet wholesale across a bar line when an insert displaces it — see the [Ties](#ties) planner — and that is INTENDED, not an inconsistency with the rules above. The two are categorically different: a displaced tuplet keeps its identity and contents and was moved by a deliberate edit at an earlier point, whereas CREATING a tuplet in M+1 while M still has room reads as a bug. Rule 1's `remaining === 0` trigger is exactly what keeps creation out of that case. Do not "unify" the two paths.
-
-A PARTIAL measure still emits its own M+1 wrapper stop, so its end is NOT ambiguous and gets no spill: an oversized tuplet there is simply rejected (`Tuplet span exceeds remaining measure space`) and the user steps to the next stop to place it in M+1. When the re-read target is itself full, the rejection reads `Tuplet doesn't fit in the next measure.` The tuplet paste path (`insertClonedAtCursor`) shares `resolveTupletTarget`. Fixtures: `tupletAtBarlineOpensNextMeasure`, `tupletAtBarlineBeforeExistingContent`, `tupletMidFullMeasureRejected`, `tupletPartialMeasureNoSpill`, `tupletBarlineBothMeasuresFull`, `tupletSequentialAcrossBarline`.
-
-**Arbitrary count — `Ctrl+Shift+3` modal** (`tupletDialog.ts`, 2026-10-05). The table stops at 7 and fixes one ratio per N; the modal takes a **count** (≥ 2), a **span in eighth notes** (the pickup modal's unit, seeded from `state.duration`, capped by `tupletFreeTicksAtCursor` — the resolved target's capacity less its content; no room at all refuses before opening) and a **written value**: a select rebuilt on every count/span change (`TextEntryFieldApi.setOptions`) from `tupletRatioOptions(count, spanTicks)` — every undotted written value A dividing the span, each giving `numbase = spanTicks / A` (a doubling ladder: a quarter admits 1, 2, 4, 8, 16; a dotted quarter 3, 6, 12, 24) — with `defaultTupletRatio` pre-selected: the numbase **nearest the count, ties to the smaller numbase** (the longer written value). That rule reproduces the table's 2:3, 3:2, 5:4, 6:4 and 7:8 and gives the engraving-standard 5:6, 7:6, 9:8, 9:6, 11:8 beyond it; the one place it departs from the table is the compound-time quadruplet (nearest rung 4:3; `Ctrl+4` writes 4:6 by convention) — both are in the list. `tupletFitsExactly` (some rung's numbase equals the count: 4 over a quarter is four 16ths) is refused in the list and on OK. The modal calls `createTupletAtCursor` with `num`, `numbase`, `atomicDur` only — `spanDur`/`spanDots` are now optional there, the span being `numbase × atomicDur` by identity (a span of 5 eighths is no single dotted value) — so fit, spill and nesting rules are the `Ctrl+N` ones. Matched on `e.code === 'Digit3'` (Shift+3 is `#` in `e.key`), before the `Ctrl+2..7` branch. Fixtures: `tupletModal_nonuplet` (9:8 in 32nds, seed, option list), `tupletModal_dottedSpanDefault` (5:6), `tupletModal_matchesCtrlDigit`, `tupletModal_writtenOverride` (7:8 → 7:4), `tupletModal_fitsExactlyRefused`, `tupletModal_noRoomRefused`, `undo_tupletModal`.
-
-**Pending flow** (`input.ts`): `Ctrl+N` sets `state.pendingTuplet`, prompts, `preventDefault`s. Next plain digit completes via `commitPendingTuplet`. Any other non-modifier key cancels and falls through (so `Ctrl+3` then `→` cancels and moves; `Ctrl+3` then Shift alone is a no-op so the user can still Shift+digit chord). `Ctrl+N` inside a tuplet rejects `Cannot nest tuplets.`
-
-**Data model** (live MEI): `<tuplet>` is a direct child of `<layer>`. `data-tuplet-atomic-dur` records the atomic written-duration for `regenTupletPlaceholders`. Children = filled content + trailing placeholder rests:
-
-```xml
-<tuplet xml:id="t-..." num="3" numbase="2"
-        num.visible="true" num.format="count"
-        data-tuplet-atomic-dur="8">
-  <note dur="8" pname="a" oct="3" .../>           <!-- F1 -->
-  <rest dur="8" data-tuplet-placeholder="true"/>  <!-- fill anchor -->
-  <rest dur="8" data-tuplet-placeholder="true"/>
-</tuplet>
-```
-
-Placeholders are `<rest>` (not `<space>`) because Verovio's bracket-rendering pass only fires with visible-content children; the rest glyph is CSS-hidden (see Bracket workaround).
-
-**Cursor stops** (`navigableChildren`): each `<tuplet>` contributes `[tuplet-wrapper, ...in-tuplet-stops]`. The wrapper is a layer-level "before tuplet" stop. In-tuplet stops: one before each filled child Fi, plus one on the first trailing placeholder (fill anchor) iff any exist. "After tuplet" is the natural "before next layer element" stop.
-
-- Empty `[note, tuplet]` → flat `[note, tuplet, fill-anchor]` (4 stops).
-- Partial `[tuplet[F1], Q]` → `[tuplet, F1, fill-anchor, Q]` (5 stops).
-- Complete `[F1, F2, F3]` → `[tuplet, F1, F2, F3]` (fill anchor absent).
-
-"Before tuplet at layer level" (insert pushes tuplet right) is distinct from "before F1 inside" (insert pushes F1 right within the bracket).
-
-**Insertion**: layer-level "before tuplet" → planner insert (may push tuplet to next measure; rejects `Insertion would push tuplet across bar line.` if that target isn't empty). In-tuplet stop → consumes trailing placeholders; total written-tick budget (num × atomic) invariant; regen recomposes. Overflow inside → reject `Doesn't fit in remaining tuplet space.`
-
-**Atomic-aware regen** (`regenTupletPlaceholders`): after any trailing-placeholder change, regenerate preferentially as N atomic-sized rests (per `data-tuplet-atomic-dur`), `decomposeTicks` for awkward remainders. Makes fill+delete reversible (e.g. insert 8th into a triplet → `[F1_8, P_8, P_8]`; backspace → `[P_8, P_8, P_8]`). Non-aligned remainders emit one atomic + leftover decomposed.
-
-**Backspace** (`deleteAtCursor`):
-- Right of / past the tuplet: nibble the rightmost filled child, regrow placeholders; element survives until all-placeholder; one more removes the `<tuplet>` from the empty fill-anchor.
-- "Before F1 inside" (target = tuplet wrapper): cursor moves left to "before tuplet at layer level", no deletion.
-- Between filled children: nibble that child, following content shifts left, placeholders regrow.
-- On fill anchor of an entirely empty tuplet: delete the whole `<tuplet>`.
-
-**Cursor rendering** (`cursor/cursor.ts:renderVoiceCursor`), two tuplet anchor cases in insert mode: entering (flat[c-1]=wrapper) → LEFT edge of flat[c], just inside the bracket; exiting (flat[c-1] is a tuplet child, flat[c] has a different parent) → parent tuplet's right edge.
-
-**Beaming** (`notation/beams.ts:regroupOneTuplet`): a second pass beams each tuplet's content as one beat group (rests split runs, placeholders filtered by `isTupletPlaceholder`); reuses `splitIntoBeamableRuns`/`wrapInBeam`.
-
-**MusicXML** (`exportMusicXml`): `DIVISIONS = LCM(16, all tuplet @num)`. Each child carries `<time-modification>` (`num`/`numbase`); first child's `<notations>` has `<tuplet type="start">`, last `"stop"`. Chord-in-tuplet: only the primary note carries the `<tuplet>` tag; all members carry `<time-modification>`. Rests carry `<time-modification>` but no `<tuplet>`.
-
-**Bracket workaround**: `<space>` is excluded from Verovio's bracket pass; `<rest visible="false">` doesn't work (verovio#202, open since 2016). So placeholders are real `<rest data-tuplet-placeholder="true">`, hidden via CSS:
-
-```css
-#score svg g.rest[data-data-tuplet-placeholder="true"] { visibility: hidden }
-```
-
-(`data-data-` is Verovio's normalization of `svgAdditionalAttribute`-exposed attrs.) `visibility: hidden` preserves layout width; `display: none` would collapse the bracket.
-
-**Out of scope**: nested tuplets (rejected `Cannot nest tuplets.`), `<tupletSpan>` cross-bar tuplets, mid-tuplet insertion when out of placeholder space (rejected; no push-past-bar since tuplets can't cross bars).
-
-## Selection, copy & paste
-
-A third `CursorMode` value (`'select'`), orthogonal to voice/expr and to `EntryMode`. Two granularities, always bounded at musical boundaries:
-- **Beat mode** — one voice, contiguous beats. Entered via Shift+Left/Right. Entry is direction-aware when the cursor sits exactly on a mid-score beat boundary (end of note A / start of note B): Shift+Right selects the beat to the RIGHT (note B), Shift+Left the LEFT (note A), so the selection matches the cursor's visual position; strictly inside a beat, both select the containing beat. (`enterBeatSelection` + `boundaryAt`; `currentBeatAt` keeps its "just-ended beat" boundary semantics for paste/8va.) → decisions.md "Shift+arrow beat selection is direction-aware on a boundary".
-- **Measure mode** — one+ two-voice staves, contiguous measures. Entered via Shift+Up/Down. Beat mode promotes to measure mode irreversibly via Shift+Up/Down.
-
-**Beat-mode state** (`apps/composer/src/selection/selection.ts`):
-```ts
-{ kind: 'beat'; voice: Voice;
-  origin: number; first: number; last: number;
-  lastMoved: 'first' | 'last'; }
-```
-Invariant `first ≤ origin ≤ last`, with `first==origin` or `last==origin` (grows from one side at a time). Minimum is one beat; zero-width impossible (no convergence-exit). A **beat** is the half-open interval between consecutive `beatBoundariesInVoice` entries (cursor positions tstamp-aligned to `beatTicks(timeSig)`, not strictly inside a tuplet; tuplets spanning beat-aligned tstamps select atomically). Boundaries dedup'd by tstamp (collapsed wrapper case: later/measure-aligned index wins). `measureBoundariesInVoice` is the barline-aligned analog — tstamp-based, NOT `getMeasureStartCursor`-based (which returns one stop past the visual barline in the collapsed case).
-
-**Beat transitions:**
-
-| State | Shift+Left | Shift+Right |
-|---|---|---|
-| `origin==last` (single OR expanded left) | `first--`, lastMoved='first' | `last++` if single; else `first++` (shrink) |
-| `origin==first` (expanded right) | `last--` (shrink), lastMoved='last' | `last++`, lastMoved='last' |
-
-Ctrl+Shift+Arrow = repeated Shift+Arrow until the moved edge lands on a measure-aligned boundary (or score edge). Entry direction sets `lastMoved`: Shift+Left→'first', Shift+Right→'last' (matters for immediate exit).
-
-**Measure-mode state:**
-```ts
-{ kind: 'measure'; originVoice: Voice;
-  originStaff: number; firstStaff: number; lastStaff: number;  // global staff @n (Phase 5: was 1|2)
-  anchorMeasure: number; movableMeasure: number;
-  movableSide: 'left' | 'right' | 'unset'; }
-```
-`anchor`/`movable` accounting predates the beat rework (measure mode has no convergence-exit problem). `originStaff` defines symmetric staff expansion via Shift+Up/Down.
-
-**Mode-exit cursor placement** (`cursorAtMovable`) — used by Escape and any non-selection key. Ctrl+X and Backspace/Delete reuse the lastMoved-side placement via `deleteSelectionContent(sel)` (beats: `boundaries[lastMoved==='first' ? first : last+1]` post-clear; measures: `cursorAtMovable`). Ctrl+C is the exception — leaves selection intact, doesn't reposition. Backspace and Delete are identical in selection mode.
-
-**What a cleared span leaves behind** (`model/measure-ops.ts`). Measure mode has always emptied the cell: `clearMeasureRange` strips the layer and lets `normalizePlaceholders` install the whole-measure `<space data-placeholder>`. Beat mode refilled the cleared span with beat-aligned rests unconditionally (`decomposeBeatAlignedRests`), so which MODE the user had pointed with decided what the document said — a bar emptied from beat mode came back as a bar of rests. Since 2026-09-17 (Max, backlog Composer/Features) `clearBeatRange` skips the refill in any measure the cleared span covers **entirely** (`tLoIn <= 0 && tHiIn >= cap`), leaving the layer bare for the same placeholder pass; a PARTIAL span still refills, because a hole inside a bar is what rests mean. The test is on TICKS rather than on "was everything removed", which also covers a PART-FULL bar (one quarter plus trailing placeholder): the refill is sized by `removedTicks`, so the old behavior left a stray quarter rest at the head of an otherwise empty bar. The rule is per MEASURE, so a span running from mid-bar 1 through mid-bar 3 empties bar 2 and rests the two partial ends. Both delete paths share it (`deleteSelectionContent` for Ctrl+X and Backspace/Delete, `deleteSelectionWithoutCopy` for paste-over-selection). Fixtures `sel_beat_cut_fullMeasure_empties`, `sel_beat_delete_partFullMeasure_empties`, `sel_beat_cut_partialMeasure_keepsRests`.
-
-**Move to the other voice** (`Alt+V`, beat selection only — Max, backlog Composer/Features, 2026-09-17). Corrects notes entered into the wrong voice. `moveFullMeasuresToSiblingVoice` (`model/measure-ops.ts`) takes the selection's tick span, collects the measures it covers ENTIRELY (the same test `clearBeatRange` uses), narrows that to the ones actually holding something, and moves each one's layer children to the other voice on the same staff. **All-or-nothing**: it refuses — with a reason naming the measure by `@n` — when no whole measure with content is covered, when the destination is not free in every measure it would write into, or when the staff has no partner voice. A feature whose job is to undo a mistake must not half-apply and make a subtler one. The destination test is "nothing but placeholder `<space>`s", deliberately STRICTER than `layerIsEmpty` (model/empty-flags.ts), which ignores every `<space>`, not just placeholders. The sibling voice is derived from the instrument table (same staff `@n`, other layer `@n` — `ComposerModel.siblingVoiceOf`), never assumed to be `v ± 1`. Elements MOVE rather than being recreated, so ties, slurs and every other id reference stay resolved; only their layer changes. The mutation does not narrow the render dirty-range, so it stays `'all'` and the splicers fall back to the full signature diff — safe by default (see `renderDirty`). Afterwards the SELECTION FOLLOWS THE MUSIC into its new voice (`reselectBeatsOverMeasures` rebuilds the beat range over the moved measures, spanning first-to-last since the move set can skip a bar that was empty in the source), which keeps the highlight on the notes and makes `Alt+V` its own inverse — press it again and the bars come back, the voice they left now being empty. Measure mode is refused: it is staff-scoped and already spans both voices. Matched on `e.code === 'KeyV'` first, since Alt+letter does not give a plain letter in `e.key` on every platform. Fixtures `sel_altV_*`.
-
-**Clipboard format + OS I/O** (`apps/composer/src/selection/clipboard.ts`): an `<hkl:clipboard>` MEI fragment carrying re-anchor metadata:
-```xml
-<hkl:clipboard kind="beat" voice="1" durationTicks="32" timeSig="4/4">
-  <hkl:content>… raw chord/note/rest/tuplet, ids stripped …</hkl:content>
-</hkl:clipboard>
-```
-```xml
-<hkl:clipboard kind="measure" staffFirst="1" staffLast="2" measureCount="2" timeSig="4/4">
-  <hkl:measures><measure>…</measure></hkl:measures>
-  <hkl:expressions><dynam … data-hkl-src-measure-offset="0"/></hkl:expressions>
-</hkl:clipboard>
-```
-
-OS clipboard uses the **DOM `copy`/`cut`/`paste` events**, NOT `navigator.clipboard.writeText`/`readText` (unreliable on Firefox — permission UI + stale/empty data). The keydown handler still does the model side-effects for Ctrl+C/X (so CDP tests observe state changes); the serialized text is stashed in module-level `pendingClipboardText`, written to `event.clipboardData` by the DOM `copy`/`cut` handler in the same gesture tick. Paste is handled entirely in the DOM `paste` event.
-
-**Paste semantics** (`pasteBeatContent` / `pasteMeasureContent` in `model/index.ts`):
-- *Beat*: snap to current beat boundary, clear destination range (incl. partially-overlapping tuplets expanded atomically), insert source via existing helpers, auto-append measures past end-of-score, re-enter beat selection over the pasted range.
-- *Measure*: time-sig pre-check (mismatch → reject); per-measure wipe + replace of selected staves' layers; expression re-anchoring; auto-append.
-- *In selection mode*: delete current selection first, paste at the resulting cursor; final selection covers pasted content.
-
-**Cursor convention bridge** (`findCursorByTickPosition`): the model has two cursor conventions off by one — `locateCursor`/`insertChordAtCursor`/`deleteAtCursor`/`getTickPositionAt` use "cursor c = past flat[c]"; `getTimeAt`/`findCursorAtOrBefore` use "past flat[c-1]". Paste/cut paths pairing `getTickPositionAt` with cursor placement use `findCursorByTickPosition` (the locateCursor-convention version) to avoid off-by-one. → see decisions.md "two cursor-position conventions".
-
-**Selection overlay** (`apps/composer/src/selection/selectionOverlay.ts`): one rect per `<g class="system">` ancestor touched (coalesced via DOM ancestor, not a y-distance heuristic). X ranges union within a group; Y depends on mode — measure: full staff bbox across `firstStaff..lastStaff`; beat: union of layer-element bboxes in the voice, `CURSOR_VPAD` padded (hugs the actual voice). Boundary x rules: past-end → last measure right edge; measure-start tstamp → `kind='start'` uses `Mₖ.contentLeft` (sig-block snap via `findSigEndXForStaff`), `kind='end'` uses `Mₖ₋₁.right` (disambiguates across system breaks); mid-content → left edge of `flat[c+1]`; mid-system barline → prefer `Mₖ₊₁.bbox.left` (Verovio renders the barLine glyph inside the measure group, so `Mₖ.bbox.right` overshoots). **Content-free beats draw too** (2026-09-11): `<space>` placeholders and an imported `<mRest>` are not cursor stops (`model/cursor-location.ts layerStops`), so a beat over an empty measure, an empty voice, an `<mRest>`, or the placeholder remainder after the last entered note has nothing between its boundary cursors. `selectionMeasureRange` then falls back to the measures the boundary TICKS lie in (`measureIdxAtTick(tLo)` .. `measureIdxAtTick(tHi − ε)`), and the y range takes `staffYRangeForMeasure`'s staff-bbox fallback (staff height, not note-hugging). A cursor strictly inside its measure with nothing after it there (flat[c+1] missing or the next measure's wrapper) anchors its x on **flat[c]'s right edge** — the same edge the voice cursor sits on (`elementRight`) — so the last-note beat and the empty-remainder beat tile at the cursor's position instead of both collapsing onto the bar line (zero width → dropped) or the note's box stretching over the empty space. Before this, entering beat selection on any such beat printed the `Sel:` status while drawing nothing (the cursor is hidden in select mode by design, so the score showed no indicator at all). Fixtures `sel_beat_enter_emptyMeasure*`, `sel_beat_enter_mRest`, `sel_beat_enter_trailingPlaceholder`, `sel_beat_lastNote_hugsNote`.
-
-**Out of scope**: cross-system selection bridging ribbon (rects render correctly per-system, just not connected); paste of non-HKL clipboard content (fails gracefully with "Clipboard is empty or not HKL content").
-
-## Note decorations & articulations (Phase 1)
-
-Plain-letter toggles on the note/chord (or rest) at the cursor anchor (INS → `flat[cursor−1]`, OVR → `flat[cursor]`):
-- **Articulations** `S`/`A`/`T`/`F`/`B` → staccato/accent/tenuto/fermata/breath. Stacc/acc/ten are `<artic>` CHILDREN of the note/chord; a fermata is a `<staff>` sibling on `@startid`; a breath is a `<staff>` sibling on `@tstamp` + `@staff` + `data-hkl-anchor` — Verovio draws a `@startid` breath ABOVE its note (probed on 6.3.0, 2026-10-17), so the comma is placed by time at the END of its anchor slot: the ticks before the slot in its layer (`ticksBeforeInLayer`, which descends `<tuplet>` / `<beam>` / tremolo wrappers) plus the slot's own, 5% of the slot back from its end, in the meter in effect at THAT measure (`expressions.ts` `beatTicksForMeasure`). Until 2026-10-17 it divided by the HEAD scoreDef's unit and scanned only direct layer children, so in the sonata (head = cut time) every breath in the 4/4 finale sat left of beat 3 and a triplet member summed the whole layer. The MusicXML importer's `<breath-mark>` goes through the same `addBreathAfter`. Fixtures `breath_endOfBarUsesEffectiveMeter`, `breath_onTupletMemberCountsNestedTicks`, `breath_musicxmlImportBreathMark`. `pruneDanglingArticControls` (inside `normalizeTies`) drops fermata/breath siblings whose anchor was deleted. Playback shapes velocity/duration (accent boosts, staccato shortens, tenuto extends).
-- **Parenthetical cautionary accidental** `P` (`@hkl-paren-caut` → `<accid enclose="paren">`), **hide rest** `H` (`@visible="false"`, CSS-hidden — Verovio ignores `@visible`), **beam split/join** `/` (`@hkl-beam-break`, XOR on the natural beam state), **stem direction** `L` / **slur direction** `Shift+L` (2-state flip: frozen when opposite the natural default, else follows layout).
-
-## Score structure (Phase 3)
-
-- **Repeats + endings** `{` / `}` / `Ctrl+E`: repeat barlines (`@left="rptstart"` / `@right="rptend"`), 1st/2nd endings as `<ending>` wrapping measures (`Ctrl+E` toggles one measure at a time, context-derived). `]` sets a double bar (`@right="dbl"`). **Playback** expands the repeat/volta structure: `expandPlayOrder(mei, startIdx)` returns the played measure order (rptstart/rptend honored, voltas selected by pass, capped at 2, **start-aware** — a repeat whose body the seek falls inside doesn't replay); `buildPlayback` re-stamps `atMs` over that order while velocity/tempo/octave stay keyed on the **original** tick. No-repeat docs keep the exact linear path.
-- **Empty-cell flags** `Ctrl+H` (hide empty staves) / `Ctrl+M` (multimeasure rest), 2026-09-11 (`model/empty-flags.ts`): two per-(measure, staff) booleans stored as attributes on the `<staff>` element inside `<measure>` — `data-hkl-hide-empty` / `data-hkl-multirest`, no namespace, round-trip through `.hkc` untouched. Only an **empty cell** may carry one: every `<layer>` of the staff has no content child (chord/note/rest/tuplet/fTrem/bTrem — `<space>` placeholders and an imported `<mRest>` both count as empty) and no `<clef>`. Content entering a cell drops both flags in `normalizePlaceholders` (`model/placeholders.ts`), the one pass every edit path already runs over every dirty layer, so no call site knows about them; the mutation tracker treats a `data-hkl-*` attribute on `<staff>` as budget-safe (`cannotChangeLayerBudget`). **One command, two flags** (`input.ts toggleEmptyFlagCommand`): the target is the selection's measure × staff rectangle (`selectionBounds`, beat or measure kind) or the cursor's measure on the cursor's staff, filtered to empty cells (`emptyCellsIn`); every target takes the state the **fewest** already hold (tie → on), so repeated presses cycle `10001 → 11111 → 00000`; the selection is kept alive for that (`dispatchSelectionMode` fall-through whitelist, beside Ctrl+8/Ctrl+R). The toggle is an ordinary edit for the renderer — the attribute changes the measure's serialized signature, so the splicer re-flows the touched lines. What a flag *means* is the render's business: see [Hidden staves and multimeasure rests](#hidden-staves-and-multimeasure-rests-2026-09-11). Insert-measure moved from `Ctrl+M` to plain `M` in the same change. Fixtures `eflag_*`.
-- **8va** `Ctrl+8`: MEI `<octave>` rendered from `@startid`/`@endid` (Verovio needs note anchors), with `data-hkl-t0`/`t1` (tick span) driving the playback pitch shift — spanned notes sound `q ± 3` per octave (band structure). Per-staff.
-- **Trills + tremolos** `Ctrl+R` (rebound off `Ctrl+T`, which Firefox reserves): `<trill>` (note-attached, `@startid`) or, on a 2-slot equal-duration selection, a diatonic-step trill (collapse to one note + `<trill>`, discarded cell stashed on `data-hkl-trill-q/r`) else an `<fTrem>` of the pair. **Playback** expands into a slur of alternating notes (static `TRILL_NOTE_MS`) preserving the source notes' lattice cells. A tremolo's time = ONE wrapped note's drawn value (needs first-class handling in all six tick/enumeration sites).
-- **Manual line breaks** `Alt+Shift+↓` (a plain `<sb>` "lock" before the measure the break precedes; padlock at the end of the system, click to unlock) — see the line-break ownership paragraph above for the partition-edit path, the forced reflow, and the undo snapshots. Page view only; scroll view ignores locks (`breaks:'none'`).
-- **Page break** `Ctrl+B` (`<pb>`) + **section headers** `Ctrl+Shift+H` (custom post-render centered movement title that displaces the system; `renumberMeasures` restarts numbering at each header). On derive renders breaks go via `breaks:'smart'` + `breaksSmartSb:0` (system breaks) / a two-pass bake (page breaks) so material after a break still auto-wraps; edit-path refill renders honor them as hard line starts under the line-break ownership above. → decisions.md (3 Phase-3 entries + the Phase C-A entry). A section start draws **no courtesy key, meter or clef** at the end of the previous system and restates no instrument labels (render clone — see [Engraving conventions](#engraving-conventions-on-the-render-clone-2026-09-0405)).
-
-## Mid-piece time/key signatures & clefs (Phase 4)
-
-The model carries **per-measure metadata** via in-`<section>` `<scoreDef>`/`<staffDef>` overrides (NOT data attributes), keyed by a cached **meter/instrument table** (`meterTable()` — per-measure budget + cumulative `prefix[]`; `measureTicksAt`/`measureStartTick`/`meterAt`/`keySigAt`/`clefAtCursor`). The old uniform `measureTicks()` is now `measureTicksAt(mi)` threaded through every caller — the highest-blast-radius migration in the roadmap. Cache invalidation is centralized in `normalizePlaceholdersAll()`.
-- **`Ctrl+Shift+S`** (sig modal, `sigDialog.ts`) writes meter/key from the anchored measure forward via diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit writes nothing). Setup relegates time/key to a button opening the same modal at measure 0. The modal also carries:
-  - **Symbol** select — `meter.sym ∈ {"common","cut"}` (Verovio renders C / ¢). Choosing Common forces 4/4, Cut forces 2/2 (the numeral selects lock); the budget still comes from count×unit so capacity is unaffected.
-  - **Beat groups** — an optional additive pattern (`hkl:beat-groups="2+2+3"`, ns `https://hexkeylab.com/ns/mei`). **Beaming-only**: `meter.count` stays the sum (display is a plain numeral), the pattern just drives `beatGroupBoundaries`. Validated to sum to the beat count (mismatch → `onError`, nothing applied). Both `meter.sym` + `hkl:beat-groups` ride the same `<scoreDef>`; a meter-touching `<scoreDef>` resets the full descriptor (count/unit/sym/groups) — `meterAt(mi)` returns the `MeterInfo` quad.
-- **Selection-driven (Phase 4a)** — in select mode `Ctrl+Shift+S`/`Ctrl+Shift+C` apply over the **selected span** instead of reverting to voice mode (handled in `dispatchSelectionMode`, before the voice-mode handlers). Time/key span over the touched measures `[lo,hi]` via `setMeterRange`/`setKeySigRange` (each = two diff-aware calls: set at `lo`, **bounded restore** of the prior value at `hi+1`). Clef span over the selected **beats** via `applyClefRange` (beat-mode only — measure selection is rejected): the span is set to the chosen clef and ONLY the span — clefs attached to slots strictly inside it are removed, the new clef goes at the start slot, and the clef in force at the end cursor (captured before mutating, including a clef sitting exactly at the end slot) is restored there, diff-aware. Both endpoint slots are resolved first, so a refusal (tuplet, past-end) writes nothing. This is the one bounded exception to the direct-only rule below.
-- **`Ctrl+Shift+C`** (clef modal, `clefDialog.ts`) writes a mid-measure inline `<clef>` (a zero-duration `<layer>` child — rides the content whitelists; `realTicks`=0; breaks beam runs; never a cursor stop). Diff-aware (mirrors `setMeterAt`): setting a clef equal to the one **inherited** at the slot (`clefInheritedAt` — everything before it, excluding its own clefs) **removes** the inline `<clef>` instead of stacking a redundant one; the dialog's **Remove clef change** button does the same directly (`removeClefAt`). The dialog pre-selects `clefInEffectAt` — the clef the next note typed there would be drawn in, including one attached to the cursor's own slot. Clef inheritance carries forward across measures: `effectiveClefForVoice` walks every prior measure's clefs in the voice's layer up to the slot. `setClefAt`/`setClefAtCursor`/`setClefRange` are boolean wrappers over `applyClefAt`/`applyClefRange`, which return a `ClefOutcome` (`inserted`/`replaced`/`removed`/`noop`/`pastEnd`/`inTuplet`) so the status line says what happened. Playback is clef-agnostic (coords carry pitch).
-  - **Clef slots (`model/clef-slot.ts`, 2026-09-27).** A clef has no stop of its own, so "the clef at this cursor" is derived from the cursor's insertion point by ONE function, `clefSlotAt(voice, cursor)`, used by every read, write and remove. A slot is `{layer, ref, existing}`: a new clef goes immediately before `ref` (a content child, else the first placeholder/mRest, else appended); `existing` lists the clefs already attached there. The barline after a **full** measure M is one slot with two cursors and two spellings: "past the last content of M" (whose insertion overflows into M+1) and "M+1's wrapper stop" both resolve to the head of M+1's layer, and `existing` collects BOTH the trailing clef run of M's layer (what a reload or the old boundary write produced; renders before the barline as-is) and the head run of M+1's layer (what the wrapper write and the MusicXML importer produce; the form `relocateInitialClefs`, `runningScoreDefContext`, `sectionRestart` and `sigranges` key on). A fresh barline clef is written in the head-of-M+1 form; an existing one is edited in place and any other spelling/duplicate dropped, so one position never holds two clefs (the source of the clef-on-clef overlap: alto appended to M1's tail beside a bass relocated from M2's head). Past-end of a partial last measure is refused (`pastEnd`); past the end of a full LAST measure appends to its tail (there is no M+1 to head).
-  - **Clefs change only through the dialog (Max, 2026-09-27).** No Delete/Backspace path removes a clef: selection delete (`clearBeatRange`/`clearMeasureRange`) skips clefs, and Backspace at the wrapper of a measure holding a `<clef>` skips left with a status instead of deleting the measure (which would silently drop the clef and revert every later bar). The only indirect removal is the bounded selection change above, which by construction cannot cascade.
-- **Pickup / anacrusis (Phase 4c, `Ctrl+Shift+A`)** — `pickupDialog.ts`: a length field at the start of the cursor's section, counted in **eighth notes** (`0..maxPickupEighthsAt` — the largest whole eighth still shorter than a bar; 7 in 4/4 or 2/2, 5 in 3/4 or 6/8). It counted denominator BEATS until 2026-09-17 (Max): that could not express a half-beat anacrusis in 4/4 — the commonest kind — and in 2/2 could not express a sub-bar pickup at all, the only beat there being a half note. Eighths cover every case beats did plus every half-beat one, at the cost of a larger number for ordinary ones (a quarter-note pickup in 4/4 is `2`, not `1`). The STORAGE never changed — `hkl:pickup-ticks` was always absolute ticks (8 per eighth on the 64-per-whole-note grid) — so documents written before it read back identically, and the full-bar guard is stated in ticks (`budget >= fullBarTicksAt`) so it holds for meters whose bar is not a whole number of eighths. `pickupEighthsForSection` reports a sub-eighth pickup (import-only) as 1 rather than 0, since 0 is the value the dialog REMOVES on. A pickup is a **dedicated measure 0** carrying a reduced tick budget (`hkl:pickup-ticks`) + `@metcon="false"` (Verovio skips meter-conformance and renders the short bar without padding — verified). `meterTable`'s `budgetByEl` honors `hkl:pickup-ticks`, so `measureTicksAt` → autofill / `truncateOverflowingMeasures` / `normalizePlaceholders` all respect the reduced budget for free. `renumberMeasures` numbers the pickup `0` (next measure stays `1`). `setPickupAt(sectionStartIdx, eighths)`: eighths≥1 inserts (`insertSectionPickup`, moving any section title onto the pickup) or resizes; eighths=0 removes the measure (`removePickupMeasure`, handing the title back). `sectionStartIdxForCursor` walks back to the nearest section title (else 0).
-  - **Downbeat tempo travels with the pickup** (`moveDownbeatTempos`): an instant `<tempo>` at the section's beat 1 moves onto the pickup on add (and back to the new first measure on remove), so the tempo governs the anacrusis. Gradual tempos (with a `tstamp2` span) stay put — re-encoding their span across a short bar is ambiguous.
-  - **Pickup-aware tick resolution**: the doc-based `absoluteTickForMoment` (`expressions.ts:measureTickInfo`) — the clock for tempo/dynamics/hairpins/pedal — now subtracts the pickup's reduced budget per measure, matching the model's budget-aware `measureStartTick` (the note clock). Without this, every mark after a pickup drifted by the pickup's missing ticks (tempo applied a beat or two late). → lessons.md "two playback clocks must agree on per-measure budget".
-- Per-measure accidental spelling, beaming (6/8 = 3+3, additive = explicit groups), and MusicXML export all consume the per-measure lookup. → decisions.md (Phase-4 entries), lessons.md ("mid-measure clef vs the leading-signature region", "Verovio short measures + metcon").
-
-## Pedal, tempo, expressive-text layers (Phase 2)
-
-The expression layer (below) generalized into **navigable virtual layers** in the ↑/↓ cycle:
-- **Pedal** (`Shift+P` down / `Shift+O` lift) — `<pedal>` siblings, `@tstamp`-anchored. Playback drives HKL's damper engine via deferred note-offs (`pedalCapturesNoteEndingAt`); `play-score` carries an optional `pedalEvents` array.
-- **Tempo** (`Ctrl+Shift+T` modal) — score-global, one `<tempo>` per moment, fixed placement above staff 1 in the model. **Restated above every part on the render clone** (`notation/parts.ts` `duplicateTempiAcrossParts`, 2026-09-09, backlog Layout "Tempo markings need to be duplicated between parts"): the model keeps ONE element — so the layer cursor, delete, save, MusicXML export and the playback timeline never see the copies — and each instrument's TOP staff that carries no `<tempo>` at that moment gets a deep clone with its own `@staff` and an `@xml:id` suffixed `-p<staffN>` (a fourth id segment, which `newId`'s three-segment form cannot produce, so `selectLayerElementById` recovers the original by stripping it — after trying the literal id, since a real id CAN end in `-p<digits>`; `Cursor.updateLayerHighlight` lights up the copies with the original). Before this a two-part score drew "Allegro" above the top staff only, while an imported "rit." — which Finale writes into every part and the importer turns into per-part `<dir>`s — appeared above both. A text-less `<tempo>` is neither copied nor allowed to occupy its moment: the document's head tempo (`setTempo`, playback-only `@mm` with no content) renders nothing in this Verovio build and would otherwise shadow a real marking written on beat 1 of measure 1. Copies are APPENDED to the measure rather than inserted beside the source — the head tempo lives before the measure's `<staff>`s, where Verovio rejects a control event. Unlike the other clone conventions this runs in `serialize`/`serializeRangeForRender` **before `filterToStaves`**, not in `applyRenderConventions`: single-part view drops control events anchored to a hidden staff, so without a copy of its own a view of anything but the first instrument used to lose every tempo marking. Deterministic (ids derive from the source), so a range sub-render matches the full one. Fixture `engr_tempoRestatedAbovePart`. Every part gets a copy — the orchestral convention of restating only at the top of each family is not modelled. `buildTempoTimeline` gives `tickMsAt`/`atMsAt` (piecewise-linear beat-period; gradual ramps interpolate; "a tempo" restores). All playback runs on `atMsAt`. Rendering: an instant tempo marking is **bold, non-italic** (Verovio's `<tempo>` default — plain text); gradual rit./accel. and "a tempo" are **italic, non-bold**, which needs an explicit `<rend fontstyle="italic" fontweight="normal">` (fontstyle alone leaves it bold-italic — see lessons.md). The modal is a builder: focuses Kind, and hides the ♩=/beat-note/show-mm fields unless Kind is an instant marking.
-- **Expressive text** (`Ctrl+Shift+E` modal) — `<dir>`, `@tstamp`-anchored, italic checkbox. `<dir>` is **italic by default** in Verovio, so the text is always wrapped in a `<rend>` with an explicit `fontstyle` (`italic` or `normal`) — "italic off" must write `fontstyle="normal"` or it still renders italic. Render-only except the pizz/arco articulation cue (matched on the typed `<dir>` text — see Multi-instrument).
-- **Above/below placement** `Ctrl+↑`/`Ctrl+↓` — sets `@place` (tempo + pedal excluded, fixed placement): in the expr layer on the SELECTED mark only; in voice mode on every dynamic/hairpin/expressive-text at the voice anchor.
-
-The reusable modal shell `ui/textEntryModal.ts` (`text|number|check|select` fields) hosts the expressive-text, tempo, signature, and clef dialogs. Keyboard-first: **Enter submits from any field** (incl. a focused `<select>`, where the browser would otherwise just close the dropdown) but NOT from a focused button (so Enter on Cancel dismisses, on OK submits). Optional `onChange(values, changed, api)` builder hook with `api.setPlaceholder/setValue/setDisabled/setHidden`, plus a `focusField` to choose the initially-focused control (tempo focuses Kind). Composer modals restore a visible **checkbox focus ring** (HKL globally suppresses it; `.hkl-dialog input[type=checkbox]:focus` adds one back) since these dialogs are keyboard-driven.
-
-## Multi-instrument specialization (Phase 5)
-
-Built on the instrument table (see [MEI model](#mei-model-appscomposersrcmodelindexts)). All single-instrument docs stay byte/pixel-identical.
-- **Instrument management** — `instrumentsDialog.ts` (drag-to-reorder list editing a working `InstrEdit[]`) is **staged**: it touches nothing until Setup's **Save** calls `reconcileInstruments` (remove → append → reorder, content traveling via `origIndex`), folded into Setup's single history entry; Cancel discards.
-- **Single-part view + export** — a toolbar instrument selector (`viewInstrSelect`) sets `state.viewInstrIdx`; `serialize(forRender, viewStaves)` filters the render clone to one instrument's staves (`filterToStaves` — drops non-kept `<staff>`/`<staffDef>`, prunes emptied `<staffGrp>`, removes control events anchored to a hidden staff or dropped `@startid` — which is why `duplicateTempiAcrossParts` runs BEFORE the filter, so the viewed part keeps a tempo marking of its own). **Staff @n are NOT renumbered** (the cursor resolves staves by the doc's @n→xml:id; the ↑/↓ stop list restricts to the viewed instrument and parks the cursor there). MusicXML export splits **one `<part>` per instrument** (part-local staff/voice renumbering, `<part-list>` from `<label>`); PDF export honors the view (prints just that part). → decisions.md "Single-part view filters the render clone WITHOUT renumbering". **The filtered render is OWNED like the score** (2026-09-05, backlog "single-part view doesn't do the system auto-balancing"): `PageLineBreaks.setView(viewStaves)` keys the owner on the staff subset (`viewKeyOf`; a different subset invalidates — a part has its own widths, so its own partition, naturals and `partitionCache` entry), and every serialize the owner and renderer do on the model's behalf carries the filter — the refill's pinned MEI and naturals windows, `pinnedMeiForCurrentModel` (lazy mounts, the reference gate), the segmented castoff, and the page splicer's window (`PageSpliceCtx.viewStaves`), whose synthetic leader/trailer now takes the filtered head's staffDef NUMBERS rather than `1..n` (the viola alone is staff 3). The derive path's filtered-view bail and the `viewStaves == null` gates on refill, partition cache, extents job and the heaviness predictor are gone; a view change still derives (`forceFullRerender` → `invalidate`). Scroll view's splicer stays gated to all-parts (its gap calibration assumes the full staff set). Fixtures `pageBalanceSinglePartView`, `pageSinglePartViewEditSplices`.
-- **Instrument identity = name.** Each instrument is identified ONLY by its `<label>` name (there is no `hkl:instr` key, no Composer timbre dropdown). `buildPlayback`/`buildPedalEvents`/`composer-instruments`/`composer-active-instrument` all send that **name** verbatim; HKL resolves it to a sample-set key by CASE-SENSITIVE match against its live `#waveform` dropdown option text (imported instruments included), defaulting to the "Piano" option when nothing matches. It's the user's job to name a Composer instrument to match an HKL dropdown label. MusicXML import names each part from its `<part-name>`. → decisions.md "Composer instrument identity is a name HKL resolves against its dropdown".
-- **Pizz/arco** — a "pizz."/"arco" `<dir>` cue sets a notation-level `pizz` flag on the spanned events (`buildArticCueLookup`, keyed on original written tick). HKL owns the base-key → pizzicato-variant mapping (`ARTIC_VARIANTS`, only `viola_pizz` shipped; else **any library pizz** fallback) and applies it when resolving the event's instrument. Multi-instrument only; HKL preloads the variants (never-fall-back).
-- **String harmonic** `Alt+H` — `data-hkl-harmonic` on the slot + `@head.shape="diamond"`/`@head.fill="void"` (open diamond) on the highest note. Playback sounds the diamond at a pitch computed from the **next-lowest note below it** (natural → +octave; P4 → 2 octaves above the reference; M3 → 2 octaves + P5); the reference (stopped note) is dropped, every OTHER chord note plays at its written pitch (no whole-chord silencing). → decisions.md "String-harmonic playback".
-- **Ignore color** — a `<hkl:config @ignore-color>` flag (mirrors the HEJI flag) + Setup checkbox; `serialize` strips `@color` from notes on the render clone only (live/saved doc keeps lattice color).
-- **Selection-mode** is now N-staff: `Staff` is `number` (was `1|2`), all `voice<=2?1:2` ternaries route through `model.staffForVoice`/`layerForVoice`, `adjustStaffRange` clamps to `totalStaves()`.
-- **Overflow clearance between instruments** (2026-09-05) — Verovio's `defaultBottomMargin: 2.0` (render.ts `DEFAULT_BOTTOM_MARGIN`; default 0.5). Verovio widens a staff distance only as far as the colliding boxes plus their margins, so this is the margin every element without a dedicated option gets and it acts ONLY where content of one staff overflows toward the next: probed at 0.5/1.0/1.5/2.5 the viola-dynamic→piano-note clearance went 39/79/119/199 user units while an uncollided staff pair stayed at Verovio's 960. On the sonata it halved the systems with overlapping cross-instrument elements (18 → 9 of 116) and the tight ones (< ½ unit: 29 → 14). A `staffDef@spacing` minimum was tried first (09-04) and reverted: it widened EMPTY staff pairs and left the collision case unchanged. Brace + `bar.thru` on grand staves only (see Bar lines + grand staff).
-
-## PDF export (`apps/composer/src/save.ts`, PDFKit)
-
-`downloadPdf(pages)` is **the page view, page for page** (2026-09-05). Its input is the live page SVGs: `renderer.mountAllPages()` first makes every virtualized placeholder real through the ordinary mount path (Verovio SVG → `postProcessRendered` → placement → the `onPageMounted` injections → page-fit repair), so every pass that shapes the screen — render-clone conventions, crisp post pass, below-staff text layout, balancing, line-break / vertical ownership, header / footer / section titles, `pageScale` — has already run on what the export reads. Nothing is re-engraved and the live toolkit's layout is untouched. Scroll view has no pages: the toolbar handler (main.ts) switches to page view, awaits the deferred render, exports, and switches back (the view-switch stash makes both directions cheap); in page view it hands the mounted set back to the mount window afterwards.
-
-Each page is cloned **synchronously, before the first `await`** (the mount window can evict far pages on the next idle tick — the export must be one picture of the screen at the moment it was asked for), then placed in an attached off-screen host and normalized for print there (`normalizePageForPrint`) — everything svg-to-pdfkit cannot get from stylesheets, since it reads presentation attributes and inline `style` only: light theme regardless of the screen theme (`data-notation-theme` tags stripped from the clone, inline light-source notehead colors removed by `applyNotationTheme('light')`); non-notehead glyphs pinned black (`forceNonNoteheadBlack` — the `#score` CSS that does this on screen doesn't reach the host); CSS-hidden rests removed (`removeHiddenRests`); Verovio's stylesheet stroke inlined from computed style (`inlineComputedStroke`, only on elements carrying a `stroke-width`, else filled glyphs grow gray outlines); and the stylesheet's text weight/slant — `g.tempo` bold, `g.dir`/`g.dynam`/`g.mNum` italic — inlined as `font-weight`/`font-style` on every text run (`inlineComputedTextStyle`; svg-to-pdfkit applies none of Verovio's `<style>` rules, and the tempo printed regular until Max read it off the heatmap, 2026-09-05). `SVGtoPDF` then draws the clone onto a US-Letter PDFKit page with the embedded `BravuraText.otf` (shipped in `/public`): the paper is always Letter — `pageScale` scales the page rectangle relative to the notation, not the sheet — and the page's viewBox keeps Letter's aspect, so `meet` fits it exactly. PDFKit rather than jsPDF because it embeds the Bravura OTF/CFF, so HEJI accidentals survive (decisions.md "Composer PDF export uses PDFKit"). The OTF is fetched from `/BravuraText.otf`, which only the proxy origin serves at the root path: the export verifies the response and its `OTTO` magic and throws otherwise, naming `localhost:5170`, and routes svg-to-pdfkit's warnings to `console.error` (lessons.md 2026-09-05, "no accidentals"). The pdfkit chunk is lazy-loaded.
-
-**Known residual**: text set in `Times, serif` (title, composer, tempo, footer, section titles) is drawn with PDFKit's built-in Times, whose advance widths differ from the browser's substitute serif, so those words are wider or narrower than on screen at the same anchor — the one non-WYSIWYG element left (sonata heatmap, 2026-09-05). Closing it means shipping one serif face used by both the screen CSS and the PDF.
-
-Verification: `test/composer-inspect/phasec/pdf-wysiwyg.mjs` (sonata: page-count parity + live-page screenshots for a `heatmap.py` diff against `pdftoppm` at 254 dpi); fixtures `export_pdf_smoke` (page-tree count = exported pages = DOM pages), `phase5_pdf_split_view` (single-part view via the real selector) and `export_pdf_from_scroll_view` (the toolbar button from scroll view: paginated PDF, view returns to scroll). History: before 2026-09-05 the export re-loaded the document under its own fixed options (Letter, `scale 100`, `breaks 'auto'`) and re-ran a copy of the three June-era passes; everything added since never reached it → decisions.md "PDF export is the page DOM".
-## Out of scope (Composer overall)
-
-- Note-level *pitch* edits inside an existing chord beyond `Alt+↑/↓` step + `Alt+←/→` SC-transpose.
-- Continuous-loudness shaping through hairpins (held notes spanning a hairpin don't ramp; only newly-struck notes pick up interpolated levels) — would need a `ComposerEvent` carrying timed `(meiId, pressureValue, atMs)` triples for HKL's `handleAftertouch`.
-- MusicXML export of grace notes (the model has none) and of a section's movement TITLE (it lives in a page-anchored `<credit>`, which we deliberately neither read nor write — the boundary itself survives as a final barline and the numeral is synthesized). Everything else round-trips — see the measured coverage under [Save / load / export](#save--load--export-appscomposersrcsavets).
-- Per-instrument **external** pedal CC (internal damper is per-instrument; outbound CC-64 mirroring stays single-channel global).
-- Pizzicato sample bundles beyond viola (mechanism is general; add to `ARTIC_VARIANTS` + ship the `.hki`).
-- Tie-chain re-coalescence under time-sig change (currently per-measure truncation).
-- Cross-system selection bridging ribbon (rects render per-system, just unconnected); nested tuplets; `<tupletSpan>` cross-bar tuplets.
-
-## Help modal (`apps/composer/src/helpDialog.ts`)
-
-Read-only enumeration of every binding the dispatcher acts on, grouped Universal / Voice / Tuplet / Expression / Selection. The catalog is `KEYBINDINGS: KeySection[]` in `apps/composer/src/keybindings.ts` — the canonical doc source for Composer keybindings (replaced the former `input.ts` header docstring). Native `<dialog>.showModal()` provides focus trap + Escape; the dispatcher's `shouldIgnore` already drops events from focused form elements. When changing a binding in `input.ts`, update `keybindings.ts`. The catalog is documentation-as-data, NOT a dispatch table. → see decisions.md.
-
-## Testing & inspection
-
-**Test suite** (`test/composer-test/`) — pre-merge gate. `pnpm test:composer` (full, 581 fixtures, ~5 min wall-clock as of 2026-10-05) / `:fast` (60 fixtures, ~25 s); `--only <prefix>` re-checks a few fixtures in seconds; needs `pnpm dev` in another terminal.
-
-Tiers: `fast` (MODEL+CURSOR+CONSOLE), `full` (+ROUNDTRIP+RENDER+INPUT+VISUAL), `visual` (pixel baselines; `--update-baselines`), `scenario <name>` (single fixture, `--keep-open`).
-
-| Invariant | Asserts | Catches |
-|---|---|---|
-| MODEL | model query post-setup matches | flat-list off-by-one, cursor convention drift, accidental clamp |
-| CURSOR | consecutive positions render >3px apart | "state changes but pixel doesn't" |
-| RENDER | DOM/SVG shape | missing tuplet bracket, accid overlap, color leak |
-| ROUNDTRIP | serialize→replace→serialize identical (mod placeholder ids) | xml:id namespace bugs, tie reconstruction |
-| VISUAL | pixel match vs baseline (clipped to bbox) | font/color/line-rendering changes |
-| INPUT | real CDP keystrokes reach the model-API end-state | keybinding registration, pending flows |
-| CONSOLE | no error-level messages (always-on) | stale `@tie`, dangling refs, MEI parse errors |
-
-`RESET_SNIPPET` (`lib/runner-core.mjs`) clears model + input state + scroll between fixtures and forces scroll mode for deterministic clip rects. Every bug fix lands with a fixture; `fixtures.mjs` is grouped by concern (cursor-convention, single/multi-voice, tuplets, ties, sig-changes, keystroke-dispatch, bridge, scroll, visual). The selection group covers entry/growth/shrink-to-origin/Ctrl+Shift jumps/promotion/cut/visual (`sel_beat_shrink_to_origin` enforces "selection always ≥ 1 beat").
-
-**Headless inspection** (`test/composer-inspect/`): `inspect.mjs '<expr>'` runs a JS expression in headless Chromium and prints JSON; `--screenshot <path>` captures a PNG. `cursor-trace-all.mjs <outDir>` walks every `scenarios.mjs` scenario's cursor positions and reports rect-collision violations. Needs `pnpm dev`; the `window.__hkl_composer` handle exposes `bridge, model, renderer, cursor, reRender`.
+| empty | `[wrapper]` |
+| has content; k = 0, or measure k−1 empty or partial | `[wrapper, …content]` |
+| has content; measure k−1 full | `[…content]` |
+| past the end | one synthetic stop, only when the last measure is not full |
+
+Placeholders (`<space data-placeholder>`), inline `<clef>`s and rests drawn by
+the renderer are never stops. A partial measure's fill point is "past its last
+content"; extending a measure vs entering the next is the user's choice
+between two visibly different stops. `locateCursor` / `locateFlatElement`
+(`model/cursor-location.ts`) resolve a cursor to `{measureIdx, layer,
+withinIdx, inTuplet}`; past the end, the first returns a location in a
+measure about to be appended.
+
+Navigation reads a per-voice index (`model/voice-index.ts`: stops, ticks,
+measure boundaries), rebuilt lazily after a structural change. Under
+`HKL_INDEX_CHECK` every index is checked against the uncached computation.
+
+**Backspace** deletes the element before the cursor and never auto-removes a
+measure it empties: at an empty measure's wrapper it deletes the measure
+(never the last one; never one holding a clef; a multimeasure-rest run only
+whole and only if every member is empty on every staff); at a placeholder or
+other wrapper it moves left; at an empty tuplet it deletes the tuplet.
+
+### Mutation pipeline
+
+- **Placeholders** (`normalizePlaceholders`): each layer's trailing `<space>`
+  sums to the measure's budget minus its content. Idempotent (no id churn);
+  also drops the empty-cell flags from a cell that gained content.
+- **Insertion** (`planInsert`, `model/insertion-plan.ts`): a note longer than
+  what remains splits at the barline into tied pieces (`decomposeTicks`); the
+  cursor measure's later items and the next measure's items are repacked whole
+  (ids and ties kept). Overflow reaches only the next measure: "Doesn't fit in
+  next measure.", "Tuplet too large for measure.", "Doesn't fit.".
+  `canInsertHere` runs the same planner dry so the status line matches.
+- **Ties** (`model/ties.ts`): a note's **intent** (`@tie` `i`/`m`, or
+  `data-pending-tie`) is persisted; its **realization** — `@tie` `i`/`m`/`t`
+  (never compound), a forward `data-tie-partner`, and an `<lv>` stub when no
+  same-pitch successor exists — is rebuilt by `normalizeTies` after every
+  structural mutation. The walk follows a time-ordered event sequence that
+  descends into tuplets; a measure with no content in the voice breaks a
+  chain. A stub ends half a beat after its note, in that measure's meter.
+  `=` flips intent (one chord member under a chord-internal selection).
+  Deletion just removes and re-normalizes.
+- **Dirty range** (`renderDirty`): `'all'` by default — every structural
+  mutation resets it — and narrowed only by converted mutations, so a missed
+  mark can only over-render. Ties are re-realized in the dirty range ±1
+  measure, checked against a full pass under `HKL_INDEX_CHECK`.
+- **Autofill** is off. Setup's *Fill incomplete measures* pads every partial
+  non-empty layer with beat-aligned rests.
+
+### Tuplets
+
+`<tuplet num numbase data-tuplet-atomic-dur>`, a direct child of `<layer>`,
+never nested, never across a barline. Its unfilled slots are
+`<rest data-tuplet-placeholder="true">` hidden by CSS (Verovio only brackets
+tuplets with visible content; `<space>` and `@visible` don't work), regrown
+as atomic-sized rests after every change so fill and delete are reversible.
+`@bracket.visible` is left unset, so Verovio brackets only tuplets not wholly
+under one beam.
+
+- **Creation**: `Ctrl+2..7` then a duration digit uses a fixed ratio table;
+  `Ctrl+Shift+3` opens a modal for any count over any span (in eighths) with
+  every valid written value listed and the numbase nearest the count
+  pre-selected. Both call `createTupletAtCursor`.
+- **Placement** (`resolveTupletTarget`): a tuplet lands whole in one measure.
+  The stop at the end of a FULL measure is read as the head of the next (it
+  has no capacity otherwise); a partial measure never spills. The fit test
+  counts content after the cursor. A tuplet that an insert *displaces* may
+  move whole into the next measure — displacement is not creation, and the two
+  paths stay separate.
+- **Stops**: the wrapper ("before the tuplet") and one stop per filled child
+  plus the first placeholder ("inside"). Inserting inside consumes
+  placeholders; overflow is refused.
+
+### Signatures, clefs, pickups
+
+- **Per-measure meter and key** live in in-section `<scoreDef>` overrides.
+  `meterTable()` backs `measureTicksAt`, `measureStartTick`, `meterAt`,
+  `keySigAt`. Anything computing a tstamp or a beat from ticks must use the
+  meter in effect at that measure, never the head `<scoreDef>`.
+- **Signature modal** (`Ctrl+Shift+S`, also Setup's Time/Key button at
+  measure 0): diff-aware `setMeterAt`/`setKeySigAt` (an unchanged submit
+  writes nothing; a mode-only change writes `@mode` alone). It sets `meter.sym`
+  (common/cut) and `hkl:beat-groups` (an additive grouping for beaming only).
+  In select mode it applies to the selected span with a bounded restore after
+  it. Shrinking a meter truncates overflowing content per measure (shorten the
+  first overflowing element, drop the rest, drop an overflowing tuplet whole);
+  there is no reflow.
+- **Clefs** are inline `<clef>` layer children (zero ticks, never a stop,
+  break beams), written only through the clef dialog (`Ctrl+Shift+C`) — no
+  delete path removes one. `clefSlotAt` (`model/clef-slot.ts`) resolves every
+  read and write: the barline after a full measure is ONE slot reachable from
+  two cursors, and a new clef there is written at the head of the next
+  measure. Choosing the inherited clef removes the change.
+- **Pickup** (`Ctrl+Shift+A`, length in eighths): a dedicated measure 0 with
+  `hkl:pickup-ticks` and `@metcon="false"`, numbered 0. Every budget-aware
+  path honours it, including the clock for control events. An instant
+  downbeat tempo moves onto the pickup.
+
+### Empty cells
+
+`Ctrl+H` (hide empty staff) and `Ctrl+M` (multimeasure rest) set
+`data-hkl-hide-empty` / `data-hkl-multirest` on a measure's `<staff>`
+(`model/empty-flags.ts`). Only an empty cell — no content and no clef in any
+layer — carries one; content entering it drops both. One command, two flags:
+each target cell takes the state the fewest already hold. Both are
+render-only: playback, the flat cursor and the saved structure ignore them.
+Rendering: see Hidden staves and Multimeasure rests below.
+
+### Undo
+
+`history.ts`: full-state snapshots (the MEI plus cursors and the active
+voice) before and after each user action, the AFTER snapshot taken lazily; a
+cut followed by a paste merges into one entry. A line-break command also carries a
+`LayoutSnapshot` so undo restores the exact partition.
+
+## Input
+
+`input.ts` dispatches keys (Speedy-Entry flow, Finale-style bindings); the
+canonical list is `keybindings.ts`, rendered by the help modal. Highlights:
+
+- **Entry**: digits `1`–`7` are durations (5 = quarter); held HKL keys make a
+  chord, none a rest; any accidental magnitude is accepted. `.` cycles dots
+  (overflow ties across the bar), `=` ties, `Insert` toggles insert/overwrite.
+- **↑/↓** step a stop list built from the instrument table: tempo, then per
+  instrument its voices, its expression layer and (two-staff instruments) its
+  pedal layer — one piano: `tempo → 1 → 2 → expr → 3 → 4 → pedal`. It is
+  limited to the viewed instrument in single-part view and skips empty layer
+  stops and hidden staves. A voice switch lands on the note sounding at the
+  current note's onset (`setVoicePreservingMeasure`); entering a layer lands
+  on the nearest mark.
+- **Transport**: `Space` stops whichever transport runs, else starts
+  playback; `Shift+Space` starts performance mode when neither runs. The Play
+  and Perform buttons switch transports. During a transport, plain ←/→ stop
+  at the playhead and `Ctrl+←/→` seek by measure.
+- **Files**: `Ctrl+S`, `Ctrl+O`.
+- **Status line** (`#composerStatus`): four kinds by intent — `error`,
+  `state` (persistent context: held notes, pending prompts, selection span),
+  `action` (only with an undoable edit), `info`. Every keydown clears all but
+  `state`. Voice switches post nothing; the toolbar's `#voiceIndicator` shows
+  the voice or layer.
+- **Pending states**: a hairpin, a slur (`Ctrl+L`) and a `Ctrl+N` tuplet wait
+  for their second key; any other key cancels and falls through.
+
+**Click** (`click.ts`): one listener on `#score` resolves every click to the
+nearest of three target kinds by box distance — a note/chord/rest (cursor on
+it, or before it if left of its left edge), an empty staff region (that
+measure's start), or a control event (selects it in its layer). Clicks are
+ignored during a transport.
+
+### Selection and clipboard
+
+Selection is a cursor mode (`'select'`, `selection/selection.ts`):
+
+- **Beat mode** (`Shift+←/→`): one voice, contiguous beats, at least one;
+  `{voice, origin, first, last, lastMoved}` with `first ≤ origin ≤ last`,
+  growing from one side at a time. Entry on a beat boundary is
+  direction-aware. `Ctrl+Shift+←/→` jumps to the barline.
+- **Measure mode** (`Shift+↑/↓`, or promoting a beat selection, one way):
+  contiguous measures over a range of staves.
+- **Delete / cut**: a measure the span covers entirely becomes an empty cell;
+  a partial span is refilled with rests. Clefs are never removed.
+- **`Alt+V`** moves wholly selected measures to the staff's other voice,
+  all or nothing, and the selection follows the music (so it is its own
+  inverse).
+- **Clipboard**: an `<hkl:clipboard>` MEI fragment (beat kind: content and
+  duration; measure kind: measures plus dynamics and hairpins), written and
+  read only through DOM `copy`/`cut`/`paste` events — `navigator.clipboard`
+  is unreliable in Firefox. Paste snaps to a beat (or replaces whole
+  measures), clears the destination and reselects what was pasted.
+- **Overlay** (`selectionOverlay.ts`): one rect per system the selection
+  touches; beats over empty space fall back to staff-height rects at the
+  cursor's edge.
+
+## Rendering
+
+`Renderer` (`render/render.ts`, singleton `renderer`) loads Verovio WASM from
+the CDN by script injection and keeps two toolkits: `tk` for full renders and
+`spliceTk` for every window (splices, line windows, naturals, the reference
+gate). Options are `buildOptions(strategy, geomMode)`: base options +
+geometry + breaks + the zoom preset (`CRISP_PRESETS`: scale 50/75/100, `unit`
+8 at every zoom) + line widths. Every per-mode option is set explicitly on
+every render, because `setOptions` persists what it is not told.
+
+- **Page geometry**: US Letter (`pageWidth` 2159, `pageHeight` 2794, 1/100 mm),
+  scaled by the document's **page scale** (60–160 %, Setup "Page size") — the
+  paper grows relative to the notation, so bars per system change while the
+  notation keeps its on-screen size. Zoom sizes the notation; page scale sizes
+  the paper.
+- **Scroll geometry**: Verovio's maxima (100 000 × 60 000), `breaks:'none'`,
+  one system; about 500 bars fit at 100 % before it would wrap.
+- `condense` is `'none'` (Composer hides staves itself); `defaultBottomMargin`
+  2.0 widens a staff gap only where content collides with the next staff;
+  `dynamDist` 4.5.
+
+`renderComposer(model, viewStaves)` is the entry point for both views; a full
+engrave happens only on a forced cause (`forceFullRerender`: new document,
+view staves, zoom, page scale). A render predicted heavier than 250 ms
+(`predictNextRenderHeavy` — in page view, whether a local refill is possible)
+defers one frame so the `#renderBusy` badge paints first, and requests
+arriving meanwhile coalesce into one render of the latest state. Post-render
+readers use `afterRender()`.
+
+### Serialize for render
+
+`model.serialize(forRender)` and `serializeRangeForRender` (the windows) build
+the clone Verovio sees: `computeAccidentalDisplay` → `transformDocForHeji` →
+ignore-color strip → `duplicateTempiAcrossParts` → `filterToStaves`
+(single-part view) → `relocateInitialClefs` → `regroupBeams` →
+`applyRenderConventions`. Every render path goes through it, so a full render
+and a splice agree by construction. `filterToStaves` keeps the original staff
+numbers (the cursor resolves staves by them) and drops a brace from a group
+reduced to one staff.
+
+`applyRenderConventions` (one module each, in this order):
+
+| Pass | Rule |
+|---|---|
+| `unifySlurStems` (`slurStems.ts`) | In a single-voice staff, one stem direction under a slur: longest slur first, majority of the covered units' natural directions (predicted from pitch with Verovio's rule); fixed votes — an explicit `@stem.dir`, a longer slur's choice, a direction forced by a second voice — decide. Skipped when the minority would need stems more than `CAP_STEPS` (5) off the middle line. Runs first: the rest pass reads its `@stem.dir`. |
+| `fillEmptyMeasureRests` (`measurerests.ts`) | Every content-free staff cell gets a rest in its lowest layer: `<mRest>` for a full bar in any meter, pickup-sized rests in a pickup (marked `data-hkl-cosmetic`, which click skips). The only source of a whole-bar rest; the cursor never stops on one. |
+| `settleRestLocations` (`restlayout.ts`) | Two-layer staves: a rest meeting nothing visible in the other layer, or an identical rest, is pinned to its single-layer `@loc` (twins draw as one); a rest against notes stays on the staff above (voice 1) or below (voice 2) the other layer's predicted ink, half a space clear, else Verovio decides. Pinning `@loc` keeps every rest's element and id. |
+| `applySectionRestarts` (`sectionRestart.ts`) | A section (movement) break draws no courtesy key, meter or clef and restates no instrument names; the new section starts in its own signatures. Built from a `<section restart>` wrapper plus plain nested sections for abbreviated labels and the section's clef (Verovio mechanics: lessons.md). |
+| `settleSlurSides` (`slurSides.ts`) | A two-voice slur is flipped to its notehead side only when provably clear: every other-layer head in its span lies more than a fourth (`BLOCK_STEPS` 3) beyond the slur's farthest own head. Otherwise Verovio's side stays — it never collides; forced sides do. |
+| `settleFermataSides` (`parts.ts`) | On a grand staff the top staff's fermata goes above, the bottom staff's below. |
+| `separateSameMomentMarks` (`unstack.ts`) | A `<dir>` sharing tstamp, staff and place with a `<dynam>` moves `NUDGE_BEATS` (0.25) past it, so Verovio engraves one row instead of a stack and reserves space for one. |
+| `collapseMultiRests` (`model/multirest.ts`) | Multimeasure-rest runs, one-staff views only. |
+
+`duplicateTempiAcrossParts` (`parts.ts`) copies each `<tempo>` onto every
+instrument's top staff (ids `<src>-p<staffN>`); it runs before
+`filterToStaves` so a part view keeps its tempo marks. The model keeps one
+`<tempo>`.
+
+`svgAdditionalAttribute` surfaces the MEI attributes the DOM passes read —
+note colour and coordinates, `staff@n`, `layer@n`, control events' `@staff`,
+`@place`, `@tstamp`, `@startid`/`@endid`, `slur@curvedir`, the `hkl-*`
+markers — as `data-*` attributes. Verovio prefixes `data-`, so
+`data-tuplet-placeholder` arrives as `data-data-tuplet-placeholder`.
+
+### Accidentals and HEJI
+
+`computeAccidentalDisplay` (`notation/accidentals.ts`) decides which
+accidentals show, per measure and staff with all layers merged in time order.
+The alteration comes from `(q, r)`, not `@accid` (which is a ±3 display cache
+only — there is no clamp anywhere in capability). Carry state is keyed by
+`pname:oct` on the full HEJI identity `{alter, syn5, sept7}`, so with HEJI on,
+F♯ and F♯↑ are different accidentals. Rules, in order: a parenthesized
+cautionary (`P`) always shows; a tie destination hides but updates the carry;
+two different identities at one position and tick (a chromatic cluster) both
+show; a repeated identity hides — except on a unison partner drawn by another
+layer at the same tick, after a clash, and after a tie into the bar whose
+identity differs from the key. A clef change does not reset the carry.
+
+HEJI glyphs are render-only (`packages/notation/src/heji-render.ts`). Verovio
+cannot draw them and collapses repeated identical `<accid>`s, so
+`transformDocForHeji` gives each note needing a comma or more than ±3 distinct
+placeholder `<accid>` tokens tagged with the glyph to draw, and
+`injectHejiGlyphs` redraws every accidental (key signatures and parentheses
+included) as BravuraText text at the SMuFL codepoint, with a deliberate
+downward house offset (`ACCID_BASELINE_CORRECTION_SPACES`). The score is
+Leipzig; accidentals are Bravura; the C-clef family comes from Bravura through
+the custom font `LeipzigHkl` (`music-font.ts`). HEJI is a document flag, on by
+default.
+
+### Beaming
+
+`regroupBeams` (`notation/beams.ts`) beams on the clone; the live document has
+no `<beam>`. Groups, per measure's meter: an `hkl:beat-groups` pattern if
+present; in 4/4, each half bar is one group only when it is exactly four
+eighths, else quarters; compound meters group in threes; otherwise one beat
+unit per group. Rests and quarters or longer break a run, as does an inline
+clef; `/` (`@hkl-beam-break`) inverts the natural break at a note. Tuplets are
+beamed as their own group.
+
+### Clefs before the barline
+
+The engraving convention puts a measure-initial clef change before the
+barline. `relocateInitialClefs` moves each measure-initial `<clef>` to the end
+of the previous measure's same staff and layer on the clone, so a rendered
+barline is never followed by a clef. Section starts keep their clef (the
+restart pass draws it). Because of this relocation a measure's render depends
+on the next measure's first clef, so both splicers widen a changed run one
+measure left when its first measure holds one. Saved documents carry the
+relocated spelling; `clefSlotAt` reads both.
+
+### Post-processing
+
+`postProcessRendered` runs on every rendered system before placement measures
+it: after a full render, on every window, and again on a zoom (which rescales
+mounted pages through the same passes). Order:
+
+1. `pinExactScale`; scroll view's title-block cleanup; barline snaps;
+   noteheads moved last so the coloured head draws over its stem.
+2. `injectHejiGlyphs` — first, because every later pass must measure the
+   glyph that will be drawn.
+3. `repairBarLines` — redraws the stretch of a grand-staff barline Verovio
+   erased under a text mark.
+4. `resetInstrumentGaps` → `layoutBelowStaffText` → `layoutInstrumentGaps`
+   (multi-instrument), with a second `layoutBelowStaffText` round on the
+   systems it shifted.
+5. `layoutTupletNums` — moves a bracketless numeral clear of a steep beam.
+6. `restoreTieRedraws` → `layoutFlippedSlurs` → `liftSlursOffShiftedNumerals`
+   → `layoutCollidingTies`.
+7. `applyNotationTheme`.
+
+**Every pass is a fixed point under re-run**: it undoes its previous run before
+measuring (`data-hkl-orig-d` restores, cleared shift tags,
+`resetInstrumentGaps`), and it measures in the SVG's own user space through
+the CTM, never screen rectangles. Boxes come from `textlayout.ts`: `svgBox`,
+`strokedBox` (stems, whose bbox is zero-wide) and `inkBox` (text by
+per-character ink — a BravuraText accidental's `getBBox` is a whole character
+cell).
+
+| Pass | Does |
+|---|---|
+| `layoutBelowStaffText` (`textlayout.ts`) | Moves a text mark off a barline into its measure; under a one-staff instrument puts a `<dir>` at the dynamics' clearance and a lone hairpin on the dynamics' line (clusters holding a dynamic stay Verovio's); stops a push toward another instrument `INSTR_CLEAR` (one space) short, recording the refusal in `data-hkl-clamped`; keeps a `between` mark off its own staff; lays same-tstamp groups the clone could not separate side by side; lifts above-staff text clear of slur and tie outlines. Reads everything, then writes. |
+| `layoutInstrumentGaps` (`instrgap.ts`) | Moves each lower instrument down so a mark sits nearer its own staff than the next instrument's, plus an ink floor and textlayout's refusals, quantized to the device grid and recorded as `data-hkl-ishift` for `alignStaffRows` to apply. Every glyph is attributed to a staff explicitly; a system with anything unattributable is left alone with a warning. Marks are only tagged; their transform stays textlayout's. |
+| `layoutFlippedSlurs` (`slurlayout.ts`) | Re-draws a flipped slur whose endpoint Verovio displaced, and each segment of a slur broken at a system break, as a curve clear of every glyph in its span; else keeps Verovio's. |
+| `liftSlursOffShiftedNumerals` | Raises an unflipped slur that now crosses a moved tuplet numeral. |
+| `layoutCollidingTies` (`tielayout.ts`) | Re-arches a tie drawn through another voice: same endpoints and side, the lowest arch that clears, never taller than wide. |
+
+### Scroll view
+
+One persistent SVG holds the score as a single system; scrolling is native.
+The full render fixes the vertical layout; an edit re-engraves only the
+changed measure run (`ScrollSplicer`, `render/splice.ts`) and splices it in:
+
+- The run is found by diffing per-measure signatures and is widened over
+  spanners — those the document draws now as well as those the edit added or
+  removed (`expandForRenderedSpanners`) — and over a relocated clef.
+- The sub-render places the run on the left context measure; following
+  measures shift in X. A **synthetic spacer** measure (one discarded measure
+  whose stem length, calibrated per full render, forces each inter-staff gap)
+  makes the sub-render's staff spacing match the system's.
+- The splicer owns the SVG box (`scrollbox.ts`: width re-fitted from the last
+  measure per splice) and the system's vertical frame (from staff-line
+  geometry; adopted only when it grows).
+- System-initial furniture belongs to whichever measure is first, so a run
+  starting at measure 0 re-engraves the incoming first measure.
+- Refused (warn, then full re-engrave): a part view, active multimeasure
+  rests, and an edit that changes inter-staff spacing.
+
+### Page view
+
+Composer owns the line partition, the pagination and every vertical position;
+Verovio is asked only to lay out **line windows** horizontally. Nothing about
+layout is stored in the model except the user's own breaks, so a document
+reproduces its own layout.
+
+**Line windows** (`render/systemrender.ts`): up to `CHUNK_LINES` (6) lines per
+Verovio call, never across a change in hidden staves, each window = a leader
+stub + the lines (closed over spanners and endings) + a courtesy stub when the
+next line begins with a signature change + a trailer, with the line's hidden
+staves removed and `<sb>` pins (`hklpin-N`, render-time MEI only) at every
+line start. The window's systems are imported into Composer-drawn **page
+shells** (`render/pageshell.ts`), which also draw the page header.
+
+**The partition** (`PageLineBreaks`, `render/linebreaks.ts`, with
+`balance.ts`):
+
+- A line's fill = the sum of its measures' natural widths (measured in
+  unjustified `breaks:'none'` windows, read from the SVG path text) over the
+  budget, `(pageWidth − margins) × 10`. The first line also pays the
+  instrument-name indent; no line pays the leading clef and key, which sit
+  inside measure 0's natural width.
+- **Section balancing is the partition authority.** For each section (the
+  lines between two hard starts) the line count is the fewest lines keeping
+  every line at or under fill 1.0, and the arrangement at that count is the
+  minimum-variance one with every line in [`MIN_FILL` 0.65, `FIT_MAX` 1.45]
+  (trying N, N+1, N−1). `BALANCE_LAMBDA` is 0, so the partition is a pure
+  function of content and has no hysteresis. A section with no feasible count
+  keeps what it had.
+- On load the whole document is balanced before the first paint. On an edit
+  the refill diffs per-measure signatures against its baseline, carries the
+  partition by line membership, repairs lines the edit made illegal, and
+  rebalances every touched section from the first line of the edit's page —
+  no page before an edit moves (consequence: decisions.md "Open: the bounded
+  section balance…").
+- Hard starts — locks, page breaks, section headers — are line-start edits
+  like any other; a page break or section header also re-fits pages from its
+  page. A signature change re-engraves the range it governs
+  (`render/sigranges.ts`: to the next change of the same kind on the same
+  staff).
+- Justification: page geometry sets `minLastJustification` from `MIN_FILL`, so
+  a document-final line is justified exactly when it is a legal line.
+
+**Manual line breaks** (`Alt+Shift+↓`, `linebreakCommands.ts`): a lock is a
+plain `<sb>` in the document before the cursor's measure — saved in `.hkc`,
+exported as `<print new-system="yes"/>`, and handled by the refill like a
+measure insert. Whether the remainder folds back is the balancer's call; the
+document can say where a break must be, never where one must not. A padlock
+(`render/lockmarks.ts`) marks each locked break; a click unlocks.
+
+**The system splice** (`PageSystemSplicer`, `render/pagesplice.ts`): when a
+refill's change is local, the affected lines are re-engraved in one window
+and swapped into the mounted pages — no full-document `loadData`. The changed
+run is closed over spanners (drawn and edited), endings and clef relocation;
+the replaced set is clipped to the band of mounted pages, and lines beyond it
+are deferred: such a page is parked and rebuilt from its committed lines when
+it next mounts. When the hunk path refuses, `PageAssembler.applyPartition`
+engraves the reached lines one window each and reuses every other system.
+
+**Cross-measure render dependencies** — check this list when scoping any edit
+(both splicers implement it):
+
+- End-of-line courtesy signatures are drawn on line k but generated by line
+  k+1's first measure (the window carries that measure as a stub).
+- A measure-initial clef in measure i is drawn at the end of measure i−1
+  (`relocateInitialClefs`).
+- A clef, key or meter change governs every measure to the next change of
+  the same kind on the same staff.
+- A spanner with one end in the replaced set pulls its other end into the
+  window (one pass, no fixed point); a tie pulls one neighbour; an ending is
+  taken whole.
+
+**Vertical placement** (`render/pagefit.ts`), in units of 80 SVG user units
+(10 × Verovio's `unit`, constant across zoom presets):
+
+- **Rule v1 (minimum)**: first content top = header bottom + 2 units (5.25
+  without a header); between systems `max(below, 6) + 4 + max(above, 6)`; a
+  section header reserves a band (`SECTION_HEADER_RESERVE`) above its system.
+  Verovio's stacking is never read.
+- **Rule v2 (distribution)**: the gaps between systems and below the last
+  equalize at a level L solving `Σ max(gap_k, L) + L = C`, capped at 14 units
+  so a sparse page looks sparse. The header gap opens only when the level is
+  capped and the bottom gap still exceeds the cap (at most 10 units, never on
+  page 1). The footer sits in the bottom margin, so it never affects
+  pagination.
+- Pagination is judged on v1; only then is the page distributed. Placement is
+  non-local within a page, so any change to a page's systems re-places the
+  whole page.
+- **Staff grid**: `alignStaffRows` spaces a system's staff rows whole device
+  pixels apart and `placeSystems` puts each system's first row on the grid,
+  applied once as the emitted translate — positions accumulate unsnapped.
+  Both run before `measureExtents`, so extents describe what is drawn.
+
+**Pagination** (`PageAssembler`, `render/pageassembly.ts`): first-fit over
+the measured extents in the `ExtentsStore` — a page's membership depends only
+on the lines before it. A load creates a sized card for every expected page,
+builds pages synchronously until the cursor's page closes, then in 60 ms
+`MessageChannel` slices. Closing a page places it (v2), reveals it, runs the
+page-mount hook and commits its page start. An edit re-runs first-fit from one
+page before the first affected line and rebuilds only pages whose first or
+last line changed; later pages are renumbered. Add instrument is the one edit
+that re-assembles everything. Gate: the suite's `assertPaginationFirstFit` —
+no mounted page overflows, none has room for the next page's first system.
+
+**Page furniture**: page 1's title block, pages 2+'s outer-corner page number
+and running title (`render/pageheader.ts` constants), all drawn by the shell
+from nominal font metrics (no text is measured; `data-hkl-head-bottom` records
+the band's bottom); the footer and section titles (`Ctrl+Shift+H`, drawn into
+the band placement reserved) are injected by the page-mount hook
+(`main.ts`). Injected text is positioned from the page's real column
+(`pageFrameOf`), so it follows the page scale. A Setup apply redraws the
+headers and re-fits from page 1 without rendering any system.
+
+**Hidden staves** (page view only, `render/hiddenstaves.ts`): a staff is
+omitted from a system when every measure on it carries the hide-empty flag
+for it (the top staff stays if all would hide). Line windows are rendered
+without their hidden staves; a system imported with all staves is re-rendered
+alone without them before placement, so heights and pagination see the
+reduced system. Navigation skips hidden cells (`isCellRendered`).
+
+**Multimeasure rests** (`model/multirest.ts`): in a view with exactly one
+staff, a run of two or more flagged empty measures renders as one measure
+holding `<multiRest num>` — the run's first measure, keeping its ids. Runs
+break at every hard boundary and at control events concerning the staff.
+`renderUnits(viewStaves)` is the single source of truth: the clone pass takes
+its runs, and the cursor, selection, click, range serializer (which snaps to
+unit edges), refill and balancer map measures through it.
+
+**Mounting**: every page has a card from the first paint; a closed page
+outside the mount window (the viewport ± one viewport, and the cursor's page
+± 1) is
+**parked** — its SVG detached — and re-attached on mount without rendering.
+An `IntersectionObserver` only wakes a pump that mounts one visible page per
+frame, nearest the top first, and nothing while the viewport moves fast, so a
+scrollbar drag draws its landing page ~120 ms after it stops. The cursor,
+scroll-into-view and playback target the active layer's measure.
+
+**Zoom renders nothing**: the inner SVG is identical at every zoom, so
+`PageAssembler.rescale` resizes the shells and re-runs post-processing and
+placement on built pages (parked pages on mount). Page scale changes the
+budget and re-assembles.
+
+**Reference gate** (`HKL_INDEX_CHECK` only): every splice is checked against
+an offscreen full render of the same pinned MEI — per-measure x and width,
+staff tops against the placement rule, signature glyphs, and a census of glyph
+classes per measure and per system (a broken spanner's continuation is drawn
+outside every measure). A failure throws.
+
+### View modes, theme, overlays
+
+- **View mode** (`#viewModeSelect`) and **theme** (`#themeSelect`:
+  light/dark/transparent) persist in `localStorage`. Switching view restores
+  the other mode's stashed DOM when the document, zoom and page scale are
+  unchanged; otherwise it engraves fresh, never splicing into the other mode's
+  DOM.
+- **Theme** repaints in place (`applyThemeToRendered`): dark and transparent
+  tag the container and every page wrapper so the shared notation CSS
+  recolours ink, and noteheads switch to their light-source colour.
+  Non-notehead ink uses `--notation-ink`; only the notehead carries lattice
+  colour. Strokes use `shape-rendering: geometricPrecision`.
+- **Cursor overlay**: a fresh `svg#cursorOverlay` per render, covering the
+  whole score. Editing mode draws the voice cursor (`V<n>`) or the layer
+  cursor (`EXPR`/`PED`/`TEMPO`); playback mode draws one bar per voice
+  (left edge = sounding now; performance mode uses the right edge = just
+  played). The anchor resolution (`resolveVoiceCursorAnchor`) and geometry
+  (`computeVoiceCursorRect`) are shared with HKL's Composer view.
+- Plain navigation and clicks move the cursor without re-rendering
+  (`onCursorMove`).
+
+## Control-event layers
+
+Dynamics, hairpins, expressive text, pedal marks and tempo marks are
+measure-level siblings of `<staff>` anchored by `@tstamp`/`@tstamp2`, never
+note-attached, so they survive deletion of nearby notes (re-barring does not
+carry them). A mark at a barline is expressed as beat 1 of the cursor's visual
+measure, because Verovio draws a tstamp at that beat's note; tstamps use the
+measure's own meter. Slurs, fermatas, trills and octaves are note-attached
+(`@startid`); a breath is time-anchored at the end of its note.
+
+- **Layers**: expression (per instrument; dynamics `1..8` / `Shift+1..8`,
+  hairpins `<`/`>` as start-then-end), pedal (`Shift+P` down, `Shift+O`
+  lift), tempo (score-global, `Ctrl+Shift+T` modal: instant marks with an
+  optional shown metronome, gradual rit./accel., "a tempo"), expressive text
+  (`Ctrl+Shift+E`, `<dir>` always with an explicit `fontstyle`).
+- **Stops** (`cursor/expressionCursor.ts`): one per mark (a hairpin
+  contributes its start and its end) plus a placeholder at every note onset
+  without a mark; coincident marks are ordered top to bottom as rendered. A
+  stop selects exactly its own mark — a placeholder selects nothing — and the
+  cursor stays on the same mark across an edit. `Ctrl+←/→` jumps mark to
+  mark; Backspace/Delete remove the selected mark only. The layer bar sits
+  beside the selected mark's rendered box.
+- **Placement**: a mark on the upper staff of a grand staff is
+  `@place="between"` and Verovio centres it; anywhere else `below`. Applied on
+  entry, import and every load; `Ctrl+↑/↓` sets it explicitly. Everything
+  else vertical is `textlayout.ts`.
+- **Playback**: a per-tick velocity timeline — the latest dynamic at or before
+  an onset (default `mf` from the document's dynamic map), and inside a
+  hairpin a linear ramp to the first dynamic within its span, else ±45. Only
+  new attacks pick up a ramp. Tempo marks build a piecewise-linear tempo
+  timeline (`buildTempoTimeline`) that all playback timing uses. Pedal marks
+  travel as `pedalEvents` and HKL defers note-offs while the damper is down.
+
+## Notation features
+
+- **Articulations** (`articulations.ts`), on the note at the cursor:
+  staccato/accent/tenuto as `<artic>` children; fermata as a `<staff>`
+  sibling on `@startid`; breath as a time-anchored sibling at the end of the
+  note. Playback: staccato halves, tenuto holds full value, fermata ×1.5,
+  breath shortens, accent adds velocity. Also: `P` parenthesized cautionary
+  accidental, `H` hide rest, `/` beam break, `L` / `Shift+L` stem / slur
+  direction.
+- **Slurs** (`slurs.ts`, `Ctrl+L` twice): `<slur @startid @endid>` between two
+  slots; `Ctrl+L` under an existing slur deletes it; slurs whose endpoint
+  disappeared are pruned with the ties. Playback (HKL's `computeLegatoPlan`): an
+  overlapping release on instruments that replay on transpose, a glide
+  handoff on sustained ones, an overlap when the pedal is down.
+- **Structure**: repeats `{`/`}`, endings `Ctrl+E`, double bar `]`, ottava
+  `Ctrl+8` (sounds `q ± 3` per octave), trill/tremolo `Ctrl+R` (a tremolo
+  occupies one wrapped note's value; playback alternates), page break
+  `Ctrl+B`, section header `Ctrl+Shift+H` (measure numbering restarts).
+  Playback expands repeats and endings (`expandPlayOrder`).
+- **Instruments**: single-part view (`viewInstrSelect`) renders one
+  instrument's staves; it is owned and balanced like the full score (its own
+  partition and widths) and exported to PDF as that part. "pizz."/"arco" text
+  switches playback to a pizzicato sample set. `Alt+H` marks a string
+  harmonic (diamond head; sounds at the harmonic's pitch). *Ignore color*
+  drops notehead colour on the render clone.
+- **Retune**: changing the score's tuning mode in Setup rewrites each note's
+  `(q, r)` to keep its frequency (`notation/retune.ts`).
+
+## Playback and performance
+
+`buildPlayback(model, startMs)` (`render/playback.ts`) produces per-voice
+events: tie chains coalesce, trills and tremolos expand into alternations,
+visible rests emit silent events (so the playback bars step through them),
+repeats expand, and events before the start are dropped. Playback starts at
+the cursor; each `playback-position` moves that voice's bar (overlay only);
+the end restores the editing cursor.
+
+**Performance mode** (`render/performance.ts`) is input-driven playback for
+filming a performance: the player plays the part on the Lumatone and each
+voice's bar advances as its notes are struck (one instrument only; no audio is
+sent).
+
+- A step is a voice's set of notes attacking at one onset (tied-in notes are
+  absent). Identity is pitch name and octave plus colour, the expected colour
+  looked up by octave-invariant lattice class; a sounding note with no written
+  colour matches on pitch alone. Pythagorean and Semiditonal modes also accept
+  any same-pitch variant.
+- A voice advances only when its whole step is struck; voices advance
+  independently; an unmatched strike changes nothing. When several voices
+  would take a strike, only those at the earliest onset do.
+- Voices are listened to only in the current measure (that of the earliest
+  pending step); a voice's bar shows only where it has content.
+- A trill or tremolo is one step satisfied by any of its notes; when the next
+  step's notes all belong to the ornament, its advance waits for the first
+  strike outside them (the bar lags rather than runs ahead).
+- The bar trails the player (right edge of the step just played). Reaching
+  the end does not exit.
+- **Invariant**: the take is performed correctly and in order, and a deviation
+  halts the follow by design. No recovery, resync or tolerance
+  (decisions.md "Performance mode halts on deviation, by design").
+
+## Files and export
+
+- **`.hkc`**: the MEI document (`save.ts` `hkcBlob` / `loadHkcFromFile`).
+  Loading replaces the model, unbinds the file, clears history and forces a
+  full render.
+- **Where files go** (`files.ts`): with the overlay host's local file bridge
+  up ([overlay.md](overlay.md)), Open and Import use native dialogs and Save
+  writes in place (`write` conditioned on the file's mtime; a conflict asks
+  before overwriting); a MusicXML import binds to its folder and saves a new
+  `.hkc` beside it (numbered if the name is taken), never over the source. Without a host: file
+  input and downloads named from the title. The binding is app state, never
+  MEI. Exports always go through the save dialog, before rendering. One file
+  operation at a time.
+- **MusicXML import** (`importMusicXml.ts`) reads Finale's encoding of hidden
+  staves and multimeasure rests into the empty-cell flags, breath marks, and
+  parenthesized accidentals; it spells pitches onto lattice cells
+  (`coord-spelling.ts`) and turns `<rest measure="yes">` into an empty layer.
+- **MusicXML export** (`exportMusicXml`): one `<part>` per instrument, voices
+  separated by `<backup>`, divisions 16 or its LCM with tuplet numbers,
+  colour on noteheads, every tempo written into every part (`<sound tempo>`
+  always, `<metronome>` where shown), directions interleaved into the note
+  stream, slur numbers assigned in document order, pickups `implicit`, ottava
+  pitches written as sounding, breaks as `<print>`. Not exported: section
+  titles, HEJI commas, parenthesized accidentals; `<space>` comes back as a
+  hidden rest. Parity census and probes: decisions.md "MusicXML export
+  parity: the sonata census".
+- **PDF** (`renderPdf`): the page view, page for page. Every page is mounted
+  (`mountAllPages`), cloned synchronously, normalized for print (light theme,
+  black non-notehead ink, hidden rests removed, computed stroke and text
+  styles inlined — svg-to-pdfkit reads no stylesheets) and drawn with PDFKit
+  with the embedded `BravuraText.otf`, so HEJI survives. Paper is US Letter;
+  scroll view switches to page view for the export. Residual: `Times` text
+  widths differ slightly from the screen.
+
+## Setup and help
+
+**Setup** (`setupDialog.ts`) edits title, subtitle, composer, footer, tuning
+mode (retunes on change), HEJI, ignore colour, page size, the dynamic map,
+gradual-tempo percentages and instruments, applied as one undo entry. Buttons
+open the signature modal and the tempo modal at measure 1 and run *Fill
+incomplete measures*. The modals share `ui/textEntryModal.ts` (Enter submits
+except on a focused button).
+
+**Help** (`helpDialog.ts`) renders `KEYBINDINGS` from `keybindings.ts` —
+documentation, not a dispatch table: change both together.
+
+## Known limits
+
+- Held notes don't follow a hairpin; only new attacks pick up its level.
+- Nested tuplets and tuplets across barlines are not supported.
+- Scroll view wraps past roughly 500 bars at 100 %.
+- A selection's rects are per system, unconnected across a system break.
+- Pizzicato sample sets beyond viola need their `.hki` and an entry in HKL's
+  variant map.
+
+## Testing
+
+- **`test/composer-test/`** — the fixture suite (README there). For a scoped
+  change: `pnpm test:composer:affected` (fixtures that execute the changed
+  lines, plus the fast tier); for a broad one: `pnpm test:composer`. Every
+  bug fix lands with a fixture.
+- **`test/composer-inspect/inspect.mjs`** — evaluate an expression or take a
+  screenshot in a headless page.
+- **`test/composer-inspect/sonata-probes/`** — whole-document gates, censuses
+  and cost probes on Max's sonata (README there).
+- **`HKL_INDEX_CHECK=1`** turns on the in-app verifiers: navigation index,
+  scoped ties and dirty ranges, multirest unit edges, and the page-splice
+  reference gate.

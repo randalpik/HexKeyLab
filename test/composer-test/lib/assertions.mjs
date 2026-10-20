@@ -504,7 +504,7 @@ export const ASSERTION_LIB = `
   }
 
   /* Pagination is first-fit over the systems as placed (design doc
-     composer-pagination-design.md, 2026-10-08): every mounted page's systems
+     decisions.md "Composer draws the pages", 2026-10-08): every mounted page's systems
      fit under Composer's minimum placement (no overflow), and the NEXT page's
      first system would NOT also fit (no under-full page), a user <pb> before
      it excepted. Read from the DOM through renderer.placeFor, so it holds on

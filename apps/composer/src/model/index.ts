@@ -1040,7 +1040,7 @@ export class ComposerModel {
        window opening at a measure whose staff 2 turns G→F drew every line of
        the window in G, and the replaced line with it — 11 units of ledger-line
        drift on the context line was all that stopped it landing
-       (`cb-ctxdiverge.js`). Mirror relocateInitialClefs exactly: a clef that is
+       (a since-deleted probe). Mirror relocateInitialClefs exactly: a clef that is
        the FIRST child of a layer. */
     if (targetEl) {
       for (const staff of Array.from(targetEl.children)) {
@@ -3541,7 +3541,7 @@ export class ComposerModel {
        O(slurs × measures) queries: on the sonata, 922 slurs over 446 measures
        came to 432 000 `querySelector` calls and 406 ms of the 523 ms mutation,
        which was the whole reason a blank-measure insert cost ~4x a note edit
-       (`cb-splicecost.js --arg edit=ctrlm`). Same fix, and same lesson, as the
+       (`edit-cost-attribution.js --arg edit=ctrlm`). Same fix, and same lesson, as the
        spanner-growth loop in splice.ts. */
     const slurs = Array.from(this.doc.querySelectorAll('slur'));
     const slurStraddle: Element[] = [];

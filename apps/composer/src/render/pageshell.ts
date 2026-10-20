@@ -1,4 +1,4 @@
-// The page, drawn by Composer (composer-pagination-design.md, 2026-10-08).
+// The page, drawn by Composer (decisions.md "Composer draws the pages", 2026-10-08).
 //
 // A page used to be Verovio's `renderToSVG(p)` of a pinned layout, and every
 // system on it Verovio's; Composer then re-placed the systems (pagefit.ts),

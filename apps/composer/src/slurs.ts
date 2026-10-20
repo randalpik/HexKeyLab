@@ -1,7 +1,7 @@
 // Note-attached slur control events. Unlike dynamics/hairpins (tstamp-anchored,
 // in expressions.ts), a slur binds to specific notes via @startid/@endid — its
 // identity IS its two endpoint slots, so it must move/disappear with them.
-// See docs/architecture/composer.md#slurs
+// See docs/architecture/composer.md#notation-features
 //
 // Endpoints are SLOT elements: a bare <note> (single pitch) or a <chord>
 // (multi-pitch). Both carry an xml:id. Verovio renders <slur startid endid>

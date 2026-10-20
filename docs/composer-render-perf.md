@@ -1,491 +1,119 @@
-# Composer render performance — living plan
+# Composer performance — baselines and open levers
 
-Tracking doc for large-document render latency (page view, view switching,
-document-wide actions). Companion to
-[composer-spot-splice-design.md](composer-spot-splice-design.md), which owns the
-scroll-view splice engine (Phases A–B3, shipped; steady-state scroll edits
-~150 ms Firefox). This doc owns everything still slow: the full-render paths.
-Update statuses here as levers land or get rejected.
+Where Composer's time goes on a large document, and the levers not yet
+pulled. The architecture is in [architecture/composer.md](architecture/composer.md);
+what was tried and why is in decisions.md / lessons.md under the dates cited.
+Update this document as levers land or are rejected.
 
-Backlog items this covers: "Improve speed in page view", "Add loading
-indications for document actions rather than silent stall".
+Backlog items this covers: "Improve speed in page view", plus Max's Performance
+items on moving pagination, inactive-view re-engraves and PDF export off the
+main thread.
 
-## Measured baseline (2026-08-29, headless Chromium, sonataBr1)
+## Baselines (2026-10-09, headless Chromium, `~/Documents/sonata.hkc`, 115 lines, 31 pages)
 
-446 measures / 9,099 notes / 37 pages @100% zoom. Probe: wrap
-`verovio.toolkit.prototype.{loadData,renderToSVG,setOptions}` +
-`model.serialize` in-page, drive `__composerImportMusicXml` / `reRender`.
-Firefox is worse on the DOM-bound buckets (Max observes up to 10 s); WASM
-buckets transfer roughly 1:1.
+Probes are in `test/composer-inspect/sonata-probes/` (README there).
 
-| Action | Total | Breakdown |
-|---|---|---|
-| Page-view full render (= every edit, zoom, switch) | ~4.5 s | serialize 75 ms · loadData (layout) 1.25 s · renderToSVG ×37 1.8 s (~50 ms/page) · ~1.3 s DOM remainder (innerHTML parse, postProcess, header/section injections, overlay) |
-| Zoom change, page view | ~4.0 s | same full pipeline |
-| Switch page→scroll | ~6.7 s | ONE renderToSVG(1) of the ~190k-px SVG ≈ 5 s; loadData only ~250 ms (breaks:'none' skips line-breaking) |
-| Theme change (was) | ~6.4 s | full re-engrave for a DOM-only repaint |
-| Scroll no-op reRender / steady-state edit | 70 ms / ~150 ms (Fx) | splice path — at threshold |
+- **Edit**: a steady one-note edit costs 118–130 ms (`edit-cost-attribution.js`):
+  render of the hunk window 95, splice 55, refill 38, naturals 34, DOM surgery
+  15, mutation 11, post passes 10 (overlapping buckets). Unchecked sweep median
+  124–165 ms (`splice-sweep.js`). The first edit after a load pays the
+  in-flight assembly once (`finishSync`, ~7 s with the cursor deep).
+- **Structural edits** (`command-splice-inventory.js`, cursor at m. 221): page
+  break 258 ms, section header 152, mid-piece meter change 172, head meter
+  change 785 (every measure to the next change re-flows — O(range) by nature),
+  key change 296, pickup 1.3 s, insert measure 178, tempo 217; add instrument
+  11.8 s through a full re-assembly, the one all-lines edit.
+- **Zoom**: 0.93 s, zero Verovio loads, every system node kept
+  (`zoom-roundtrip-cost.js`).
+- **Load** (a full re-assembly — also what a page-scale change costs):
 
-Structural facts driving the plan:
-
-1. **Verovio separates layout from drawing.** `loadData` lays out all pages;
-   `renderToSVG(n)` draws one (~50 ms). Nothing forces drawing all 37 pages +
-   post-processing them per render.
-2. **All engraving is synchronous main-thread WASM.** No indicator can animate
-   during the block; inputs stack. Feedback requires async chunking (yield
-   between per-page renderToSVG) or a worker toolkit.
-3. `redoLayout()` re-lays-out already-loaded data with current options — skips
-   MEI parse/convert on option-only changes (zoom).
-4. The splice machinery (spacer measure, defs merge, dirty range,
-   anchor/cascade) transfers to system granularity for page view (Phase C).
-
-## Tier 1 — cheap independent wins
-
-- [x] **T1.1 Theme change in place** (shipped 2026-08-29). `setTheme` no longer
-  forces a re-engrave; the theme handler runs `renderer.applyThemeToRendered()`
-  (`applyNotationTheme` + transparent-class toggle) on the existing container —
-  the pass was already fully reversible (dark tags + inline-paints noteheads;
-  light removes both). Measured 6.4 s → ~0.45–0.55 s on the sonata (Chromium;
-  the remainder is the 9,099-note repaint traversal — optimizable later if it
-  bites in Firefox). Splicer + mode caches stay valid across theme changes.
-- [x] **T1.2 View-switch render cache** (shipped 2026-08-29). On a mode switch,
-  `stashAndRestore` stashes the outgoing mode's container nodes (detached REAL
-  nodes, so splicer refs survive) keyed on serialize output + zoom + pageScale,
-  and re-attaches the incoming mode's stash when the key matches (re-applying
-  theme if it changed while stashed). Cache cleared by `forceFullRerender()`
-  and the string-entry `render()`. A mode-change cache MISS forces a full
-  engrave — never a splice into DOM the other mode owns. `renderComposer` now
-  returns `fresh: boolean`; main.ts skips the page-only injections + crisp
-  snap on a restore (already baked into the stashed DOM). Measured: page
-  restore 4.3 s → ~0.75 s, scroll restore 6.7 s → ~0.78 s (Chromium; ~0.6 s of
-  that is the browser re-laying-out the re-attached SVG — Firefox number TBD).
-  Key soundness: byte-equal serialize ⇒ identical xml:ids ⇒ render-equivalent
-  DOM; correctness relies on "every model mutation re-renders before a mode
-  switch can happen" (true for all app paths — mutations funnel through
-  reRender).
-- [x] ~~**T1.3 Zoom via `redoLayout()`.**~~ **REJECTED — dead end (2026-08-29,
-  don't retry).** Implemented and reverted same-day: on the CDN build,
-  `setOptions` + `redoLayout()` does NOT re-apply page geometry — a
-  scroll→page relayout kept the 100000-unit scroll page and produced 2 pages
-  instead of 37, and a zoom relayout returned in 0 ms (silent no-op; the crisp
-  preset's `unit` change likely not re-applied either). `loadData` is the only
-  reliable relayout. Zoom stays a full render; its real fix is T2.1 (fewer
-  pages drawn) + T2.2/T2.3 (feedback). See lessons.md.
-
-## Tier 2 — page virtualization + feedback (perceived-lag fix)
-
-- [x] **T2.1 Draw only visible pages** (shipped 2026-08-29). `renderPage`
-  (renderComposer path only — string-entry `render()` keeps the legacy
-  all-pages DOM for old tooling) renders page 1, sizes fixed-dim placeholder
-  `.score-page-pending` divs from its measured SVG box, synchronously mounts
-  viewport±1-page placeholders + the cursor's page, and lazy-mounts the rest
-  via IntersectionObserver (root #score, rootMargin 100 %). Page-scoped
-  injections (header/footer, section headers, volta, crisp snap) moved from
-  reRender into a renderer-owned `onPageMounted` hook — exactly once per
-  mount (section-header translation is not idempotent). `ensureMeasureMounted`
-  is a real page-mode implementation (measure id → `getPageWithElement` →
-  mount), with a DOM-presence fast path so it never reloads the toolkit for
-  an already-visible measure; call sites (scroll-into-view, cursor update,
-  playback bars) already existed. `pageVirt.tkCurrent` tracks whether the live
-  toolkit still holds the page layout (scroll engraves + PDF export steal it);
-  a lazy mount reloads on demand (~1 s once, then cheap again). Virtualization
-  state survives view-switch stash/restore (IO disconnected on stash, re-armed
-  on restore). Measured (Chromium, sonata): page full render 4.5 s → **1.25 s**
-  (loadData 1.0–1.2 s is now ~90 % of it), zoom 4.0 s → **1.35 s**, page
-  restore 0.75 s → **0.43 s**, lazy mount ~40–70 ms/page, theme ~50 ms.
-- [x] **T2.1b Visible-first mount pump + post-repair toolkit warm** (shipped
-  2026-09-11; probe `test/composer-inspect/phasec/mount-drag.js`). Max: "up to
-  3 s to mount a page after scrolling to it" in the sonata. Measured cause, not
-  one slow mount but two compounding ones: (1) the IntersectionObserver
-  callback mounted EVERY entry synchronously in DOM order — a clean jump drew
-  the off-screen neighbour before the visible page (294 ms to the visible one),
-  and a scrollbar drag mounted every page it swept through the ±1-viewport
-  band ahead of the landing page (20→3: 15 mounts, 2.58 s of mount work, 2.75 s
-  to the visible page; then the idle window evicted 16 of them); (2) the
-  paint-time pagination repair (`settlePaginationForAdoptedPartition` →
-  `repairAtMount`) ran AFTER the synchronous extents pass and marked pages
-  15–31 stale, so the first mount past page 14 paid the whole-document
-  serialize + pin + `loadData` (+784 ms). Shipped: the observer only WAKES a
-  pump (`pumpMounts`, one rAF): one VISIBLE page per frame, nearest the
-  viewport top first; band-only pages left to `updateMountWindow`, now one
-  page per idle slice; pages that left the band dropped; nothing mounts while
-  `viewportMoving()` — scroll-EVENT samples, >0.5 viewport of travel over
-  400 ms, settled 120 ms after the last event — so a drag shows placeholders
-  and draws its landing page ~120 ms after the thumb stops. The warm is
-  re-armed (`rearmWarmIfStaleUnmounted` → extents job) after the paint-time
-  repair and at balance completion. Sonata, Chromium: jump 294 → **136 ms** to
-  the visible page (neighbour follows from idle); drag 20→3 2.75 s / 15 mounts
-  → **~410 ms / 1 mount** (incl. the 120 ms settle); fast drag 3→28 1.40 s / 8
-  → **385 ms / 2**; nothing stale after load, zero `loadData` on scroll. Suite
-  462/462. Per-mount cost itself is unchanged (~150 ms Chromium: Verovio SVG
-  30–50, first layout of the SVG 30–60 — it lands in whichever pass reads
-  geometry first, `snapBarlines` — post-pass JS 15–60, placement 2–4); the
-  only avoidable share is Verovio's, by keeping the strings the extents job
-  already renders offscreen (deferred — see Rejected/deferred below).
-- [x] **T2.2 Busy badge + render coalescing** (shipped 2026-08-29, reshaped by
-  T2.1): with lazy pages, the per-page loop shrank to ~2 pages, so the
-  determinate "page 12/37" progress idea died — the dominant block is ONE
-  unbreakable loadData. What shipped instead: `renderer.predictNextRenderHeavy`
-  (mirrors renderScroll's splice test + recorded last-full-engrave durations,
-  250 ms threshold — small docs and splices stay fully synchronous, fixtures
-  unaffected); heavy renders defer via double-rAF + timeout so the static
-  `#renderBusy` badge paints first; re-render requests arriving while one is
-  queued/frozen coalesce into a single render of the latest model state
-  (probe: 3 burst reRenders → 1 loadData) — the input-stacking fix; DOM-reading
-  post-render actions route through `afterRender()`; file load/import handlers
-  show the badge across their parse (the `await file.text()` yields the paint).
-  The badge is deliberately unanimated: nothing animates while the engrave
-  blocks the main thread — a spinner would freeze. That, plus unfreezing the
-  UI entirely, is T2.3's territory.
-- [ ] **T2.3 Worker-offloaded full engraves** (optional; the remaining ~1.2 s
-  page-edit floor is loadData, unbreakable on the main thread). Second toolkit
-  in a Web Worker for FULL engraves only (splice stays sync on main). Main
-  thread interactive during file open / reflow; animated progress becomes
-  possible. Biggest refactor of the tier: reRender goes async at full-render
-  call sites (the afterRender queue from T2.2 is the ready seam).
-
-**Known v1 virtualization limits** (revisit if they bite): a selection or
-measure-mode overlay spanning unmounted pages draws only on mounted ones; a
-click on a not-yet-mounted (visible for <1 frame) page resolves against the
-nearest mounted glyph; a lazily-mounted page containing a section header grows
-on mount (viewBox growth), shifting pages below it; scroll-mode full engrave
-(~7 s) is untouched — its fix is T2.3/Phase C.
-
-## Tier 3 — Phase C: system-splice cascade in page view (structural fix)
-
-- [x] **T3.0 Line-break ownership (Phase C-A)** — SHIPPED 2026-08-30
-  (`apps/composer/src/render/linebreaks.ts`): Composer owns the page-view
-  system partition (naturals model + greedy/rebalance + render-time `<sb>`
-  pins, displayed via breaks:'line' — verbatim systems, Verovio keeps
-  pagination). Enablement pixel-exact; edits refill only the affected lines
-  (bounded, deterministic reflow); everything unprovable derives loudly.
-  NOT yet a latency win — the refill still pays a full loadData (~1.5 s
-  Chromium / Firefox TBD, ± today's cost; refill overhead itself is
-  ~150–400 ms). It is the structural prerequisite: every boundary is now a
-  hard anchor, so C-B's windows are pixel-exact by construction and the
-  cascade extent is known before any DOM work.
-- [x] **T3.1 Contained system splice (Phase C-B v1)** — SHIPPED 2026-08-30
-  (`apps/composer/src/render/pagesplice.ts`; full account in
-  composer-page-splice-design.md → "The system splice", current state; the
-  v1 account is decisions.md 2026-08-30). A refilled
-  edit lands as a DOM splice of only the affected systems from a pin-anchored
-  window render (synthetic leader + trailer, breaks:'line') — **no full-doc
-  loadData**. Gated hard: splices only when the window's measured spacing
-  chain proves nothing else on any page moves; context-line sanity + inline
-  HKL_INDEX_CHECK reference parity enforce Max's no-visual-change gate.
-  **Sonata: 7 of 8 battery edits splice at 380–673 ms wall (splice work
-  ~160–190 ms) vs ~1.95 s for the one full render**; reference parity ≤ 4
-  units document-wide on every edit; the single fallback is the
-  section-header line (excluded by design). No-op renders skip DOM work
-  entirely. (The 3/8 hit rate measured before conservative reflow was a
-  side effect of re-derivation changing the line count — see the 2026-08-30
-  reflow entry below.)
-- [x] **T3.2a Pagination ownership** — SHIPPED 2026-08-30. Page starts are
-  adopted from the derive render, pinned as `<pb>`, and displayed with
-  `breaks:'encoded'` (the only mode honoring them). Reproduces Verovio's own
-  pagination exactly (37/37 pages, identical splits), self-consistent with a
-  full render of the same pinned MEI (max delta 4 units over 446 measures),
-  and **loads 2× faster (577 ms vs 1191 ms)** — a win for every derive render.
-  Max accepted the one-time intra-line respacing (~52 px) after comparing both
-  renders as images. Overflow is now our problem, so a pinned page that spills
-  hands pagination back to Verovio (warn + derive). Does NOT fix the
-  user-`<pb>` giant-page quirk — that needs the derive path to paginate by
-  height itself. Full renders also got cheaper across the board (sonata page
-  edit fallback ~1.95 s → ~1.1 s).
-- [x] **T3.2b B2 — line-count and pagination changes splice** — SHIPPED
-  2026-09-02. The replaced set is a line HUNK (N old systems → M new), pages are
-  carried by line, and a page that spills is repaired by a measured cascade
-  (its tail moves onto the next page as a page-first splice; a full last page
-  spawns a created page; an emptied page is removed and the rest renumbered) —
-  the hand-back above no longer happens on the edit path. Composing at the end
-  of the sonata (new line + new page) is ~700 ms worst-case-mounted in the
-  battery instead of a ~1.2 s full render; battery 10/10 spliced,
-  reference-clean. The cascade is synchronous across the mounted set and lazy
-  at the mount boundary; the scheduled continuation is the next item
-  (docs/composer-page-splice-design.md → START HERE).
-- [x] **T3.2b Splice-latency profile + two self-inflicted fixes** — SHIPPED
-  2026-08-30. A steady-state spliced edit is **313 ms**, of which Verovio is
-  only 58 ms; the rest is whole-document bookkeeping (cursor.update 57 ms over
-  TWO calls, model mutation 45 ms, 32 k querySelectorAll calls, 495 measure
-  serializations). Fixed en route: the splice invalidated the live toolkit it
-  never touches (forcing a ~590 ms reload on the next lazy mount — staleness is
-  now per-page), and every page edit was deferred behind the busy badge
-  (predictNextRenderHeavy now predicts light after a splice; superseded
-  2026-09-14 — page mode predicts light whenever a refill can be ATTEMPTED,
-  since `lastPageSpliced` was false after any derive and charged the next edit
-  the derive's price). Remaining levers
-  with measurements in composer-page-splice-design.md.
-- [x] **T3.2d One break algorithm everywhere** — SHIPPED 2026-08-30. The
-  castoff pass that chooses the partition is now an internal bootstrap
-  (`loadData` only, never painted); the partition is read via page-based
-  `getMEI({scoreBased:false})` in **98 ms instead of a 1830 ms SVG walk**
-  (byte-identical), and the pinned `encoded` render is what gets painted. The
-  first edit after a derive therefore **splices at 333 ms instead of
-  full-rendering at ~1.2 s**, and the idle adoption walk is gone entirely.
-  Cost: first paint 1.2 s → ~2.0 s (one extra loadData) — accepted by Max as
-  the one place additional time is acceptable, verified to happen once per
-  derive with no idle tail. Total work per load-and-first-edit ~4.2 s → ~2.3 s.
-- [x] **T3.2c Cascades + cross-page moves (Phase C-B2b)** — CLOSED
-  2026-10-09: every item shipped in another form or made moot by the
-  assembled page view (decisions.md 2026-10-08 ×2, 2026-10-09).
-  - dy-translate of following systems → superseded: a page places its own
-    systems from measured extents (`placePage`, rule v1 fold + rule v2
-    distribution, 2026-09-03/04); nothing is translated from a window.
-  - line-count-changing splices (N → M systems) → shipped as B2 line hunks
-    (2026-09-02) and, for every change the hunk splicer refuses,
-    `PageAssembler.applyPartition` (2026-10-08).
-  - page-boundary moves → shipped: first-fit from one page before the first
-    affected line, systems moved between shells (`repaginateFrom` /
-    `applyPartition`, 2026-10-08); a page break is a hard page start.
-  - `<pb>` pins + a height-fit rule so a full render agrees by construction
-    → moot: there is no full page render to agree with; Composer draws the
-    pages and the reference gate compares systems, not pages. The user-`<pb>`
-    giant-page quirk went with the castoff.
-  - re-splice k−1 on courtesy-signature boundaries → shipped as the courtesy
-    stub in every window (B3, 2026-09-02; the assembly's line windows carry
-    it since 2026-10-08) plus signature ranges that start one measure early
-    (sigranges.ts); the line before a change is in the hunk by construction.
-  - section-zone windows (the k59/k87 scoreDef family) →
-    `beginsSignatureChange` + the restart-aware window recipe; the battery's
-    `edit-section-header-zone` splices.
-  - first-edit hit rate via a keep-current-boundary fill bias → superseded by
-    the conservative repartition (2026-08-31: an edit that leaves every line
-    inside [MIN_FILL, FIT_MAX] moves no boundary); the checked sweep is
-    114/114 spliced on the sonata.
-
-## Tier 4 — assembled page view: where a load goes now, and the next levers
-
-Measured 2026-10-09, headless Chromium, `~/Documents/sonata.hkc` (115 lines,
-31 pages), after the 2026-10-08/09 rounds. Numbers are a full re-assembly
-(`forceFullRerender` + render), which is what a load and a page-scale change
-cost; a zoom no longer assembles at all. Firefox is NOT measured here — Max
-reported 20+ s before this round and is re-measuring; every item below says
-which engine it is expected to help most and why.
-
-| Phase (per full load) | Chromium | Calls | Notes |
+| Phase | Chromium | Calls | Notes |
 |---|---|---|---|
-| Verovio `renderToSVG` | 1.6 s | 20 windows | ~80 ms a 6-line window; per-system layout dominates |
+| Verovio `renderToSVG` | 1.6 s | 20 windows | ~80 ms per 6-line window; per-system layout dominates |
 | Verovio `loadData` | 0.5 s | 20 | parse + setup per window |
 | `DOMParser` (window SVG + range MEI) | 0.5 s | 60 | |
-| Post passes (`postProcessRendered`) | 0.9 s | 115 systems | text 150, instr 180, slurs 80, ties 190, snapBar 100, rest small |
+| Post passes (`postProcessRendered`) | 0.9 s | 115 systems | text 150, instrument gaps 180, slurs 80, ties 190, barline snap 100 |
 | Import + align + measure + fit + close | ~0.4 s | | one layout per system is inherent |
 | `model.serializeRangeForRender` | 0.16 s | 20 | |
 | Slice gaps (macrotask hops) | ~0.4 s | | was ~2 s with `requestIdleCallback` |
 | **Whole document** | **5.1–5.6 s** | | first page 0.17 s (synchronous to the cursor's page) |
 
-Remaining DOM-call counts per load, the ones Gecko charges for: `getBBox`
-82 000 (79 ms here), `querySelector`/`querySelectorAll` 200 000 (250 ms),
-`closest` 73 000, `getCTM` 3 400, `getScreenCTM` 684 (97 ms). Forced reflows
-(a layout read after a write) ~450 — the passes are already read-then-write
-batched; a reflow here is mostly the one layout a freshly imported system
-must get.
+DOM calls per load, the ones Gecko charges for: `getBBox` 82 000 (79 ms here),
+`querySelector`/`querySelectorAll` 200 000 (250 ms), `closest` 73 000, `getCTM`
+3 400, `getScreenCTM` 684 (97 ms). Forced reflows ~450 — the passes are
+already read-then-write batched; a reflow here is mostly the one layout a
+freshly imported system must get. Probes: `load-profile-phases.js`,
+`load-profile-dom-calls.js`, `load-profile-reflows.js`,
+`pagination-fold-check.js`; run `load-reference-gate.js` after any change
+here.
 
-Probes (all `node test/composer-inspect/phasec/runner.mjs <probe>`):
-`cb-loadprofile.js` (phases of a re-assembly by function), `cb-domcalls.js`
-(every geometry / query DOM call, count + time, plus per-pass ms from
-`lastPostStats`), `cb-ctmattr.js` (which callers force reflows and sample
-curves), `cb-pagefill.js` (page-by-page fold and slack, load stats),
-`cb-zoomtime.js` (a zoom round trip: ms, loads, outcome), `cb-refgate.js`
-(every page against a full engrave — run after any change here).
+**Firefox is not measured** since the 2026-10-08/09 rounds (Max reported 20+ s
+loads before them). Every lever below says which engine it should help most.
 
-Next levers, in the order to try them. Each is independent of the others.
+## Open levers, in the order to try them
+
+Each is independent of the others.
 
 1. **Verovio in a Web Worker** (expected: the biggest remaining win in both
-   engines). The window renders are pure functions of a MEI string: a worker
-   with its own Verovio instance can render chunk N+1 while the main thread
-   imports, post-processes and measures chunk N. Main-thread work per load is
-   ~2 s, Verovio ~2.1 s, so a pipelined load approaches max(2, 2.1) rather
-   than their sum — roughly 5.1 → 3 s here, more in Firefox, where the WASM
-   is no faster but the main thread is slower. Preconditions: load the
-   Verovio WASM in the worker (`@hkl/notation` loads it from the CDN on the
-   main thread today; the analyzer/orchestrator workers show the bundling
-   pattern); the chunk recipe (`renderLineSystems`) must send the window MEI
-   and the options and receive SVG strings; `applyPartition` and the splicer
-   can keep the main-thread toolkit for their one-off windows. Risk: a second
-   toolkit's output must be byte-identical to the first's (same build, same
-   options, same font) — gate with `cb-refgate.js`.
-2. **Cross-pass `getBBox` memo** (expected: Gecko-specific). The four heavy
-   passes measure the same ~150 elements per system, once per curve or mark:
-   82 000 reads for ~17 000 distinct elements. A memo keyed by element,
-   cleared on any geometry write (the passes write through `setAttribute` on
-   `transform`/`d` and through `appendChild`; ~24 sites across tielayout,
-   slurlayout, instrgap, textlayout), would cut the count 4–5×. Cheap in
-   Chromium (79 ms total), so only worth it if Firefox still shows the passes
-   as a hotspot; the risk is a stale box after a write a site forgot to
-   announce — `cb-refgate.js` and the engr_/tie/slur visual fixtures gate it.
-3. **Bigger chunks, first chunk small** (expected: small, both engines).
-   `CHUNK_LINES` 6 → 12 halves `loadData` and the parses (~0.5 s → ~0.3 s
-   here) at the cost of a longer first window; render the first chunk as 2–3
-   lines so the first page still paints in well under 200 ms.
-4. **Deferred cosmetic passes** (expected: Gecko). Notehead z-order, theme,
-   HEJI glyph injection and the snaps do not change a system's extents; they
-   could run at reveal (mount) rather than before the fold. Measured
-   2026-10-08: the passes that DO change extents (instrument gaps, below-staff
-   text, tuplet numbers, raised ties) grew 61 of 115 systems' bottoms by up to
-   420 units, so those must stay before measurement; the split saves only the
-   cosmetic ~250 ms here. Not worth it alone; worth it with 2.
+   engines). Window renders are pure functions of a MEI string: a worker with
+   its own Verovio can render chunk N+1 while the main thread imports,
+   post-processes and measures chunk N. Main-thread work per load is ~2 s,
+   Verovio ~2.1 s, so a pipelined load approaches max(2, 2.1) rather than the
+   sum — roughly 5.1 → 3 s here, more in Firefox. Preconditions: load the WASM
+   in the worker (`@hkl/notation` loads it from the CDN on the main thread
+   today; the analyzer/orchestrator workers show the bundling pattern);
+   `renderLineSystems` must send window MEI + options and receive SVG strings;
+   `applyPartition` and the splicer can keep the main-thread toolkit. Risk: the
+   second toolkit's output must be byte-identical (same build, options, font)
+   — gate with `load-reference-gate.js`.
+2. **Cross-pass `getBBox` memo** (expected: Gecko). The heavy passes measure
+   the same ~150 elements per system once per curve or mark: 82 000 reads for
+   ~17 000 elements. A memo keyed by element, cleared on any geometry write
+   (~24 write sites across tielayout, slurlayout, instrgap, textlayout), would
+   cut the count 4–5×. Worth it only if Firefox still shows the passes as a
+   hotspot; the risk is a stale box after an unannounced write — gate with
+   `load-reference-gate.js` and the engraving/tie/slur visual fixtures.
+3. **Bigger chunks, small first chunk** (expected: small, both engines).
+   `CHUNK_LINES` 6 → 12 halves `loadData` and the parses (~0.5 → ~0.3 s)
+   at the cost of a longer first window; render the first chunk as 2–3 lines
+   so the first page still paints in well under 200 ms.
+4. **Deferred cosmetic passes** (expected: Gecko). Notehead z-order, theme and
+   the snaps do not change a system's extents and could run at reveal rather
+   than before the fold. The passes that change extents (instrument gaps,
+   below-staff text, tuplet numbers, raised ties) grew 61 of 115 systems'
+   bottoms by up to 420 units and must stay before measurement, and HEJI
+   injection must run before all of them (2026-10-18). Saves ~250 ms here;
+   worth it only with 2.
 5. **Query hygiene** (expected: small). 200 000 `querySelector(All)` calls per
    load — the passes re-query obstacles per curve. A per-system element index
-   built once (notes, accidentals, marks, curves by staff) and handed to every
-   pass would remove most of them; same invalidation story as 2.
+   built once and handed to every pass would remove most; same invalidation
+   story as 2.
 
-Not levers (measured): the slice scheduler (gaps are ~0.4 s now and a
-macrotask hop is the floor); the number of forced reflows (~4 a system, each
-inherent to a pass boundary); `serializeRangeForRender` (0.16 s).
+Not levers (measured): the slice scheduler (~0.4 s of gaps; a macrotask hop
+is the floor); the number of forced reflows (~4 per system, each inherent to a
+pass boundary); `serializeRangeForRender` (0.16 s).
+
+## Other open items
+
+- **Two `cursor.update` calls per edit**: `doReRender` and
+  `composerOnStateChange` (both `main.ts`) each update the cursor; callers fire
+  `onStateChange()` then `onChange()` (e.g. `linebreakCommands.ts`). Collapse
+  to one.
+- **Test-mode residual**: under `HKL_INDEX_CHECK`,
+  `assertVoiceIndexConsistent` still calls the uncached measure-start lookup
+  per stop (`model/index.ts`); cost unmeasured since 2026-09-01.
+- **Firefox re-measure** of load, edit and zoom after the 2026-10-08/09
+  rounds (Max).
 
 ## Rejected / dead ends (don't retry)
 
-- `display:none` on `#score` to skip layout flushes — forces from-scratch
-  relayout on restore (~4× worse). See spot-splice doc, settled decision 9.
-- Chunk virtualization of scroll view — superseded by the persistent-SVG +
-  splice design (see composer-virtualization-handoff.md).
-- Verovio `select`(measureRange) as a page-view window: layout of a selection
-  re-breaks lines, so page boundaries wouldn't match the full document —
-  unusable for a pixel-stable window. (Noted 2026-08-29; revisit only if
-  Verovio gains layout-preserving selection.)
-
-## Status log
-
-- 2026-08-29 — doc created; baseline measured; Tier 1 in progress.
-- 2026-08-29 — T1.1 + T1.2 shipped (theme in place ~0.5 s; view-switch
-  restores ~0.7–0.8 s, both Chromium); T1.3 (redoLayout zoom) implemented,
-  disproven by probe (wrong page geometry), reverted and marked dead end.
-  Gates: typecheck / build / boundaries / `HKL_INDEX_CHECK=1 test:composer`
-  328/328. Firefox pass confirmed theme + switches (~1 s).
-- 2026-08-29 — T2.1 + T2.2 shipped (page virtualization + busy badge +
-  render coalescing). Chromium sonata: page edit/full render 4.5 s → 1.25 s
-  (loadData is ~90 % of the residual), zoom 1.35 s, page restore 0.43 s,
-  theme 50 ms, 3-burst reRender → 1 engrave. Same gates, 328/328. Remaining
-  floors: loadData ~1.2 s per page edit (T2.3 worker or Phase C), scroll full
-  engrave ~7 s (Phase C). Awaiting Max's Firefox pass.
-- 2026-08-29 — Phase C design drafted (composer-page-splice-design.md) with
-  Max's amendments: reverse cascade via greedy refill (pull-back and spill are
-  the same operation), gate = no visual change to cross-system actions vs a
-  full re-engrave. Spike 1 run on the sonata: viable — range-serialize content
-  byte-perfect, boundary-crossing spanners identified as the sole fidelity
-  killer, previous-system-context window + left escalation is the fix to
-  validate; ~125 ms per window engrave.
-- 2026-08-30 — Phase C spike 2 complete (see composer-page-splice-design.md):
-  87 % of boundaries splice at ~180 ms via window escalation; hard-break-
-  anchored windows are pixel-exact; design pivots to encoded-<sb> partition
-  pinning (spike 3). Shipped en route: boundary scoreDefs render inline in
-  serializeRangeForRender (fidelity fix, also scroll-splice relevant).
-- 2026-08-30 — **Page-view edits no longer shift scroll**: the T2.1 virtualized
-  rebuild's zero-height placeholders + mid-swap layout clamped #score.scrollTop
-  to ~page 1 on EVERY page edit (probe: 25392 → 2744, content-identical), with
-  the afterRender scroll-into-view yanking it back — visible as jump-then-
-  correct once C-A made edits surgical. renderPage now captures/restores the
-  scroll in the same synchronous block (fixture pageEditPreservesScroll).
-  En route: composer-test visual capture reworked (viewport-fit raster,
-  stable-frame settle, compact vs visualFullPage framing, capture meta in
-  summary.json), all baselines re-seeded — see decisions.md same date.
-- 2026-08-30 — **T3.0 line-break ownership shipped** (spikes 3+5 validated →
-  implemented same day; full account in composer-page-splice-design.md
-  "Implementation"). Key discovery en route: Verovio breaks:'line' honors
-  every <sb> VERBATIM while auto-paginating — the display mode that makes
-  partition ownership possible WITHOUT owning pagination (smartSb0 display
-  refuted by probe: castoff re-wraps refilled lines). 334/334 with
-  HKL_INDEX_CHECK, 3 new fixtures; enablement pixel-exact; awaiting Max's
-  Firefox feel-check of the edit-reflow semantics.
-- 2026-08-29 — Firefox pass: virtualization works, page edits ~2–3 s (loadData
-  dominated — Firefox's WASM/parse is slower than Chromium's; T3 is the fix,
-  not micro-tuning). **Atomicity bug fixed**: T2.2's deferral exposed
-  applyViewMode's eager CSS-class flip — the container restyled to the new
-  mode's shape around the OLD mode's DOM for the whole engrave. The view-mode
-  class now flips inside doReRender, in the same synchronous block as the
-  content swap, so a deferred switch paints class + content atomically
-  (probe-verified both directions). Rule for all future deferral work:
-  **no user-visible state may change before the deferred render lands — every
-  visible flip travels with the content swap.**
-- 2026-08-30 — **T3.1 contained system splice shipped** (Phase C-B v1; full
-  account in composer-page-splice-design.md). Page-view edits that pass the
-  gates splice at ~400–630 ms wall on the sonata (Chromium) vs 1.6–3.1 s full
-  renders — the first structural latency win from Phase C. Probes settled the
-  mechanism (endings ride inside g.system; content-driven stacking, no
-  vertical justification; pin-anchored windows pixel-exact); the battery
-  found the end-of-score final-barline artifact (synthetic trailer) and the
-  section-zone divergence (context-check refusal). Suite green under
-  HKL_INDEX_CHECK with 3 new fixtures; awaiting Max's Firefox pass (the
-  splice avoids loadData, where Firefox pays 2–3×, so the relative win
-  should be larger there).
-- 2026-08-30 — **Reflow made conservative** (Max's ruling; decisions.md same
-  date). The page-view partition is no longer re-derived on an edit — it is
-  carried across and only REPAIRED where a line left the legality envelope
-  ([MIN_FILL 0.65, FIT_MAX 1.45], set to contain Verovio's own castoff range
-  0.706–1.426). Fixes the reported drift (delete a note → the system gained a
-  measure → undo left it there: threshold hysteresis inherent to greedy
-  re-derivation) and, because most edits now leave the line count untouched,
-  raises the C-B splice hit rate — the first edit in a region splices too.
-  Sonata (real keystrokes): 4/4 edits and undos held the partition with zero
-  moved lines, undo geometry bit-exact 3/4 (4th within 3 units of snap noise),
-  spliced edits ~460–650 ms. Also closed a hole the probe exposed: a page
-  mounted lazily AFTER a splice used to draw pre-edit content (pageVirt.stale
-  → re-serialize + re-pin on the next mount, ~1.5 s once, off the hot path).
-- 2026-08-30 — **T3.2a/b shipped**: pagination ownership (`<pb>` pins +
-  breaks:'encoded', self-consistent, 2x faster loads) and the splice-latency
-  profile. Sonata battery after enablement: 6/8 edits splice at 407-544 ms,
-  all reference-clean at 4 units; the remaining full renders fell to ~1.1 s.
-  Suite 339/339 under HKL_INDEX_CHECK. Verovio is only 58 ms of a 313 ms
-  splice — the rest is whole-document bookkeeping (see the design doc's
-  latency table for the remaining levers).
-- 2026-08-30 — **T3.2d shipped**: one break algorithm everywhere. Measured
-  proof that Verovio spaces identical data differently per breaks mode (409 of
-  446 measures, median 2.6 px, max 52 px; the `<pb>` elements themselves are
-  inert), so the derive render's castoff output is no longer painted — it is
-  loaded, read via page-based getMEI, and replaced by the pinned encoded
-  render. First edit after a derive: ~1.2 s full render → 333 ms splice. Four
-  page-mode baselines reseeded with Max's approval.
-- 2026-10-08 — **Pages assembled from measured systems** (composer-pagination-design.md):
-  the castoff pass, the pinned page paint and the extents job are gone; Verovio
-  renders one line window per system (~36 ms a line on the sonata) and Composer
-  first-fits pages from the measured extents. Sonata, headless Chromium: first
-  page painted at 637 ms (synchronous to the cursor's page), the remaining 30
-  pages in 40 ms idle slices, whole document 8.5–8.9 s (115 windows 4.1–4.2 s
-  of Verovio, the rest post passes + measurement) — a load's TOTAL CPU went up
-  (one castoff + one paint was ~2.5 s) while time-to-first-page went down.
-  Steady-state edit (unchecked sweep, 24 lines): spliced median 145 ms,
-  min 79 ms; `cb-splicecost` steady 116 ms (render 92, splice 53, refill 38,
-  naturals 34). Checked sweep: 114 lines, every line splices once the refill
-  waits for the assembly; fresh-load reference gate 31/31 pages exact.
-  The same day's second round ("Every edit is a splice") retired the derive
-  branch for owned documents: a page break, section header, pickup, meter
-  change or Setup apply had re-assembled the document synchronously to the
-  cursor's page (8–11 s deep in the sonata, against ~1.2 s for the old
-  castoff). Now the refill carries page breaks and section headers, measures
-  signature ranges in chunks, and the renderer applies any partition change
-  with `PageAssembler.applyPartition` (changed lines engraved into a staging
-  shell, everything else reused, pages first-fit from one page before the
-  first affected line); the balance is bounded to the edit's page; Setup
-  apply redraws the shells' headers. `cb-commands` on the sonata (cursor at
-  m. 221, Chromium): page break 258 ms (applied), section header 152 ms,
-  meter change mid-piece 172 ms, HEAD meter change 785 ms (every measure to
-  the next change re-flows — an O(range) edit by nature), key change 296 ms
-  (applied), pickup 1.3 s (applied), insert measure 178 ms, tempo 217 ms;
-  add instrument 11.8 s as the one all-lines edit, through the lazy
-  assembly. 21 of 25 mutating commands splice, 3 apply, 1 is all-lines; no
-  derive. The first edit after a load still pays the in-flight assembly
-  (`finishSync`, ~7 s with the cursor deep) — that is the load's own cost,
-  once.
-- 2026-10-08 — **Load cost** (Max: 20+ s in Firefox for a sonata load or
-  zoom). Profiled by DOM call rather than by function (lessons.md "Profile
-  the DOM calls"): curve sampling through `getPointAtLength` (105 000 calls)
-  moved to JS (`render/curves.ts`); the per-line `getScreenCTM` cached per
-  page; `getCTM` memoised by ancestor transform chain (96 000 → 3 400 calls);
-  six lines per Verovio window (`renderLineSystems`, 115 → 20 windows);
-  macrotask slices in place of idle callbacks. Chromium, whole sonata:
-  10.0 s → 5.6 s (Verovio 3.3 → 2.1 s, passes 2.6 → 0.9 s, parse 0.8 →
-  0.5 s, slice gaps ~2 s → ~0.5 s); first page 0.65 → 0.16 s. Reference gate
-  exact throughout. Firefox to be re-measured by Max. Next levers if still
-  slow there: a cross-pass `getBBox` memo (82 000 calls remain), and
-  rendering windows in a Web Worker so Verovio (2.1 s) overlaps the
-  main-thread import/pass/measure work (~2 s).
-- 2026-10-09 — **Zoom rescales in place** (decisions.md): no Verovio, no
-  parsing; shells resized, passes + placement re-run per page. Sonata zoom
-  100 → 50 in Chromium: 5.6 s → 0.93 s (back: 0.91 s), 0 loads, every
-  system node and page start preserved.
-- 2026-09-11 — **T2.1b shipped**: visible-first mount pump with a fast-scroll
-  gate, one near page per idle slice, and the post-repair toolkit warm. The
-  "3 s to mount a page" was 8–18 synchronous mounts queued ahead of the visible
-  page plus a 784 ms stale reload on the first scroll into the sonata's back
-  half. Jump 294 → 136 ms; drag 20→3 2.75 s → ~410 ms; zero loadData on
-  scroll. Gate: `mount-drag.js` (`ok: true`). Suite 462/462.
+- `display:none` on `#score` to skip layout flushes — forces a from-scratch
+  relayout on restore (~4× worse; lessons.md).
+- Chunk virtualization of scroll view — superseded by one persistent SVG with
+  spot splices (decisions.md "Scroll view: one persistent SVG…").
+- Verovio `select` (measureRange) as a page-view window — a selection's layout
+  re-breaks lines (lessons.md).
+- Naturals from pinned lines or from a justified render, `svgRemoveXlink`,
+  `getBBox` call-count reduction alone, leader/trailer removal, quantizing
+  per-system placement terms or the distribution level — each measured and
+  recorded in decisions.md / lessons.md (2026-09-01 to 09-04).

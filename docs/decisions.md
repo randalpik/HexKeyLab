@@ -9868,3 +9868,105 @@ Max, sonata IV m. 75 (p. 28): the source's breath marks (IV mm. 75 and 100, both
 **Rejected**: restating after a mid-bar clef change (the m96 viola C♯5 Finale restated). Max, after research: that is an explicit user choice — a `P` parenthetical — not a rule.
 
 **Fixtures**: `accid_restate_after_tie`, `accid_chromatic_cluster_chord`, `accid_chromatic_cluster_two_voices` (glyph-per-note assertions + visual baselines), each red on the unfixed tree at exactly the predicted notes.
+
+---
+
+# Recorded 2026-10-19: rationale moved out of the architecture docs
+
+The entries below were written during the 2026-10-19 rewrite of `docs/architecture/composer.md` and the retirement of the Composer design docs (`composer-page-splice-design.md`, `composer-pagination-design.md`, `composer-spot-splice-design.md`, `composer-virtualization-handoff.md`). Each records a choice that until then lived only in one of those documents or in a code comment. Dates are when the choice was made; "recorded" marks a late entry. Where an earlier entry is now wrong, the new entry says what it supersedes.
+
+## Scroll view: one persistent SVG, spot splices, and a model navigation index (2026-06-21/23, recorded 2026-10-19)
+
+**Picked**: Verovio is a one-shot engraver with no incremental API, so scroll view engraves the whole score once as one `breaks:'none'` system in one persistent SVG and thereafter uses Verovio only to re-engrave a run of measures and splice it in (`render/splice.ts`). The full render fixes the vertical layout; edits swap content and shift X. **Rejected**: chunk virtualization (render the score in independently engraved chunks and mount them as they scroll near) — each chunk got a content-independent, too-wide `spacingStaff` and the chunks overlapped or clipped at their seams; its modules were deleted. **Model side**: a per-voice navigation index (`model/voice-index.ts`, invalidated by `invalidateMeterCache`) made `measureBoundaryCursors` 46 s → ~0 ms on the sonata and Ctrl-arrow 46 s → ~31 ms; under `HKL_INDEX_CHECK` every index is rebuilt and compared against the per-query computation — keep that pattern after any model change. **Per-edit scoping (B3)**: `renderDirty` is safe by default (every structural mutation resets it to `'all'`; a converted mutation only narrows it); `normalizeTies` re-realizes dirty±1 measures per voice with `prevOffers` seeded from the tie before the window, checked byte-for-byte against a full pass under the flag; `clampCursors` touches only the edited voice; `withHistory` reuses the last AFTER-MEI as the next BEFORE (`committedMei`). Sonata delete: multi-second → ~150 ms (Firefox).
+
+## Composer nav stops: no placeholder stops; past-end only after a non-full last bar (2026-05-19, recorded 2026-10-19)
+
+**Picked** (commit cc2f76b, "refactor cursor system"): cursor `c` means "past `flat[c]`". A layer `<space data-placeholder>` is never a stop — a partial bar's fill point is the stop past its last content. Mₖ's wrapper stop is omitted only when k > 0, Mₖ has content and Mₖ₋₁ is full. `getVoiceLength` is `flat.length − 1` when the last bar is full: a past-end stop there would draw at the same x as "past last content" — a stuck-cursor pair. **Supersedes** the fill-anchor-is-the-first-placeholder and past-end-for-every-voice rules ("Composer measure nav-stops mirror tuplets…") and the M₁-with-content collapse ("Composer cursor verification tooling + voiceLen no-+1"). Why the measure-0 and after-an-empty-bar wrappers came back is not recorded.
+
+## Composer insert overflow is bounded to M+1 and displaces M+1's content when it fits (2026-05-19, recorded 2026-10-19)
+
+**Picked** (`planInsert`, `model/insertion-plan.ts`): the new note's pieces fill from the cursor and split at the M/M+1 barline with tie intent; M's post-cursor items, then M+1's existing items, are repacked whole (ids and tie wiring kept). It rejects only when the load overruns M+1 ("Doesn't fit in next measure.") or one displaced item exceeds a bar ("Tuplet too large for measure." / "Doesn't fit."), and never cascades past M+1. **Supersedes** invariant (1) of "Composer measure-fill invariants…" ("never into a layer that already has content") and its message strings. Tuplet creation has its own rule (`resolveTupletTarget`, 2026-09-18).
+
+## "Fill incomplete measures" is its own pass, not the dormant autofill (2026-05-28, recorded 2026-10-19)
+
+The explicit command promised by "Auto-autofill disabled" (2026-05-19) shipped as Setup → *Fill incomplete measures with rests* (`fillIncompleteMeasures`, its own history entry). It pads every partial non-empty layer in every voice, trailing tail included, with `decomposeBeatAlignedRests`. The autofill primitives (`autofillMeasure`, `autofillAllAbandoned`, `autofillAllAndReanchor`, `autofillOnLeave`) remain unwired.
+
+## Composer beaming: a 4/4 half-bar beams as one group only for exactly four eighths (2026-05-28, recorded 2026-10-19)
+
+**Picked** (`notation/beams.ts`): each 4/4 half-bar is one beam group only when its members are exactly four eighth notes (no rest, every `@dur="8"`); otherwise it splits into quarter-beat groups. The halves are judged independently, so eight eighths beam 4+4. **Rejected**: an unconditional half-bar group, which over-beams mixed rhythms (`E E 16 16 E` as one cross-beat beam) that engraving practice groups per beat. An `hkl:beat-groups` pattern is authoritative and never gets this rule.
+
+## Accidental house offset is 1.58, not 1.6 (2026-06-04, recorded 2026-10-19)
+
+`ACCID_BASELINE_CORRECTION_SPACES` (`packages/notation/src/heji-render.ts`) went 1.6 → 1.58 in commit b37e1b7 ("dark mode and related tweaks"), a day after "Composer accidentals: deliberate downward house-offset" recorded 1.6. The commit gives no reason. The method in that entry stands: re-tune only against the on-a-line pixel probe, never `getBBox`; `FAMILY_Y_OFFSET.septimal` stays 0.05.
+
+## HKL → Composer broadcasts are event-driven, not rAF-polled (2026-05-23, recorded 2026-10-19)
+
+**Supersedes** "RAF polls `selection.selectedKeys`" in the 2026-05 bridge entry. **Picked** (commit 1fe0571): `apps/hkl/src/bridge/hkl-side.ts` exports `broadcastHeldKeys` / `broadcastTuning` / `broadcastFootprint` / `broadcastAllToComposer`, called from the effects fan-outs (`effects/onSelectionChanged.ts`, `onTuningChanged.ts`, `onRefChanged.ts`, `ui/controls.ts`). Each returns early on an unchanged signature, so callers fire freely; `broadcastHeldKeys` also returns while `playbackActive`. **Why**: browsers throttle `requestAnimationFrame` to ~1 Hz or suspend it in background tabs. With HKL in the background and Composer focused, a polled bridge stalled while audio kept playing; an event runs in the stack of the input handler that fired the note.
+
+## Scroll geometry is pinned to Verovio's page maxima (2026-06-22, recorded 2026-10-19)
+
+**Picked** (commit 493169f): `SCROLL_GEOM` = `pageWidth` 100 000, `pageHeight` 60 000, margins 30, `adjustPageHeight: true` so the page trims to its one system (was `pageHeight` 400). 100 000 × 60 000 MEI units is Verovio's maximum; past it Verovio logs a bounds error. `pageWidth` is a layout budget, not output pixels (the sonata's system is ~190k px wide), so one system holds roughly 500 bars at 100 % before it would wrap. **Open**: a larger score wraps in scroll view.
+
+## Page-view `pageMarginTop` is a layout input — no zoom-dependent crisp nudge (2026-09-08, recorded 2026-10-19)
+
+**Supersedes** the crispness clause of "Score size relative to page" (2026-07-11). **Picked** (commit 7adb4f9): `buildOptions` passes the page-scale-scaled `pageMarginTop` verbatim; Composer no longer calls `crispMarginTop` (only `@hkl/notation` `verovio.ts`, for HKL's frame and inset, does). **Why**: `crispMarginTop` raised the margin by up to 1 unit at scale 50 and 3 at 75 to put staff lines on their stroke parity, which changed the usable page height: a pagination settled at 100 % overflowed at 75/50 and re-derived (sonata: 31 → 30 pages on the first zoom). Page view gets crispness from `placeSystems` (the first staff row's phase) and `alignStaffRows` instead.
+
+## Scroll view draws no composer credit (2026-09-17, Max, recorded 2026-10-19)
+
+**Problem** (backlog Layout): scroll renders with `header: 'none'`, so there is no title block, and `styleTitleBlock` synthesized a credit-only `g.pgHead` right-aligned to the frame's width — which in scroll view is the whole system, so the composer's name was drawn at the end of the piece. **Picked**: the credit is page furniture, like the footer and running header. In scroll view `postProcessRendered` calls `styleTitleBlock(container, '')`, whose removal path also cleans a credit already baked into a stashed or spliced scroll DOM. **Fixture**: `engr_scrollNoComposerCredit`.
+
+## The pure-function partition supersedes "Page-view reflow is CONSERVATIVE" (2026-08-30) (recorded 2026-10-19)
+
+The 2026-08-30 entry made reflow path-dependent (carry by membership, repair only what became illegal) so a no-op edit and its undo never reflow. The single-authority ruling (2026-09-17/18, `BALANCE_LAMBDA` 0) and the gate removal (2026-09-19) meet the undo goal differently: the partition is a function of the document, so undo restores the layout because it restores the document. Membership carry and one-measure repair steps survive as edit-path mechanics, not as policy. At the ruling the sonata's movements had 36/21/22/37 lines with fills 0.73–1.04. Since 2026-10-08 the balance is bounded per page — see "Open: the bounded section balance…" below.
+
+## Splice-deferred pages are rebuilt from their committed lines on mount (2026-10-08, recorded 2026-10-19)
+
+The mounted-band clip ("An edit costs what is ON SCREEN", 2026-09-02) still defers a hunk's lines on pages outside the band. With stale pages and warm reloads gone, `markDeferred` parks such a page and adds it to `needsRebuild`; `mount` then calls `rebuildPage`, which renders the page's committed lines through `renderLineSystem` into a fresh shell, places it, re-runs the mount hook and calls `repaginateFrom([p])`, because the fresh extents may move its boundary. `stalePages` survives only as a test-compatibility getter.
+
+## Open: the bounded section balance means undo need not restore a reflowed layout (2026-10-19, for Max)
+
+Since "Every edit is a splice" (2026-10-08), `balanceTouched` (`render/linebreaks.ts`) rebalances only a touched section's suffix from the first line of the edit's page, so no page before an edit moves. The single-authority guarantee ("a derive and an edit compute the same partition", 2026-09-17/18) therefore holds per suffix, not per document. **Measured** (`test/composer-inspect/sonata-probes/undo-reversibility-gate.js`, sonata, 2026-10-19): a one-note delete at m. 250 moved 57 line boundaries; its undo restored the content (both spliced) but not the layout — 46 measures sat elsewhere (largest displacement 15 447 user units) and the partition differed from the pre-edit one. The deletes at mm. 100, 115 and 439 moved no lines and undid exactly. **Open (Max)**: an accepted cost of bounding edit work to the edit's page, or a defect.
+
+## MusicXML import keeps parenthesized accidentals as cautionary (2026-10-18, recorded 2026-10-19)
+
+**Problem**: the importer read only `<alter>`, so `<accidental parentheses="yes">` was dropped — all 23 of the sonata's parenthetical accidentals. **Picked**: `importMusicXml.ts` maps it to `@hkl-paren-caut="true"` on that note, bare or chord member — the flag voice-mode `P` toggles. **Known gap**: the exporter writes no `<accidental>`, so the flag does not survive a MusicXML round trip (`.hkc` keeps it). **Fixture**: `musicxml_paren_accidental` (commit b75f81e).
+
+## MusicXML export parity: the sonata census (2026-09-09, recorded 2026-10-19)
+
+"MusicXML export coverage is audited, not assumed" (2026-09-09) pointed to `docs/architecture/composer.md` for the counts; they live here now. At parity (export → re-import, model compared against itself) the sonata carries 9 099 notes, 922 slurs, 513 tuplets, 504 tied notes, 484 articulations, 150 dynamics, 135 expressive texts, 18 tempi, 15 double bars, 13 hairpins, 4 fermatas, 3 trills, 3 tremolos, 2 ottavas, 2 voltas, 1 repeat pair, 1 pickup and 3 section boundaries. The one delta is representational: 20 `<space>` come back as `<rest visible="false">` (MusicXML has one encoding, `<forward>`, for invisible time). Before the fixes, 134 rest-bounded tuplets lacked a bracket tag. Probes: `test/composer-inspect/sonata-probes/musicxml-export-coverage.js`, `musicxml-duration-gate.js`, `musicxml-roundtrip-gate.js` — re-run after any exporter change.
+
+## Composer exports ask for the destination before rendering (2026-09-28, recorded 2026-10-19)
+
+`files.ts` `exportDocument` opens the host's save dialog before calling `make()`, so cancelling a PDF export costs no render. With no host (or no dialog tool) it downloads `<base>.<ext>` after `make()`.
+
+## Performance mode: residual limits after the 2026-09 matcher work (2026-10-19)
+
+**Accepted**: a run of notes from the trill's pitch set right after a trill can put the bar up to one element ahead of the player when the shadow lifts — bounded by the cap. **Unsupported**: play-ahead of the current frontier; a mid-piece start (the score is performed from the top). **Harmonics**: a harmonic's sounding coordinate has no written note at its lattice class, so its expected colour is `null` and it matches on pitch alone (`render/performance.ts`) — this updates "v1 doesn't follow harmonics" (2026-06-05).
+
+## Slur-side gate is pitch-only by choice: span and slope rejected (2026-10-17, Max, recorded 2026-10-19)
+
+Span and slope would separate a long gentle slur (room below) from a short steep one (none). The fourth's wide margin already does that job, and Max chose the simpler rule; the residue goes to the manual flips (`Shift+L`, stem `L`). A local per-column test was weaker on real material: I m. 79's chord-top is nine steps under the slur's start but a unison with its end, so a start-column test passes it. Source: the `notation/slurSides.ts` header.
+
+## Slur stems: the final census, and the measurements behind three constants (recorded 2026-10-19)
+
+**Slur stems** ("Slur stems unified", 2026-09-05, stopped before the beam-rule fix): 918 resolvable slurs; before the pass 104 mixed, 71 of them on a beam side and 22 on a bracket side; after it 8 mixed (all capped, reviewed by Max), 11 on a beam side, 1 on a bracket. **`INSTR_CLEAR`** is one staff space because the grand-staff half-unit pad left p. 21 m. 99's "dim." 0.45 space above the piano. **Unstack** on that system: the system height went 7129 → 6249 with the gap's 2120 → 1240. **Tie pass**: ~12 ms per full sonata mount.
+
+## Correction: a tremolo occupies ONE wrapped note's written value, not their sum (2026-10-19)
+
+"Tremolo/trill playback = alternation-as-slur; fTrem needs tick support everywhere" (2026-05-30) says a tremolo's time is the SUM of its wrapped notes. The code never did that: `writtenTicks` (`model/ticks.ts`) returns the first wrapped note's or chord's written duration for `<fTrem>`/`<bTrem>`. Each note of a fingered tremolo is drawn at the full combined value and the tremolo occupies that value once; summing would double every two-note tremolo. The six-site rule in that entry stands.
+
+## A pickup takes the section's downbeat tempo with it; gradual tempos stay put (2026-06-03, recorded 2026-10-19)
+
+Adding a pickup (`setPickupAt`) moves every instant `<tempo>` at beat 1 of the section's first measure onto the pickup (`moveDownbeatTempos`); removing the pickup hands it back. A downbeat marking governs the section from its first sounding moment, so it governs the anacrusis. Gradual marks (a `tstamp2` span) are not moved: re-encoding a span across a bar shorter than the meter is ambiguous (commit 1d0938f).
+
+## Alt+V moves elements, never recreates them; the sibling voice is looked up (2026-09-17, addendum recorded 2026-10-19)
+
+Three choices behind `moveFullMeasuresToSiblingVoice` (`model/measure-ops.ts`) that the 2026-09-17 entry omits. (1) Layer children are MOVED into the sibling layer, not cloned, so ties, slurs and every other id reference stay resolved. (2) The mutation does not narrow the render dirty range, which stays `'all'`, so both splicers fall back to the full signature diff — safe by default. (3) The destination comes from the instrument table (`siblingVoiceOf`: same staff `@n`, other layer `@n`), never `v ± 1`.
+
+## Selection overlay: one rect per rendered system, grouped by DOM ancestor (2026-05-20, recorded 2026-10-19)
+
+`selection/selectionOverlay.ts` groups a selection's rects by the `g.system` each touched element is drawn in (`closest('g.system')`); rejected: clustering by y distance. Boundary x depends on the side: a span START at a measure's first tick uses that measure's content left (past the signature block, `findSigEndXForStaff`), a span END at that same tick uses the previous measure's right edge — across a system break the two are on different lines. A mid-system barline prefers the next measure's left edge (lessons.md "Verovio measure bbox includes the barLine glyph"). Commit 8968cfd.
+
+## Composer suite: modes only select fixtures; coverage picks the fast tier; affected ∪ fast is the default (2026-10-19, Max)
+
+**Problem**: the full suite (622 fixtures) takes 6 min headless here and 10+ on Max's machine, and the old fast tier (60 JS-setup fixtures from nine early groups, with roundtrip and visual checks switched off) covered no keystroke dispatch, page view, splicing, selection, undo, HEJI, bridge or export — so nobody ran it. **Picked**: (1) every mode runs every invariant; a mode only chooses fixtures. (2) Fixtures live in 26 feature categories (`test/composer-test/fixtures/<category>.mjs`, fixtures and their assertions together), selectable with `--group`. (3) `run.mjs full --coverage` records each fixture's executed source lines (V8 block coverage mapped back through Vite's sourcemaps) with a snapshot of each module; `run.mjs affected` diffs the working tree against those snapshots and runs every fixture that executed a changed line (a module-scope change selects every fixture that ran the module), ∪ the fast tier — Max's default for a scoped change. (4) The fast tier is generated, not curated (`select-fast.mjs`): one fixture per category, one visual fixture per category that has baselines (pixels are what coverage cannot see), then greedy by new lines per second to a 40 s budget — 91 fixtures, 94.6 % of the full suite's executed lines, 45 s wall here. **Rejected**: hand-curating the fast tier (no way to see what it misses; the generator prints the per-module gap); a static source→category map for "affected" (rots); mutation testing to validate the tier (needs edits to the served tree mid-run). **Where**: `test/composer-test/run.mjs`, `lib/coverage.mjs`, `lib/affected.mjs`, `select-fast.mjs`, `fast-tier.json`, README there.

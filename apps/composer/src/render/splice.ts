@@ -21,7 +21,7 @@
 // its staff. With the gaps reproduced (dy ≈ 0) the edited measures splice in
 // with a single x-translate, cross-staff spanners correct by construction.
 //
-// See docs/composer-spot-splice-design.md.
+// See docs/architecture/composer.md (Scroll view).
 
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { CONTROL_EVENT_NAMES } from '../model/index.js';
@@ -826,7 +826,7 @@ interface SpannerExtents {
    Two hand-maintained lists that had to agree did not: `tempo` — which a
    GRADUAL tempo mark (accel./rit.) anchors with @tstamp2, exactly like a
    hairpin (`addTempo`, expressions.ts) — was a control event the model knew
-   about and the window did not. Measured (`cb-spangaps.js`, probe A), that
+   about and the window did not. Measured (probe A, since deleted), that
    one was LATENT rather than live: Verovio draws no extension line for a
    gradual tempo, so its host measure renders identically whether or not the
    @tstamp2 target is in range, and a short window lost nothing. It is covered
@@ -840,8 +840,8 @@ interface SpannerExtents {
    breath, reh, caesura, and the ornaments) resolve to a single measure and can
    never grow a window, so including them costs one union-selector term and
    nothing at run time. `pedal` is a point event too — Composer emits the pair
-   as two independent `dir="down"`/`"up"` events with no @tstamp2 — and probe
-   `cb-pedalspan.js` confirms Verovio draws them as independent glyphs, not a
+   as two independent `dir="down"`/`"up"` events with no @tstamp2 — and a
+   probe (since deleted) confirmed Verovio draws them as independent glyphs, not a
    connecting line, so the pair carries no cross-measure dependency to cover
    (contingent on nobody enabling Verovio's `pedalStyle` line/bracket).
 
@@ -897,7 +897,7 @@ function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
              model/ties.ts, writes a bare 'm' for every interior note of a
              3+-note chain). Testing only for 't'/'i' left every such measure
              with neither edge set, so a range seeded mid-chain pulled in
-             neither neighbour. Measured (`cb-spangaps.js`, probe B): the
+             neither neighbour. Measured (probe B, since deleted): the
              medial measure rendered alone draws NO tie where the full render
              draws one — a dropped spanner the splice would transplant. Fixed
              2026-09-03 (Phase 3 precondition 1). */
@@ -985,7 +985,7 @@ export function expandForRenderedSpanners(
  *
  *  `expandForSpanners` iterates until nothing grows, which makes it a
  *  transitive closure over the interval graph of spanners — and on real music
- *  that graph is a chain. Measured on the sonata (`cb-spanchain.js`): 922 of
+ *  that graph is a chain. Measured on the sonata (a since-deleted probe): 922 of
  *  its 926 spanners are slurs, none longer than 3 measures, and NONE crosses
  *  more than one line boundary — yet ordinary legato phrasing (each slur
  *  ending on the downbeat where the next begins) let one seed walk 17 slurs

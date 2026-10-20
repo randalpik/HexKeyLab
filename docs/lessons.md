@@ -5379,3 +5379,39 @@ The sonata prints 22 of these on every load (9 `@tie`, 13 slur) and they look li
 ## A run closure over the post-edit document cannot see what the edit removed (2026-10-18)
 
 A control event lives in ONE measure (a slur or hairpin in its start measure), so removing it shows up in a signature diff as a change to that measure alone, and closing the run over spanners read from the live document finds nothing to follow, because the spanner is gone. Its other segments are still on screen. Symptom: deleting a slur that crosses a system break, or undoing its add, cleared the first segment and left the continuation. Rule: any closure that decides what to REPLACE must consider what is DRAWN (the pre-edit state) as well as what will be drawn. The splicers do this through `Renderer`'s per-render `SpannerSnapshot` and `expandForRenderedSpanners` (decisions.md, same date). The page splicer's reference gate (residue census) catches the stale segment, but only on touched pages and only when a fixture exercises the removal. Additions never reveal this; test removals and undos of cross-line structures explicitly.
+
+## Recorded 2026-10-19: lessons moved out of the architecture docs
+
+Written during the 2026-10-19 rewrite of `docs/architecture/composer.md` and the retirement of the Composer design docs; each lived only in one of those documents or in a code comment.
+
+## A tie's end zone excuses Verovio's endpoint, not contact in general (2026-09-22, recorded 2026-10-19)
+
+Contact near a tie's endpoint is Verovio's endpoint placement, which raising the arch cannot change; testing it made ties unsolvable — a tie whose start note also starts a slur, and a chord's nested ties, which meet at their ends (4 of the sonata's 9 "kept"). Excusing ALL contact inside the zone overcorrected: a raise could carry a chord's inner tie into its sibling. The rule (`render/tielayout.ts`, `END_ZONE` 1.5 units / `END_ZONE_FRAC` 0.2 of the span, `EPS`): inside the zone a raised arch may never bring an edge nearer an obstacle than Verovio's original was at that sample (commit defc3b5).
+
+## "A pitch-based gate is the wrong tool" is narrowed, not withdrawn (2026-10-17, recorded 2026-10-19)
+
+The 2026-09-05 lesson rejected a near-voice pitch gate on the slur flip because it un-flipped p. 17's bass slurs onto their tuplet brackets. The 2026-10-17 gate is pitch-based again (global, a fourth, onsets within the span) and accepts that a refused flip leaves a slur on Verovio's beam or bracket side, because Verovio's own side never collides and a forced side may. What still holds from 09-05: don't diagnose a routing failure (Verovio's endpoint rule) as a space failure. Read the two entries together.
+
+## Profile Composer latency on the sonata, through keystrokes, and confirm layout in Firefox (2026-06-22, recorded 2026-10-19)
+
+A synthetic document (appended measures, sparse inserts) splices in ~30 ms and does not reproduce the cost; the sonata (9 099 notes, 446 bars, ~920 slurs) does. Drive edits through the input layer (keystrokes), not the model API, so `withHistory` and its snapshots are counted. Chromium lays the 190k-px scroll SVG out cheaply and under-reports the forced-layout costs (`getScreenCTM`, `getBBox`) that dominate in Firefox: profile JS passes in Chromium, confirm layout-bound items in Firefox.
+
+## Natural widths cannot come from a justified render (recorded 2026-10-19)
+
+The line partition needs each measure's natural width; a justified line stretches its measures to fill the line, so a width read from it depends on the line's membership — circular for the partition being built from it. Naturals come from the unjustified `breaks:'none'` window. (Pinned-lines naturals were also measured and rejected: no cheaper, and system-first measures need clef/key corrections — decisions.md 2026-09-01 "A thread measured…".)
+
+## Don't run a build or a second Chromium job alongside the suite (recorded 2026-10-19)
+
+A visual fixture was once shot mid-relayout while a `pnpm build` ran, and the sonata probe runner's 300 s eval deadline expires under a concurrent suite. Run long gates alone, and chunk long probes with `from=`/`limit=` rather than sampling them.
+
+## The keybindings catalog drifts from the dispatcher (2026-10-19)
+
+`keybindings.ts` is documentation-as-data, not a dispatch table, and the 2026-06 decision called the drift risk low. It drifted: `Ctrl+L` (slur) and `Alt+H` (string harmonic) are dispatched by `input.ts` but missing from `KEYBINDINGS`, and the expression-mode Delete entry still describes the old moment-wide delete (it now removes the selected mark only). When changing a binding, edit both files in the same change.
+
+## Verovio `select` (measureRange) cannot serve as a page-view window (2026-08-29, recorded 2026-10-19)
+
+Laying out a selection re-breaks its lines, so the selection's systems and page boundaries do not match the full document's — unusable for a pixel-stable window. Revisit only if Verovio gains layout-preserving selection.
+
+## V8 precise coverage: functions appear only once compiled, and block ranges leave gaps (2026-10-19)
+
+Two traps found building the composer suite's coverage map. (1) `Profiler.takePreciseCoverage` reports only functions V8 has compiled so far, so function extents taken from the first snapshot miss every lazily compiled function — a changed line inside one read as module scope and selected every fixture. Take function extents from the source (the TypeScript AST over the snapshot), not from V8. (2) Block ranges are exact where reported but not complete: the code after a conditional expression inside an early-returning function was left inside the function's own count-1 range with no count-0 range covering it, so it read as executed. Painting ranges innermost-wins can therefore only over-approximate; selection built on it errs toward running more fixtures, which is the safe direction. Also: `takePreciseCoverage` with `callCount: true` resets counters, so module top-level code (run once at load) is never attributed to a later snapshot.

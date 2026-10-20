@@ -6,9 +6,9 @@
 // a JS expression in the page context, and prints the result as JSON.
 //
 // Usage:
-//   node tools/composer-inspect/inspect.mjs '<js-expression>'
-//   node tools/composer-inspect/inspect.mjs --screenshot <out.png> ['<js-expression>']
-//   SCREENSHOT=<out.png> node tools/composer-inspect/inspect.mjs '<js-expression>'
+//   node test/composer-inspect/inspect.mjs '<js-expression>'
+//   node test/composer-inspect/inspect.mjs --screenshot <out.png> ['<js-expression>']
+//   SCREENSHOT=<out.png> node test/composer-inspect/inspect.mjs '<js-expression>'
 //
 // Modes:
 //   • Eval only (no flags):     run the JS expression, print JSON to stdout.
@@ -19,12 +19,12 @@
 // it to set up DOM state for the shot), then the screenshot is taken.
 //
 // Examples:
-//   node tools/composer-inspect/inspect.mjs \
+//   node test/composer-inspect/inspect.mjs \
 //     'Array.from(document.querySelectorAll("g.barLine")).map(e => e.getBoundingClientRect())'
 //
-//   node tools/composer-inspect/inspect.mjs --screenshot /tmp/composer.png
+//   node test/composer-inspect/inspect.mjs --screenshot /tmp/composer.png
 //
-//   node tools/composer-inspect/inspect.mjs --screenshot /tmp/m1.png \
+//   node test/composer-inspect/inspect.mjs --screenshot /tmp/m1.png \
 //     '(() => { const m = window.__hkl_composer.model; m.setCursor(0,1); m.insertRestAtCursor({duration:"4",dots:0}); return m.getCursor(1); })()'
 //
 // Optional env:
@@ -175,7 +175,7 @@ try {
        an inner scroller, so a bare captureScreenshot returns just the visible
        slice of one page — which reads as "the image is scaled wrong / cut off"
        rather than as a missing flag, and has already cost one round of
-       misleading comparison shots (2026-09-01). phasec/runner.mjs has always
+       misleading comparison shots (2026-09-01). sonata-probes/run-probe.mjs has always
        done this; the two capture paths now agree. */
     const dimsRes = await cdp.send('Runtime.evaluate', {
       expression: `JSON.stringify((() => {

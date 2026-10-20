@@ -1,4 +1,4 @@
-// Pages assembled from measured systems (composer-pagination-design.md,
+// Pages assembled from measured systems (decisions.md "Composer draws the pages",
 // approved 2026-10-08). Composer owns pagination: which systems share a page
 // is first-fit over the systems' MEASURED heights, in document order, and no
 // page is ever painted from a guess.
@@ -724,7 +724,7 @@ export class PageAssembler {
     return this.applyPartition(this.lines(), new Set(), touched);
   }
 
-  /** THE edit operation (composer-pagination-design.md, "Every edit is a
+  /** THE edit operation (decisions.md "Every edit is a
    *  splice", 2026-10-08). `oldLines` is the partition the DOM renders,
    *  `this.lines()` the one the refill just committed, `changedIds` the lines
    *  whose content or render context changed (the refill's changed run, by

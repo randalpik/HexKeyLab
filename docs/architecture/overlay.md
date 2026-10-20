@@ -78,7 +78,7 @@ would swap `static.mjs`'s on-disk `embedded/` root for an embedded VFS.
 
 Firefox has no File System Access API: a page never learns where a picked file lives and can write only
 to Downloads. The host does both for Composer (`apps/composer/src/files.ts`, client
-`packages/bridge/src/local-fs.ts`; → [composer.md](composer.md#save--load--export-appscomposersrcsavets-filests)).
+`packages/bridge/src/local-fs.ts`; → [composer.md](composer.md#files-and-export)).
 Routes: `GET status`, `POST pick-open` / `pick-save` (spawn a **native dialog** — `kdialog` → `zenity` →
 `yad`, first found, `HKL_FS_PICKER` overrides, `none` disables; one at a time — see the portal note
 below), `POST read` (JSON text +

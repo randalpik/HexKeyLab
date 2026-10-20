@@ -21,6 +21,7 @@
     "analyze:musiquest": "node apps/analyzer/cli/batch-musiquest.js",
     "test:composer": "node test/composer-test/run.mjs full",
     "test:composer:fast": "node test/composer-test/run.mjs fast",
+    "test:composer:affected": "node test/composer-test/run.mjs affected",
     "test:transcription": "node test/transcription-roundtrip/run.mjs",
     "check:heji": "node test/heji-check.mjs",
     "scan:hkl": "node test/hkl-inspect/console-scan.mjs",

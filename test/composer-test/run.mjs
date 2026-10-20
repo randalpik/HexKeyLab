@@ -2,16 +2,21 @@
 // HKL Composer test suite entry point.
 //
 // Usage:
-//   node tools/composer-test/run.mjs <tier> [--keep-open]
-//   node tools/composer-test/run.mjs scenario <name> [--keep-open]
+//   node test/composer-test/run.mjs <mode> [--group a,b] [--only a,b] [--list]
+//                                          [--coverage [path]] [--keep-open]
+//   node test/composer-test/run.mjs scenario <name> [--keep-open]
 //
-// Tiers:
-//   fast    — MODEL + CURSOR + CONSOLE on the fast-tier fixtures (~25 s wall-clock for 60, 2026-10-05)
-//   full    — fast + ROUNDTRIP + RENDER + INPUT on every fixture (~5 min for 581, 2026-10-05; the gate)
-//   --only a,b — restrict either tier to fixtures whose names start with a listed prefix (seconds)
-//   visual  — pixelmatch only (planned; not yet implemented)
+// Modes (every mode runs every invariant on the fixtures it selects):
+//   affected — fixtures a working-tree change can reach (coverage map, see
+//              lib/affected.mjs) ∪ the fast tier. The default for a scoped change.
+//   fast     — the fast tier (fast-tier.json, chosen by select-fast.mjs).
+//   full     — every fixture. The gate before declaring a change set done.
+//   --group a,b  restrict to fixture categories (fixtures/<category>.mjs)
+//   --only a,b   restrict to fixtures whose names start with a listed prefix
+//   --list       print the selection (and affected's report) without running
+//   --coverage   record per-fixture coverage to out/coverage-map.json (or path)
 //
-// Requires: Vite dev server running (`npm run dev`) at
+// Requires: the dev proxy running (`pnpm dev`) at
 // COMPOSER_URL (default http://localhost:5170/composer/).
 
 import { launchChromium, newTabWsUrl } from './lib/chromium.mjs';
@@ -21,7 +26,9 @@ import { INJECT_LIB, RESET_SNIPPET, setupExpr, cursorTraceExpr } from './lib/run
 import { typeKeys, focusBody } from './lib/keystroke.mjs';
 import { MOCK_BRIDGE_LIB } from './lib/bridge-mock.mjs';
 import { visualCheck } from './lib/visual.mjs';
-import { FIXTURES, FIXTURE_ASSERTIONS } from './fixtures.mjs';
+import { FIXTURES, FIXTURE_ASSERTIONS, CATEGORIES } from './fixtures/index.mjs';
+import { CoverageCollector } from './lib/coverage.mjs';
+import { affectedSelection } from './lib/affected.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -38,30 +45,51 @@ function parseArgs() {
   let keepOpen = false;
   let updateBaselines = false;
   let only = null;
+  let groups = null;
+  let list = false;
+  let coverage = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--keep-open') keepOpen = true;
     else if (a === '--only') only = (args[++i] ?? '').split(',').filter(Boolean);
+    else if (a === '--group') groups = (args[++i] ?? '').split(',').filter(Boolean);
+    else if (a === '--list') list = true;
+    else if (a === '--coverage') coverage = args[i + 1] && !args[i + 1].startsWith('-') && !['fast', 'full', 'affected'].includes(args[i + 1]) ? args[++i] : join(__dirname, 'out', 'coverage-map.json');
     else if (a === '--update-baselines') updateBaselines = true;
     else if (a === 'scenario') { mode = 'scenario'; scenarioName = args[++i]; }
-    else if (['fast', 'full', 'visual'].includes(a)) mode = a;
+    else if (['fast', 'full', 'affected'].includes(a)) mode = a;
     else if (!scenarioName && mode === 'scenario') scenarioName = a;
+    else throw new Error('unknown argument: ' + a);
   }
-  return { mode, scenarioName, keepOpen, updateBaselines, only };
+  if (groups) for (const g of groups) if (!CATEGORIES[g]) throw new Error('unknown group ' + g + '. Known: ' + Object.keys(CATEGORIES).join(', '));
+  return { mode, scenarioName, keepOpen, updateBaselines, only, groups, list, coverage };
 }
 
-function selectFixtures(mode, scenarioName, only) {
+async function selectFixtures({ mode, scenarioName, only, groups }) {
   if (mode === 'scenario') {
     if (!scenarioName || !FIXTURES[scenarioName]) {
       throw new Error('Unknown scenario: ' + scenarioName +
         '. Known: ' + Object.keys(FIXTURES).join(', '));
     }
-    return [[scenarioName, FIXTURES[scenarioName]]];
+    return { fixtures: [[scenarioName, FIXTURES[scenarioName]]], report: [] };
   }
-  const wanted = mode === 'full' ? ['fast', 'full'] : ['fast'];
-  /* `--only a,b`: keep fixtures whose name starts with any listed prefix. */
-  return Object.entries(FIXTURES).filter(([name, f]) => wanted.includes(f.tier)
+  let report = [];
+  let inMode;
+  if (mode === 'affected') {
+    const a = await affectedSelection(join(__dirname, 'out', 'coverage-map.json'), FIXTURES, FIXTURE_ASSERTIONS);
+    report = a.report;
+    const fast = Object.keys(FIXTURES).filter((n) => FIXTURES[n].tier === 'fast');
+    report.push(`selected: ${a.selected.size} affected ∪ ${fast.length} fast`);
+    inMode = (name, f) => a.selected.has(name) || f.tier === 'fast';
+  } else {
+    inMode = (name, f) => mode === 'full' || f.tier === 'fast';
+  }
+  /* `--group a,b`: keep listed categories. `--only a,b`: keep fixtures whose
+     name starts with any listed prefix. */
+  const fixtures = Object.entries(FIXTURES).filter(([name, f]) => inMode(name, f)
+    && (!groups || groups.includes(f.category))
     && (!only || only.some((p) => name.startsWith(p))));
+  return { fixtures, report };
 }
 
 async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
@@ -141,7 +169,7 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
        page overflows, none leaves room for the next page's first system. */
     { name: 'pagination first-fit', expr: `window.__test.assertPaginationFirstFit()` },
   ];
-  if (currentTier === 'full') {
+  {
     universal.push({
       name: 'roundtrip serialize→load→serialize',
       expr: `(() => {
@@ -197,10 +225,9 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
     }
   }
 
-  /* VISUAL invariant: only on `visual` tier or when fixture declares
-   * visualBaseline. Captures a screenshot via CDP and compares to the
-   * stored baseline PNG. */
-  if (fixture.visualBaseline && (currentTier === 'visual' || currentTier === 'full' || currentTier === 'scenario')) {
+  /* VISUAL invariant: when the fixture declares visualBaseline. Captures a
+   * screenshot via CDP and compares to the stored baseline PNG. */
+  if (fixture.visualBaseline) {
     result.counts.invariants++;
     try {
       const v = await visualCheck(cdp, fixture.visualBaseline, { updateBaselines: opts.updateBaselines, fullPage: fixture.visualFullPage === true });
@@ -219,7 +246,8 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
      answers the DEFECT question is not baseline-vs-output anyway: it is the
      live (spliced) page against a full re-engrave of the same document, in the
      same container, at the same scroll, through the same capture path. Shoot
-     both here, into a scratch dir — never into out/, which is tracked — so the
+     both here, into a scratch dir — never into out/, which holds the visual
+     output — so the
      heatmap can be made without reproducing the ordering by hand. */
   /* Read the splice ledger and drain the console BEFORE the failure shots
      below: their forced re-engrave is a full render the fixture did not ask
@@ -316,12 +344,21 @@ function fmtResult(r) {
 }
 
 async function main() {
-  const { mode, scenarioName, keepOpen, updateBaselines, only } = parseArgs();
-  const fixtures = selectFixtures(mode, scenarioName, only);
+  const opts = parseArgs();
+  const { mode, keepOpen, updateBaselines, list, coverage } = opts;
+  const { fixtures, report } = await selectFixtures(opts);
   const outDir = join(__dirname, 'out');
   mkdirSync(outDir, { recursive: true });
 
-  console.log(`composer-test: tier=${mode}, ${fixtures.length} fixtures, url=${URL_DEFAULT}`);
+  for (const line of report) console.log(line);
+  if (list) {
+    const byCat = new Map();
+    for (const [name, f] of fixtures) { if (!byCat.has(f.category)) byCat.set(f.category, []); byCat.get(f.category).push(name); }
+    for (const [cat, names] of byCat) console.log(`  ${cat} (${names.length}): ${names.join(' ')}`);
+    console.log(`${fixtures.length} fixtures`);
+    return;
+  }
+  console.log(`composer-test: mode=${mode}, ${fixtures.length} fixtures, url=${URL_DEFAULT}${coverage ? ', coverage → ' + coverage : ''}`);
 
   const browser = await launchChromium();
   let exitCode = 0;
@@ -346,12 +383,21 @@ async function main() {
     const bridgeReady = await cdp.evalJSON(MOCK_BRIDGE_LIB);
     if (bridgeReady?.__error) throw new Error('bridge mock injection failed: ' + bridgeReady.__error);
 
+    const cov = coverage ? new CoverageCollector(cdp, URL_DEFAULT) : null;
+    if (cov) await cov.start();
+
     const startedAt = Date.now();
     const results = [];
     for (const [name, fixture] of fixtures) {
+      if (cov) await cov.discard();
       const r = await runOne(cdp, name, fixture, console_cap, mode, { updateBaselines });
+      if (cov) await cov.record(name, { ms: r.ms.total, category: fixture.category, ok: r.ok });
       results.push(r);
       console.log(fmtResult(r));
+    }
+    if (cov) {
+      writeFileSync(coverage, JSON.stringify(cov));
+      console.log(`coverage map: ${Object.keys(cov.fixtures).length} fixtures → ${coverage}`);
     }
     const elapsedMs = Date.now() - startedAt;
     const passed = results.filter((r) => r.ok).length;

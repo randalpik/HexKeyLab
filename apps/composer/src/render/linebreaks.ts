@@ -1,5 +1,5 @@
 // Page-view line-break ownership (Phase C foundation — "own the line-breaking",
-// docs/composer-page-splice-design.md, spike 5).
+// docs/architecture/composer.md, Page view).
 //
 // In page view, Composer — not Verovio's castoff — decides which measure starts
 // each system. The partition is pinned as render-time <sb> elements injected
@@ -310,7 +310,7 @@ export function injectPins(
  *  number is rendered, one per line start — but a number is an overlay label
  *  above the staff, so their widths and their lines' fills cannot have moved,
  *  and re-measuring 134 naturals for it cost 675 ms of a 2.6 s insert
- *  (`cb-splicecost.js --arg "edit=ctrlm,mi=8"`). Flow differences are a subset
+ *  (`edit-cost-attribution.js --arg "edit=ctrlm,mi=8"`). Flow differences are a subset
  *  of full differences, always.
  *
  *  Only the measure element's own attribute is stripped: its opening tag ends
@@ -335,7 +335,7 @@ function measureIds(meiMeasures: Element[]): string[] {
  *  identity: inserting a blank measure anywhere above a break shifted every
  *  later count, so Ctrl+M insert-measure tripped this guard and derived —
  *  2.8 s on the sonata for an edit whose break structure had not changed at
- *  all (`cb-commands.js`). Ids are stable, so the signature now changes when a
+ *  all (`command-splice-inventory.js`). Ids are stable, so the signature now changes when a
  *  break is added, removed, or moved to another measure, and only then. A
  *  trailing break with no following measure keys on `$end`. */
 function computeUserBreakSig(model: ComposerModel): string {
@@ -823,7 +823,7 @@ export class PageLineBreaks {
     return this.startIds !== null && this.startIds.length > 1;
   }
 
-  /* ── the seed partition (composer-pagination-design.md, 2026-10-08) ─────── */
+  /* ── the seed partition (decisions.md "Composer draws the pages", 2026-10-08) ─────── */
 
   /** The partition a fresh derive starts from, computed from Composer's own
    *  measurements — no Verovio castoff anywhere. Every natural width is
@@ -1741,7 +1741,7 @@ export class PageLineBreaks {
     }
     if (touched) {
       /* Lines only. Pages are no longer carried by line index from a castoff
-         (composer-pagination-design.md): the renderer decides them from the
+         (decisions.md "Composer draws the pages"): the renderer decides them from the
          measured systems after the balance and commits them with
          `setPageStarts`. */
       this.startIds = starts.map((i) => ids[i]);
@@ -1786,7 +1786,7 @@ export class PageLineBreaks {
    *  page's layout stays clean for the splice's first live read (that read used
    *  to be a 5 ms flush purely because this host touched `<body>`). Proven
    *  against the previous `getBBox` reading over every sonata measure
-   *  (`cb-naturalspath.js`): 441/443 interior measures and every last measure
+   *  (a since-deleted probe): 441/443 interior measures and every last measure
    *  identical (delta 0); the only differences are a window's FIRST measure,
    *  whose bbox began 144 units left of its staff line (the system-start brace/
    *  barline), i.e. the old reading over-counted measure 0 by the brace. The

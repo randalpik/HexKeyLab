@@ -191,7 +191,7 @@ export function signatureRanges(req: RangeRequest): RangeResult {
 
   /* head */
   /* Every system's staff set changes: the one legitimately all-lines edit
-     (composer-pagination-design.md, "Every edit is a splice", 2026-10-08). */
+     (decisions.md "Every edit is a splice", 2026-10-08). */
   if (oldState.head.rest !== newState.head.rest) return { ranges, bail: 'all lines (head context changed)' };
   if (oldState.head.key !== newState.head.key) push(0, nextReset(-1, 'key') - 1);
   if (oldState.head.meter !== newState.head.meter) push(0, nextReset(-1, 'meter') - 1);
@@ -200,7 +200,7 @@ export function signatureRanges(req: RangeRequest): RangeResult {
      identity — undo/redo/restoreSnapshot swap the whole document object, so
      every scoreDef element is new and identity would read each one as removed
      and re-added, turning every undo into a whole-document range and a derive
-     (found by cb-bigrange.js's undo step: three derives, zero naturals
+     (found by governed-range-edits.js's undo step: three derives, zero naturals
      windows, and a sweep that no longer finished). Two scoreDefs before one
      measure merge into one entry. A removed entry anchors at its successor's
      new position (or the run start when that measure is gone). */
