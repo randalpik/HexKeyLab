@@ -27,10 +27,20 @@ export const KEYBINDINGS: KeySection[] = [
     title: "Universal",
     intro: "Active regardless of current mode.",
     bindings: [
-      { keys: "Space", desc: "Play / pause from cursor." },
       {
-        keys: "Click on note / rest",
-        desc: "Move the cursor to that note and switch to its voice.",
+        keys: "Space",
+        desc: "Play from the cursor, or stop. Stopping returns the cursor to where playback started.",
+        note: "Also stops Performance mode. Playback needs HKL open in another tab.",
+      },
+      {
+        keys: "Shift+Space",
+        desc: "Start Performance mode: play your part on HKL and the score follows. Space stops it.",
+        note: "Single-instrument scores only; needs HKL open. Does nothing while playback or Performance mode is running.",
+      },
+      {
+        keys: "Click",
+        desc: "Move the cursor to the nearest note / rest (switching to its voice), or to the start of an empty measure. Clicking a dynamic, hairpin, expressive text, pedal or tempo mark selects it in its layer.",
+        note: "Ignored during playback or with a modifier held.",
       },
       {
         keys: "←  /  →  (during playback)",
@@ -45,7 +55,7 @@ export const KEYBINDINGS: KeySection[] = [
       { keys: "Ctrl+O", desc: "Open a .hkc (the local host's file dialog, else the browser's)." },
       { keys: "Shift+=", desc: "Zoom in." },
       { keys: "Shift+-", desc: "Zoom out." },
-      { keys: "Escape", desc: "Cancel pending hairpin or pending tuplet." },
+      { keys: "Escape", desc: "Cancel a pending hairpin, slur or tuplet. In selection mode, exit the selection." },
     ],
   },
   {
@@ -56,7 +66,7 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "1 .. 7",
         desc: "Duration: 1 = 64th, 2 = 32nd, 3 = 16th, 4 = 8th, 5 = quarter, 6 = half, 7 = whole.",
-        note: "With held HKL keys → chord at this duration. Without held keys → rest.",
+        note: "With held HKL keys → chord at this duration. Without held keys → rest. In OVR mode it replaces the element at the cursor. With a chord note selected (Alt+↑/↓) in INS mode, it adds the held keys to that chord instead (no advance; duration unchanged).",
       },
       {
         keys: ".",
@@ -68,7 +78,8 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "]",
-        desc: "Double bar line at the end of the current measure.",
+        desc: "Toggle a double bar line at the end of the current measure.",
+        note: "Not on the last measure (it keeps its final barline).",
       },
       {
         keys: "{  /  }",
@@ -82,7 +93,7 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Ctrl+8",
-        desc: "Toggle an 8va (ottava) over the selection, or the current beat in voice mode.",
+        desc: "Toggle an 8va (ottava) over the beat selection, or the current beat in voice mode.",
         note: "Applies to the cursor's whole staff (both voices). Spanned notes sound an octave higher. Press again at the same start to remove it.",
       },
       {
@@ -93,7 +104,7 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "Ctrl+B",
         desc: "Toggle a page break before the current measure (page view).",
-        note: "Verovio starts a new system/page at the break. No effect in scroll view.",
+        note: "The measure starts a new page. Not on the first measure; no effect in scroll view.",
       },
       {
         keys: "Alt+Shift+↓",
@@ -102,7 +113,11 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "H",
-        desc: "Hide the current rest (still affects timing).",
+        desc: "Hide / unhide the current rest (a hidden rest still takes up time).",
+      },
+      {
+        keys: "Alt+H",
+        desc: "Toggle a string harmonic on the current note or chord: diamond notehead; playback sounds the harmonic pitch.",
       },
       {
         keys: "P",
@@ -119,13 +134,18 @@ export const KEYBINDINGS: KeySection[] = [
         desc: "Flip the curve direction of the slur covering the cursor.",
       },
       {
+        keys: "Ctrl+L",
+        desc: "Slur: press on the start note, move to the end note (any voice or staff) and press again. On a note already under a slur, deletes that slur.",
+        note: "Escape cancels a pending slur. Arrow keys, including ↑/↓ through the layers, keep it pending; entering selection mode or undo drops it.",
+      },
+      {
         keys: "/",
         desc: "Toggle a beam break at the cursor. Splits a beam mid-beat, or joins one across beats.",
       },
       {
         keys: "S  /  A  /  T  /  F  /  B",
-        desc: "Add staccato, accent, tenuto, fermata, or breath mark to the current note or chord.",
-        note: "Only fermata can attach to a rest.",
+        desc: "Toggle staccato, accent, tenuto, fermata, or breath mark on the current note or chord.",
+        note: "Each key toggles its own mark, so marks combine. Only fermata can attach to a rest.",
       },
       {
         keys: "Shift+1 .. Shift+8",
@@ -139,7 +159,8 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Ctrl+↑  /  Ctrl+↓",
-        desc: "Move the expression(s) at the current note above / below the staff (@place). Same as in the expression layer.",
+        desc: "Move the expressions at the current note above / below the staff (@place): its dynamic, expressive text and any hairpin spanning it.",
+        note: "Below the upper staff of a grand staff means between the staves. In the expression layer, Ctrl+↑/↓ moves only the selected mark.",
       },
       {
         keys: "Shift+P  /  Shift+O",
@@ -149,7 +170,7 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "↑  /  ↓",
         desc: "Previous / next voice. Cycle: tempo → 1 → 2 → expr → 3 → 4 → pedal.",
-        note: "Tempo is a top-level layer above V1 (it applies to all instruments). The expression and pedal layers appear only when they contain marks; create marks in voice mode, then navigate the layer to edit/delete.",
+        note: "Tempo is a top-level layer above V1 (it applies to all instruments) and is always reachable. The expression layer is a stop only when the cursor's measure has a dynamic or expressive text or lies under a hairpin; the pedal layer only when the instrument has pedal marks. A single-staff instrument cycles 1 → 2 → expr (no pedal); several instruments follow one another in score order; a part view limits the cycle to that part; staves hidden on the current system are skipped.",
       },
       {
         keys: "←  /  →",
@@ -159,16 +180,20 @@ export const KEYBINDINGS: KeySection[] = [
         keys: "Home  /  End",
         desc: "Jump to start / end of the current voice.",
       },
-      { keys: "Backspace", desc: "Delete element at/before cursor." },
+      {
+        keys: "Backspace",
+        desc: "Delete element at/before cursor.",
+        note: "With a chord note selected (Alt+↑/↓), deletes just that note.",
+      },
       { keys: "Delete", desc: "Delete element after cursor." },
       { keys: "Insert", desc: "Toggle insert / overwrite mode (INS ↔ OVR)." },
       {
         keys: "M",
-        desc: "Insert a new empty measure after the current one. Cursor lands at its start.",
+        desc: "Insert an empty measure at the next barline after the cursor (at the cursor itself when it sits on a barline, e.g. after Ctrl+→). Cursor lands at its start.",
       },
       {
         keys: "Ctrl+H",
-        desc: "Hide empty staves: toggle the hide-empty flag on the empty measures of the current staff (or of the selected measures × staves).",
+        desc: "Hide empty staves: toggle the hide-empty flag on the current measure of the current staff, if it is empty (or on every empty measure × staff in the selection).",
         note: "Every targeted measure takes the state the fewest of them had (tie → on), so pressing again cycles. In page view a staff drops out of a system once every measure on that system is flagged for it; scroll view always shows every staff. Content entering a measure clears its flag.",
       },
       {
@@ -211,6 +236,7 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "Escape",
         desc: "Cancel a pending tuplet (between Ctrl+N and the digit).",
+        note: "Any other non-digit key also cancels it, then acts normally.",
       },
       {
         keys: "1 .. 7  (inside tuplet)",
@@ -229,7 +255,7 @@ export const KEYBINDINGS: KeySection[] = [
     intro:
       "A virtual voice between voices 2 and 3 in the cycle. Edits expression marks (dynamics, hairpins, expressive text).",
     bindings: [
-      { keys: "←  /  →", desc: "Step through the unified moment list." },
+      { keys: "←  /  →", desc: "Step through the layer's stops: each mark (a hairpin's start and end separately) and each note onset without a mark." },
       {
         keys: "Ctrl+←  /  Ctrl+→",
         desc: "Jump to the previous / next existing mark, skipping bare note onsets.",
@@ -246,11 +272,13 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Backspace  /  Delete",
-        desc: "Delete the selected expression element at this moment (dynamic, then expressive text, then any containing hairpin).",
+        desc: "Delete the selected expression mark (dynamic, expressive text or hairpin).",
+        note: "Coincident marks are separate stops, so each is deleted on its own; a stop with no mark deletes nothing.",
       },
       {
         keys: "Ctrl+↑  /  Ctrl+↓",
-        desc: "Move the expression mark(s) at this moment above / below the staff (@place). Affects every expression element sharing the moment. Also works in voice mode (acts on the expression at the current note).",
+        desc: "Move the selected expression mark above / below the staff (@place).",
+        note: "In voice mode, Ctrl+↑/↓ moves every expression at the current note instead.",
       },
       { keys: "Escape", desc: "Cancel pending hairpin." },
       { keys: "Home  /  End", desc: "Jump to first / last moment." },
@@ -274,7 +302,7 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Backspace  /  Delete",
-        desc: "Delete the pedal mark(s) at this moment. Deleting the last mark exits to voice 4.",
+        desc: "Delete the selected pedal mark. Deleting the instrument's last pedal mark returns to its last voice (voice 4 on a piano).",
       },
       { keys: "↑", desc: "Leave the pedal layer upward (back to voice 4)." },
     ],
@@ -287,7 +315,7 @@ export const KEYBINDINGS: KeySection[] = [
       { keys: "←  /  →", desc: "Step through the moment list." },
       { keys: "Home  /  End", desc: "Jump to first / last moment." },
       { keys: "Ctrl+Shift+T", desc: "Open the tempo modal at the current moment (also works from voice mode at the cursor)." },
-      { keys: "Backspace  /  Delete", desc: "Delete the tempo mark at this moment." },
+      { keys: "Backspace  /  Delete", desc: "Delete the selected tempo mark. The layer stays reachable when it is empty." },
       { keys: "↓", desc: "Leave the tempo layer downward (to voice 1)." },
     ],
   },
@@ -298,7 +326,7 @@ export const KEYBINDINGS: KeySection[] = [
     bindings: [
       {
         keys: "Ctrl+Shift+E",
-        desc: "Expressive text (pizz, dolce, sul tasto, …) at the cursor moment. Re-open on an existing mark to edit; submit empty to delete. Italic toggle + common-cue chips.",
+        desc: "Expressive text (pizz, dolce, sul tasto, …) at the cursor moment. Re-open on an existing mark to edit; submit empty to delete. Italic toggle.",
       },
       {
         keys: "Ctrl+Shift+T",
@@ -330,7 +358,7 @@ export const KEYBINDINGS: KeySection[] = [
   {
     title: "Selection mode",
     intro:
-      "Entered from voice mode via Shift+arrow. Selects a contiguous range of beats (one voice) or measures (one or more two-voice staves).",
+      "Entered from voice mode via Shift+arrow. Selects a contiguous range of beats (one voice) or measures (one or more two-voice staves). Ctrl+8, Ctrl+R, Ctrl+Shift+S and Ctrl+Shift+C act on the selection; any key not listed here exits it (cursor to the movable end) and then acts normally.",
     bindings: [
       {
         keys: "Shift+←  /  Shift+→",
@@ -359,8 +387,8 @@ export const KEYBINDINGS: KeySection[] = [
       { keys: "Ctrl+X", desc: "Cut selection to clipboard." },
       {
         keys: "Ctrl+V",
-        desc: "Paste at the cursor. Auto-appends measures when content overflows the score.",
-        note: "Also works in voice mode (no selection needed for paste).",
+        desc: "Paste: a beat clip at the start of the current beat, a measure clip at the current measure. In selection mode it replaces the selection. The pasted content comes back selected; measures are appended when it overflows the score.",
+        note: "Also works in voice mode (no selection needed). A measure clip needs a matching time signature. Not available in the expression, pedal or tempo layers.",
       },
       {
         keys: "Backspace  /  Delete",

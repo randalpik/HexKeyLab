@@ -632,9 +632,13 @@ export class PageLineBreaks {
   private sigMoDoc: Document | null = null;
   private sigDirty = new Set<Element>();
   private sigAll = true;
-  /** Line starts the last refill actually MOVED (0 = the edit changed content
-   *  only and no boundary shifted — the common, desired case). Diagnostics
-   *  and tests read it; fixtures assert 0 for no-op-equivalent edits. */
+  /** Line-start boundaries the last refill changed: starts that appeared plus
+   *  starts that disappeared (0 = the edit changed content only and no
+   *  boundary shifted — the common, desired case). Counted by measure id, not
+   *  by line index: an index-wise count read every line after an added or
+   *  removed one as moved (a 10-line section rebalance reported 57).
+   *  Diagnostics and tests read it; fixtures assert 0 for no-op-equivalent
+   *  edits. */
   lastRefillLines = 0;
   /** Timing/diagnostic breakdown of the last tryRefill (ms). */
   lastRefillStats: { naturalsMs: number; windows: number; windowMeasures: number; injectMs: number; serializeMs: number } =
@@ -1518,10 +1522,10 @@ export class PageLineBreaks {
     this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA, units);
 
     const out = starts.map((i) => ids[i]);
+    const before = new Set(this.startIds!), after = new Set(out);
     let movedLines = 0;
-    for (let i = 0; i < Math.max(out.length, this.startIds!.length); i++) {
-      if (out[i] !== this.startIds![i]) movedLines++;
-    }
+    for (const id of after) if (!before.has(id)) movedLines++;
+    for (const id of before) if (!after.has(id)) movedLines++;
     this.lastRefillLines = movedLines;
     return { starts: out, pages: pageLines.map((li) => out[li]) };
   }

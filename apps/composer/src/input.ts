@@ -2398,7 +2398,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         hooks.onChange();
         return;
       }
-      hooks.setStatus?.('Ctrl+T needs a note (voice mode) or two selected notes.', 'error');
+      hooks.setStatus?.('Ctrl+R needs a note (voice mode) or two selected notes.', 'error');
       return;
     }
 
@@ -2768,7 +2768,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       return;
     }
 
-    /* Voice-mode Shift+digit dynamics: !@#$%^ → pp p mp mf f ff. */
+    /* Voice-mode Shift+digit dynamics: Shift+1..8 → fff ff f mf mp p pp ppp (SHIFT_DIGIT_TO_DYNAMIC). */
     if (state.cursorMode === 'voice' && SHIFT_DIGIT_TO_DYNAMIC[e.key]) {
       e.preventDefault();
       withHistory('dynamic', () => { commitDynamic(model, hooks, SHIFT_DIGIT_TO_DYNAMIC[e.key]); return true; });

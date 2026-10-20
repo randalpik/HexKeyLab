@@ -52,6 +52,10 @@ const out = { warns, errs, stride: STRIDE, from: FROM, undo: UNDO, rows: [] };
 out.adopted = await waitFor(() => pb['startIds'] !== null, 120000, 200);
 if (!out.adopted) { console.warn = ow; console.error = oe; return out; }
 await waitFor(badgeHidden, 60000, 40);
+/* Measure a finished document: until the assembly ends, the first edit also
+   pays its finishSync and corrects the page-card estimate, which reads as a
+   scrollHeight change the edit did not cause. */
+await waitFor(() => !r.assemblyPending(), 120000, 50);
 
 const mountedCount = () =>
   container.querySelectorAll('.score-page:not(.score-page-pending)').length;

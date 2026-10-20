@@ -289,6 +289,13 @@ export const FIXTURES = {
     setup: `document.getElementById('btnHelp').click();`,
     setupKeys: ['Escape'],
   },
+  /* The catalog (keybindings.ts) is documentation, not dispatch, and it drifted:
+     Ctrl+L, Alt+H and Shift+Space were dispatched but unlisted, and the layer
+     Delete entries described a moment-wide delete the code no longer does
+     (2026-10-19 audit of the catalog against input.ts). */
+  help_catalog_matches_dispatcher: {
+    setup: `document.getElementById('btnHelp').click();`,
+  },
 
   /* (no visual baseline: visualCheck's bbox is scoped to #score content,
    * which doesn't cover the <dialog> overlay; a visual regression for the
@@ -651,6 +658,18 @@ export const ASSERTIONS = {
         const dlg = document.getElementById('helpDialog');
         const sections = dlg ? dlg.querySelectorAll('section.help-section').length : 0;
         return { ok: sections >= 5, detail: 'sectionCount=' + sections };
+      })()` },
+  ],
+  help_catalog_matches_dispatcher: [
+    { name: 'catalog lists the dispatched bindings and describes the layer deletes as the code does',
+      expr: `(() => {
+        const dlg = document.getElementById('helpDialog');
+        const txt = dlg ? dlg.textContent || '' : '';
+        const want = ['Ctrl+L', 'Alt+H', 'Shift+Space', 'Delete the selected expression mark', 'Delete the selected pedal mark', 'Delete the selected tempo mark'];
+        const banned = ['Play / pause', 'common-cue'];
+        const missing = want.filter((w) => !txt.includes(w));
+        const present = banned.filter((b) => txt.includes(b));
+        return { ok: !missing.length && !present.length, detail: 'missing=' + JSON.stringify(missing) + ' stale=' + JSON.stringify(present) };
       })()` },
   ],
   help_modal_esc_closes: [

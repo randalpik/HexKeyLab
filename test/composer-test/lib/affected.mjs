@@ -143,7 +143,12 @@ export async function affectedSelection(mapPath, fixtures, assertions) {
   const srcRe = /^(apps\/composer\/(src\/|index\.html)|packages\/(notation|shared|bridge)\/src\/)/;
   const unmapped = [...new Set(changed.filter((p) => srcRe.test(p) && !map.files[p]))];
   if (unmapped.length) report.push(`not in the coverage map (new, unloaded, or non-JS — choose --group or full): ${unmapped.join(', ')}`);
-  const runner = [...new Set(changed.filter((p) => /^test\/composer-test\/(lib\/|run\.mjs)/.test(p)))];
+  /* The runner check is against HEAD, not the map's commit: the question is
+     whether THIS change touches the runner, not whether it moved since the
+     map was made. */
+  let uncommitted = [];
+  try { uncommitted = [...git('diff', '--name-only', 'HEAD').split('\n'), ...git('ls-files', '--others', '--exclude-standard').split('\n')].filter(Boolean); } catch {}
+  const runner = [...new Set(uncommitted.filter((p) => /^test\/composer-test\/(lib\/|run\.mjs)/.test(p)))];
   if (runner.length) report.push(`runner changed (affects every fixture — consider the full tier): ${runner.join(', ')}`);
 
   /* Test-side changes. */

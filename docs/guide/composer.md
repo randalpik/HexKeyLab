@@ -60,7 +60,7 @@ Composer is keyboard-first. The cursor sits in one **voice** at a time; most key
 | Key | Action |
 |---|---|
 | `Space` | Start / stop playback. |
-| `Shift+Space` | Start / stop **performance mode** (you play the part live; see [Playing it back](#playing-it-back)). |
+| `Shift+Space` | Start **performance mode** (you play the part live; see [Playing it back](#playing-it-back)); `Space` stops it. |
 
 A read-only list of every binding lives in the **Help** dialog (the `?` button); it's always in sync with what the editor actually does.
 
@@ -140,7 +140,7 @@ Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
 - **Trills & tremolos** (`Ctrl+R`): a trill on a single note, or a tremolo / diatonic trill on a two-note equal-duration selection. Playback realizes the alternation.
 - **Page break**: `Ctrl+B`. **Section header**: `Ctrl+Shift+H` (restarts measure numbering).
 - **Manual line break**: `Alt+Shift+↓` — see [Manual line breaks](#manual-line-breaks).
-- **Insert measure**: `M` adds an empty measure after the current one (or at the cursor when it already sits on a bar line).
+- **Insert measure**: `M` adds an empty measure at the next bar line after the cursor (at the cursor itself when it already sits on a bar line).
 
 ---
 
