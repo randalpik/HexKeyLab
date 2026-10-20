@@ -36,7 +36,9 @@ directly: a NO-OP edit on the pages starting at m. 180 and m. 240 moves 15 and
   compressed lines collide. A single measure wider than a line sits alone.
 - **No MIN_FILL** in the partition. The only exception: a FINAL section of
   fewer than 3 lines stays pure greedy (the small-document convenience MIN_FILL
-  was for). A stub before another section or a lock is a bug.
+  was for). A stub before another section or a lock is a bug. The final
+  system is justified whenever its section was balanced, and at fill ≥ 0.70
+  when it stayed greedy (Phase 2).
 
 Retired: "no reach backwards" (2026-10-08) and any single target fill T (Max:
 0.70 is MIN_FILL by another name; acceptability is relative to the
@@ -131,10 +133,12 @@ balance at [0, 1.00], the final-section-under-3-lines rule, atoms never split.
 
 **Phase 2 — load.** `balanceSectionLines` (used by `balanceInitialBand` after
 `warmAllNaturals`) calls F per section instead of `balanceSection`.
-**Open (Max)**: MIN_FILL also sets the final system's justification
-(`render.ts` `buildOptions` → Verovio `minLastJustification`: the document's
-last line is justified only at fill ≥ 0.65). With MIN_FILL gone from the
-partition, choose the rule for that one line.
+**Final-system justification** (Max, 2026-10-20): today MIN_FILL also sets
+it (`render.ts` `buildOptions` → Verovio `minLastJustification`: the
+document's last line is justified only at fill ≥ 0.65). New rule: when the
+final section ran through the balancer (3+ lines), its last system is ALWAYS
+justified; when it stayed greedy (a final section of 1–2 lines), the last
+system is justified only at fill ≥ **0.70** — a little less eager than 0.65.
 
 **Phase 3 — edit.** `PageLineBreaks.tryRefill` computes F over every touched
 section in full, diffs, and hands the changed lines to the existing splice /
