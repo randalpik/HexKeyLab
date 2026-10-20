@@ -443,6 +443,11 @@ function buildEvents(
      the octave-shift spans are recorded in the same divisions space. */
   let curDiv = 0;
   let lastOnsetDiv = 0;          // onset of the last non-chord note
+  /* Invisible playback notes (see the note loop): the hidden time owed to
+     dropped onsets, emitted as hidden rests before the next visible event and
+     at the bar's end; and whether the current onset's head was one of them. */
+  let hiddenDiv = 0;
+  let headDropped = false, headDurDiv = 0;
   const octAt = (posDiv: number): { delta: number; spanIdx?: number } => {
     let delta = 0;
     let spanIdx: number | undefined;
@@ -457,6 +462,15 @@ function buildEvents(
      time advance for a voice — Finale's encoding of a hidden rest, e.g. a voice
      entering mid-bar) lands as a hidden rest at its true position. Ignoring it
      collapses the gap and displaces every following note in the voice. */
+  const flushHidden = (): void => {
+    if (hiddenDiv <= 0) return;
+    const meiTicks = divisions > 0 ? Math.round(hiddenDiv * 16 / divisions) : 0;
+    for (const r of beatAlignedRestEvents(meiTicks, tsCount, tsUnit)) {
+      r.hidden = true;
+      events.push(r);
+    }
+    hiddenDiv = 0;
+  };
   for (const node of Array.from(measureEl.children)) {
     if (node.localName === 'forward') {
       /* Only an explicitly voiced forward is unambiguous per-voice; a voiceless
@@ -466,6 +480,8 @@ function buildEvents(
       const fv = parseInt(voiceEl.textContent ?? '', 10) || 0;
       const fs = intOf(node, 'staff', localStaff);
       if (fv !== targetVoice || fs !== localStaff) continue;
+      flushHidden();
+      headDropped = false;
       const meiTicks = divisions > 0 ? Math.round(intOf(node, 'duration', 0) * 16 / divisions) : 0;
       for (const r of beatAlignedRestEvents(meiTicks, tsCount, tsUnit)) {
         r.hidden = true;
@@ -488,13 +504,39 @@ function buildEvents(
     const dur = TYPE_TO_DUR[typeName] ?? '4';
     const dots = (children(note, 'dot').length) as Dots;
 
+    /* Invisible playback notes are dropped (Max, 2026-10-20). Finale writes a
+       timpani roll as one visible note plus a run of print-object="no" notes
+       that only play, and Composer owns tremolo playback. An invisible chord
+       member vanishes; an invisible onset becomes hidden time, merged across
+       a run and emitted like a voiced <forward>, so every later note keeps its
+       beat; a visible member of a chord whose head is invisible takes the
+       head's place. The other walks over this measure (clefs, tempi) count
+       every <note>'s duration and so stay in step. */
+    const invisible = !isRest && note.getAttribute('print-object') === 'no';
+    let promoted = false;
+    if (isChordNote) {
+      if (invisible) continue;
+      if (headDropped) { hiddenDiv -= headDurDiv; headDropped = false; promoted = true; }
+    } else if (invisible) {
+      const d = intOf(note, 'duration', 0);
+      lastOnsetDiv = curDiv;
+      curDiv += d;
+      hiddenDiv += d;
+      headDropped = true;
+      headDurDiv = d;
+      continue;
+    } else {
+      headDropped = false;
+    }
+    if (!isChordNote || promoted) flushHidden();
+
     /* Onset of this note (chord members share the head's) and the written-
        octave shift of any <octave-shift> covering it. */
     const posDiv = isChordNote ? lastOnsetDiv : curDiv;
     if (!isChordNote) { lastOnsetDiv = curDiv; curDiv += intOf(note, 'duration', 0); }
     const oct = isRest ? { delta: 0, spanIdx: undefined } : octAt(posDiv);
 
-    if (isChordNote && events.length > 0) {
+    if (isChordNote && !promoted && events.length > 0) {
       // Merge onto the previous event (note → chord). Tie/notations attach
       // per chord-note; articulations/slurs/fermata stay event-level.
       const prev = events[events.length - 1];
@@ -539,6 +581,7 @@ function buildEvents(
     mergeNotations(note, ev);
     events.push(ev);
   }
+  flushHidden();
   return events;
 }
 
@@ -1022,11 +1065,41 @@ function scanPartDirections(
 
 /* ── main ──────────────────────────────────────────────────────────────────── */
 
-export function importMusicXml(xmlText: string): string {
+/** What an import left out (filled when the caller passes one). */
+export interface MusicXmlImportReport {
+  /** Names of the parts dropped for holding unpitched notes, in score order. */
+  droppedParts: string[];
+}
+
+export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): string {
   const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (xml.querySelector('parsererror')) throw new Error('Invalid MusicXML (parse error).');
   const root = xml.querySelector('score-partwise');
   if (!root) throw new Error('Unsupported MusicXML: expected <score-partwise>.');
+
+  /* Composer cannot write unpitched notes, so it takes no responsibility for
+     them (Max, 2026-10-20): a part holding ANY <unpitched> note is left out
+     whole, pitched notes included. It is removed from <part-list> and from the
+     score before anything below reads either, so no later pass (metadata,
+     tempi, staff numbering) sees it. Nothing left → a clear failure rather
+     than an empty score. */
+  const dropped: string[] = [];
+  for (const pe of Array.from(root.querySelectorAll(':scope > part'))) {
+    if (!pe.querySelector('note > unpitched')) continue;
+    const id = pe.getAttribute('id') ?? '';
+    const sp = Array.from(xml.querySelectorAll('part-list > score-part')).find((el) => el.getAttribute('id') === id);
+    /* The part name, with the instrument named when it says more (the sample
+       set's Actor Prelude names its percussion parts "1" and "2"). */
+    const partName = sp?.querySelector('part-name')?.textContent?.trim() || id;
+    const instr = sp?.querySelector('score-instrument > instrument-name')?.textContent?.trim();
+    dropped.push(instr && instr !== partName ? `${partName} (${instr})` : partName);
+    sp?.remove();
+    pe.remove();
+  }
+  if (report) report.droppedParts = dropped;
+  if (dropped.length && !root.querySelector(':scope > part')) {
+    throw new Error('Nothing to import: every part contains unpitched notes, which Composer does not support.');
+  }
 
   /* Metadata. */
   const workTitle = xml.querySelector('work > work-title')?.textContent?.trim();

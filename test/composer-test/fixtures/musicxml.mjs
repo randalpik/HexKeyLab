@@ -487,6 +487,117 @@ export const FIXTURES = {
     `,
   },
 
+  /* ── MusicXML import: file encoding (2026-10-20, Max) ──
+     The import read every file as UTF-8 (`file.text()`), so a UTF-16 file —
+     two of the 18 MusicXML sample-set pieces — failed to parse, and a file
+     declaring a single-byte encoding garbled every non-ASCII character. The
+     bytes are decoded by BOM, then by the UTF-16 null-byte pattern, then by
+     the XML declaration. Driven through `__composerImportMusicXmlBytes`, which
+     decodes exactly as the file input does. The title carries non-ASCII text
+     so a wrong decode shows. */
+  musicxml_import_utf16le: {
+    setup: `
+      const NOTE = (st, o) => '<note><pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const xml = '<?xml version="1.0" encoding="UTF-16"?><score-partwise version="3.0"><work><work-title>Après un rêve</work-title></work>'
+        + '<part-list><score-part id="P1"><part-name>Flûte</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>2</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + NOTE('C', 5) + NOTE('E', 5) + '</measure></part></score-partwise>';
+      const b = new Uint8Array(2 + 2 * xml.length); b[0] = 0xFF; b[1] = 0xFE;
+      for (let i = 0; i < xml.length; i++) { const cc = xml.charCodeAt(i); b[2 + 2 * i] = cc & 0xFF; b[3 + 2 * i] = cc >> 8; }
+      window.__composerImportMusicXmlBytes(b);
+    `,
+  },
+  musicxml_import_utf16be: {
+    setup: `
+      const NOTE = (st, o) => '<note><pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const xml = '<?xml version="1.0" encoding="UTF-16"?><score-partwise version="3.0"><work><work-title>Après un rêve</work-title></work>'
+        + '<part-list><score-part id="P1"><part-name>Flûte</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>2</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + NOTE('C', 5) + NOTE('E', 5) + '</measure></part></score-partwise>';
+      const b = new Uint8Array(2 + 2 * xml.length); b[0] = 0xFE; b[1] = 0xFF;
+      for (let i = 0; i < xml.length; i++) { const cc = xml.charCodeAt(i); b[2 + 2 * i] = cc >> 8; b[3 + 2 * i] = cc & 0xFF; }
+      window.__composerImportMusicXmlBytes(b);
+    `,
+  },
+  musicxml_import_latin1: {
+    setup: `
+      const NOTE = (st, o) => '<note><pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const xml = '<?xml version="1.0" encoding="ISO-8859-1"?><score-partwise version="3.0"><work><work-title>Après un rêve</work-title></work>'
+        + '<part-list><score-part id="P1"><part-name>Flûte</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>2</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + NOTE('C', 5) + NOTE('E', 5) + '</measure></part></score-partwise>';
+      window.__composerImportMusicXmlBytes(Uint8Array.from(xml, (ch) => ch.charCodeAt(0)));
+    `,
+  },
+
+  /* ── MusicXML import: invisible playback notes are dropped (2026-10-20, Max) ──
+     Finale writes a timpani roll as one visible note (single tremolo) plus a
+     run of print-object="no" notes that only play; they imported as visible
+     notes (the sample set's Actor Prelude: 48 in a bar, a measure ~1.9 lines
+     wide). Composer owns tremolo playback, so they are dropped: an invisible
+     onset becomes hidden time (every later note keeps its beat), an invisible
+     chord member vanishes, and a visible member of a chord with an invisible
+     head takes the head's place. Bar 1 = the roll (voice 2 all invisible);
+     bar 2 = C5, invisible D5, E5, G5 + invisible B5; bar 3 = invisible C5
+     head + visible E5, then F5 G5 A5. */
+  musicxml_import_invisible_dropped: {
+    setup: `
+      const N = (st, o, d, ty, extra) => '<note' + (extra?.inv ? ' print-object="no" print-spacing="no"' : '') + '>' + (extra?.chord ? '<chord/>' : '')
+        + '<pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>' + d + '</duration><voice>' + (extra?.v ?? 1) + '</voice>'
+        + (extra?.inv ? '' : '<type>' + ty + '</type>') + (extra?.trem ? '<notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations>' : '') + '</note>';
+      let roll = ''; for (let i = 0; i < 8; i++) roll += N('E', 3, 12, 'eighth', { inv: true, v: 2 });
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0"><part-list><score-part id="P1"><part-name>Timpani</part-name></score-part></part-list><part id="P1">'
+        + '<measure number="1"><attributes><divisions>24</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + N('E', 3, 96, 'whole', { trem: true }) + '<backup><duration>96</duration></backup>' + roll + '</measure>'
+        + '<measure number="2">' + N('C', 3, 24, 'quarter') + N('D', 3, 24, 'quarter', { inv: true }) + N('E', 3, 24, 'quarter')
+        + N('G', 3, 24, 'quarter') + N('B', 3, 24, 'quarter', { inv: true, chord: true }) + '</measure>'
+        + '<measure number="3">' + N('C', 3, 24, 'quarter', { inv: true }) + N('E', 3, 24, 'quarter', { chord: true })
+        + N('F', 3, 24, 'quarter') + N('G', 3, 24, 'quarter') + N('A', 3, 24, 'quarter') + '</measure>'
+        + '</part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+    `,
+  },
+
+  /* ── MusicXML import: parts with unpitched notes are dropped (2026-10-20, Max) ──
+     Composer cannot write unpitched notes, so a part (instrument) holding ANY
+     <unpitched> note is left out of the import — the whole part, even its
+     pitched notes — instead of the importer crashing on it (the MusicXML
+     sample set's Actor Prelude: TypeError in eventToElement). Flute, a
+     percussion part with one pitched note among unpitched ones, Cello: the
+     result is Flute + Cello on staves 1–2, and the status line names the
+     dropped part. */
+  musicxml_import_unpitched_dropped: {
+    setup: `
+      const P = (st, o) => '<note><pitch><step>' + st + '</step><octave>' + o + '</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const U = '<note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const attrs = (sign, line) => '<attributes><divisions>24</divisions><key><fifths>0</fifths></key><time><beats>2</beats><beat-type>4</beat-type></time><clef><sign>' + sign + '</sign><line>' + line + '</line></clef></attributes>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0"><part-list>'
+        + '<score-part id="P1"><part-name>Flute</part-name></score-part>'
+        + '<score-part id="P2"><part-name>Percussion</part-name></score-part>'
+        + '<score-part id="P3"><part-name>Cello</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">' + attrs('G', 2) + P('C', 5) + P('D', 5) + '</measure></part>'
+        + '<part id="P2"><measure number="1">' + attrs('percussion', 2) + P('G', 4) + U + '</measure></part>'
+        + '<part id="P3"><measure number="1">' + attrs('F', 4) + P('C', 3) + P('E', 3) + '</measure></part>'
+        + '</score-partwise>';
+      window.__composerImportMusicXml(xml);
+    `,
+  },
+  /* Every part unpitched: nothing is importable, so the import fails with a
+     message that says why — and the open document is left as it was. */
+  musicxml_import_unpitched_all: {
+    setup: `
+      const U = '<note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>24</duration><voice>1</voice><type>quarter</type></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0"><part-list><score-part id="P1"><part-name>Snare</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1"><attributes><divisions>24</divisions><time><beats>2</beats><beat-type>4</beat-type></time>'
+        + '<clef><sign>percussion</sign><line>2</line></clef></attributes>' + U + U + '</measure></part></score-partwise>';
+      window.__unpBefore = m.serialize();
+      try { window.__composerImportMusicXml(xml); window.__unpErr = null; } catch (e) { window.__unpErr = String(e && e.message || e); }
+    `,
+  },
+
   /* ── MusicXML: empty-cell flags round-trip (2026-09-11) ──
      Export writes Finale's encoding — <staff-details number="k" print-object=
      "no"/"yes"> at hide-range edges, <measure-style><multiple-rest>N</multiple-
@@ -1017,6 +1128,58 @@ export const ASSERTIONS = {
         if (bad.length) return { ok: false, detail: 'no parens on ' + bad.map((n) => n.getAttribute('pname') + ' cps=' + JSON.stringify(cps(n))).join('; ') };
         return parens(notes[0]) ? { ok: false, detail: 'plain F#5 drew parens: ' + JSON.stringify(cps(notes[0])) } : { ok: true };
       })()` },
+  ],
+  musicxml_import_utf16le: [
+    { name: 'UTF-16LE (BOM) decodes: the non-ASCII title and both notes intact',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc();
+        const t = d.querySelector('titleStmt title')?.textContent, notes = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('pname') + n.getAttribute('oct'));
+        return t === 'Après un rêve' && notes.join() === 'c5,e5' ? { ok: true } : { ok: false, detail: JSON.stringify({ t, notes }) }; })()` },
+  ],
+  musicxml_import_utf16be: [
+    { name: 'UTF-16BE (BOM) decodes: the non-ASCII title and both notes intact',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc();
+        const t = d.querySelector('titleStmt title')?.textContent, notes = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('pname') + n.getAttribute('oct'));
+        return t === 'Après un rêve' && notes.join() === 'c5,e5' ? { ok: true } : { ok: false, detail: JSON.stringify({ t, notes }) }; })()` },
+  ],
+  musicxml_import_latin1: [
+    { name: 'a declared ISO-8859-1 file decodes as declared (no U+FFFD in the title)',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc();
+        const t = d.querySelector('titleStmt title')?.textContent, notes = [...d.querySelectorAll('layer note')].map((n) => n.getAttribute('pname') + n.getAttribute('oct'));
+        return t === 'Après un rêve' && notes.join() === 'c5,e5' ? { ok: true } : { ok: false, detail: JSON.stringify({ t, notes }) }; })()` },
+  ],
+  musicxml_import_invisible_dropped: [
+    { name: 'no invisible note survives: bar 1 voice 2 holds no note, D3/B3/C3-head are gone',
+      expr: `(() => { const ms = [...window.__hkl_composer.model.getDoc().querySelectorAll('measure')];
+        const pn = (n) => n.getAttribute('pname') + n.getAttribute('oct');
+        const notesOf = (mi, l) => [...(ms[mi]?.querySelectorAll('staff[n="1"] layer[n="' + l + '"] note') ?? [])].map(pn);
+        const got = { b1v1: notesOf(0, 1), b1v2: notesOf(0, 2), b2: notesOf(1, 1), b3: notesOf(2, 1) };
+        const ok = got.b1v1.join() === 'e3' && got.b1v2.length === 0 && got.b2.join() === 'c3,e3,g3' && got.b3.join() === 'e3,f3,g3,a3';
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(got) }; })()` },
+    { name: 'timing kept: bar 2 is C3, a hidden rest where D3 was, E3, G3 (a note, not a chord); bar 3 opens on E3 at beat 1',
+      expr: `(() => { const ms = [...window.__hkl_composer.model.getDoc().querySelectorAll('measure')];
+        const seq = (mi) => [...ms[mi].querySelector('staff[n="1"] layer[n="1"]').children].map((c) =>
+          c.localName === 'rest' ? 'rest' + (c.getAttribute('visible') === 'false' ? ':hidden' : '') + '/' + c.getAttribute('dur')
+            : c.localName + ':' + [...(c.localName === 'note' ? [c] : c.querySelectorAll('note'))].map((n) => n.getAttribute('pname') + n.getAttribute('oct')).join('+') + '/' + (c.getAttribute('dur') ?? c.querySelector('note')?.getAttribute('dur')));
+        const b2 = seq(1).join(' '), b3 = seq(2).join(' ');
+        return b2 === 'note:c3/4 rest:hidden/4 note:e3/4 note:g3/4' && b3 === 'note:e3/4 note:f3/4 note:g3/4 note:a3/4'
+          ? { ok: true } : { ok: false, detail: JSON.stringify({ b2, b3 }) }; })()` },
+  ],
+  musicxml_import_unpitched_dropped: [
+    { name: 'the part with an unpitched note is dropped whole: Flute + Cello on staves 1–2, its pitched G4 gone',
+      expr: `(() => { const d = window.__hkl_composer.model.getDoc();
+        const defs = [...d.querySelectorAll('scoreDef staffDef')].map((s) => s.getAttribute('n'));
+        const notes = [...d.querySelectorAll('staff')].map((st) => st.getAttribute('n') + ':' + [...st.querySelectorAll('note')].map((n) => n.getAttribute('pname') + n.getAttribute('oct')).join('+'));
+        const text = d.querySelector('scoreDef')?.textContent ?? '';
+        return defs.join() === '1,2' && notes.join() === '1:c5+d5,2:c3+e3' && !/Percussion/.test(text) && /Cello/.test(text)
+          ? { ok: true } : { ok: false, detail: JSON.stringify({ defs, notes, text: text.trim().slice(0, 120) }) }; })()` },
+    { name: 'the status line names the dropped part',
+      expr: `(() => { const t = document.getElementById('composerStatus')?.textContent ?? '';
+        return /Percussion/.test(t) && /unpitched/i.test(t) ? { ok: true } : { ok: false, detail: t }; })()` },
+  ],
+  musicxml_import_unpitched_all: [
+    { name: 'all parts unpitched: the import fails with a message naming the reason; the open document is untouched',
+      expr: `(() => { const e = window.__unpErr, same = window.__hkl_composer.model.serialize() === window.__unpBefore;
+        return e && /unpitched/i.test(e) && same ? { ok: true } : { ok: false, detail: JSON.stringify({ e, same }) }; })()` },
   ],
   musicxml_tempi: [
     { name: 'three <tempo> marks (words+sound, metronome shown, bare sound), deduped across parts, no <dir> from the words',

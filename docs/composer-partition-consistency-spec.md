@@ -1,9 +1,11 @@
 # Spec: one partition function for load and edit
 
-**Status**: proposed 2026-10-19, for a new thread. Decision points for Max are
-marked **[D1]**–**[D3]**. Background: decisions.md "Open: the bounded section
-balance means undo need not restore a reflowed layout" and its addendum;
-architecture: [architecture/composer.md](architecture/composer.md) → Page view.
+**Status**: rewritten 2026-10-19 after Max's review; replaces the page-causal
+proposal of the same day. Decision points for Max are marked **[D1]**–**[D3]**.
+Background: decisions.md "Open: the bounded section balance means undo need not
+restore a reflowed layout", its addendum, and "Partition: whole-section greedy
+lines with deficit windows" (2026-10-19); architecture:
+[architecture/composer.md](architecture/composer.md) → Page view.
 
 ## The defect
 
@@ -11,178 +13,230 @@ Page view computes the line partition two different ways:
 
 - **On load** every section is balanced whole (`balanceInitialBand`,
   `render/linebreaks.ts`): the line count is the fewest lines at fill ≤ 1.0,
-  the arrangement the minimum-variance one (`render/balance.ts`).
-- **On an edit** `balanceTouched` balances only from the first line of the edit's
-  page to the section's end — the bound added on 2026-10-08 so that "an edit
-  never reaches a page before it" (Max).
+  the arrangement the minimum-variance one (`balanceSection`,
+  `render/balance.ts`).
+- **On an edit** a one-measure repair loop runs, then `balanceTouched` balances
+  only from the first line of the edit's page to the section's end — the bound
+  added on 2026-10-08 so that "an edit never reaches a page before it".
 
 The two disagree whenever a section's suffix, balanced alone, wants a different
 line count or arrangement than the whole-section answer gives it.
 
 **Evidence** (sonata, `test/composer-inspect/sonata-probes/balance-consistency.js
 --arg "mi=250"`): movement III is mm. 226–325. A one-note delete at m. 250 (on
-the page starting at m. 240) re-divides mm. 240–325 from 9 lines into 10
-(line starts 245/249/254/… → 244/248/252/…), and every later page start shifts.
-The note itself is irrelevant — the first edit of any kind on that page does
-it. The undo restores the document byte-for-byte, but the bounded balance of the
-restored content returns the edited partition unchanged (it is a fixed point of
-the suffix balance), so the load's answer is never recomputed. A reload brings
-it back. In a whole-score sweep these flips accumulate: one later edit cascaded
-through 10 pages and created a page only because three earlier edits had flipped
-their sections.
+the page starting at m. 240) re-divides mm. 240–325 from 9 lines into 10, and
+every later page start shifts. The first edit of any kind on that page does it.
+Undo restores the document byte-for-byte, but the restored content is a fixed
+point of the suffix balance, so the load's answer is never recomputed; a reload
+brings it back. In a whole-score sweep these flips accumulate (one later edit
+cascaded through 10 pages and created a page).
 
 ## Requirements
 
 - **G1 — one function** (Max, 2026-09-17/18): the partition and pagination are a
   pure function of the document. A load and an edit compute the same layout for
   the same content; a reload never changes what is on screen.
-- **G2 — no reach backwards** (Max, 2026-10-08): an edit never moves a page
-  before the edit's page. (Today's one exception stays: a page's first system
-  that shrinks may return to the page before — the boundary itself is shared.)
-- **G3 — O(edit)**: an edit's cost is bounded by what it changes, not by the
-  section or document length, except where the change itself propagates.
+- **G2 — whole-section quality** (Max, 2026-10-19): a section balances as a
+  whole. Every line reaches the target fill wherever the content allows it; a
+  stub — at a section's end or anywhere else — is unacceptable.
+- **G3 — minimal reach, measured** (Max, 2026-10-19): an edit changes only the
+  lines the content ties to it, and F is designed to reach back as little as
+  possible. There is **no cap** on how far a repair reaches (Max: "There cannot
+  be a hard cap on how far a repair can reach. That reintroduces the exact
+  discrepancy that we're trying to remove."). Edit cost is measured precisely,
+  not argued (Phase 0, Phase 3).
 - **G4 — exact undo** (Max, 2026-10-19): undo and redo restore the exact
-  previous layout, for any sequence of steps.
+  previous layout, for any sequence of steps. Follows from G1.
 
-## Why the fix is a different partition function
+**Retired: "no reach backwards"** (2026-10-08, "an edit never moves a page
+before the edit's page"). G1 and that rule together force a page-causal
+partition — F's pages before page p must not depend on content at or after p,
+for every p — and a page-causal partition cannot borrow across a page break, so
+it leaves stubs at section ends and balances per page, not per section. Max
+ruled it out (2026-10-19). An edit near a section's end may now move lines on
+earlier pages, exactly as far as the content requires.
 
-G1 and G2 together force a **page-causal** partition: let F be the layout
-function and p the edit's page. G2 says the edit leaves pages before p alone;
-G1 says the result equals F(new content). So F's pages before p must not depend
-on content at or after p — for every p. Whole-section balancing (today's load)
-violates this: the balance of a section spanning pages 3–9 depends on all of it,
-so content on page 9 decides lines on page 3. Any scheme that keeps that load
-function and bounds the edit will disagree with the load somewhere, which is the
-defect. G4 then follows for free: with a pure F, undoing the content undoes the
-layout, for any sequence.
+## F: greedy lines, then deficit windows
 
-Rejected:
+F runs per **segment**: the measures between hard starts (every measure after
+an `sb` or `pb` — `hardStartIds`; line locks, page breaks and section breaks).
+Measures never cross a hard start. Atoms are render units (`model/multirest.ts`
+— a multirest run is one atom, so no break falls inside it). A line's fill is
+(its leading clef+key block + Σ naturals) / justified budget, with each line's
+**own** leading block (`sigWForLine`) — this removes `balanceSectionLines`'
+one-block-per-section approximation. Constants: `S` = `BALANCE_SOFT_MAX` 1.00,
+`MIN_FILL` 0.65, `FIT_MAX` 1.45, `T` the target fill **[D1]**.
+
+1. **Greedy.** Pack atoms left to right, each line taking as many as fit at
+   fill ≤ S. An atom wider than S takes a line alone. This is `greedyLines`,
+   which already decides today's line COUNT; F also keeps its BREAKS. Result: N
+   lines, the fewest possible at ≤ S (the same count as today's load).
+2. **Deficit windows, right to left.** Visit the lines from the last to the
+   first. A line i with fill < T is a **deficit**. Its **window** is the
+   smallest run of lines [j..i] whose measures can be re-divided into the same
+   number of lines with every fill in [T, S]: try j = i−1, i−2, … down to the
+   segment's first line, with no cap. The window's outer edges (the start of
+   line j, the end of line i) stay where they are and it keeps its line count;
+   inside, it takes the minimum-variance arrangement within [T, S] (`dpPartition`
+   with `minFill` T and `fitMax` S) **[D2]**. Line j−1 — the first line that
+   does not need adjustment — is untouched, and the visit continues there.
+3. **No window.** When no window down to the segment's first line is feasible:
+   a deficit with fill ≥ MIN_FILL stays as greedy made it (a light but legal
+   line — e.g. one holding a wide bar whose neighbours are too wide to join
+   it); one below MIN_FILL is illegal, and the run from the segment's first line
+   to line i takes `balanceSection`'s answer at the legality bounds (today's
+   ladder: N, N+1, N−1 lines). This is the only path that changes the line
+   count **[D3]**.
+
+This is the hand method applied line by line: fix the number of lines, then
+reach back exactly far enough to gather the measures that make every system
+look full. Step 2 covers the mid-section dips greedy leaves wherever the next
+bar is too wide to join a line, not only a section's last line.
+
+**Properties.** F is a pure function of (naturals, leading blocks, hard starts,
+units, budget, T): load and edit call the same code, which gives G1 and G4.
+Every line is at most S (never compressed past its natural width) except a
+lone over-wide atom. Every line is at least T wherever step 2 found a window.
+A line keeps its greedy breaks unless a deficit's window covers it — unlike
+whole-section minimum-variance, which re-divides every line of the section.
+
+**What an edit changes.** For an edit at measure m on line L:
+
+- greedy lines before L are unchanged (greedy depends only on what precedes);
+- from L on, greedy breaks differ until they coincide with the old ones again
+  (the **resync** line R); from R on the greedy lines are identical;
+- windows built only from lines after R are unchanged. A deficit at or after L
+  whose window changes may grow back past L, as far as its content requires.
+  Once the right-to-left visit reaches a line before L in the same state as
+  before (same position, same greedy lines to its left), every line further
+  left is unchanged.
+
+The changed lines are therefore the span from L (or the start of the furthest
+window that grew back past it) to R (or the end of the last window overlapping
+it). Backward reach happens only when a deficit lies at or after the edit, and
+its length is a property of the content.
+
+**The edit computes F in full.** The early stop above is a property of F's
+OUTPUT, not a separate edit algorithm: an edit recomputes F over every touched
+segment entirely and diffs the line starts by measure id. That keeps G1 exact
+by construction — there is no stopping rule to prove equivalent. The
+computation is arithmetic over cached naturals (`warmAllNaturals` fills them
+before the first paint; today's whole-section DP took ≤ 1.8 ms on the 139-bar
+movement against a 342 ms edit). The cost to bound is the number of CHANGED
+lines, which the splice re-renders and the pagination re-fits.
+
+**Why T is fixed, not derived from the section.** A target derived from the
+section's average fill depends on the section's total width, so every edit
+would move it, and any window in the section could re-divide — the edge case
+where every edit is costly. With T fixed, the remaining cost risk comes from
+the content: a segment whose greedy fills average only a little above T leaves
+each donor line little slack, so its windows grow long. As an estimate (not a
+measurement), a window spans about shortfall / (average fill − T) lines; Phase 0
+reports the real distribution per segment.
+
+## Rejected
 
 | Alternative | Why not |
 |---|---|
-| Whole-section balance on edits (the pre-10-08 behaviour) | Violates G2: a page break on page 4 moved lines three pages up. Ruled out by Max. |
-| Undo restores a layout snapshot on every history entry (the machinery exists for line-break commands: `LayoutSnapshot`, `captureLayout` / `restoreLayout`) | Meets G4 only. Live and reload still differ, and the first edit on a later page of a section still reflows it for no reason. Useful as a safety net, not a fix. |
-| Edits compute the whole-section answer and adopt it when earlier pages are unchanged, else fall back to the bounded balance | Path-dependent: a single undo is exact, but a chain of undos after a fallback is not, and live ≠ reload whenever the fallback fired. |
-| Page-sequential suffix balance (each page takes the first lines of a balance from its first measure to the section end) | Page k still depends on content after it, so G2 still forces the edit path to diverge. Same defect, moved. |
-
-## Proposed F: page-local balancing
-
-Pages are laid out in order. Page k starts at measure `s_k` (the first measure
-after page k−1, or a hard page start):
-
-1. **Capacity.** From `s_k`, form greedy lines — each as many measures as fit at
-   natural width (fill ≤ `BALANCE_SOFT_MAX` 1.0), breaking at hard line starts
-   (locks, section starts) and at render-unit (multirest) boundaries — and add
-   them to the page while they fit under the rule-v1 minimum placement
-   (`placeSystems` + `foldIndex`, measured extents). A user page break or the end
-   of the document ends the page. The page's measure range is `[s_k, e_k)`; a
-   single system taller than the page still takes the page alone.
-2. **Balance.** Within `[s_k, e_k)`, each segment between hard line starts gets
-   the minimum-variance arrangement at the greedy line count, every line in
-   [`MIN_FILL` 0.65, `FIT_MAX` 1.45] (`balanceSection`, `dpPartition`, reused
-   as-is). A segment with no legal arrangement keeps its greedy lines.
-3. **Verify.** Measure the balanced lines. If they no longer fit (an extreme
-   measure moved into a taller line), drop the last greedy line from the range
-   and repeat from 2. Terminates: the range only shrinks.
-4. Page k+1 starts at `e_k`. Rule v2 distributes each page as today.
-
-**Dependencies.** Page k depends on `s_k`, the content of `[s_k, e_k)`, and the
-first greedy line after `e_k` (the one that did not fit) — nothing further.
-Courtesy signatures at a page's last line come from the next measure but do not
-enter the fill, so they redraw a line without changing the partition.
-
-**Load** runs F page by page; it replaces `balanceInitialBand` + first-fit, and
-fits the assembler's existing page-by-page close loop (`PageAssembler`).
-
-**Edit** recomputes F from the edit's page — from the page before it when the
-edit touches a page's first line — and stops at the first page whose
-`(start, end)` and content signature match the previous layout: by causality
-every later page is then unchanged. Typically one page; a cascade only when a
-page's range changes, as today.
-
-**Undo** needs nothing special: F of the restored content is the previous
-layout. The line-break commands' `LayoutSnapshot` path becomes redundant (keep
-it until the gates prove F alone restores exactly, then delete it).
+| Page-causal, page-local balancing (this spec's first revision) | Cannot borrow across a page break: stubs at section ends, evenness per page rather than per section, and greedy capacity lines rendered on top of the final ones (load up to ~2×). Ruled out by Max, 2026-10-19. |
+| Whole-section minimum-variance on every edit (the pre-10-08 behaviour) | Pure, but globally unstable: 30 / 38 / 70 boundaries moved per added bar (median / p90 / max) on the sonata (`balance.ts` λ table, 2026-09-17). Its optimum can re-divide every line of a section for one bar. |
+| Bounded suffix balance (today's edit path) | The defect. |
+| A cap on how far a window reaches | Max: reintroduces the discrepancy. A capped repair gives an answer that depends on the cap, not the content. |
+| T derived from the section's average | Every edit shifts T; see above. |
+| Undo restores a layout snapshot on every history entry (`LayoutSnapshot`, `captureLayout` / `restoreLayout`) | Meets G4 only; live and reload still differ. |
 
 ## Decisions for Max
 
-- **[D1] Section tails.** Whole-section balancing always leaves a section's last
-  line legal. Page-local balancing cannot borrow across a page break, so a
-  section whose remainder after a full page is one short line (below
-  `MIN_FILL`) gets an unjustified stub on its last page. Options: (a) accept it;
-  (b) a bounded exception: when the remainder after page k fits on page k+1 and
-  would be an illegal final line, balance page k's last segment together with
-  it — then an edit on a section's last page may move the page before it (one
-  page, section ends only). Recommendation: measure first (Phase 0); choose (b)
-  only if stubs actually occur on real scores.
-- **[D2] Evenness per page, not per section.** Lines are even within a page;
-  two pages of one section may differ in average fill (a page turn separates
-  them). Phase 0 reports the per-page fill spread on the sonata against today's.
-- **[D3] Capacity cost.** Step 1 needs extents of greedy lines that are mostly
-  not the lines finally drawn, so a load may render lines twice (Verovio ~2.1 s
-  → up to ~4 s on the sonata). Options: (a) accept, caching greedy-line extents
-  by line signature (an edit re-renders only changed lines); (b) predict a
-  line's height from per-measure vertical extents (the naturals windows already
-  render every measure) and render only the final lines, re-checking the fold
-  on measured extents. Recommendation: (a) first, measured; (b) if the load
-  regresses noticeably in Firefox.
+- **[D1] T.** A fixed fill between MIN_FILL (0.65) and S (1.00). Higher means
+  fuller tails and dips and longer windows. Phase 0 sweeps 0.70, 0.75, 0.80,
+  0.85 and 0.90 and reports quality against reach for each.
+- **[D2] Arrangement inside a window.** (a) minimum-variance: the window's lines
+  come out even, as a hand balance of the reached-back systems would; (b)
+  anchored to the greedy breaks — `dpPartition`'s λ applied to line starts
+  absent from the GREEDY partition (still pure, since greedy is a function of
+  the content), which moves fewer boundaries per window. Recommendation: (a),
+  unless Phase 0 shows window churn.
+- **[D3] A deficit with no window** (step 3). Phase 0 lists every occurrence on
+  real scores; expected rare, since it needs a segment that cannot hold its
+  lines at T anywhere back to its start.
 
 ## Implementation plan
 
-**Phase 0 — measure** (probes only, no app change). On the sonata and one
-multi-instrument score, simulate F from the stored naturals and rendered
-extents: line count, fill spread per page and per section, section-tail stubs
-(D1), page count, and the number of extra line renders (D3), against today's
-layout. Decide D1–D3.
+**Phase 0 — measure** (probes only, no app change).
 
-**Phase 1 — F as one module.** A new `render/pagelayout.ts` exporting a pure
-page step — `(start measure, naturals, extents provider, hard starts, units,
-budget, page geometry) → { lines, end }` — reusing `greedyLines` /
-`balanceSection` from `balance.ts` and `placeSystems` / `foldIndex` from
-`pagefit.ts`. No DOM; the extents provider is injected (the assembler renders
-on demand and memoizes by line signature).
+- A new sonata probe dumps F's inputs from the live document (Max's working
+  copy, `~/Documents/sonata.hkc`): per-measure naturals, per-line leading blocks,
+  hard starts, render units, the budget, and today's committed line and page
+  starts. `test/balance/sonata-fills.json` (measured 2026-09-05 from the
+  MusicXML import) is not current.
+- A Node simulation in `test/balance/` runs F at each T from D1 and today's
+  whole-section balance on the dump, and reports:
+  1. **quality** per segment: line count; fill min / mean / sd; the tail fill;
+     lines below T — against today's load;
+  2. **reach**: window length in lines per deficit (median / p90 / max);
+  3. **churn**, over an every-measure sweep (delete the measure, duplicate it,
+     scale its natural by 0.85 and by 1.15): line starts changed before the
+     edit's line (backward reach) and from it on (forward), and the resync
+     distance — median / p90 / max, for F and for today's whole-section balance;
+  4. every step-3 occurrence;
+  5. F's compute time per segment.
+- The same on one multi-instrument score.
 
-**Phase 2 — load.** `Renderer.assembleDocument` (`render/render.ts`, which
-calls `seedPartition` + `balanceInitialBand` before `PageAssembler.begin`) and
-`PageAssembler` close pages through the page step instead of balancing first
-and first-fitting after. The partition cache keeps working (keyed on the layout
-inputs, checked against the document version).
+Decide D1–D3 from the tables.
 
-**Phase 3 — edit.** `PageLineBreaks.tryRefill` / `repartition` stop repairing
-and balancing; the refill computes the changed pages with the page step from the
-first affected page until convergence, and hands the new lines and page starts
-to the existing splice / `applyPartition` path. Remove `balanceTouched`, the
-repair loop, `BALANCE_LAMBDA`, and the "Open" decisions entry's bound.
+**Phase 1 — F as one module.** `render/balance.ts` gains the segment function
+(greedy breaks, deficit windows, step-3 ladder) beside `greedyLines`,
+`dpPartition` and `balanceSection`, with `dpPartition` and `fillsOf` taking a
+leading block per line start. No DOM. `test/balance/run.mjs` covers: purity
+(independent of the incumbent), line count = greedy count outside step 3, every
+line in [T, S] where a window exists, window minimality against brute force on
+small random widths, the step-3 cases, and atoms never split.
 
-**Phase 4 — clean up.** Retire the line-break commands' `LayoutSnapshot`
-restore if the gates show it redundant; update architecture/composer.md (Page
-view → The partition / Pagination), the `balance.ts` header (whose "derive and
-edit-rebalance agree by construction" is currently false), and decisions.md.
+**Phase 2 — load.** `balanceSectionLines` (used by `balanceInitialBand`, which
+already balances every section after `warmAllNaturals`) calls F per segment in
+place of `balanceSection`. Pagination is unchanged: first-fit over F's lines,
+then rule v2 distribution per page.
+
+**Phase 3 — edit.** `PageLineBreaks.tryRefill` computes F over every touched
+segment (one whose content, naturals or hard starts changed) in full, diffs the
+starts by measure id, and hands the changed lines to the existing splice /
+`PageAssembler.applyPartition` path; pagination re-fits from the page holding
+the first changed line until a page's start, end and content signature match
+the previous layout. Remove the repair loop in `repartition`, `balanceTouched`
+and its page bound, and `BALANCE_LAMBDA`. Measure `edit-cost-attribution.js` and
+`splice-every-measure` in Firefox on Max's machine (Chromium under-reports
+Firefox layout costs).
+
+**Phase 4 — clean up.** Retire the line-break commands' `LayoutSnapshot` restore
+if the gates show it redundant; update architecture/composer.md (Page view → The
+partition), the `balance.ts` and `linebreaks.ts` headers (the "partition is
+never re-derived" and "derive and edit-rebalance agree by construction" claims),
+and decisions.md.
 
 ## Verification
 
-- **Universal invariant**: replace `assertPaginationFirstFit`
-  (`test/composer-test/lib/assertions.mjs`) with a page-local check — every
-  mounted page's lines and end equal the page step's result from its first
-  measure. This asserts load ≡ edit on every fixture.
-- **New fixtures** (page-layout category): a section spanning two or more
-  pages where the suffix-alone balance differs from the whole (reproduce the m.
-  250 case small) — edit on the later page, assert no earlier page moved, undo,
-  assert the partition and every system's geometry are back exactly; a chain of
-  edits and undos returning to the load layout; a reload (re-derive) after edits
-  matching the live layout; section-tail behaviour per D1.
+- **Universal invariant**: on every fixture, the mounted partition equals F of
+  the document (load ≡ edit), alongside the existing first-fit pagination check
+  (`assertPaginationFirstFit`, `test/composer-test/lib/assertions.mjs`).
+- **New fixtures** (page-layout category): the m. 250 case reproduced small — an
+  edit on a later page of a multi-page section, then undo, with the partition
+  and every system's geometry back exactly; a chain of edits and undos returning
+  to the load layout; a reload after edits matching the live layout; a section
+  ending in a one-bar remainder (the window reaches back, no stub); a
+  mid-section dip from a wide bar; a deficit whose window crosses a page break
+  (an earlier page moves, by design); each step-3 case.
 - **Expected changes**: `pag_*` and `pageBalance*` fixtures that assert
-  whole-section results, and full-page visual baselines of multi-page sections,
-  will change; re-seed only after reviewing heatmaps of the new layout.
+  minimum-variance results, and visual baselines of multi-line sections; re-seed
+  only after reviewing heatmaps of the new layout.
 - **Probes** (`test/composer-inspect/sonata-probes/`): `balance-consistency.js`
   at several sites — `undo.startsDiffVsLoad` and `undo.pagesDiffVsLoad` empty;
   `undo-reversibility-gate.js` — `geomAfterUndo.changed` 0 for every case;
-  `splice-exactness-census.js` — no row where a page before the edit's moved;
-  `load-reference-gate.js`, `pagination-fold-check.js`; `edit-cost-attribution.js`
-  and `load-profile-phases.js` for G3 and D3.
+  `splice-exactness-census.js` — each edit's changed lines equal F's diff;
+  `load-reference-gate.js`, `pagination-fold-check.js`, `load-profile-phases.js`.
 
 **Acceptance**: G1 — a reload after any sequence of edits and undos matches the
-live layout; G2 — no page before the edit's page (other than a shared first
-system returning) ever moves; G4 — the probes above show exact undo at every
-site; G3 — steady edit cost within 10 % of today's 118–130 ms
-([composer-render-perf.md](composer-render-perf.md)).
+live layout, and the invariant holds on every fixture; G2 — no line below T
+outside the listed step-3 cases; G3 — Phase 0 churn and reach tables reviewed by
+Max, and steady edit cost within 10 % of today's 118–130 ms
+([composer-render-perf.md](composer-render-perf.md)) measured in Firefox; G4 —
+exact undo at every probe site.

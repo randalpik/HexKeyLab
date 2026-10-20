@@ -66,6 +66,26 @@ const WRITE_EXTS = new Set(['.hkc', '.mei', '.xml', '.musicxml', '.pdf']);
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_WRITE_BYTES = 128 * 1024 * 1024;
 const MAX_READ_BYTES = 64 * 1024 * 1024;
+
+/** An XML file's bytes → text: byte-order mark, then UTF-16's null-byte
+ *  pattern on "<?", then the declaration's encoding (ASCII-compatible ones
+ *  only), else UTF-8. Twin of apps/composer/src/xmlText.ts `decodeXmlText` —
+ *  this host cannot import that module; keep the two alike. (`readFile(…,
+ *  'utf8')` turned a UTF-16 MusicXML into garbage, 2026-10-20.) */
+function decodeXmlText(b) {
+  let enc = 'utf-8';
+  if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) enc = 'utf-8';
+  else if (b[0] === 0xff && b[1] === 0xfe) enc = 'utf-16le';
+  else if (b[0] === 0xfe && b[1] === 0xff) enc = 'utf-16be';
+  else if (b[0] === 0x3c && b[1] === 0x00 && b[2] === 0x3f && b[3] === 0x00) enc = 'utf-16le';
+  else if (b[0] === 0x00 && b[1] === 0x3c && b[2] === 0x00 && b[3] === 0x3f) enc = 'utf-16be';
+  else {
+    const head = b.subarray(0, 256).toString('latin1');
+    const label = /^<\?xml[^>]*\bencoding\s*=\s*["']([A-Za-z0-9._:-]+)["']/.exec(head)?.[1].toLowerCase();
+    if (label && !/^utf-?(16|32)/.test(label)) { try { enc = new TextDecoder(label).encoding; } catch { enc = 'utf-8'; } }
+  }
+  return new TextDecoder(enc).decode(b);
+}
 const MAX_UNIQUE = 999;
 
 class HttpError extends Error {
@@ -347,7 +367,7 @@ export async function createFsBridge(opts) {
       const st = await statOrNull(real);
       if (!st || !st.isFile()) throw new HttpError(404, 'not-found', 'file not found');
       if (st.size > MAX_READ_BYTES) throw new HttpError(413, 'too-large', 'file too large');
-      const text = await fs.readFile(real, 'utf8');
+      const text = decodeXmlText(await fs.readFile(real));
       return { ...describe(real), text, mtimeMs: st.mtimeMs };
     },
 

@@ -24,7 +24,8 @@ import type { CursorUpdateOpts } from './cursor/cursor.js';
 import { selectionOverlay } from './selection/selectionOverlay.js';
 import { loadHkcFromFile, musicXmlBlob, renderPdf, exportMusicXml } from './save.js';
 import { openFile, saveDocument, exportDocument, resetFile, bindBrowserFile, onFileChange, fileState, setLocalFs, type OpenedFile } from './files.js';
-import { importMusicXml } from './importMusicXml.js';
+import { importMusicXml, type MusicXmlImportReport } from './importMusicXml.js';
+import { decodeXmlText } from './xmlText.js';
 import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { PerformanceMatcher } from './render/performance.js';
 import { addDir } from './expressions.js';
@@ -1594,7 +1595,7 @@ async function loadWithBusy(busyText: string, work: () => void): Promise<void> {
 function openCommand(kind: 'score' | 'musicxml'): void {
   const load = kind === 'score'
     ? (f: OpenedFile) => loadWithBusy('Loading…', () => applyLoadedDocument(new ComposerModel(f.text).serialize(), 'Loaded ' + f.name))
-    : (f: OpenedFile) => loadWithBusy('Importing…', () => applyLoadedDocument(importMusicXml(f.text), 'Imported ' + f.name));
+    : (f: OpenedFile) => loadWithBusy('Importing…', () => loadMusicXml(f.text, f.name));
   openFile(kind, load).then(
     (r) => {
       if (r === 'browser') $<HTMLInputElement>(kind === 'score' ? 'fileInputHkc' : 'fileInputMusicXml')?.click();
@@ -1643,6 +1644,18 @@ function applyLoadedDocument(meiXml: string, statusMsg: string): void {
   setStatus(statusMsg, 'info');
 }
 
+/** Import MusicXML text and load it. The status line names any part the
+ *  import left out (parts with unpitched notes — importMusicXml). Every
+ *  MusicXML path comes through here: the host dialog (text decoded on the
+ *  host), the file input and the test hooks (bytes via decodeXmlText). */
+function loadMusicXml(text: string, name: string): void {
+  const report: MusicXmlImportReport = { droppedParts: [] };
+  const mei = importMusicXml(text, report);
+  const n = report.droppedParts.length;
+  const left = n ? ` — left out ${n === 1 ? 'a part' : n + ' parts'} with unpitched notes: ${report.droppedParts.join(', ')}` : '';
+  applyLoadedDocument(mei, 'Imported ' + name + left);
+}
+
 $<HTMLInputElement>('fileInputHkc')?.addEventListener('change', async (e) => {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -1678,8 +1691,7 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
      importMusicXml alone): the await paints it before the sync block. */
   showBusy('Importing…');
   try {
-    const text = await file.text();
-    applyLoadedDocument(importMusicXml(text), 'Imported ' + file.name);
+    loadMusicXml(decodeXmlText(await file.arrayBuffer()), file.name);
     bindBrowserFile(file.name);
   } catch (err) {
     setStatus('Import failed: ' + (err as Error).message, 'error');
@@ -1691,9 +1703,11 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
 
 /* Test hook: drive import without a file picker (headless verification). */
 (window as unknown as { __composerImportMusicXml?: (xml: string) => void })
-  .__composerImportMusicXml = (xml: string) => {
-    applyLoadedDocument(importMusicXml(xml), 'Imported MusicXML (test)');
-  };
+  .__composerImportMusicXml = (xml: string) => { loadMusicXml(xml, 'MusicXML (test)'); };
+/* Test hook: import MusicXML from raw file BYTES, decoded exactly as the file
+   input decodes them (headless fixtures and probes for non-UTF-8 files). */
+(window as unknown as { __composerImportMusicXmlBytes?: (bytes: Uint8Array) => void })
+  .__composerImportMusicXmlBytes = (bytes: Uint8Array) => { loadMusicXml(decodeXmlText(bytes), 'MusicXML (test)'); };
 /* Test hook: load an .hkc the way Open does (headless probes work from Max's
    working copy, ~/Documents/sonata.hkc, not the original MusicXML). */
 (window as unknown as { __composerLoadHkc?: (text: string) => void })

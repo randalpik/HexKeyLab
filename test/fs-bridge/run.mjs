@@ -93,6 +93,12 @@ async function hostPhase() {
   await fs.mkdir(path.join(root, '.hidden'), { recursive: true });
   await fs.mkdir(outside, { recursive: true });
   await fs.writeFile(path.join(root, 'scores', 'a.hkc'), 'AAA');
+  /* Encodings (2026-10-20): a UTF-16LE file with a BOM and a declared
+     ISO-8859-1 one must come back as the text they encode. */
+  const ENC_TEXT = '<?xml version="1.0" encoding="UTF-16"?><score-partwise><work><work-title>Après un rêve</work-title></work></score-partwise>';
+  await fs.writeFile(path.join(root, 'scores', 'u16.musicxml'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(ENC_TEXT, 'utf16le')]));
+  const LATIN_TEXT = ENC_TEXT.replace('UTF-16', 'ISO-8859-1');
+  await fs.writeFile(path.join(root, 'scores', 'l1.musicxml'), Buffer.from(LATIN_TEXT, 'latin1'));
   await fs.writeFile(path.join(root, 'secret.txt'), 'nope');
   await fs.writeFile(path.join(root, '.hidden', 'h.hkc'), 'hidden');
   await fs.writeFile(path.join(outside, 'x.hkc'), 'outside');
@@ -123,6 +129,10 @@ async function hostPhase() {
     /* Gate 3 + 4: paths and extensions. */
     r = await post(P, '/fs/read', { path: path.join(root, 'scores', 'a.hkc') });
     check('read inside root', r.status === 200 && r.json.text === 'AAA' && typeof r.json.mtimeMs === 'number' && r.json.name === 'a.hkc', r.text);
+    r = await post(P, '/fs/read', { path: path.join(root, 'scores', 'u16.musicxml') });
+    check('UTF-16LE (BOM) file reads as its text', r.status === 200 && r.json.text === ENC_TEXT, r.text.slice(0, 160));
+    r = await post(P, '/fs/read', { path: path.join(root, 'scores', 'l1.musicxml') });
+    check('declared ISO-8859-1 file reads as its text', r.status === 200 && r.json.text === LATIN_TEXT, r.text.slice(0, 160));
     r = await post(P, '/fs/read', { path: path.join(outside, 'x.hkc') });
     check('read outside root → 403 outside-roots', r.status === 403 && r.json.error === 'outside-roots', r.text);
     r = await post(P, '/fs/read', { path: root + '/../outside/x.hkc' });

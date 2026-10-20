@@ -11,13 +11,18 @@
 //
 //   node test/composer-inspect/sonata-probes/page-screenshots.mjs <outDir> <pages> [probe.js] [--arg <v>] [--no-sonata]
 //   e.g. node test/composer-inspect/sonata-probes/page-screenshots.mjs /tmp/shots 1,16,17,21
+// A page token `m<idx>` means "the page holding measure index <idx>" (0-based),
+// resolved AFTER the probe — for probes that change the partition
+// (apply-partition.js). Its file is `m<idx>-p<page>.png`.
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const OUT = process.argv[2];
-const PAGES = (process.argv[3] ?? '1').split(',').map(Number).filter((n) => n > 0);
+const PAGE_TOKENS = (process.argv[3] ?? '1').split(',').filter(Boolean);
+let PAGES = PAGE_TOKENS.filter((t) => !t.startsWith('m')).map(Number).filter((n) => n > 0);
+const fileOf = new Map(PAGES.map((n) => [n, `p${n}.png`]));
 const probeFile = process.argv[4] && !process.argv[4].startsWith('--') ? process.argv[4] : null;
 const argIdx = process.argv.indexOf('--arg');
 const probeArg = argIdx >= 0 ? process.argv[argIdx + 1] : null;
@@ -72,9 +77,16 @@ try {
   await new Promise((res) => cdp.ws.addEventListener('message', (ev) => { const m = JSON.parse(ev.data); if (m.method === 'Page.loadEventFired') res(); }));
   for (let i = 0; i < 200; i++) { if (await evalIn(cdp, `!!(window.__hkl_composer && window.__hkl_composer.renderer && document.querySelector('#score svg'))`) === 'true') break; await sleep(250); }
   if (!noSonata) {
-    const xml = readFileSync(SONATA, 'utf8');
-    await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(xml)}, true)`);
-    await evalIn(cdp, `(window.${SONATA.endsWith('.hkc') ? '__composerLoadHkc' : '__composerImportMusicXml'}(window.__sonataXml), true)`);
+    /* MusicXML goes in as bytes through the app's decoder (see run-probe.mjs). */
+    let imp;
+    if (SONATA.endsWith('.hkc')) {
+      await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(readFileSync(SONATA, 'utf8'))}, true)`);
+      imp = await evalIn(cdp, `(window.__composerLoadHkc(window.__sonataXml), true)`);
+    } else {
+      await evalIn(cdp, `(window.__sonataB64 = ${JSON.stringify(readFileSync(SONATA).toString('base64'))}, true)`);
+      imp = await evalIn(cdp, `(window.__composerImportMusicXmlBytes(Uint8Array.from(atob(window.__sonataB64), (ch) => ch.charCodeAt(0))), true)`);
+    }
+    try { const r = JSON.parse(imp); if (r && r.__error) console.error('import failed: ' + String(r.__error).split('\n').slice(0, 4).join(' | ')); } catch {}
     await waitIdle(cdp);
   }
   if (probeArg !== null) await evalIn(cdp, `(window.__probeArg = ${JSON.stringify(probeArg)}, true)`);
@@ -83,6 +95,23 @@ try {
     const out = await evalIn(cdp, `(async () => { ${src}\n })()`);
     try { console.log(JSON.stringify(JSON.parse(out), null, 2)); } catch { console.log(out); }
     await waitIdle(cdp);
+  }
+  /* Measure tokens → pages, on the partition the probe left (pageStarts are
+     line-start ids; a measure's page is the last page start at or before it). */
+  const mTokens = PAGE_TOKENS.filter((t) => t.startsWith('m')).map((t) => Number(t.slice(1)));
+  if (mTokens.length) {
+    const res = JSON.parse(await evalIn(cdp, `(() => { const r = window.__hkl_composer.renderer, pb = r['pageBreaks'];
+      const ids = window.__hkl_composer.model.allMeasures().map((m) => m.getAttribute('xml:id'));
+      const idx = new Map(ids.map((id, i) => [id, i]));
+      const pages = pb.pageStarts().map((id) => idx.get(id));
+      const lines = pb.lineStarts().map((id) => idx.get(id));
+      const inj = window.__injectedLines;
+      const meas = window.__hkl_composer.model.allMeasures();
+      return { linesMatch: !inj || lines.join() === inj.join(), lines: lines.length, pages: pages.length,
+        at: ${JSON.stringify(mTokens)}.map((mi) => ({ mi, n: meas[mi]?.getAttribute('n'), page: pages.filter((p) => p <= mi).length })) }; })()`));
+    console.error(`partition after the probe: ${res.lines} lines, ${res.pages} pages, matches injected: ${res.linesMatch}`);
+    for (const a of res.at) { if (!PAGES.includes(a.page)) PAGES.push(a.page); fileOf.set(a.page, `m${a.mi}-n${a.n}-p${a.page}.png`); }
+    writeFileSync(join(OUT, 'targets.json'), JSON.stringify(res, null, 1));
   }
   /* Mount every requested page (the lazy window would evict pages far from the
      cursor) and size the viewport past one page box. */
@@ -104,8 +133,8 @@ try {
     if (!rect) { console.error('page ' + n + ' not found / not mounted'); continue; }
     await sleep(200);
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: rect.x, y: rect.y, width: rect.w, height: rect.h, scale: 1 } });
-    writeFileSync(join(OUT, `p${n}.png`), Buffer.from(shot.data, 'base64'));
-    console.error(`page ${n} → ${join(OUT, `p${n}.png`)}`);
+    writeFileSync(join(OUT, fileOf.get(n) ?? `p${n}.png`), Buffer.from(shot.data, 'base64'));
+    console.error(`page ${n} → ${join(OUT, fileOf.get(n) ?? `p${n}.png`)}`);
   }
   cdp.close(); cleanup(0);
 } catch (e) { console.error('probe failed:', e?.message ?? e); cleanup(1); }

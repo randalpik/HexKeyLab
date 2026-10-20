@@ -8,6 +8,9 @@
 //                              [--screenshot <path>] → PNG of the page AFTER
 //                                the probe returns (probes that rearrange
 //                                #score can hand Max a real picture)
+//                             [--console]  → console errors/warnings and
+//                               uncaught exceptions from load through the
+//                               probe, de-duplicated, on stderr
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +18,7 @@ import { join } from 'node:path';
 
 const probeFile = process.argv[2];
 const noSonata = process.argv.includes('--no-sonata');
+const captureConsole = process.argv.includes('--console');
 const argIdx = process.argv.indexOf('--arg');
 const probeArg = argIdx >= 0 ? process.argv[argIdx + 1] : null;
 const shotIdx = process.argv.indexOf('--screenshot');
@@ -99,6 +103,19 @@ try {
   await cdp.ready;
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  /* --console: collect console errors/warnings and uncaught exceptions from
+     load through the probe (an import's problems surface here, not in the
+     probe's JSON); printed de-duplicated to stderr at the end. */
+  const consoleMsgs = [];
+  if (captureConsole) cdp.ws.addEventListener('message', (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.method === 'Runtime.consoleAPICalled' && (m.params.type === 'error' || m.params.type === 'warning')) {
+      consoleMsgs.push(`${m.params.type}: ` + m.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300));
+    } else if (m.method === 'Runtime.exceptionThrown') {
+      const d = m.params.exceptionDetails;
+      consoleMsgs.push('exception: ' + String(d.exception?.description ?? d.text).split('\n')[0].slice(0, 300));
+    }
+  });
   await cdp.send('Page.navigate', { url });
   await new Promise((res) => {
     cdp.ws.addEventListener('message', (ev) => {
@@ -113,9 +130,22 @@ try {
     await new Promise((r) => setTimeout(r, 250));
   }
   if (!noSonata) {
-    const xml = readFileSync(SONATA, 'utf8');
-    await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(xml)}, true)`);
-    await evalIn(cdp, `(window.${SONATA.endsWith('.hkc') ? '__composerLoadHkc' : '__composerImportMusicXml'}(window.__sonataXml), true)`);
+    /* A MusicXML file goes in as BYTES through the app's own decoder
+       (__composerImportMusicXmlBytes → xmlText.ts), so UTF-16 and declared
+       encodings import exactly as the file input imports them. The import's
+       result is checked: a throw inside the eval used to vanish, leaving the
+       default document to be probed as if it were the score. */
+    let imp;
+    if (SONATA.endsWith('.hkc')) {
+      await evalIn(cdp, `(window.__sonataXml = ${JSON.stringify(readFileSync(SONATA, 'utf8'))}, true)`);
+      imp = await evalIn(cdp, `(window.__composerLoadHkc(window.__sonataXml), true)`);
+    } else {
+      await evalIn(cdp, `(window.__sonataB64 = ${JSON.stringify(readFileSync(SONATA).toString('base64'))}, true)`);
+      imp = await evalIn(cdp, `(window.__composerImportMusicXmlBytes(Uint8Array.from(atob(window.__sonataB64), (ch) => ch.charCodeAt(0))), true)`);
+    }
+    try { const r = JSON.parse(imp); if (r && r.__error) console.error('import failed: ' + String(r.__error).split('\n').slice(0, 4).join(' | ')); } catch {}
+    const status = await evalIn(cdp, `document.getElementById('composerStatus')?.textContent ?? ''`);
+    try { console.error('status: ' + JSON.parse(status)); } catch {}
     // Import triggers a deferred heavy render behind the busy badge; wait it out.
     for (let i = 0; i < 400; i++) {
       const v = await evalIn(cdp, `(() => { const b = document.getElementById('renderBusy'); return !!document.querySelector('.score-page svg') && (!b || b.hidden); })()`);
@@ -144,6 +174,11 @@ try {
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
     writeFileSync(shotPath, Buffer.from(shot.data, 'base64'));
     console.error('screenshot → ' + shotPath);
+  }
+  if (captureConsole) {
+    const counts = new Map(); for (const m of consoleMsgs) counts.set(m, (counts.get(m) ?? 0) + 1);
+    console.error(`console: ${consoleMsgs.filter((m) => m.startsWith('error')).length} errors, ${consoleMsgs.filter((m) => m.startsWith('warning')).length} warnings, ${consoleMsgs.filter((m) => m.startsWith('exception')).length} exceptions`);
+    for (const [m, n] of counts) console.error(`  ${n}× ${m}`);
   }
   cdp.close();
   cleanup(0);

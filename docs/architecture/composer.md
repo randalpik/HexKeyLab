@@ -777,6 +777,18 @@ sent).
   staves and multimeasure rests into the empty-cell flags, breath marks, and
   parenthesized accidentals; it spells pitches onto lattice cells
   (`coord-spelling.ts`) and turns `<rest measure="yes">` into an empty layer.
+  A file's bytes are decoded by `xmlText.ts` `decodeXmlText` (byte-order mark,
+  then UTF-16's null-byte pattern, then the declared encoding; the host bridge
+  decodes `/fs/read` with a twin in `fs-bridge.mjs`), so UTF-16 and single-byte
+  encodings import. A part holding any `<unpitched>` note is dropped whole
+  before anything reads it — Composer cannot write unpitched notes — and the
+  status line names it; a score of nothing but such parts fails to import.
+  Invisible playback notes (`<note print-object="no">`, e.g. Finale's
+  realisation of a timpani roll — Composer owns tremolo playback) are dropped
+  in `buildEvents`: an invisible onset becomes hidden time, merged and emitted
+  like a voiced `<forward>`, so every later note keeps its beat; an invisible
+  chord member vanishes; a visible member of a chord with an invisible head
+  takes its place.
 - **MusicXML export** (`exportMusicXml`): one `<part>` per instrument, voices
   separated by `<backup>`, divisions 16 or its LCM with tuplet numbers,
   colour on noteheads, every tempo written into every part (`<sound tempo>`
