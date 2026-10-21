@@ -1556,7 +1556,15 @@ export const ASSERTIONS = {
            the end-of-line courtesy, so its line is replaced too. This bound is
            UNCHANGED by the 2026-09-19 balance work — only the line LOOKUPS moved
            to lineOf; the run stayed local. */
-        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
+        /* The run starts at the edit line, one line above it (the end-of-line
+           courtesy), or where F re-laid lines from: F partitions the whole
+           section, so a width change can move line starts BEFORE the edit
+           (partition spec, "Accepted consequences"; 2026-10-21). */
+        const endBefore = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
+        let firstChanged = startIds.length;
+        startIds.forEach((id, k) => { if (k < firstChanged && endBefore(linesBefore, id) !== endBefore(startIds, id)) firstChanged = k; });
+        const minA = Math.max(0, Math.min(editLine, firstChanged) - 1);
+        if (!run || run.a > editLine || run.a < minA) return { ok: false, detail: 'run does not start between the first re-laid line (or one above) and the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' firstChanged=' + firstChanged + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
@@ -1651,6 +1659,7 @@ export const ASSERTIONS = {
            splicer's diagnostics first — a derive leaves them from the previous
            render, which would read as a stale "spliced". */
         const editMi = ids.indexOf(startIds[2]);
+        const linesBefore = pb.lineStarts().slice();
         ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
         const snapBefore = m.snapshotState();
         const ver = m.docVersion();
@@ -1680,7 +1689,15 @@ export const ASSERTIONS = {
            the end-of-line courtesy, so its line is replaced too. This bound is
            UNCHANGED by the 2026-09-19 balance work — only the line LOOKUPS moved
            to lineOf; the run stayed local. */
-        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
+        /* The run starts at the edit line, one line above it (the end-of-line
+           courtesy), or where F re-laid lines from: F partitions the whole
+           section, so a width change can move line starts BEFORE the edit
+           (partition spec, "Accepted consequences"; 2026-10-21). */
+        const endBefore = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
+        let firstChanged = startIds.length;
+        startIds.forEach((id, k) => { if (k < firstChanged && endBefore(linesBefore, id) !== endBefore(startIds, id)) firstChanged = k; });
+        const minA = Math.max(0, Math.min(editLine, firstChanged) - 1);
+        if (!run || run.a > editLine || run.a < minA) return { ok: false, detail: 'run does not start between the first re-laid line (or one above) and the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' firstChanged=' + firstChanged + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */
@@ -1767,6 +1784,7 @@ export const ASSERTIONS = {
            splicer's diagnostics first — a derive leaves them from the previous
            render, which would read as a stale "spliced". */
         const editMi = ids.indexOf(startIds[2]);
+        const linesBefore = pb.lineStarts().slice();
         ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
         const snapBefore = m.snapshotState();
         const ver = m.docVersion();
@@ -1796,7 +1814,15 @@ export const ASSERTIONS = {
            the end-of-line courtesy, so its line is replaced too. This bound is
            UNCHANGED by the 2026-09-19 balance work — only the line LOOKUPS moved
            to lineOf; the run stayed local. */
-        if (!run || run.a > editLine || run.a < editLine - 1) return { ok: false, detail: 'run does not start at (or one line above) the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
+        /* The run starts at the edit line, one line above it (the end-of-line
+           courtesy), or where F re-laid lines from: F partitions the whole
+           section, so a width change can move line starts BEFORE the edit
+           (partition spec, "Accepted consequences"; 2026-10-21). */
+        const endBefore = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
+        let firstChanged = startIds.length;
+        startIds.forEach((id, k) => { if (k < firstChanged && endBefore(linesBefore, id) !== endBefore(startIds, id)) firstChanged = k; });
+        const minA = Math.max(0, Math.min(editLine, firstChanged) - 1);
+        if (!run || run.a > editLine || run.a < minA) return { ok: false, detail: 'run does not start between the first re-laid line (or one above) and the edit line: run=' + JSON.stringify(run) + ' editLine=' + editLine + ' firstChanged=' + firstChanged + ' | diag: sigW=' + pb['sigW'] + ' budgetW=' + pb['budgetW'] + ' refillLines=' + pb.lastRefillLines + ' lines=' + startIds.length + ' editStart=' + ids[editMi] + ' startsNow=' + JSON.stringify(startIds.slice(0, 6)) + ' zoom=' + (window.__hkl_composer.renderer['zoom']) + ' mounted=' + document.querySelectorAll('#score .score-page:not(.score-page-pending)').length + '/' + document.querySelectorAll('#score .score-page').length + ' derive=' + pb.lastDeriveReason + ' adoptionInFlight=' + !!pb['adoption'] + ' tkCurrent=' + (window.__hkl_composer.renderer['pageVirt'] && window.__hkl_composer.renderer['pageVirt'].tkCurrent) + ' stale=' + (window.__hkl_composer.renderer['pageVirt'] ? [...window.__hkl_composer.renderer['pageVirt'].stalePages].join('/') : '-') + ' outcome=' + ps.lastOutcome + ' warns=' + JSON.stringify(__warns) };
         /* key/meter resets sit BEFORE their measure, so the run ends on the line
            before the reset; a mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too */

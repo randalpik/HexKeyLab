@@ -36,7 +36,7 @@ import {
   SECTION_HEADER_RESERVE, type PageFitConstants, type SysExtents,
 } from './pagefit.js';
 import { createPageShell, renumberPageHeader, type ShellGeom, type ShellMeta } from './pageshell.js';
-import { renderLineSystem, renderLineSystems, CHUNK_LINES, styleTextOf, type LineRenderCtx, type RenderedLine } from './systemrender.js';
+import { renderLineSystem, renderLineSystems, CHUNK_LINES, styleTextOf, STYLE_ROOT_TOKEN, type LineRenderCtx, type RenderedLine } from './systemrender.js';
 import { mergeGlyphDefs } from './splice.js';
 
 /** What the assembler needs from the renderer. */
@@ -104,6 +104,10 @@ interface Job {
 }
 
 const BUILDING = 'score-page-building';
+/* The staging shell's root id, and the id of the ONE stylesheet that styles it
+   (see openStaging). */
+const STAGING_ROOT_ID = 'hklpg-staging';
+const STAGING_STYLE_ID = 'hkl-staging-style';
 const PENDING = 'score-page-pending';
 /** A slice of assembly work between yields. Each yield is a macrotask hop
  *  (MessageChannel), not an idle callback: `requestIdleCallback` waited for
@@ -160,7 +164,7 @@ export class PageAssembler {
   private expected: number | null = null;
   lastStats: AssemblyStats = { lines: 0, pages: 0, syncMs: 0, totalMs: 0, renderMs: 0 };
   /** Diagnostics of the last repagination (fixtures and the sweep read it). */
-  lastRepaginate = { fromPage: 0, rebuiltPages: 0, movedSystems: 0, renderedLines: 0, pagesBefore: 0, pagesAfter: 0, ms: 0 };
+  lastRepaginate = { fromPage: 0, rebuiltPages: 0, refreshedPages: 0, movedSystems: 0, renderedLines: 0, prestagedLines: 0, pagesBefore: 0, pagesAfter: 0, ms: 0 };
   /** Pages applyPartition rebuilt on its last run (the renderer's touched set). */
   lastRebuiltPages: HTMLElement[] = [];
   /** Parked pages whose post passes must re-run on mount (a rescale). */
@@ -782,17 +786,51 @@ export class PageAssembler {
    *  page before the first affected line (a changed line that starts a page
    *  may fit on the page before) and rebuilt by moving systems between
    *  shells; pages past the last changed one are kept and renumbered.
-   *  `touched` names pages whose extents a splice refreshed in place, or the
-   *  page of a changed break: they re-fit even with no line change. False
-   *  when the page starts could not be committed (the caller re-assembles). */
-  applyPartition(oldLines: readonly string[], changedIds: ReadonlySet<string>, touched: number[]): boolean {
+   *  `touched` names pages that must re-fit even with no line change (the
+   *  page of a changed break, a page whose header changed). `prestaged` holds
+   *  systems the splicer already engraved for some changed lines (one window
+   *  for the hunk); every other changed line on a mounted page is engraved
+   *  here. `oldPages` is the pagination the DOM was built for (the refill's
+   *  pre-edit pins); it defaults to the committed one.
+   *
+   *  Pagination is never carried (2026-10-21, Max: "every repartition must
+   *  repaginate"; "no path should allow pagination to be stale on mounted
+   *  lines"). What a page holds NOW is read from its DOM — its systems'
+   *  first measures, mounted or parked — and only a page with no DOM (never
+   *  built, or deferred) is taken from the old pins. A page is kept only when
+   *  the fit gives it exactly the lines it holds and none of them changed.
+   *  False when the page starts could not be committed (the caller
+   *  re-assembles). */
+  applyPartition(
+    oldLines: readonly string[], changedIds: ReadonlySet<string>, touched: number[],
+    prestaged?: ReadonlyMap<string, { system: SVGGElement; host: Document }>, oldPages?: readonly string[],
+  ): boolean {
     const t0 = performance.now();
     this.finishSync();
     this.lastRebuiltPages = [];
     this.pbStarts = this.readPbStarts();
     const lines = this.lines();
-    const pages = this.pageBreaks.pageStarts();
-    const stats = { fromPage: 0, rebuiltPages: 0, movedSystems: 0, renderedLines: 0, pagesBefore: this.pageCount, pagesAfter: this.pageCount, ms: 0 };
+    const pins = oldPages ?? this.pageBreaks.pageStarts();
+    /* Each page as it actually is: a built page's systems (first-measure ids)
+       from its DOM, else null and its start from the old pins. */
+    const actualLines: Array<string[] | null> = [];
+    const pages: string[] = [];
+    const heldEl = new Map<string, { sys: Element; p: number }>();
+    for (let p = 1; p <= this.pageCount; p++) {
+      const root = this.rootOf(p);
+      const held: string[] = [];
+      if (root && !this.needsRebuild.has(p)) {
+        for (const sys of this.systemsOf(root)) {
+          const id = sys.querySelector('g.measure')?.id ?? '';
+          if (!id) continue;
+          held.push(id);
+          heldEl.set(id, { sys, p });
+        }
+      }
+      actualLines.push(held.length ? held : null);
+      pages.push(held.length ? held[0] : (pins[p - 1] ?? ''));
+    }
+    const stats = { fromPage: 0, rebuiltPages: 0, refreshedPages: 0, movedSystems: 0, renderedLines: 0, prestagedLines: 0, pagesBefore: this.pageCount, pagesAfter: this.pageCount, ms: 0 };
     this.lastRepaginate = stats;
     if (!lines.length || !pages.length) { stats.ms = performance.now() - t0; return true; }
     const lineIdx = new Map(lines.map((id, i) => [id, i]));
@@ -851,15 +889,47 @@ export class PageAssembler {
 
     /* Stage the fresh systems — for the lines on a mounted page only. Every
        other changed line keeps the height it had (`heightOf`) and is engraved
-       when its page mounts, or below if the fit lands it on a mounted page. */
+       when its page mounts, or below if the fit lands it on a mounted page.
+       A line whose old system (same start) sits on a mounted page is engraved
+       IN that page, replacing it — post-processed and measured where it is
+       drawn, as the pre-2026-10-21 splicer did; the fit below then decides
+       whether it stays there. Only a line with no old system goes through the
+       staging shell, whose stylesheet costs a document-wide style recalc on
+       insertion and again on removal (~25 ms each with the sonata's 32 pages
+       mounted, measured 2026-10-21). */
     const staged = new Map<string, Element>();
+    const inPlace = new Set<string>();
+    const touchedInPlace = new Set<number>();
     let staging: { div: HTMLElement; root: SVGSVGElement } | null = null;
     for (const id of needRender) {
-      if (!onMountedPage(id)) continue;
+      const pre = prestaged?.get(id);
+      /* The splicer engraved only lines drawn on mounted pages; a line whose
+         start measure the edit created has no page to look up, so its
+         presence in `prestaged` is the answer. */
+      if (!pre && !onMountedPage(id)) continue;
       const li = lineIdx.get(id)!;
-      const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
+      const rl = pre ?? renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
       if (!rl) { console.warn('[page-assembly] line ' + id + ' could not be rendered — its old system stays'); continue; }
+      if (pre) stats.prestagedLines++;
       if (!this.styleText) this.styleText = styleTextOf(rl.host);
+      const live = heldEl.get(id);
+      const liveDiv = live && mountedBefore.has(live.p) ? this.pageDiv(live.p) : null;
+      if (live && liveDiv && live.sys.parentElement) {
+        const fresh = this.importSystem(rl.system, rl.host, liveDiv);
+        live.sys.parentElement.insertBefore(fresh, live.sys);
+        this.host.removeLockMarksOf(liveDiv, [live.sys]);
+        live.sys.remove();
+        const sys = this.host.postProcess(liveDiv, [fresh])[0] ?? fresh;
+        alignStaffRows(sys, this.host.gridUser());
+        const ext = measureExtents(sys as SVGGraphicsElement);
+        if (ext) this.extents.set(id, ext);
+        else console.warn('[page-assembly] line ' + id + ' has no readable extents (in place)');
+        heldEl.set(id, { sys, p: live.p });
+        inPlace.add(id);
+        touchedInPlace.add(live.p);
+        stats.renderedLines++;
+        continue;
+      }
       if (!staging) staging = this.openStaging();
       const imported = this.importSystem(rl.system, rl.host, staging.div);
       const sys = this.host.postProcess(staging.div, [imported])[0] ?? imported;
@@ -909,20 +979,87 @@ export class PageAssembler {
        — old pages [s, a] become new pages [s, b] — and every old page past `a`
        is kept as is (renumbered when the window's page count changed). */
     const END = '';
-    const rangeHasRender = (startId: string, nextId: string | undefined): boolean => {
-      if (!staged.size) return false;
-      const a0 = lineIdx.get(startId) ?? 0;
-      const b0 = nextId !== undefined && nextId !== END ? (lineIdx.get(nextId) ?? lines.length) : lines.length;
-      for (let i = a0; i < b0; i++) if (staged.has(lines[i])) return true;
-      return false;
+    const rangeOf = (startId: string, nextId: string | undefined): [number, number] => [
+      lineIdx.get(startId) ?? 0,
+      nextId !== undefined && nextId !== END ? (lineIdx.get(nextId) ?? lines.length) : lines.length,
+    ];
+    /* A page whose start AND end the fit leaves where they were keeps its
+       element; what may change is the content between. It is REUSED when:
+       - mounted (a DOM nobody sees is never edited): every line the fit gives
+         it is either engraved above or already on it, unchanged — the page is
+         then refreshed in place below (systems swapped, inserted, removed;
+         nothing moves between pages);
+       - built but parked: its DOM holds exactly those lines and none changed;
+       - never built, or deferred: compared by its pins alone, no line changed.
+       Anything else is rebuilt — a deferred card when it is not on screen. */
+    const reusable = (ni: number, oi: number): boolean => {
+      if (newTail[ni] !== oldTail[oi] || (newTail[ni + 1] ?? END) !== (oldTail[oi + 1] ?? END)) return false;
+      const [a0, b0] = rangeOf(newTail[ni], newTail[ni + 1]);
+      const p = fromPage + oi;
+      const held = actualLines[p - 1];
+      if (mountedBefore.has(p) && held) {
+        const have = new Set(held);
+        for (let i = a0; i < b0; i++) {
+          const id = lines[i];
+          if (staged.has(id)) continue;
+          if ((needRender.has(id) && !inPlace.has(id)) || !have.has(id)) return false;
+        }
+        return true;
+      }
+      for (let i = a0; i < b0; i++) if (needRender.has(lines[i])) return false;
+      if (!held) return true;
+      if (held.length !== b0 - a0) return false;
+      for (let i = a0; i < b0; i++) if (held[i - a0] !== lines[i]) return false;
+      return true;
     };
-    const pairSame = (ni: number, oi: number): boolean =>
-      newTail[ni] === oldTail[oi] && (newTail[ni + 1] ?? END) === (oldTail[oi + 1] ?? END) && !rangeHasRender(newTail[ni], newTail[ni + 1]);
+    /* Bring a reused mounted page's systems to the fit's lines, in order: an
+       engraved system replaces or joins, a system whose line vanished or was
+       re-engraved leaves, every other system stays where it is. Re-placed
+       from the extents the fit already counted. */
+    const refreshInPlace = (oi: number): void => {
+      const p = fromPage + oi;
+      const root = this.rootOf(p), div = this.pageDiv(p);
+      if (!root || !div || !mountedBefore.has(p)) return;
+      const [a0, b0] = rangeOf(oldTail[oi], oldTail[oi + 1]);
+      const heldSys = this.systemsOf(root);
+      const byId = new Map(heldSys.map((sys) => [sys.querySelector('g.measure')?.id ?? '', sys]));
+      const want: Element[] = [];
+      for (let i = a0; i < b0; i++) {
+        const el = staged.get(lines[i]) ?? byId.get(lines[i]);
+        if (el) want.push(el);
+      }
+      const keep = new Set(want);
+      let changed = 0;
+      for (const sys of heldSys) {
+        if (keep.has(sys)) continue;
+        this.host.removeLockMarksOf(div, [sys]);
+        sys.remove();
+        changed++;
+      }
+      /* `root.contains`, not `closest('svg')`: a page's systems sit under the
+         nested `svg.definition-scale`, never directly under the root. */
+      for (let k = 0; k < want.length; k++) {
+        const el = want[k];
+        if (root.contains(el)) continue;   // already on the page
+        let anchor: Element | null = null;
+        for (let n = k + 1; n < want.length && !anchor; n++) if (root.contains(want[n])) anchor = want[n];
+        if (staging) this.moveSystems(staging.root, root, [el], anchor);
+        changed++;
+      }
+      if (!changed && !touchedInPlace.has(p)) return;
+      this.host.decorate(div);
+      this.host.placePage(div);
+      this.host.applyTheme(div);
+      this.lastRebuiltPages.push(div);
+      stats.refreshedPages++;
+    };
     let s = 0;
-    while (s < newTail.length && s < oldTail.length && pairSame(s, s)) s++;
+    while (s < newTail.length && s < oldTail.length && reusable(s, s)) s++;
     let a = oldTail.length - 1, b = newTail.length - 1;
-    while (a >= s && b >= s && pairSame(b, a)) { a--; b--; }
-    if (a < s && b < s) { this.paginatedLines = lines.slice(); disposeStaging(); stats.ms = performance.now() - t0; return true; }   // identical pagination
+    while (a >= s && b >= s && reusable(b, a)) { a--; b--; }
+    for (let oi = 0; oi < s; oi++) refreshInPlace(oi);
+    for (let oi = a + 1; oi < oldTail.length; oi++) refreshInPlace(oi);
+    if (a < s && b < s) { this.paginatedLines = lines.slice(); disposeStaging(); stats.ms = performance.now() - t0; return true; }   // pagination unchanged
     const base = fromPage + s;                       // first page rebuilt (same number on both sides)
     const rebuildNew = newTail.slice(s, b + 1);
     const rebuildOld = oldTail.slice(s, a + 1);
@@ -1006,7 +1143,7 @@ export class PageAssembler {
           continue;
         }
         const bk = byId.get(lines[li]);
-        if (!bk || staleRoots.has(bk.root) || needRender.has(lines[li])) {
+        if (!bk || staleRoots.has(bk.root) || (needRender.has(lines[li]) && !inPlace.has(lines[li]))) {
           /* No current system for this line: engrave it here. */
           const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
           if (!rl) { console.warn('[page-assembly] line ' + lines[li] + ' could not be rendered during repagination'); continue; }
@@ -1078,7 +1215,22 @@ export class PageAssembler {
     const div = doc.createElement('div');
     div.className = 'score-page ' + BUILDING;
     div.dataset.page = '0';
-    const shell = createPageShell(doc, this.host.shellGeom(), Math.max(2, this.pageCount + 1), this.host.shellMeta(), this.styleText);
+    /* No `<style>` of its own: inserting or removing ANY stylesheet restyles
+       the whole document (~25 ms each way with the sonata's 32 pages mounted,
+       measured 2026-10-21), and a staging shell lives for one edit. Its root
+       has a fixed id, and Verovio's rules — scoped to that id — live in one
+       stylesheet that is written once and only rewritten when the text
+       changes. */
+    const shell = createPageShell(doc, this.host.shellGeom(), Math.max(2, this.pageCount + 1), this.host.shellMeta(), '');
+    shell.svg.setAttribute('id', STAGING_ROOT_ID);
+    const css = this.styleText.split(STYLE_ROOT_TOKEN).join('#' + STAGING_ROOT_ID);
+    let sheet = doc.getElementById(STAGING_STYLE_ID) as HTMLStyleElement | null;
+    if (!sheet) {
+      sheet = doc.createElement('style');
+      sheet.id = STAGING_STYLE_ID;
+      doc.head.appendChild(sheet);
+    }
+    if (sheet.textContent !== css) sheet.textContent = css;
     div.appendChild(shell.svg);
     this.host.container.appendChild(div);
     return { div, root: shell.svg };

@@ -133,12 +133,11 @@ export interface RefillResult {
   oldStartIds: string[];
   /** Partition just committed (what the DOM must render after this edit). */
   newStartIds: string[];
-  /** Pagination the mounted DOM renders (pre-edit) and the one just committed
-   *  — page-start line ids, page 1 first. Pages are carried by LINE: a
-   *  surviving line keeps its page, so an id here changes only when a page's
-   *  first line got a new start measure (its old one was deleted) — the page
-   *  grid itself is unchanged and the splicer handles it. The COUNT changes
-   *  only when a page's every line vanished (the page collapses). Empty when
+  /** Pagination the mounted DOM renders (pre-edit), and the PROVISIONAL pins
+   *  just committed: the old page starts that are still line starts. Pages
+   *  are never carried — the renderer re-fits them after every refill
+   *  (PageAssembler.applyPartition, against what each page actually holds)
+   *  and commits the fit. Page-start line ids, page 1 first; empty when
    *  pagination isn't owned. */
   oldPageStartIds: string[];
   newPageStartIds: string[];
@@ -433,38 +432,6 @@ function sectionRanges(starts: number[], ids: string[], hard: Set<string>): Arra
   }
   out.push([kLo, starts.length - 1]);
   return out;
-}
-
-/** Page bookkeeping after the lines [kLo, kLo+n0) were replaced by n1 lines
- *  (pages are carried by LINE index, B2).
- *
- *  Shrinking (n1 < n0): a page starting past the section shifts up by the lines
- *  removed; a page whose first line was one of the removed tail lines now
- *  begins at the line after the section (the tail merged into lines that end on
- *  the previous page); a page left with no line collapses into its predecessor.
- *
- *  Growing (n1 > n0): a page starting past the section shifts DOWN by the lines
- *  added — the section now needs one more system than the page grid allotted
- *  it, exactly as a repair that inserts a line does (`lineInserted`). A section
- *  can grow because the line count is greedy's over the current content
- *  (balance.ts `partitionSection`) rather than only ever merged away. */
-function linesReplaced(pageLines: number[], kLo: number, n0: number, n1: number, lineCount: number): void {
-  const d = n0 - n1;
-  if (d === 0) return;
-  if (d < 0) {
-    for (let p = 0; p < pageLines.length; p++) {
-      if (pageLines[p] >= kLo + n0) pageLines[p] -= d;
-    }
-    return;
-  }
-  for (let p = 0; p < pageLines.length; p++) {
-    const L = pageLines[p];
-    if (L >= kLo + n0) pageLines[p] = L - d;
-    else if (L >= kLo + n1) pageLines[p] = kLo + n1;
-  }
-  for (let p = pageLines.length - 1; p >= 0; p--) {
-    if (pageLines[p] >= lineCount || (p > 0 && pageLines[p] <= pageLines[p - 1])) pageLines.splice(p, 1);
-  }
 }
 
 /** Head-level context that is NOT the head scoreDef's key/meter: the
@@ -1191,27 +1158,17 @@ export class PageLineBreaks {
     const oldPageStartIds = this.pageStartIds.slice();
     if (run.lo > run.hi && !hasEdit) {
       newStartIds = oldStarts;               // no line needs re-flowing — re-pin as-is
-      /* Every measure's FLOW survived identically, so every line and page did
-         too. A single-page document has exactly one page start — the document
-         start — which simply follows line 0. (An empty list would read as
-         "pagination changed" and block every splice.)
-         The document may still need REDRAWING here (a renumber): `changedRun`
-         carries that to the splicer even though nothing re-flowed. */
-      newPageStartIds = oldPageStartIds.length ? [newStartIds[0], ...oldPageStartIds.slice(1)] : [];
+      /* The document may still need REDRAWING here (a renumber): `changedRun`
+         carries that to the renderer even though nothing re-flowed. */
       changedRun = redraw.lo > redraw.hi ? null : { lo: redraw.lo, hi: redraw.hi };
       this.lastRefillLines = 0;
     } else {
-      /* Pagination is carried INSIDE the repartition, by line (see repartition):
-         a surviving line never changes page, and a page whose lines all
-         vanished collapses. The renderer compares old and new page COUNTS to
-         decide whether the page grid itself changed. */
       const repaired = this.repartition(
         model, meiMeasures, ids, idIdx, hard, { lo: run.lo, hi: run.hi }, ctx,
         hasEdit ? { addStarts, removedAt } : null,
       );
       if (!repaired) return bail('repartition window/cap exhausted');
-      newStartIds = repaired.starts;
-      newPageStartIds = repaired.pages;
+      newStartIds = repaired;
       if (run.lo <= run.hi) {
         changedRun = { lo: Math.min(run.lo, redraw.lo), hi: Math.max(run.hi, redraw.hi) };
       } else {
@@ -1229,9 +1186,16 @@ export class PageLineBreaks {
        and castoff's metric could flip-flop per edit. Docs that small derive
        synchronously well under the deferral threshold — let them. */
     if (newStartIds.length <= 1) return bail('single-line result');
+    /* Pages are NOT carried (2026-10-21, Max: "every repartition must
+       repaginate"): the renderer re-fits them from the measured systems and
+       what each page actually holds (PageAssembler.applyPartition), and
+       commits the result. Until it does, the pins are the old page starts
+       that are still line starts — valid pins that never put a `<pb>` inside a
+       line, but not a pagination anyone fitted. */
     const newLineStarts = new Set(newStartIds);
-    if (newPageStartIds.length && newPageStartIds[0] !== newStartIds[0]) return bail('page 1 does not start the document');
-    if (!newPageStartIds.every((id) => newLineStarts.has(id))) return bail('page start is not a line start');
+    newPageStartIds = oldPageStartIds.length
+      ? [newStartIds[0], ...oldPageStartIds.slice(1).filter((id) => newLineStarts.has(id) && id !== newStartIds[0])]
+      : [];
 
     /* ALWAYS 'encoded' (2026-09-18). This used to fall back to 'line' when the
        owner held one page start, because a one-page document pins no `<pb>`
@@ -1295,7 +1259,7 @@ export class PageLineBreaks {
     dirty: { lo: number; hi: number },
     ctx: PageBreaksCtx,
     edit: PartitionEdit | null = null,
-  ): { starts: string[]; pages: string[] } | null {
+  ): string[] | null {
     const n = ids.length;
     /* The per-measure signature-context keys are rebuilt here, not as a side
        effect of measuring a window: with the width caches restored from the
@@ -1353,38 +1317,6 @@ export class PageLineBreaks {
     if (!starts.length) return null;
     starts[0] = 0;   // line 0 always begins the document
 
-    /* ── carry PAGINATION by LINE, not by id (B2, 2026-09-02) ──
-       A page is a run of lines; it keeps the LINE its old start carried to.
-       Carrying by start ID (what this did before) sent a page whose start
-       MEASURE was deleted to the next surviving old START — skipping the
-       remnant of its own first line, which then landed on the previous page:
-       a pagination change no edit asked for. By line, a surviving line never
-       changes page; a page whose every line vanished collapses into its
-       successor (the renderer removes the emptied page element). Tracked as
-       indices into `starts` through the break edits and F below, because a
-       line inserted or removed shifts every later page's line index. The
-       renderer re-fits pages from the first changed one regardless. */
-    const oldLineOf = new Map(this.startIds!.map((id, k) => [id, k]));
-    const pageLines: number[] = [];
-    for (const pid of this.pageStartIds) {
-      const kOld = oldLineOf.get(pid);
-      if (kOld == null) return null;   // page start is not a line start → derive
-      let li: number | null = null;
-      for (let k = kOld; k < oldLineToNew.length && li === null; k++) li = oldLineToNew[k];
-      if (li === null) continue;                                  // page at the end, everything gone
-      if (pageLines.length && li <= pageLines[pageLines.length - 1]) continue;   // collapsed into its predecessor
-      pageLines.push(li);
-    }
-    if (this.pageStartIds.length) {
-      if (!pageLines.length || pageLines[0] !== 0) pageLines.unshift(0);
-      if (pageLines.length > 1 && pageLines[1] === 0) pageLines.splice(1, 1);
-    }
-    /* A repair that inserts a new line at position k+1 shifts the line index
-       of every page starting at or after it. */
-    const lineInserted = (at: number): void => {
-      for (let p = 0; p < pageLines.length; p++) if (pageLines[p] >= at) pageLines[p]++;
-    };
-
     /* Dirty measures must be re-measured; drop their cached naturals. */
     for (let i = dLo; i <= dHi; i++) this.naturals.delete(ids[i]);
 
@@ -1440,7 +1372,6 @@ export class PageLineBreaks {
         while (k < starts.length && starts[k] < at) k++;
         if (k < starts.length && starts[k] === at) { touch(starts[k - 1], lineEndAt(k) - 1); continue; }
         starts.splice(k, 0, at);
-        lineInserted(k);
         touch(starts[k - 1], lineEndAt(k) - 1);
       }
       /* Removed breaks: the boundary is no longer hard. Examine the line
@@ -1483,7 +1414,7 @@ export class PageLineBreaks {
            edit dirtied (measured above), so this is normally free. */
         if (!ensureRange(starts[kLo], mTo - 1)) return null;
         lb.sections++;
-        const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, units, lb);
+        const r = this.balanceSectionLines(starts, kLo, kHi, ids, units, lb);
         if (r.reason) { this.lastBalance = lb; return null; }   // F never runs on partial widths
         if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
       }
@@ -1498,7 +1429,7 @@ export class PageLineBreaks {
     for (const id of after) if (!before.has(id)) movedLines++;
     for (const id of before) if (!after.has(id)) movedLines++;
     this.lastRefillLines = movedLines;
-    return { starts: out, pages: pageLines.map((li) => out[li]) };
+    return out;
   }
 
   /* ── the partition: F per section ─────────────────────────────────────── */
@@ -1521,7 +1452,7 @@ export class PageLineBreaks {
 
   /** Partition the section occupying lines [kLo..kHi] of `starts` with F
    *  (balance.ts `partitionSection`) and splice its answer in place: `starts`
-   *  and `pageLines` (page-start line indices) are updated, and the line count
+   *  is updated (pages are the assembler's fit, never carried), and the line count
    *  may shrink OR grow — it is greedy's count over the CURRENT content, never
    *  a function of the incumbent. The section is FINAL when it ends the
    *  document (F keeps a final section under FINAL_GREEDY_BELOW lines greedy).
@@ -1530,7 +1461,7 @@ export class PageLineBreaks {
    *  against a phantom document. The pick is recorded in `stats.picks`.
    *  Reasons: '' (applied, or nothing moved), 'naturals incomplete'. */
   private balanceSectionLines(
-    starts: number[], pageLines: number[], kLo: number, kHi: number, ids: string[],
+    starts: number[], kLo: number, kHi: number, ids: string[],
     units: RenderUnitIndex, stats: BalanceStats,
   ): { applied: boolean; reason: string; changed: number; removed: number } {
     const n = ids.length;
@@ -1554,7 +1485,6 @@ export class PageLineBreaks {
     for (const x of after) if (!before.has(x)) changed++;
     if (changed === 0) return { applied: false, reason: '', changed: 0, removed: 0 };
     starts.splice(kLo, n0, ...secStarts);
-    linesReplaced(pageLines, kLo, n0, n1, starts.length);
     return { applied: true, reason: '', changed, removed: n0 - n1 };
   }
 
@@ -1582,17 +1512,14 @@ export class PageLineBreaks {
     return true;
   }
 
-  /** The committed partition as line indices + page-start line indices, or
-   *  null when an id is missing from the document. */
-  private indexedPartition(ids: string[]): { starts: number[]; pageLines: number[] } | null {
+  /** The committed partition as line indices, or null when an id is missing
+   *  from the document. */
+  private indexedPartition(ids: string[]): number[] | null {
     if (this.startIds === null) return null;
     const idIdx = new Map(ids.map((id, i) => [id, i]));
     const starts: number[] = [];
     for (const id of this.startIds) { const i = idIdx.get(id); if (i == null) return null; starts.push(i); }
-    const lineAt = new Map(this.startIds.map((id, k) => [id, k]));
-    const pageLines: number[] = [];
-    for (const id of this.pageStartIds) { const k = lineAt.get(id); if (k == null) return null; pageLines.push(k); }
-    return { starts, pageLines };
+    return starts;
   }
 
   /** The load's partition: F over EVERY section, run SYNCHRONOUSLY before the
@@ -1610,10 +1537,9 @@ export class PageLineBreaks {
     if (this.budgetW <= 0) this.budgetW = budget;
     const meiMeasures = model.allMeasures();
     const ids = measureIds(meiMeasures);
-    const part = this.indexedPartition(ids);
-    if (!part) return;
+    const starts = this.indexedPartition(ids);
+    if (!starts) return;
     this.ensureSigCtx(model, meiMeasures, ids, ctx);   // keys before any fill (see repartition)
-    const { starts, pageLines } = part;
     const hard = hardStartIds(model);
     const units = model.renderUnits(this.viewStaves);
     const secs = sectionRanges(starts, ids, hard);
@@ -1623,7 +1549,7 @@ export class PageLineBreaks {
       lb.sections++;
       const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : ids.length;
       if (this.measureMissing(model, meiMeasures, ids, mFrom, mTo - 1, ctx, Infinity) !== true) { lb.reasons.push('naturals window failed'); continue; }
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, units, lb);
+      const r = this.balanceSectionLines(starts, kLo, kHi, ids, units, lb);
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; touched = true; }
     }
@@ -2010,11 +1936,13 @@ export class PageLineBreaks {
 
   /* ── post-render verification ─────────────────────────────────────────── */
 
-  /** After a refill render, check that every mounted page's system starts form
-   *  a contiguous, in-order run of the pinned partition. smartSb0 can in rare
-   *  cases auto-wrap a pinned line it deems overfull (the k87 class) — that is
-   *  detected here, warned about, and healed by re-adopting from the rendered
-   *  layout; under HKL_INDEX_CHECK it throws so fixtures fail loudly. */
+  /** After every refill render, check that every mounted page's systems form
+   *  a contiguous, in-order run of the pinned partition and that each page
+   *  begins where its pin says. Nothing may leave a mounted page holding
+   *  systems the fit did not give it (2026-10-21, Max: "no path should allow
+   *  pagination to be stale on mounted lines"), so a divergence is an ERROR
+   *  in every mode — the suite fails any fixture that logs one — and under
+   *  HKL_INDEX_CHECK it throws. */
   verifyRenderedPartition(container: HTMLElement, model: ComposerModel, pageCount: number, ctx: PageBreaksCtx): boolean {
     if (this.startIds === null) return true;
     const pos = new Map(this.startIds.map((id, i) => [id, i]));
@@ -2051,21 +1979,17 @@ export class PageLineBreaks {
       if (indexCheckEnabled()) {
         throw new Error('[page-breaks] rendered partition diverged from the pinned one (castoff override?)');
       }
-      console.warn('[page-breaks] rendered partition diverged from pins');
+      console.error('[page-breaks] rendered pagination diverged from the committed pins (a mounted page holds systems the fit did not give it)');
     }
     return ok;
   }
 }
 
-/** Horizontal extent of a rendered measure's staff line, from the SVG text
- *  (no layout): the first horizontal `M x1 y L x2 y` path directly under the
- *  measure's first `g.staff`. Verovio emits the five staff lines as such paths
- *  with absolute page coordinates; consecutive measures' lines abut, so the
- *  span is exactly what the previous `getBBox` reading measured as
- *  `next.x − this.x` (and as `bbox.width` for a window's last measure). Null
- *  when the shape is not what we expect — the caller then refuses the window
- *  (a derive), never guesses. */
-function staffLineSpan(measureEl: Element): number | null {
+/** A rendered measure's staff line, from the SVG text (no layout): the first
+ *  horizontal `M x1 y L x2 y` path directly under the measure's first
+ *  `g.staff`. Verovio emits the five staff lines as such paths with absolute
+ *  page coordinates. Null when the shape is not what we expect. */
+function staffLine(measureEl: Element): { x1: number; x2: number } | null {
   const staff = measureEl.querySelector('g.staff');
   if (!staff) return null;
   for (const p of Array.from(staff.children)) {
@@ -2074,17 +1998,34 @@ function staffLineSpan(measureEl: Element): number | null {
     if (!m) continue;
     const y1 = Number(m[2]), y2 = Number(m[4]);
     if (Math.abs(y1 - y2) > 1e-6) continue;
-    return Number(m[3]) - Number(m[1]);
+    return { x1: Number(m[1]), x2: Number(m[3]) };
   }
   return null;
 }
 
+/** Horizontal extent of a rendered measure's staff line (`staffLine`).
+ *  Consecutive measures' lines abut, so the span is exactly what the previous
+ *  `getBBox` reading measured as `next.x − this.x` (and as `bbox.width` for a
+ *  window's last measure). Null when the shape is not what we expect — the
+ *  caller then refuses the window (a derive), never guesses. */
+function staffLineSpan(measureEl: Element): number | null {
+  const line = staffLine(measureEl);
+  return line ? line.x2 - line.x1 : null;
+}
+
 /** Leading clef+key extent (meter excluded — mid-score systems don't redraw
  *  it) of a naturals window: sig glyphs left of the first note/rest/chord,
- *  measured from the first measure's bbox left edge. Needs glyph ink metrics,
- *  so this is the one place the window is attached and laid out; called only
- *  when the value could differ from the retained one (see measureWindow). The
- *  formula is unchanged from the pre-A7 reading so the value is identical. */
+ *  measured from the first measure's STAFF-LINE START, where a page-view
+ *  system's music may begin. Not from the measure's bbox: Verovio draws the
+ *  system-start measure number inside the first `g.measure`, centred on the
+ *  staff start, so the bbox edge added half the number's width (+72 for one
+ *  digit, +144 for two) and made the width depend on the bar it happened to be
+ *  measured under — a reload, measuring a context's first bar afresh, could
+ *  disagree with a live session that measured it before a renumber
+ *  (decisions.md 2026-10-21; fixture partF_sigWidthIgnoresBarNumber). Needs
+ *  glyph ink metrics, so this is the one place the window is attached and laid
+ *  out; called only when the value could differ from the retained one (see
+ *  measureWindow). */
 function measureLeadingSigW(svg: string, firstId: string): number {
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0';
@@ -2092,8 +2033,9 @@ function measureLeadingSigW(svg: string, firstId: string): number {
   document.body.appendChild(host);
   try {
     const first = host.querySelector('#' + CSS.escape(firstId)) as SVGGraphicsElement | null;
-    if (!first) return 0;
-    const x0 = first.getBBox().x;
+    const line = first ? staffLine(first) : null;
+    if (!line) return 0;
+    const x0 = line.x1;
     let firstContent = Infinity;
     for (const el of Array.from(host.querySelectorAll('g.note, g.rest, g.chord, g.mRest'))) {
       const b = (el as SVGGraphicsElement).getBBox();
@@ -2120,10 +2062,11 @@ function measureLeadingSigW(svg: string, firstId: string): number {
  *  this costs nothing there.
  *
  *  Do NOT measure this from the first measure's offset instead: later systems
- *  carry a MEASURE NUMBER that hangs left of the staff (system bbox x = −220),
- *  so differencing the two offsets answers a different question and gave 1690
- *  where the truth is 2009. The staff edge is the quantity that matters —
- *  it is where the music may start. */
+ *  carry ink left of the staff — the brace at −220…−60 (the system bbox's left
+ *  edge) and the measure number, centred on the staff start inside the first
+ *  measure (measured 2026-10-21) — so differencing the two offsets answers a
+ *  different question and gave 1690 where the truth is 2009. The staff edge is
+ *  the quantity that matters — it is where the music may start. */
 function measureLabelIndent(svg: string): number {
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0';

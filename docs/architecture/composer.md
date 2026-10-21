@@ -528,7 +528,10 @@ shells** (`render/pageshell.ts`), which also draw the page header.
   widths (measured in unjustified `breaks:'none'` windows, read from the SVG
   path text), over the budget `(pageWidth − margins) × 10`. The leading block
   is the clef + key a line starting at that measure draws (measured once per
-  signature context, `sigWForLine`); the document's first line pays the
+  signature context, `sigWForLine`, from the staff line's start to the last
+  signature glyph — never from the measure's bbox, which holds the
+  system-start bar number centred on the staff start); the document's first
+  line pays the
   instrument-name indent instead, since its clef and key sit inside measure
   0's natural width.
 - **The partition is one pure function of the document, F**
@@ -574,14 +577,24 @@ also how a user forces a layout F would not pick. A padlock
 joined section is re-partitioned (the layout a reload of the unlocked
 document shows).
 
-**The system splice** (`PageSystemSplicer`, `render/pagesplice.ts`): when a
-refill's change is local, the affected lines are re-engraved in one window
-and swapped into the mounted pages — no full-document `loadData`. The changed
-run is closed over spanners (drawn and edited), endings and clef relocation;
-the replaced set is clipped to the band of mounted pages, and lines beyond it
-are deferred: such a page is parked and rebuilt from its committed lines when
-it next mounts. When the hunk path refuses, `PageAssembler.applyPartition`
-engraves the reached lines one window each and reuses every other system.
+**One landing for every refill** (2026-10-21). The splicer
+(`PageSystemSplicer`, `render/pagesplice.ts`) only ENGRAVES: it closes the
+changed run over spanners (drawn and edited), endings and clef relocation,
+clips the hunk to the band of mounted pages around the edit, and engraves
+those lines in one window (no full-document `loadData`). It places nothing.
+`PageAssembler.applyPartition` then lands every refill the same way: it takes
+the splicer's systems (or engraves the changed lines on mounted pages one
+window each when the splicer refused), re-runs first-fit from one page before
+the first affected line, and compares the fit with what each page actually
+holds — the systems in its DOM, mounted or parked; only a page with no DOM is
+compared by its old pins. A page whose start and end the fit keeps is
+refreshed in place (systems swapped, inserted or removed); a page whose
+membership changes is rebuilt by moving systems between shells, or becomes a
+deferred card when it is not mounted. The refill never carries page starts:
+the pins stay provisional (old page starts that are still line starts) until
+the fit commits. `verifyRenderedPartition` checks after every refill that each
+mounted page holds exactly its pinned lines and logs an error otherwise (it
+throws under `HKL_INDEX_CHECK`).
 
 **Only mounted pages are engraved** (2026-10-20). Pagination (first-fit,
 below) runs over every line, but a line on an unmounted page whose
@@ -634,9 +647,10 @@ the measured extents in the `ExtentsStore` — a page's membership depends only
 on the lines before it. A load creates a sized card for every expected page,
 builds pages synchronously until the cursor's page closes, then in 60 ms
 `MessageChannel` slices. Closing a page places it (v2), reveals it, runs the
-page-mount hook and commits its page start. An edit re-runs first-fit from one
-page before the first affected line and rebuilds only pages whose first or
-last line changed; later pages are renumbered. Add instrument is the one edit
+page-mount hook and commits its page start. Every edit re-runs first-fit from
+one page before the first affected line, against what the pages hold (above):
+a page whose first and last line stay is refreshed in place, a page whose
+first or last line changed is rebuilt, later pages are renumbered. Add instrument is the one edit
 that re-assembles everything. Gate: the suite's `assertPaginationFirstFit` —
 no mounted page overflows, none has room for the next page's first system.
 

@@ -1009,6 +1009,22 @@ export const FIXTURES = {
     setup: partfDoc(160),
     skipCursorTrace: true,
   },
+  /* A context's leading-block width must not depend on the bar NUMBER it was
+   * measured under: Verovio centres the system-start number on the staff
+   * start inside the first g.measure, so measuring from that measure's bbox
+   * added half the number's width (+72 one digit, +144 two). A mid-measure
+   * clef in bar 8 starts a new context at bar "9"; a bar inserted at the front
+   * renumbers it "10". Live keeps the width it measured; a reload measures
+   * afresh — they must agree. */
+  partF_sigWidthIgnoresBarNumber: {
+    setup: partfDoc(24) + `
+      const flat = m['flatChildren'](1); const meas = m.allMeasures()[7];
+      const first = flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === meas);
+      m.setClefAtCursor(1, first + 2, 'F', '4', null, null);
+      r();`,
+    skipCursorTrace: true,
+    fullRender: 'the assertion reloads the document (a load is a full assembly by design)',
+  },
 };
 
 
@@ -2434,12 +2450,40 @@ export const ASSERTIONS = {
         await settle();
         const fresh = { nat9: pb['naturals'].get(I[9]), key10: pb['sigCtxKeys'][10], sig10: pb['sigWForLineQuiet'](10), lines: pb.lineStarts().join(), pages: pb.pageStarts().join() };
         if (live.nat9 == null || fresh.nat9 == null || Math.abs(live.nat9 - fresh.nat9) > 0.01) return { ok: false, detail: 'bar 10 natural: live ' + live.nat9 + ' vs reload ' + fresh.nat9 + ' (the relocated clef is drawn there)' };
-        /* The CONTEXT must agree; its measured width may differ by the measure
-           number it was measured under (lessons.md 2026-10-20) — open. */
+        /* The context and its width must agree (the width no longer depends on
+           the bar number it was measured under — partF_sigWidthIgnoresBarNumber). */
         if (live.key10 !== fresh.key10) return { ok: false, detail: 'signature context at bar 11: live ' + live.key10 + ' vs reload ' + fresh.key10 };
+        if (live.sig10 == null || fresh.sig10 == null || Math.abs(live.sig10 - fresh.sig10) > 0.01) return { ok: false, detail: 'leading block at bar 11: live ' + live.sig10 + ' vs reload ' + fresh.sig10 };
         if (live.lines !== fresh.lines) return { ok: false, detail: 'reload re-partitioned' };
         if (live.pages !== fresh.pages) return { ok: false, detail: 'reload re-paginated' };
         return { ok: true, detail: 'nat ' + live.nat9 + ', sig live ' + live.sig10 + ' / reload ' + fresh.sig10 };
+      })()` },
+  ],
+  partF_sigWidthIgnoresBarNumber: [
+    { name: 'a context first measured under bar "9" and renumbered "10" by an insert has the same leading-block width live and after a reload; the partition agrees',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        const nOf = (i) => m.allMeasures()[i].getAttribute('n');
+        const keys = () => pb['sigCtxKeys'];
+        const k0 = keys();
+        if (nOf(8) !== '9' || k0[8] === k0[7] || k0.indexOf(k0[8]) !== 8) return { ok: false, detail: 'fixture cannot pose the case: context ' + k0[8] + ' at bar ' + nOf(8) + ' (prev ' + k0[7] + ', first at ' + k0.indexOf(k0[8]) + ')' };
+        const ctx = k0[8];
+        const before = pb['sigWByCtx'].get(ctx);
+        m.insertMeasureAt(0);
+        H.reRender(); await settle();
+        const k1 = keys();
+        if (nOf(9) !== '10' || k1[9] !== ctx || k1.indexOf(ctx) !== 9) return { ok: false, detail: 'insert did not renumber the context start to "10": bar ' + nOf(9) + ', key ' + k1[9] };
+        if (!isF()) return { ok: false, detail: 'the live partition is not F' };
+        const live = { w: pb['sigWByCtx'].get(ctx), lines: pb.lineStarts().join(), pages: pb.pageStarts().join() };
+        window.__composerLoadHkc(m.serialize());
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        await settle();
+        const fresh = { w: pb['sigWByCtx'].get(ctx), lines: pb.lineStarts().join(), pages: pb.pageStarts().join() };
+        if (live.w == null || fresh.w == null || Math.abs(live.w - fresh.w) > 0.01) return { ok: false, detail: 'leading block of ' + ctx + ': measured under "9" ' + before + ', live after insert ' + live.w + ', reload under "10" ' + fresh.w };
+        if (live.lines !== fresh.lines) return { ok: false, detail: 'reload re-partitioned' };
+        if (live.pages !== fresh.pages) return { ok: false, detail: 'reload re-paginated' };
+        return { ok: true, detail: 'width ' + live.w + ' live = reload' };
       })()` },
   ],
 };

@@ -1,7 +1,7 @@
 # Spec: one partition function for load and edit
 
-**Status (end of 2026-10-20)**: design DECIDED by Max; Phases 0–4 DONE and
-verified (Phase 4 = clean-up); what remains is under "Open items". The
+**Status (2026-10-21)**: design DECIDED by Max; Phases 0–4 DONE and
+verified (Phase 4 = clean-up); nothing open (see "Open items"). The
 implementation is in the working tree and was NOT committed at the end of the
 session (commits are Max's). Decisions: decisions.md "Partition: the reach-back
 curve" (the design), "Partition F lands: one function for load and edit; only
@@ -20,7 +20,8 @@ spec's two 2026-10-19 revisions (page-causal; greedy + one target T).
 - **Load**: `linebreaks.ts` `balanceInitialBand` runs F over every section
   (after `seedPartition` + `warmAllNaturals`) before the first paint.
 - **Edit**: `linebreaks.ts` `repartition` carries the partition by line
-  membership (which sections were touched; pages kept by line), splits/joins at
+  membership (which sections were touched; pages are not carried — the
+  renderer re-fits them after every refill), splits/joins at
   added/removed hard starts, then runs F over every touched section in full
   (`balanceSectionLines`). No repair loop, no legality envelope, no page bound.
 - **Final-system justification**: `PageLineBreaks.finalSystemJustified` →
@@ -90,7 +91,10 @@ naturals) / justified budget.
 4. **Pick** max(`min` − `sd` − γ·`changes`), **γ = 0.03**, ties to fewer
    changes. A flat cost per change is intended: a user forces another layout
    with locks. (On the sonata γ 0.03 reproduces Max's own picks — I: 1 change,
-   II: 0, III: 3, IV: 1.)
+   II: 0, III: 3, IV: 1 — measured on the leading-block widths before the
+   2026-10-21 fix; the corrected widths give I: 2, II: 0, III: 1 (22 lines,
+   min 0.811), IV: 1 — decisions.md "Leading-block width is measured from the
+   staff line's start".)
 
 **Accepted consequences** (Max, 2026-10-20): a section just over one line long
 becomes two lines around 0.5–0.6 rather than one compressed line (the old
@@ -111,8 +115,10 @@ by another name).
 ## Edit path
 
 An edit recomputes F over every touched section in full (≤ 1 ms per sonata
-movement), diffs line starts by measure id, splices the changed lines on the
-mounted pages and re-fits pagination (first-fit) from the first changed page.
+movement), diffs line starts by measure id, engraves the changed lines on the
+mounted pages and re-fits pagination (first-fit) from one page before the first
+changed line, against what each page actually holds — pages are never carried
+(2026-10-21, decisions.md "Every repartition repaginates").
 
 **Unmounted pages are not engraved** (Max, 2026-10-20). A line's height exists
 only once it is engraved, and heights are cached per line membership, not
@@ -180,27 +186,25 @@ the page shows and the fit re-runs.
 
 ## Open items
 
-1. **Leading-block width depends on the measure number it was measured under**
-   (Max to decide). `measureLeadingSigW` measures from the first measure's bbox
-   x, which includes the measure number hanging left of the staff; the same
-   clef+key context measured under bar "11" and bar "12" differs by ~10 units
-   (688.70 vs 678.08), and the cache keeps whichever was measured first, so a
-   near-tie could still make a reload differ from the live layout. Measuring
-   from the staff line's start removes it but moves every leading block by the
-   overhang (line breaks shift everywhere; visual baselines would need review).
-   Not done without Max.
-2. **Firefox-only sub-pixel findings** (pre-existing, not F; lessons.md
-   2026-10-20): a spliced system's crisp right edge follows the page's
-   fractional horizontal scroll (a window narrower than the page; ≤ 0.35 device
-   px; exact in a wide window); `renderer.placeFor`'s first-content top differs
-   from the assembler's fit by a few units, so the fold check reads p. 8 at 21
-   units over a 20-unit tolerance the fit itself placed at 17.75.
-3. **Measure-start clef paths**: the MusicXML importer's boundary clefs and a
-   delete that leaves a mid-measure clef at a measure's start still store a
-   head clef (drawn and saved before the barline by `relocateInitialClefs`).
-   Max, 2026-10-20: do not touch these. The width model handles them (a
-   layer-initial clef keys its leading block from its own measure; an edit
-   re-measures one measure to the left — `partF_clefInitialReload`).
+None.
+
+**Settled, not open:**
+
+- **Leading-block width depended on the bar number** — fixed 2026-10-21
+  (decisions.md "Leading-block width is measured from the staff line's
+  start"). `measureLeadingSigW` measured from the first measure's bbox, and
+  Verovio draws the system-start bar number inside that measure, centred on
+  the staff start: every context first measured under a numbered bar was +72
+  (one digit) or +144 (two) wide — 16 of the sonata's 19 contexts — and a
+  renumber made a live session and a reload disagree. It now measures from the
+  staff line's start (fixture `partF_sigWidthIgnoresBarNumber`, proven failing
+  first: 616.75 under "9" vs 688.70 under "10").
+- **Firefox-only sub-pixel findings** (lessons.md 2026-10-20): not relevant
+  (Max, 2026-10-21); Firefox tolerance-gate failures are accepted for now.
+- **Measure-start clef paths** (the importer's boundary clefs; a delete that
+  leaves a mid-measure clef at a measure's start): out of scope by Max's ruling
+  (2026-10-20, "do not touch these"). The width model handles them
+  (`partF_clefInitialReload`).
 
 ## Phase 0 results (the design measurements)
 

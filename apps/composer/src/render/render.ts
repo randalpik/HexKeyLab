@@ -554,8 +554,8 @@ class Renderer {
    *  stopped refusing such splices for unrelated reasons (a since-deleted probe
    *  reported `optDiff = breaks: stored 'encoded' vs live 'line'`).
    *
-   *  Page ownership still governs what it should: whether a pagination REPAIR
-   *  has pins to move (`repairPagination`, `repairAtMount`). */
+   *  Page ownership still governs what it should: whether pagination is
+   *  Composer's to re-fit (PageAssembler.applyPartition). */
   private paintedBreaks(): 'line' | 'encoded' {
     return this.pageBreaks.ownershipActive() ? 'encoded' : 'line';
   }
@@ -1517,21 +1517,20 @@ class Renderer {
             this.lastPageSpliced = true;   // DOM untouched — the fastest path there is
             return false;
           }
-          /* B2 (2026-09-02): EVERY refill reaches the splicer. A changed line
-             count or a moved page start is a line HUNK to the splicer, not a
-             refusal (it used to be `line count changed` / a silent
-             `paginationHeld` bypass — both O(document) full renders on an
-             ordinary edit), and a page the splice pushed past its paper is
-             repaired by moving the spilled systems onto the next page
-             (repairPagination), never by handing pagination back. Only a
-             refusal, or a spill no step can move, falls through to the full
-             refill render / derive below — with its reason on the splicer. */
-          /* The DOM must hold every page the splice may touch: finish an
-             assembly still in flight (a keystroke right after a load). */
+          /* ONE landing for every refill (2026-10-21, Max: "every repartition
+             must repaginate … no path should allow pagination to be stale on
+             mounted lines"). The splicer ENGRAVES the line hunk in one window
+             when it can (`trySplice` → `lastStaged`); PageAssembler.applyPartition
+             engraves every other changed line on a mounted page, places every
+             system, and re-fits the pages from one page before the first
+             affected line against what each page actually holds. Nothing is
+             placed from carried pins. The DOM must hold every page the edit may
+             touch: finish an assembly still in flight (a keystroke right after
+             a load). */
           this.assembler!.finishSync();
           this.spliceDepth++;
           this.touchedPages = [];
-          let spliced = false, landed = false;
+          let landed = false, engraved = false;
           try {
             if (refill.changedRun !== null) {
               const req: SpliceRequest = {
@@ -1541,77 +1540,56 @@ class Renderer {
                 partitionOnly: refill.partitionOnly,
                 spanners: this.spanners,
               };
-              if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
-                spliced = true;
-                this.registerSpliceEffects();
-                landed = this.assembler!.repaginateFrom(this.pageSplicer.lastPages.slice());
-                this.noteRepagination();
-                if (!landed) {
-                  this.pageSplicer.lastSkipReason = 'repagination refused';
-                  console.warn('[page-splice] repagination refused — re-assembling');
-                }
-              } else {
-                console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — applying the partition line by line');
-              }
+              engraved = this.pageSplicer.trySplice(model, req, this.pageSpliceCtx());
+              if (!engraved) console.info('[page-splice] not spliceable (' + this.pageSplicer.lastSkipReason + ') — engraving the changed lines one window each');
             }
-            if (!spliced) {
-              /* Every edit is a splice (decisions.md "Composer draws the pages",
-                 2026-10-08): the lines the refill's changed run reaches are
-                 re-engraved one window each, every other system is reused, and
-                 pages re-fit from the first affected page — also for a change
-                 that is not a hunk at all (a page break on an existing line
-                 start: no line changes, pages re-fit from its page). */
-              const changed = this.changedLineIdsFor(model, refill.changedRun, refill.newStartIds);
-              landed = this.assembler!.applyPartition(refill.oldStartIds, changed, this.pagesOfBreaks(refill.breakIds));
-              this.noteRepagination();
-              if (landed) {
-                this.pageSplicer.noteApplied();
-                for (const el of this.assembler!.lastRebuiltPages) if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
-              } else {
-                console.warn('[page-splice] partition could not be applied — re-assembling');
-              }
+            /* Every line the edit changed — the splicer's hunk, closed over
+               spanners and endings, when it got that far (deferred lines
+               included: their pages must re-fit too), plus the changed run's
+               own lines. */
+            const changed = this.changedLineIdsFor(model, refill.changedRun, refill.newStartIds);
+            const hunk = this.pageSplicer.lastHunkFull;
+            if (hunk) for (let li = hunk.a; li <= hunk.bNew; li++) { const id = refill.newStartIds[li]; if (id) changed.add(id); }
+            landed = this.assembler!.applyPartition(
+              refill.oldStartIds, changed, this.pagesOfBreaks(refill.breakIds),
+              engraved ? this.pageSplicer.lastStaged : undefined, refill.oldPageStartIds,
+            );
+            this.noteRepagination();
+            if (landed) {
+              if (!engraved) this.pageSplicer.noteApplied();
+              for (const el of this.assembler!.lastRebuiltPages) if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
+            } else {
+              console.warn('[page-splice] partition could not be applied — re-assembling');
             }
           } finally {
             this.spliceDepth--;
           }
           if (landed) {
             this.lastPageSpliced = true;
-            /* The page's furniture follows its content: a splice that lands a
-               new section header needs its title injected, exactly as a mount
-               does (the hook is idempotent — both injectors replace what they
-               find). Pages the rebuild created already got it; harmless twice. */
+            /* The page's furniture follows its content: a page the rebuild
+               created gets its section titles and padlocks as a mount does
+               (the hooks are idempotent). */
             for (const el of this.touchedPages) this.onPageMountedCb?.(el);
             for (const el of this.touchedPages) this.drawLockMarks(el);
             this.pageBreaks.verifyRenderedPartition(
               this.container!, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
-            /* Reference gate (test mode): after the splice AND its repair have
-               settled, against the owner's CURRENT pins — a cascade moved them
-               past what the refill committed. */
+            /* Reference gate (test mode): after the pages have settled,
+               against the owner's CURRENT pins (the fit committed them). */
             if (indexCheckEnabled()) {
               this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
-              /* The cascade is the ONLY fit check on this path — overflowingPage
-                 runs on the full-render branches alone. Nothing asserted that it
-                 had actually run, which is exactly how a one-page score piled
-                 every new system past the bottom of page 1, silently and without
-                 a warning, until a full render happened to rebuild it
-                 (2026-09-18). Assert the OUTCOME, so any future path that skips
-                 the repair fails the suite instead of shipping. */
+              /* The fit is the ONLY fit check on this path — overflowingPage
+                 runs on the full-render branches alone. Assert the OUTCOME, so
+                 any future path that skips it fails the suite instead of
+                 shipping (a one-page score once piled every new system past
+                 the bottom of page 1, 2026-09-18). */
               const over = this.overflowingPage();
               if (over !== 0) {
-                throw new Error('[page-splice] page ' + over + ' is drawn past its paper after a landed splice'
+                throw new Error('[page-splice] page ' + over + ' is drawn past its paper after a landed edit'
                   + ' (pageStarts=' + this.pageBreaks.pageStarts().length
                   + ', repairable=' + this.pageBreaks.paginationRepairable() + ')');
               }
             }
             return false;
-          }
-          if (spliced) {
-            /* The surgery landed but a spill could not be moved on; the DOM is
-               part-way. Derive from the model (pins are already restored to
-               the last consistent pagination by the failed step). */
-            this.assembleDocument(model, viewStaves, true);
-            this.lastPageSpliced = false;
-            return true;
           }
         }
         /* Not spliceable: re-assemble every page from the partition the refill
@@ -1863,30 +1841,6 @@ class Renderer {
 
 
 
-  /** Book-keeping after a landed splice (edit or cascade step): remove emptied
-   *  pages, mark every touched page stale (the live toolkit still holds the
-   *  pre-edit layout for them — every OTHER page still mounts for free), and
-   *  refresh the splicer's page-number diagnostics under the final numbering. */
-  private registerSpliceEffects(): void {
-    const ps = this.pageSplicer;
-    for (const div of ps.lastEmptiedPages) this.assembler?.removePage(div);
-    /* Pages the splice DEFERRED (2026-09-02): their hunk lines were not
-       re-engraved because they lie outside the mounted band. Mark them stale so
-       the next mount redraws them from the committed pins, and return any that
-       are still drawn to placeholders — a drawn page holding pre-edit systems
-       under post-edit pins is exactly what verifyRenderedPartition fails on. */
-    this.assembler?.markDeferred(ps.lastDeferredPages);
-    const nums: number[] = [];
-    for (const el of ps.lastPageEls) {
-      if (!el.isConnected) continue;
-      const p = Number(el.dataset.page);
-      if (!(p >= 1)) continue;
-      nums.push(p);
-      if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
-    }
-    ps.lastPages = nums;
-  }
-
   /** Systems of a mounted page that sit past its paper: the index of the first
    *  system whose bottom crosses the page box (−1 when the page fits). Same
    *  tolerance as overflowingPage: a system's bbox includes hanging content
@@ -2064,10 +2018,14 @@ class Renderer {
    *  `(pageWidth − marginLeft − marginRight) × 10` plus a CONSTANT ~222 that
    *  does not scale with either term.
    *
-   *  That constant is why this no longer reads the DOM. It is `getBBox()` ink
-   *  overhang — stroke extents on the system's own bbox — and the per-measure
-   *  naturals this budget divides do NOT carry it (their bboxes sum to the
-   *  content width, 220 short of the system bbox). Measuring the system
+   *  That constant is why this no longer reads the DOM. On a braced score it
+   *  is the brace, which Verovio draws left of the staff in the page margin:
+   *  every later system's bbox starts at x = −220, the brace's left edge,
+   *  while its staff runs from 0 to exactly this budget (measured 2026-10-21;
+   *  the first system's staff starts after the instrument names and the
+   *  brace, which line 0 pays as `labelIndentW`). The per-measure naturals
+   *  this budget divides do NOT carry it (their bboxes sum to the content
+   *  width, 220 short of the system bbox). Measuring the system
    *  therefore inflated the budget by ~1.2 %, which made every fill ~1.2 % too
    *  SMALL and pushed marginal lines under the balancer's MIN_FILL floor of
    *  the time (0.65, retired 2026-10-20): an 8-measure locked
