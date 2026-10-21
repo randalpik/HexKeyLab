@@ -9,9 +9,15 @@
 // page, the reference render's placement against the live page's ACTUAL staff
 // tops, reporting the full distribution instead of a pass/fail.
 //
-// The reference host is given the same staff alignment a live page gets, at the
-// LIVE page's device phase — without that it is aligned under a false premise
-// and the comparison measures the harness rather than the product.
+// The reference is the GATE's own (PageSystemSplicer.referenceTops — the same
+// construction and placement rule as verifyAgainstReference, with no
+// tolerance): Composer's page header drawn on it, post passes and staff
+// alignment at the live page's device phase, placed distributed with its page
+// number. Until 2026-10-20 the census built its own reference without the
+// header and placed it without the page number, so every page-1 title block
+// (−820) and section-header band (+2890/+3050 on the sonata) read as splice
+// error even on a fresh load with no edit — a census that drifts from its gate
+// measures itself.
 //
 // Chunk it (the runner's eval deadline is 300 s):
 //   node test/composer-inspect/sonata-probes/run-probe.mjs test/composer-inspect/sonata-probes/splice-exactness-census.js --arg "from=1,limit=29"
@@ -19,9 +25,10 @@
 //   nonZero == 0  -> that (edit, page) is exact
 //   maxAbs        -> worst per-system deviation, in SVG user units (10 = 1 device px)
 //
-// Baseline at the time of writing: 317 of 338 pairs exact, 0 deviating by 30 or
-// more, remainder exactly one device pixel on pages 2/4/25. Before Phase 3.5 it
-// was 10 of 338 exact with a median around 9 units.
+// Baseline at the time of writing (2026-09-03, Verovio's own pages): 317 of 338
+// pairs exact, 0 deviating by 30 or more, remainder exactly one device pixel on
+// pages 2/4/25. Before Phase 3.5 it was 10 of 338 exact with a median around 9
+// units. `self` (the live page against its own placement) should be 0 always.
 const H = window.__hkl_composer;
 const r = H.renderer, model = H.model, reRender = H.reRender;
 const pb = r['pageBreaks'];
@@ -212,42 +219,22 @@ for (let li = FROM; li < nLines && measured < LIMIT; li += STRIDE) {
   try { reRender(); } catch (e) { row.gateThrow = String((e && e.message) || e).slice(0, 400); }
   await waitFor(badgeHidden, 60000, 30);
   row.wallMs = Math.round(performance.now() - t0);
-  /* EXACTNESS CENSUS — no tolerance. For every mounted page, place the live
-     systems and a full re-engrave's systems by the SAME rule (ctx.placeFor, one
-     coordinate space) and record every per-system difference. */
-  (() => {
-    const ctx = r['pageSpliceCtx']();
-    const mei = r['pinnedMeiForCurrentModel']();
-    if (!mei) return;
-    ctx.toolkit.setOptions(ctx.liveOptions());
-    if (!ctx.toolkit.loadData(mei)) return;
+  /* EXACTNESS CENSUS — no tolerance, by the gate's own reference and rule
+     (PageSystemSplicer.referenceTops): for every mounted page, the reference's
+     placed staff tops minus the live page's (`ds`), and the live page against
+     its own placement (`selfDs`). */
+  {
+    const mounted = Array.from(container.querySelectorAll('.score-page:not(.score-page-pending)'));
     const per = [];
-    for (const pgEl of Array.from(container.querySelectorAll('.score-page:not(.score-page-pending)'))) {
-      const pn = +pgEl.dataset.page;
-      if (!(pn >= 1) || pn > ctx.toolkit.getPageCount()) continue;
-      const h = document.createElement('div');
-      h.style.cssText = 'position:absolute;left:-99999px;top:0';
-      h.innerHTML = ctx.toolkit.renderToSVG(pn, {});
-      document.body.appendChild(h);
-      r['postProcessRendered'](h);
-      /* same decoration a live page gets — volta styling changes `above` */
-      try { r['pageSpliceCtx']().decorateHost(h); } catch (e) { /* older builds */ }
-      r['alignStavesIn'](h, r['originPhaseOf'](pgEl));
-      const refSys = Array.from(h.querySelectorAll('g.system'));
-      const liveSys = Array.from(pgEl.querySelectorAll('g.system'));
-      if (refSys.length === liveSys.length && refSys.length) {
-        const er = ctx.placeFor(refSys), el = ctx.placeFor(liveSys);
-        if (er && el) {
-          const ds = [];
-          for (let i = 0; i < refSys.length; i++) ds.push(+(er[i].top - el[i].top).toFixed(2));
-          const nz = ds.filter((x) => Math.abs(x) > 0.005).length;
-          per.push({ page: pn, sys: refSys.length, nonZero: nz, maxAbs: +Math.max.apply(null, ds.map(Math.abs)).toFixed(2), ds: ds });
-        }
-      }
-      h.remove();
+    for (const e of ps.referenceTops(r['pinnedMeiForCurrentModel'](), mounted, r['pageSpliceCtx']())) {
+      if (!e.ds) { per.push({ page: e.page, refSys: e.refSys, liveSys: e.liveSys }); continue; }
+      const nz = e.ds.filter((x) => !(Math.abs(x) <= 0.005)).length;
+      const maxAbs = Math.max(...e.ds.map((x) => (Number.isNaN(x) ? Infinity : Math.abs(x))));
+      const selfMax = Math.max(...e.self.map((x) => (Number.isNaN(x) ? Infinity : Math.abs(x))));
+      per.push({ page: e.page, sys: e.sys, nonZero: nz, maxAbs: +maxAbs.toFixed(2), ds: e.ds, selfMax: +selfMax.toFixed(2) });
     }
     row.exact = per;
-  })();
+  }
   /* "Returned truthy" is not proof an edit landed — that exact hole let two
      battery edits silently no-op for months. Assert the document changed. */
   row.editOk = model.docVersion() !== ver0;

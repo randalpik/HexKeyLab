@@ -1,11 +1,18 @@
 # Spec: one partition function for load and edit
 
 **Status (2026-10-20)**: design DECIDED by Max; Phase 0 (measurement) DONE;
-**Phases 1–4 (implementation) NOT STARTED** — the app still partitions with
-today's balancer (`balanceSection` at [MIN_FILL 0.65, FIT_MAX 1.45] on load,
-the bounded suffix `balanceTouched` on edit). The function below exists only
-as a simulation: `test/balance/partition-f.mjs` (`curve`, `curveTable`,
-`greedyStarts`) and `test/balance/curve-batch.mjs` (`distinctLayouts`, `pick`).
+**Phases 1–3 IMPLEMENTED** — F is `apps/composer/src/render/balance.ts`
+`partitionSection` (+ `sectionAtoms`), run by `linebreaks.ts` on load
+(`balanceInitialBand`) and edit (`repartition`); the repair loop,
+`balanceTouched` and MIN_FILL / FIT_MAX are gone. Pagination of a re-flowed
+unmounted tail: decisions.md "Partition F lands". Phase 3's Firefox
+measurement is DONE (headless Firefox, `run-probe.mjs --firefox`, sonata,
+median of 3): a note delete 102–162 ms and its undo 182–265 ms (F ≤ 1 ms); a
+bar inserted at m. 3 re-flows movement I's tail (38 boundaries) in 397 ms,
+leaving 7 unmounted pages deferred, each engraved on mount in ~480 ms; a bar
+at m. 241 445 ms. Phase 4 (retiring the line-break commands' `LayoutSnapshot`
+restore) is open. The simulation twin stays as the
+reference: `test/balance/partition-f.mjs` + `curve-batch.mjs`.
 Supersedes this spec's two 2026-10-19 revisions (page-causal; greedy + one
 target T). Decisions: decisions.md "Partition: whole-section greedy lines with
 deficit windows" (superseded) and "Partition: the reach-back curve" (current).

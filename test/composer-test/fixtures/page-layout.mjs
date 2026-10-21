@@ -48,6 +48,64 @@ const LOCK_SETUP = lockSetup(48);
 
 const LOCK_SETUP_18 = lockSetup(72);
 
+/* The partition spec's justification rule (2026-10-20), read off the mounted
+ * systems: every system but the document's last is justified, and the last is
+ * justified exactly when the owner says so (`finalSystemJustified`: its section
+ * was balanced by F, or it stayed greedy at fill ≥ 0.70). An expression taking
+ * the renderer; '' when the rule holds, else what broke. */
+const JUSTIFY_RULE = `((r) => {
+  if (typeof r.mountAllPages === 'function') r.mountAllPages();
+  const pb = r['pageBreaks'];
+  const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
+  if (ws.length < 2) return 'only ' + ws.length + ' systems';
+  const max = Math.max(...ws), last = ws[ws.length - 1], fmt = ws.map((w) => Math.round(w)).join(',');
+  if (ws.slice(0, -1).some((w) => w < 0.98 * max)) return 'a non-final system is unjustified: ' + fmt;
+  const want = pb.finalSystemJustified();
+  if (want === null) return 'finalSystemJustified unknown';
+  if (want !== (last >= 0.98 * max)) return 'the last system ' + (want ? 'should be justified' : 'should be at natural width') + ': ' + fmt;
+  return '';
+})`;
+
+/* Uniform test material: `bars` 4/4 bars of quarters alternating a high
+ * ledger-line bar and a mid-staff bar (varying system heights), optionally a
+ * section header before measure `headerAt`. */
+const partfDoc = (bars, headerAt = -1) => `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * ${bars}; i++) {
+        const high = (Math.floor(i / 4) % 2) === 0;
+        m.insertChordAtCursor({ notes: [mk(high ? 'g' : 'b', high ? 6 : 4)], duration: '4', dots: 0 });
+      }
+      ${headerAt >= 0 ? `m.setSectionHeaderAt(${headerAt}, 'II');` : ''}
+      r();`;
+
+/* Shared in-page helpers for the partition-F assertions. */
+const PARTF_LIB = `
+        const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
+        const settle = async () => {
+          await window.__waitForRender();
+          for (let i = 0; i < 500; i++) { const b = document.getElementById('renderBusy'); if (!b || b.hidden) break; await new Promise((res) => setTimeout(res, 20)); }
+          await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+        };
+        const J = JSON.stringify;
+        const ids = () => m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const state = () => {
+          if (typeof r.mountAllPages === 'function') r.mountAllPages();
+          /* Where each measure is ON ITS PAGE (client rect relative to the card):
+             a system's local coordinates depend on the Verovio window it was
+             engraved in, its placement is a transform above it. */
+          const geom = {};
+          for (const el of document.querySelectorAll('#score .score-page:not(.score-page-pending) g.measure')) {
+            const pg = el.closest('.score-page'); const b = el.getBoundingClientRect(), c = pg.getBoundingClientRect();
+            geom[el.id] = [pg.dataset.page, +(b.left - c.left).toFixed(1), +(b.top - c.top).toFixed(1), +b.width.toFixed(1), +b.height.toFixed(1)];
+          }
+          return { lines: pb.lineStarts().join(), pages: pb.pageStarts().join(), geom };
+        };
+        const geomDiff = (a, b) => { const out = []; for (const id of Object.keys(a)) if (J(a[id]) !== J(b[id])) out.push(id + ' ' + J(a[id]) + ' -> ' + J(b[id])); for (const id of Object.keys(b)) if (!(id in a)) out.push(id + ' new'); return out; };
+        const isF = () => { const F = pb.partitionOfDocument(m); return !!F && F.join() === pb.lineStarts().join(); };
+        const noFull = () => r.renderLedger().filter((e) => e.full).map((e) => e.deriveReason || e.skipReason || '?');
+`;
+
 export const FIXTURES = {
   /* Page view stacks multiple systems whose heights are content-dependent, so
    * each lands at its own sub-pixel device-y phase — staff lines would blur
@@ -287,12 +345,11 @@ export const FIXTURES = {
     visualFullPage: true,
     skipCursorTrace: true,
   },
-  /* 13-bar section I + 8-bar section II. This USED to be the rule-2 example —
-   * under the old width model section II had no legal partition, so its stub
-   * stayed. The corrected model (geometric budget + first-line leading block,
-   * 2026-09-18) makes [4,4] legal there, so it balances like any other section
-   * and NO stub survives. Rule 2 itself is unchanged and has its own fixture
-   * below (pageBalanceRule2StubKept). Asserted via
+  /* 13-bar section I + 8-bar section II. Section II is the FINAL section and
+   * greedy needs only two lines for it (6+2), so F keeps it greedy — the
+   * small-document rule that replaced MIN_FILL (partition spec, 2026-10-20) —
+   * rather than balancing it to [4,4] as the old balancer did, and its sparse
+   * last system stays at natural width (fill < 0.70). Asserted via
    * FIXTURE_ASSERTIONS.pageBalanceDocFinalSmallDocKeepsStub. */
   pageBalanceDocFinalSmallDocKeepsStub: {
     setup: `
@@ -307,14 +364,11 @@ export const FIXTURES = {
     `,
     skipCursorTrace: true,
   },
-  /* Max's rule 2 (the SHORT-SECTION edge case Max carved out on 2026-09-18,
-   * when he ruled the last line must otherwise always be justified): a section
-   * whose measures cannot fill even ONE legal line has no partition at any
-   * candidate line count, so `balanceSection` returns null and the caller keeps
-   * what it had — the stub stays, unjustified by `minLastJustification`.
-   * 13 bars of section I + a 2-bar section II, whose whole content is ~0.34 of
-   * a line against MIN_FILL 0.65. This is the only remaining reachable path to
-   * rule 2 and previously had no coverage at all. Asserted via
+  /* The short-final-section rule (Max's rule 2 of 2026-09-18, restated by the
+   * partition spec 2026-10-20): a FINAL section of fewer than three greedy
+   * lines stays greedy, and its last system is justified only at fill ≥ 0.70.
+   * 13 bars of section I + a 2-bar section II, whose whole content is ~0.35 of
+   * a line: one line, kept as it is, at natural width. Asserted via
    * FIXTURE_ASSERTIONS.pageBalanceRule2StubKept. */
   pageBalanceRule2StubKept: {
     setup: `
@@ -329,11 +383,10 @@ export const FIXTURES = {
     `,
     skipCursorTrace: true,
   },
-  /* Edit path, composing at the end: bars are appended until the last line
-   * overflows and the repair pushes a bar onto a new final line — the balancer
-   * then redistributes the section so that line is legal, moving only a few
-   * boundaries, on the splice path. Asserted via
-   * FIXTURE_ASSERTIONS.pageBalanceComposeAtEnd. */
+  /* Edit path, composing at the end: bars are appended until greedy needs a
+   * new line; F re-partitions the section (3+ lines: picked from the curve, so
+   * its last system is justified), on the splice path, and the result is F of
+   * the document. Asserted via FIXTURE_ASSERTIONS.pageBalanceComposeAtEnd. */
   pageBalanceComposeAtEnd: {
     setup: `
       m.setCursor(0, 1);
@@ -787,7 +840,9 @@ export const FIXTURES = {
   // 12 bars → [0..5] [6..11]
          // 18 bars → [0..5] [6..11] [12..17]
   /* Alt+Shift+↓ mid-system (m8 of [7..12]): a lock before m8; m8–12 form the
-   * next system; the one-bar remainder m7 folds up under the merge rule. */
+   * final section. The 7 bars before the lock (greedy 6+1) are a non-final
+   * section, so F balances them into two lines [3,4] — no lone bar and no
+   * compressed line (the old merge rule folded them onto one line at ~1.1). */
   lock_down_splits: {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
     setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
@@ -826,8 +881,10 @@ export const FIXTURES = {
   lock_undo_restores_partition: {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
   },
-  /* The padlock click removes the <sb>; the partition is untouched (pin
-   * removed only) and the render is a signature no-op. */
+  /* The padlock click removes the <sb>: the two sections join and F
+   * re-partitions them as one — the layout a reload of the unlocked document
+   * engraves (partition spec G1; this was "pin removed only" until
+   * 2026-10-20, a layout no reload could reproduce). */
   lock_click_unlocks_keeps_layout: {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
     setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
@@ -875,7 +932,83 @@ export const FIXTURES = {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
     setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
   },
+
+  /* ── Partition F (docs/composer-partition-consistency-spec.md, 2026-10-20) ──
+   * The partition is one pure function of the document: these pin the
+   * contracts that follow from it. */
+
+  /* The sonata's m. 250 defect, small: a bar-count edit on a later page
+   * re-partitions its section; undoing it restores partition, pagination and
+   * geometry exactly (the suffix balance of the old edit path was a fixed
+   * point of its own and kept the edited layout). */
+  partF_laterPageEditUndo: {
+    setup: partfDoc(110, 30),
+    skipCursorTrace: true,
+  },
+  /* A chain of edits of every kind (bar inserts near the start and deep in a
+   * section, a key change, a section header) then a restore of the load
+   * snapshot: back to the load layout bit for bit. */
+  partF_editUndoChain: {
+    setup: partfDoc(80),
+    skipCursorTrace: true,
+  },
+  /* Reload ≡ live: after edits, re-loading the serialized document lays it out
+   * exactly as the live edit path did (G1: a reload never changes the screen). */
+  partF_reloadEqualsLive: {
+    setup: partfDoc(70, 25),
+    skipCursorTrace: true,
+    fullRender: 'the assertion reloads the document (a load is a full assembly by design)',
+  },
+  /* A tail stub repaired by a short reach: 19 uniform bars are greedy 6+6+6+1;
+   * F re-divides only the last lines (a few boundaries), never the whole
+   * section, and no line is compressed. */
+  partF_tailStubShortReach: {
+    setup: partfDoc(19),
+    skipCursorTrace: true,
+  },
+  /* A measure wider than a line sits alone on its line (no compression of its
+   * neighbours to make room, no split of the measure). */
+  partF_wideMeasureAlone: {
+    setup: `
+      m.setCursor(0, 1);
+      const mk = (p, o) => ({ q: 0, r: 0, pname: p, accid: '', oct: o, midi: 57, colorHex: '#888', lightColorHex: '#fff', velocity: 80 });
+      for (let i = 0; i < 4 * 17; i++) m.insertChordAtCursor({ notes: [mk('b', 4)], duration: '4', dots: 0 });
+      /* Bar 9 in 32/4 (a 4/4 bar cannot get wider than ~0.96 of a line:
+         64 sixty-fourths measured 18100 against an 18790 budget), 4/4 again
+         from bar 10. */
+      m.setMeterAt(8, 32, 4);
+      m.setMeterAt(9, 4, 4);
+      /* Fill it with notes (the meter change pads with long rests, which are
+         narrow): 112 sixteenths before its 4 quarters. */
+      m.setCursor(m.getMeasureStartCursor(1, 8), 1);
+      for (let i = 0; i < 112; i++) m.insertChordAtCursor({ notes: [mk(i % 2 ? 'c' : 'a', 5)], duration: '16', dots: 0 });
+      r();`,
+    skipCursorTrace: true,
+  },
+  /* An early insert re-flows the whole tail of a long section while only
+   * pages 1-2 are mounted: the unmounted pages are not engraved (deferred
+   * cards, heights as they were), and mounting them one by one engraves each
+   * and re-fits — at the end the pagination is first-fit and the partition F,
+   * exactly as a fresh assembly would have it (Max, 2026-10-20). */
+  /* A delete that makes a clef measure-initial: the clef is then DRAWN at the
+   * end of the previous measure (model relocateInitialClefs), and `serialize`
+   * saves it there — so a reload must find exactly the widths the live edit
+   * path uses, or F re-breaks lines on reload (sonata m. 313, 2026-10-20). */
+  partF_clefInitialReload: {
+    setup: partfDoc(24) + `
+      const flat = m['flatChildren'](1); const meas = m.allMeasures()[10];
+      const first = flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === meas);
+      m.setClefAtCursor(1, first, 'F', '4', null, null);
+      r();`,
+    skipCursorTrace: true,
+    fullRender: 'the assertion reloads the document (a load is a full assembly by design)',
+  },
+  partF_deferredTailMountsExact: {
+    setup: partfDoc(160),
+    skipCursorTrace: true,
+  },
 };
+
 
 export const ASSERTIONS = {
   /* Page-size factor scales the page rectangle, not the content: at a fixed
@@ -1017,7 +1150,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   lock_down_rebalances_section: [
-    { name: 'lock before m15: [0,4,9,14], every section a balancer fixed point, no derive',
+    { name: 'lock before m15: [0,4,9,14], the partition is F of the document, no derive',
       expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
@@ -1038,35 +1171,19 @@ export const ASSERTIONS = {
           }
           return true;
         };
-        /* Single-authority check (2026-09-18): re-run the balancer over every
-           section on a COPY of the live partition, forced. A partition that is
-           already the balancer's answer moves nothing — so what an edit left on
-           screen is what a fresh derive of this document would compute. */
+        /* Single-authority check: the committed partition is F of the
+           document (read-only, from the owner's caches) — so what the lock
+           left on screen is what a fresh load of this document engraves. */
         const isFixedPoint = () => {
-          const starts = pb.lineStarts().map((id) => ids.indexOf(id));
-          const lineOf = new Map(pb.lineStarts().map((id, k) => [id, k]));
-          const pageLines = pb.pageStarts().map((id) => lineOf.get(id));
-          const units = m.renderUnits(pb['viewStaves']);
-          const hard = new Set([...Array(ids.length).keys()].filter((i) => m.hardBreakBefore(i) === 'lock').map((i) => ids[i]));
-          const secs = []; let lo = 0;
-          for (let k = 1; k < starts.length; k++) if (hard.has(ids[starts[k]])) { secs.push([lo, k - 1]); lo = k; }
-          secs.push([lo, starts.length - 1]);
-          const moved = [];
-          for (let si = secs.length - 1; si >= 0; si--) {
-            const [kLo, kHi] = secs[si];
-            const cp = starts.slice(), pl = pageLines.slice();
-            const res = pb['balanceSectionLines'](cp, pl, kLo, kHi, ids, 0, units, true);
-            if (res.changed !== 0) moved.push({ sec: [kLo, kHi], changed: res.changed, reason: res.reason });
-          }
-          return moved;
+          const F = pb.partitionOfDocument(m);
+          if (!F) return [{ unjudgeable: true }];
+          return F.join() === pb.lineStarts().join() ? [] : [{ F: F.map((id) => ids.indexOf(id)) }];
         };
         const J = JSON.stringify;
         const l = L();
-        /* The balancer no longer has anything to APPLY here: the 14-bar section
-           is already [4,5,5] before the lock, because a measure-count change
-           balances its section eagerly (2026-09-18). What the lock must do is
-           split without disturbing that — so the assertion is the partition
-           itself plus the fixed-point property, not applied >= 1. */
+        /* The lock splits the 18-bar section into 14 + 4: F balances the
+           14 bars (greedy 6+6+2) into [4,5,5] and keeps the 4-bar final
+           section on one line. */
         const moved = isFixedPoint();
         const ok = pb.lastDeriveReason === '' && J(l) === '[0,4,9,14]' && m.hardBreakBefore(14) === 'lock' && moved.length === 0 && J(locks()) === '[14]' && pinsInOrder();
         return { ok, detail: J({ pre, lines: l, derive: pb.lastDeriveReason, balance: pb.lastBalance, notFixedPoint: moved, hb14: m.hardBreakBefore(14), locks: locks(), status: status() }) };
@@ -1135,7 +1252,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   lock_click_unlocks_keeps_layout: [
-    { name: 'clicking the padlock removes the <sb>, keeps the partition, renders as a no-op, removes the glyph',
+    { name: 'clicking the padlock removes the <sb>: the two sections join and F re-partitions them as one ([0,3,7] → [0,6], what a reload engraves), spliced, glyph removed',
       expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
@@ -1160,8 +1277,10 @@ export const ASSERTIONS = {
         const before = L(); const lock = document.querySelector('g.hkl-lock');
         if (!lock) return { ok: false, detail: 'no padlock to click' };
         lock.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
-        const ok = m.hardBreakBefore(7) === null && J(L()) === J(before) && locks().length === 0 && last().outcome === 'noop' && /unlocked/.test(status());
-        return { ok, detail: J({ before, after: L(), hb7: m.hardBreakBefore(7), locks: locks(), ledger: last(), status: status() }) };
+        const F = (pb.partitionOfDocument(m) ?? []).map((id) => ids.indexOf(id));
+        const ok = m.hardBreakBefore(7) === null && J(before) === '[0,3,7]' && J(L()) === '[0,6]' && J(L()) === J(F)
+          && locks().length === 0 && !last().full && pb.lastDeriveReason === '' && /unlocked/.test(status()) && pinsInOrder();
+        return { ok, detail: J({ before, after: L(), F, hb7: m.hardBreakBefore(7), locks: locks(), ledger: last(), derive: pb.lastDeriveReason, status: status() }) };
       })()` },
   ],
   lock_scroll_view_ignored: [
@@ -1501,7 +1620,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   pageBalanceSinglePartView: [
-    { name: 'viola-only view: the owner engages on the filtered layout, its sections are balanced, only staff 3 is drawn, every system is justified',
+    { name: 'viola-only view: the owner engages on the filtered layout, section I is F\'s pick, the final two-line section stays greedy, only staff 3 is drawn, the justification rule holds',
       expr: `(() => {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         if (H.inputState().viewInstrIdx !== 1) return { ok: false, detail: 'view not on the viola: ' + H.inputState().viewInstrIdx };
@@ -1513,15 +1632,16 @@ export const ASSERTIONS = {
         const starts = pb['startIds'].map((id) => idIdx.get(id));
         const lens = starts.map((s, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s);
         if (lens.some((L) => L <= 1)) return { ok: false, detail: 'a lone-bar system survived: lens=' + lens.join(',') };
-        const secEnd = starts.indexOf(13) - 1;
-        if (secEnd < 0) return { ok: false, detail: 'section II does not start a line: starts=' + starts.join(',') };
-        for (const k of [secEnd, starts.length - 1]) {
-          const f = pb['lineFill'](starts, k, ids);
-          if (f === null || f < 0.65) return { ok: false, detail: 'section-final line ' + k + ' fill ' + f + ' (lens ' + lens.join(',') + ')' };
-        }
-        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
-        const max = Math.max(...ws);
-        if (ws.length < 3 || ws.some((w) => w < 0.98 * max)) return { ok: false, detail: 'system widths ' + ws.map((w) => Math.round(w)).join(',') };
+        const secII = starts.indexOf(13);
+        if (secII < 0) return { ok: false, detail: 'section II does not start a line: starts=' + starts.join(',') };
+        /* Section II (9 bars) is the FINAL section and needs only two greedy
+           lines, so F keeps it greedy (6+3) and its sparse last system stays
+           at natural width (fill < 0.70). */
+        if (lens.slice(secII).join() !== '6,3') return { ok: false, detail: 'final section not kept greedy: lens ' + lens.join(',') };
+        const lastFill = pb['lineFill'](starts, starts.length - 1, ids);
+        if (!(lastFill < 0.70) || pb.finalSystemJustified() !== false) return { ok: false, detail: 'final greedy line fill ' + lastFill + ', finalSystemJustified ' + pb.finalSystemJustified() };
+        const jr = ${JUSTIFY_RULE}(H.renderer);
+        if (jr) return { ok: false, detail: jr };
         return { ok: true, detail: 'lens ' + lens.join(',') };
       })()` },
   ],
@@ -1550,7 +1670,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   pageBalanceSectionFinal: [
-    { name: 'no lone-bar system: the castoff\'s 6+6+1 / 6+3 remainders are balanced before the first paint and every system is justified',
+    { name: 'no lone-bar system: section I (greedy 6+6+1) is F\'s pick before the first paint; section II, final and two lines, stays greedy 6+3 with its sparse last system at natural width; every other system is justified',
       expr: `(() => {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
@@ -1562,73 +1682,60 @@ export const ASSERTIONS = {
         const starts = pb['startIds'].map((id) => idIdx.get(id));
         const lens = starts.map((s, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s);
         if (lens.some((L) => L <= 1)) return { ok: false, detail: 'a lone-bar system survived: lens=' + lens.join(',') };
-        const secEnd = starts.indexOf(13) - 1;
-        if (secEnd < 0) return { ok: false, detail: 'section II does not start a line: starts=' + starts.join(',') };
-        for (const k of [secEnd, starts.length - 1]) {
-          const f = pb['lineFill'](starts, k, ids);
-          if (f === null || f < 0.65) return { ok: false, detail: 'section-final line ' + k + ' fill ' + f + ' (lens ' + lens.join(',') + ')' };
-        }
-        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
-        const max = Math.max(...ws);
-        if (ws.length < 4 || ws.some((w) => w < 0.98 * max)) return { ok: false, detail: 'system widths ' + ws.map((w) => Math.round(w)).join(',') };
-        return { ok: true };
+        const secII = starts.indexOf(13);
+        if (secII < 0) return { ok: false, detail: 'section II does not start a line: starts=' + starts.join(',') };
+        if (lens.slice(secII).join() !== '6,3') return { ok: false, detail: 'final section not kept greedy: lens ' + lens.join(',') };
+        if (pb.finalSystemJustified() !== false) return { ok: false, detail: 'finalSystemJustified ' + pb.finalSystemJustified() + ' for a greedy last line at ' + pb['lineFill'](starts, starts.length - 1, ids) };
+        const jr = ${JUSTIFY_RULE}(H.renderer);
+        if (jr) return { ok: false, detail: jr };
+        return { ok: true, detail: 'lens ' + lens.join(',') };
       })()` },
   ],
   pageBalanceDocFinalSmallDocKeepsStub: [
-    { name: 'a document-final section with a legal partition is balanced, not stubbed: every system justified, final line at or above MIN_FILL',
+    { name: 'a document-final section of two greedy lines stays greedy (6+2, not balanced to 4+4) and its sparse last system is left at natural width; every other system is justified',
       expr: `(() => {
         const H = window.__hkl_composer; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        /* This document USED to trip rule 2 — its final section had no legal
-           partition, so the stub stayed unjustified. Under the corrected width
-           model (geometric budget + first-line leading block) a legal partition
-           exists, so the section balances instead. Rule 2 itself is unchanged
-           and still fires when no candidate line count is feasible; it simply
-           has no example here any more.
-           NOTE: that leaves rule 2 without fixture coverage — see the summary. */
         const m2 = H.model;
         const ids = m2.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx = new Map(ids.map((id, i) => [id, i]));
         const starts = pb.lineStarts().map((id) => idIdx.get(id));
+        const lens = starts.map((s0, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s0);
+        const secII = starts.indexOf(13);
+        if (secII < 0) return { ok: false, detail: 'section II does not start a line: ' + starts.join(',') };
+        if (lens.slice(secII).join() !== '6,2') return { ok: false, detail: 'final section not kept greedy: lens ' + lens.join(',') };
+        const pick = (pb.lastInitialBalance?.picks ?? []).find((p) => p.from === ids[13]);
+        if (!pick || !pick.exempt) return { ok: false, detail: 'section II not reported exempt: ' + JSON.stringify(pick) };
         const lastFill = pb['lineFill'](starts, starts.length - 1, ids);
-        if (lastFill === null) return { ok: false, detail: 'final line fill unmeasurable' };
-        if (lastFill < 0.65) return { ok: false, detail: 'document-final line is a stub: ' + lastFill.toFixed(3) };
-        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
-        if (ws.length < 3) return { ok: false, detail: 'only ' + ws.length + ' systems' };
-        const max = Math.max(...ws);
-        if (ws.some((w) => w < 0.98 * max)) return { ok: false, detail: 'a system is unjustified: ' + ws.map((w) => Math.round(w)).join(',') };
-        return { ok: true };
+        if (lastFill === null || !(lastFill < 0.70)) return { ok: false, detail: 'final greedy line fill ' + lastFill };
+        const jr = ${JUSTIFY_RULE}(H.renderer);
+        if (jr) return { ok: false, detail: jr };
+        return { ok: true, detail: 'lens ' + lens.join(',') + ', last fill ' + lastFill.toFixed(3) };
       })()` },
   ],
   pageBalanceRule2StubKept: [
-    { name: 'a section too small to fill one legal line keeps its stub, unjustified (rule 2); every other system is justified',
+    { name: 'a one-line final section (2 bars) stays as it is and is left at natural width (fill < 0.70); every other system is justified',
       expr: `(() => {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        const ib = pb.lastInitialBalance;
-        if (!ib || !ib.reasons.some((x) => x.startsWith('no legal balance'))) {
-          return { ok: false, detail: 'rule 2 did not fire: ' + JSON.stringify(ib) };
-        }
-        /* The stub really is one below MIN_FILL, and it really is the last line. */
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx = new Map(ids.map((id, i) => [id, i]));
         const starts = pb.lineStarts().map((id) => idIdx.get(id));
+        if (starts[starts.length - 1] !== 13) return { ok: false, detail: 'section II is not one line: ' + starts.join(',') };
+        const pick = (pb.lastInitialBalance?.picks ?? []).find((p) => p.from === ids[13]);
+        if (!pick || !pick.exempt || pick.lines !== 1) return { ok: false, detail: 'section II pick: ' + JSON.stringify(pb.lastInitialBalance) };
         const lastFill = pb['lineFill'](starts, starts.length - 1, ids);
-        if (lastFill === null) return { ok: false, detail: 'final line fill unmeasurable' };
-        if (lastFill >= 0.65) return { ok: false, detail: 'final line is not a stub: ' + lastFill.toFixed(3) };
-        /* ...and Verovio leaves it at natural width while justifying the rest. */
-        const ws = [...document.querySelectorAll('#score .score-page:not(.score-page-pending) g.system')].map((g) => g.getBBox().width);
-        if (ws.length < 3) return { ok: false, detail: 'only ' + ws.length + ' systems' };
-        const max = Math.max(...ws), last = ws[ws.length - 1];
-        if (!(last < 0.6 * max)) return { ok: false, detail: 'the stub is justified: ' + ws.map((w) => Math.round(w)).join(',') };
-        if (ws.slice(0, -1).some((w) => w < 0.98 * max)) return { ok: false, detail: 'a non-final system is unjustified: ' + ws.map((w) => Math.round(w)).join(',') };
+        if (lastFill === null || !(lastFill < 0.70)) return { ok: false, detail: 'final line fill ' + lastFill };
+        if (pb.finalSystemJustified() !== false) return { ok: false, detail: 'finalSystemJustified ' + pb.finalSystemJustified() };
+        const jr = ${JUSTIFY_RULE}(H.renderer);
+        if (jr) return { ok: false, detail: jr };
         return { ok: true, detail: 'stub fill ' + lastFill.toFixed(3) };
       })()` },
   ],
   pageBalanceComposeAtEnd: [
-    { name: 'composing past the end: the pushed bar\'s new line is balanced into the section, locally, on the splice path',
+    { name: 'composing past the end: when greedy needs a new line F re-partitions the section on the splice path — F of the document, no line compressed, the balanced final system justified',
       expr: `(() => {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
@@ -1654,23 +1761,18 @@ export const ASSERTIONS = {
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx = new Map(ids.map((id, i) => [id, i]));
         const starts = pb['startIds'].map((id) => idIdx.get(id));
-        const f = pb['lineFill'](starts, starts.length - 1, ids);
-        if (f === null || f < 0.65) return { ok: false, detail: 'final line fill ' + f + ' after balance' };
-        /* NOT a locality bound (2026-09-18). λ is 0, so the balancer answers
-           with the partition this content has — which is the point: it is the
-           same partition a fresh derive computes. Locality was the old λ=0.02
-           contract and is exactly what froze a section's first line at a
-           barely-legal fill. What must hold instead:
-             (1) the section is a FIXED POINT — re-balancing it moves nothing,
-                 so what is on screen is what a reload would engrave; and
-             (2) it is EVEN — no line more than one measure off any other,
-                 which is the defect this fixture exists for (4,5,5,5,5,9). */
-        const cp = starts.slice(), pl = pb.pageStarts().map((id) => pb.lineStarts().indexOf(id));
-        const again = pb['balanceSectionLines'](cp, pl, 0, starts.length - 1, ids,
-          0, m.renderUnits(pb['viewStaves']), true);
-        if (again.changed !== 0) return { ok: false, detail: 'partition is not a balancer fixed point: ' + JSON.stringify(again) };
-        const lens = starts.map((s0, k) => (k + 1 < starts.length ? starts[k + 1] : ids.length) - s0);
-        if (Math.max(...lens) - Math.min(...lens) > 1) return { ok: false, detail: 'section not even: [' + lens.join(',') + ']' };
+        /* What must hold (partition spec): the partition is F of the document
+           — what a reload engraves — and no line is compressed past its
+           natural width (the defect this fixture was born for: 4,5,5,5,5,9
+           with the last line at 1.42). The section has 3+ lines, so F picked
+           it from the curve and its last system is justified. */
+        const F = pb.partitionOfDocument(m);
+        if (!F || F.join() !== pb.lineStarts().join()) return { ok: false, detail: 'partition is not F: ' + JSON.stringify({ F, committed: pb.lineStarts() }) };
+        const fills = starts.map((_, k) => pb['lineFill'](starts, k, ids));
+        if (fills.some((x) => x === null || x > 1.0 + 1e-9)) return { ok: false, detail: 'a line is compressed: ' + fills.map((x) => x && x.toFixed(3)).join(',') };
+        if (pb.finalSystemJustified() !== true) return { ok: false, detail: 'finalSystemJustified ' + pb.finalSystemJustified() + ' for a balanced final section' };
+        const jr = ${JUSTIFY_RULE}(H.renderer);
+        if (jr) return { ok: false, detail: jr };
         const led = H.renderer.renderLedger();
         if (!led.length || led[led.length - 1].full) return { ok: false, detail: 'the push render was a full engrave: ' + JSON.stringify(led[led.length - 1]) };
         return { ok: true };
@@ -1702,23 +1804,23 @@ export const ASSERTIONS = {
       })()` },
   ],
   pageBalanceSubMeasureWiden: [
-    { name: 'widening measures in place re-partitions immediately: every keystroke leaves a balancer fixed point, no line is compressed, and emptying voice 3 restores the original layout exactly',
+    { name: 'widening measures in place re-partitions immediately: every keystroke leaves F of the document, no line is compressed, and emptying voice 3 restores the original layout exactly',
       expr: `(() => {
         const H = window.__hkl_composer; const m = H.model; const pb = H.renderer['pageBreaks'];
         for (let i = 0; i < 2 && !pb.ownershipActive(); i++) H.reRender();
         if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
-        /* Re-balancing a COPY of the live partition: balanceSectionLines
-           mutates only the arrays handed to it, so this reads what a fresh
-           derive would choose without disturbing what is on screen. */
+        /* F of the document from the owner's caches (read-only): the layout a
+           fresh load of this content engraves. \`changed\` = boundaries the
+           committed partition differs from it by (−1: unjudgeable). */
         const state = () => {
           const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
           const idIdx = new Map(ids.map((id, i) => [id, i]));
           const starts = pb['startIds'].map((id) => idIdx.get(id));
           const fills = starts.map((_, k) => pb['lineFill'](starts, k, ids));
-          const cp = starts.slice();
-          const pl = pb.pageStarts().map((id) => pb.lineStarts().indexOf(id));
-          const again = pb['balanceSectionLines'](cp, pl, 0, starts.length - 1, ids, 0, m.renderUnits(pb['viewStaves']));
-          return { lines: starts.length, fills, changed: again.changed,
+          const F = pb.partitionOfDocument(m);
+          const A = new Set(F ?? []), B = new Set(pb.lineStarts());
+          const changed = F ? [...A].filter((x) => !B.has(x)).length + [...B].filter((x) => !A.has(x)).length : -1;
+          return { lines: starts.length, fills, changed,
                    sig: fills.map((f) => f === null ? 'x' : f.toFixed(3)).join(',') };
         };
         const base = state();
@@ -1734,13 +1836,13 @@ export const ASSERTIONS = {
           H.reRender();
           const st = state();
           if (st.fills.some((f) => f === null)) return { ok: false, detail: 'naturals cold after quarter #' + (i + 1) };
-          if (st.changed !== 0) return { ok: false, detail: 'stale partition after quarter #' + (i + 1) + ': ' + st.lines + ' lines on screen, a fresh balance moves ' + st.changed + ' boundaries (' + st.sig + ')' };
+          if (st.changed !== 0) return { ok: false, detail: 'stale partition after quarter #' + (i + 1) + ': ' + st.lines + ' lines on screen, F differs by ' + st.changed + ' boundaries (' + st.sig + ')' };
           worst = Math.max(worst, ...st.fills);
         }
         /* The defect this fixture exists for: the held partition let a line
-           reach fill 1.433 (43% compression - stems into accidentals) before
-           FIT_MAX finally tripped the repair loop. */
-        if (worst > 1.10) return { ok: false, detail: 'a line was compressed to fill ' + worst.toFixed(3) + ' (held-partition defect; 1.433 before the 2026-09-19 fix)' };
+           reach fill 1.433 (43% compression - stems into accidentals). F never
+           packs a line past its natural width (no atom here is wider). */
+        if (worst > 1.0 + 1e-9) return { ok: false, detail: 'a line was compressed to fill ' + worst.toFixed(3) + ' (held-partition defect; 1.433 before the 2026-09-19 fix)' };
         /* Undo contract: emptying voice 3 again must restore the ORIGINAL
            partition exactly, not merely a legal one. */
         m.setCursor(m.getVoiceLength(3), 3);
@@ -1748,7 +1850,7 @@ export const ASSERTIONS = {
           if (!m.deleteAtCursor()) break;
           H.reRender();
           const st = state();
-          if (st.changed !== 0) return { ok: false, detail: 'stale partition after delete #' + (g + 1) + ': ' + st.lines + ' lines, a fresh balance moves ' + st.changed + ' boundaries' };
+          if (st.changed !== 0) return { ok: false, detail: 'stale partition after delete #' + (g + 1) + ': ' + st.lines + ' lines, F differs by ' + st.changed + ' boundaries' };
         }
         if (m.getVoiceLength(3) !== v30) return { ok: false, detail: 'voice 3 not emptied: ' + m.getVoiceLength(3) + ' vs ' + v30 };
         const end = state();
@@ -1911,7 +2013,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   pag_meterChangeSplices: [
-    { name: 'a meter change deep in the document splices: page 1 untouched, the change is drawn',
+    { name: 'a meter change deep in the document splices: every page-1 line F did not change keeps its system node, the change is drawn',
       expr: `(async () => {
         const H = window.__hkl_composer, m = H.model, r = H.renderer;
         const sysOf = (p) => [...document.querySelectorAll('#score .score-page[data-page="' + p + '"] g.system')];
@@ -1925,13 +2027,25 @@ export const ASSERTIONS = {
         const mi = ids.indexOf(target);
         const before = sysOf(1);
         if (before.length < 2) return { ok: false, detail: 'page 1 has ' + before.length + ' systems' };
+        /* F re-partitions the whole section and may reach back onto page 1
+           (no cap on reach: partition spec G3); what must hold is locality —
+           a line whose start and end F left alone is not re-engraved. */
+        const L0 = pb.lineStarts().slice();
         r.clearRenderLedger();
         m.setMeterAt(mi, 3, 4);
         H.reRender(); await window.__waitForRender();
         const fulls = r.renderLedger().filter((e) => e.full);
         if (fulls.length) return { ok: false, detail: 'full render during the edit: ' + fulls.map((e) => e.deriveReason || e.skipReason || '?').join('; ') };
-        const after = sysOf(1);
-        if (after.length !== before.length || !after.every((sys, i) => sys === before[i])) return { ok: false, detail: 'page 1 was re-rendered or re-paginated (' + before.length + ' -> ' + after.length + ' systems)' };
+        const L1 = pb.lineStarts();
+        const endOf = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
+        let kept = 0;
+        for (const sys of before) {
+          const id = sys.querySelector('g.measure')?.id;
+          if (!id || endOf(L1, id) !== endOf(L0, id)) continue;
+          if (!sys.isConnected) return { ok: false, detail: 'page-1 line ' + id + ' was unchanged by F but re-engraved' };
+          kept++;
+        }
+        if (kept < 1) return { ok: false, detail: 'no page-1 line survived the edit (' + before.length + ' systems)' };
         const me = document.getElementById(target);
         if (!me || !me.querySelector('g.meterSig')) return { ok: false, detail: 'no meter signature drawn at ' + target };
         return { ok: true };
@@ -2140,5 +2254,189 @@ export const ASSERTIONS = {
     { name: 'the page starts survive a zoom round-trip',
       expr: `(() => { const now = JSON.stringify(window.__hkl_composer.renderer['pageBreaks'].pageStarts()); return now === window.__pagStartsBefore ? { ok: true } : { ok: false, detail: 'before ' + window.__pagStartsBefore + ' after ' + now }; })()` },
     { name: 'first-fit holds after the round-trip', expr: `window.__test.assertPaginationFirstFit({ mountAll: true })` },
+  ],
+
+  partF_laterPageEditUndo: [
+    { name: 'a bar insert on a later page re-partitions its section by F (a splice), and undo restores partition, pages and geometry exactly',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        if (pb.pageStarts().length < 3) return { ok: false, detail: 'need 3+ pages, got ' + pb.pageStarts().length };
+        const load = state();
+        if (!isF()) return { ok: false, detail: 'the load is not F' };
+        /* A bar on page 3, in section II (section I ends on page 1 or 2). */
+        const mi = ids().indexOf(pb.pageStarts()[2]) + 2;
+        const snap = m.snapshotState();
+        r.clearRenderLedger();
+        m.insertMeasureAt(mi);
+        H.reRender(); await settle();
+        if (noFull().length) return { ok: false, detail: 'the edit full-rendered: ' + noFull().join('; ') };
+        if (!isF()) return { ok: false, detail: 'after the edit the partition is not F' };
+        const edited = state();
+        if (edited.lines === load.lines) return { ok: false, detail: 'the insert moved no boundary — nothing to undo' };
+        r.clearRenderLedger();
+        m.restoreSnapshot(snap);
+        H.reRender(); await settle();
+        if (noFull().length) return { ok: false, detail: 'the undo full-rendered: ' + noFull().join('; ') };
+        const back = state();
+        if (back.lines !== load.lines) return { ok: false, detail: 'undo did not restore the line partition' };
+        if (back.pages !== load.pages) return { ok: false, detail: 'undo did not restore the pagination: ' + load.pages + ' -> ' + back.pages };
+        const d = geomDiff(load.geom, back.geom);
+        if (d.length) return { ok: false, detail: d.length + ' measures moved across edit+undo: ' + d.slice(0, 3).join(' | ') };
+        return { ok: true, detail: Object.keys(load.geom).length + ' measures compared' };
+      })()` },
+  ],
+  partF_editUndoChain: [
+    { name: 'a chain of edits (bar inserts early and deep, a key change, a section header) then a restore of the load snapshot is the load layout bit for bit; F after every step',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        const load = state();
+        const snap = m.snapshotState();
+        const steps = [
+          ['insert bar 3', () => m.insertMeasureAt(2)],
+          ['insert bar 41', () => m.insertMeasureAt(40)],
+          ['key change at bar 20', () => m.setKeySigAt(19, '2s', 'major')],
+          ['section header at bar 50', () => m.setSectionHeaderAt(49, 'II')],
+          ['insert bar 60', () => m.insertMeasureAt(59)],
+        ];
+        for (const [what, fn] of steps) {
+          fn(); H.reRender(); await settle();
+          if (pb.lastDeriveReason) return { ok: false, detail: what + ': derived (' + pb.lastDeriveReason + ')' };
+          if (!isF()) return { ok: false, detail: what + ': the partition is not F' };
+        }
+        m.restoreSnapshot(snap);
+        H.reRender(); await settle();
+        const back = state();
+        if (back.lines !== load.lines) return { ok: false, detail: 'restore did not bring back the load partition' };
+        if (back.pages !== load.pages) return { ok: false, detail: 'restore did not bring back the load pagination' };
+        const d = geomDiff(load.geom, back.geom);
+        if (d.length) return { ok: false, detail: d.length + ' measures differ from the load: ' + d.slice(0, 3).join(' | ') };
+        return { ok: true };
+      })()` },
+  ],
+  partF_reloadEqualsLive: [
+    { name: 'after edits, re-loading the serialized document gives the same line and page starts (a reload never changes the screen)',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        m.insertMeasureAt(4); H.reRender(); await settle();
+        m.setKeySigAt(33, '3f', 'major'); H.reRender(); await settle();
+        m.insertMeasureAt(50); H.reRender(); await settle();
+        if (!isF()) return { ok: false, detail: 'the live partition is not F' };
+        const live = state();
+        window.__composerLoadHkc(m.serialize());
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        await settle();
+        const fresh = state();
+        if (fresh.lines !== live.lines) {
+          const a = live.lines.split(','), b = fresh.lines.split(',');
+          let i = 0; while (i < Math.min(a.length, b.length) && a[i] === b[i]) i++;
+          return { ok: false, detail: 'reload re-partitioned at line ' + i + ': live ' + J(a.slice(i, i + 3)) + ' vs reload ' + J(b.slice(i, i + 3)) };
+        }
+        if (fresh.pages !== live.pages) return { ok: false, detail: 'reload re-paginated: ' + live.pages + ' -> ' + fresh.pages };
+        return { ok: true, detail: live.lines.split(',').length + ' lines' };
+      })()` },
+  ],
+  partF_tailStubShortReach: [
+    { name: 'a tail stub (greedy 6+6+6+1) is repaired by a short reach: greedy\'s line count, a few boundaries moved, the last line no longer a stub, nothing compressed',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        const pick = pb.lastInitialBalance?.picks?.[0];
+        if (!pick) return { ok: false, detail: 'no pick recorded: ' + J(pb.lastInitialBalance) };
+        const I = ids(); const st = pb.lineStarts().map((id) => I.indexOf(id));
+        const lens = st.map((x, k) => (k + 1 < st.length ? st[k + 1] : I.length) - x);
+        const fills = st.map((_, k) => pb['lineFill'](st, k, I));
+        if (pick.exempt) return { ok: false, detail: 'section exempted: ' + J(pick) };
+        if (!(pick.changes >= 1 && pick.changes <= 3)) return { ok: false, detail: 'reach not short: ' + J(pick) + ' lens ' + lens };
+        if (lens[lens.length - 1] <= 1) return { ok: false, detail: 'the stub survived: lens ' + lens };
+        if (lens.slice(0, -3).some((L) => L !== lens[0])) return { ok: false, detail: 'the body moved: lens ' + lens };
+        if (fills.some((f) => f === null || f > 1.0 + 1e-9)) return { ok: false, detail: 'a line is compressed: ' + fills.map((f) => f && f.toFixed(3)) };
+        return { ok: true, detail: 'lens ' + lens.join(',') + ', ' + pick.changes + ' changes, min ' + pick.min.toFixed(3) };
+      })()` },
+  ],
+  partF_wideMeasureAlone: [
+    { name: 'a measure wider than a line sits alone on its line; every other line fits at fill ≤ 1.00',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        const I = ids(); const st = pb.lineStarts().map((id) => I.indexOf(id));
+        const wide = I.findIndex((_, i) => (pb['naturals'].get(I[i]) ?? 0) > pb['budgetW']);
+        if (wide < 0) return { ok: false, detail: 'no measure wider than the line: the material is too narrow (' + I.map((id) => Math.round(pb['naturals'].get(id) ?? 0)).join(',') + ' vs budget ' + Math.round(pb['budgetW']) + ')' };
+        const k = st.indexOf(wide);
+        if (k < 0 || (k + 1 < st.length ? st[k + 1] : I.length) !== wide + 1) return { ok: false, detail: 'the wide measure ' + wide + ' does not sit alone: starts ' + st.join(',') };
+        const fills = st.map((_, j) => pb['lineFill'](st, j, I));
+        const bad = fills.map((f, j) => [f, j]).filter(([f, j]) => j !== k && (f === null || f > 1.0 + 1e-9));
+        if (bad.length) return { ok: false, detail: 'compressed lines: ' + J(bad) };
+        return { ok: true, detail: 'starts ' + st.join(',') + ', wide line fill ' + fills[k].toFixed(3) };
+      })()` },
+  ],
+  partF_deferredTailMountsExact: [
+    { name: 'an early insert with only pages 1-2 mounted leaves the re-flowed tail unengraved (deferred cards); mounting each page engraves and re-fits it, ending first-fit and F',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        r.setMountWindowEnabled(false);
+        const as = r['assembler'];
+        if (typeof r.mountAllPages === 'function') r.mountAllPages();
+        const n0 = as.pageCount;
+        if (n0 < 4) return { ok: false, detail: 'need 4+ pages, got ' + n0 };
+        r['pageIo']?.disconnect();
+        for (let p = 3; p <= n0; p++) r['unmountPage'](p);
+        const warns = []; const ow = console.warn;
+        console.warn = (...a) => { const t = a.join(' '); if (!/^\\[Warning\\]/.test(t)) warns.push(t); ow(...a); };
+        let rendered;
+        try {
+          r.clearRenderLedger();
+          m.insertMeasureAt(2); H.reRender(); await settle();
+          rendered = as.lastRepaginate.renderedLines;
+        } finally { console.warn = ow; }
+        if (warns.length) return { ok: false, detail: 'warnings: ' + warns.join(' | ') };
+        if (noFull().length) return { ok: false, detail: 'the edit full-rendered: ' + noFull().join('; ') };
+        if (!isF()) return { ok: false, detail: 'the partition is not F after the insert' };
+        const deferred = [...as.stalePages];
+        if (!deferred.length) return { ok: false, detail: 'no page was deferred — the tail was engraved synchronously' };
+        if (deferred.some((p) => as.isMounted(p))) return { ok: false, detail: 'a deferred page is mounted: ' + deferred };
+        /* Scroll order: mount every page front to back. */
+        for (let p = 1; p <= as.pageCount; p++) as.mount(p);
+        await settle();
+        if (as.stalePages.size) return { ok: false, detail: 'pages still deferred after mounting all: ' + [...as.stalePages] };
+        const ff = window.__test.assertPaginationFirstFit({ mountAll: true });
+        if (!ff.ok) return { ok: false, detail: 'pagination after mounting is not first-fit: ' + ff.detail };
+        if (!isF()) return { ok: false, detail: 'the partition is not F after mounting' };
+        const dom = as.domLineStarts().join();
+        if (dom !== pb.lineStarts().join()) return { ok: false, detail: 'the pages draw another partition than the committed one' };
+        return { ok: true, detail: n0 + ' -> ' + as.pageCount + ' pages, ' + deferred.length + ' deferred, ' + rendered + ' lines engraved at the edit' };
+      })()` },
+  ],
+  partF_clefInitialReload: [
+    { name: 'after a delete makes a clef measure-initial, the live inputs (the previous bar\'s natural, the signature context there) and the partition equal a reload\'s',
+      expr: `(async () => {${PARTF_LIB}
+        for (let i = 0; i < 2 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        if (!pb.ownershipActive()) return { ok: false, detail: 'ownership not engaged (' + pb.lastDeriveReason + ')' };
+        const meas = () => m.allMeasures()[10];
+        const flat = m['flatChildren'](1);
+        const first = flat.findIndex((el) => (el.localName === 'note' || el.localName === 'chord') && el.closest('measure') === meas());
+        m.setCursor(first, 1);
+        if (!m.deleteAtCursor()) return { ok: false, detail: 'delete rejected' };
+        H.reRender(); await settle();
+        const lay = meas().querySelector('staff[n="1"] > layer');
+        if (!lay || !lay.firstElementChild || lay.firstElementChild.localName !== 'clef') return { ok: false, detail: 'fixture cannot pose the case: no measure-initial clef (' + (lay ? [...lay.children].map((c) => c.localName).join(',') : 'no layer') + ')' };
+        const I = ids();
+        const live = { nat9: pb['naturals'].get(I[9]), key10: pb['sigCtxKeys'][10], sig10: pb['sigWForLineQuiet'](10), lines: pb.lineStarts().join(), pages: pb.pageStarts().join() };
+        if (!isF()) return { ok: false, detail: 'the live partition is not F' };
+        window.__composerLoadHkc(m.serialize());
+        for (let i = 0; i < 3 && !pb.ownershipActive(); i++) { H.reRender(); await settle(); }
+        await settle();
+        const fresh = { nat9: pb['naturals'].get(I[9]), key10: pb['sigCtxKeys'][10], sig10: pb['sigWForLineQuiet'](10), lines: pb.lineStarts().join(), pages: pb.pageStarts().join() };
+        if (live.nat9 == null || fresh.nat9 == null || Math.abs(live.nat9 - fresh.nat9) > 0.01) return { ok: false, detail: 'bar 10 natural: live ' + live.nat9 + ' vs reload ' + fresh.nat9 + ' (the relocated clef is drawn there)' };
+        /* The CONTEXT must agree; its measured width may differ by the measure
+           number it was measured under (lessons.md 2026-10-20) — open. */
+        if (live.key10 !== fresh.key10) return { ok: false, detail: 'signature context at bar 11: live ' + live.key10 + ' vs reload ' + fresh.key10 };
+        if (live.lines !== fresh.lines) return { ok: false, detail: 'reload re-partitioned' };
+        if (live.pages !== fresh.pages) return { ok: false, detail: 'reload re-paginated' };
+        return { ok: true, detail: 'nat ' + live.nat9 + ', sig live ' + live.sig10 + ' / reload ' + fresh.sig10 };
+      })()` },
   ],
 };

@@ -168,6 +168,8 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
     /* Pagination is first-fit over placed systems (2026-10-08): no mounted
        page overflows, none leaves room for the next page's first system. */
     { name: 'pagination first-fit', expr: `window.__test.assertPaginationFirstFit()` },
+    /* The partition is F of the document (2026-10-20): load ≡ edit. */
+    { name: 'partition is F',       expr: `window.__test.assertPartitionIsF()` },
   ];
   {
     universal.push({

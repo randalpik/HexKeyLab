@@ -521,6 +521,11 @@ export const FIXTURES = {
       const sl = doc.createElementNS(MEI, 'slur');
       sl.setAttribute('xml:id', 's-test-lift'); sl.setAttribute('startid', '#' + notes[0].getAttribute('xml:id')); sl.setAttribute('endid', '#' + notes[3].getAttribute('xml:id')); sl.setAttribute('data-voice', '3');
       doc.querySelector('measure').appendChild(sl);
+      /* The steep beam needs bar 1 on a dense line: F lays these 11 bars out
+         as 3+4+4 at fill ~0.6 (no line compressed past 1.00), where the old
+         balancer's 5+6 packed it. A lock before bar 6 restores the 5-bar
+         first line (fill ~0.87) without compressing anything. */
+      m.setLineLockAt(5, true);
       m.setVoice(3); m.setCursor(0, 3);
       r();
     `,

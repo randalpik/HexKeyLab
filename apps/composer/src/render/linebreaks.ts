@@ -9,21 +9,25 @@
 // pinned, castoff has no free choices left, so an edit can only move the
 // boundaries WE move.
 //
-// THE PARTITION IS NEVER RE-DERIVED (Max's ruling, 2026-08-30). An edit carries
-// the existing partition across by line MEMBERSHIP and then repairs ONLY the
-// lines the edit made ILLEGAL — outside the [MIN_FILL, FIT_MAX] envelope — by
-// moving as few measures as possible. Everything else stays exactly where it
-// was. This is what makes edits reversible: a greedy re-derivation accepts any
-// line up to FIT_MAX, so a measure pulled into a line by a deletion stayed
-// there when the deletion was undone (threshold hysteresis — the layout drifted
-// one measure per edit and never drifted back). With conservative repair a
-// no-op edit provably moves nothing, undo restores the original layout, and the
-// legality bounds above are the only tuning surface. (An explicit "reflow the
-// whole document as if freshly engraved" command is deliberately NOT offered.
-// Manual line breaks (2026-09-11/12, linebreakCommands.ts) are plain <sb>
-// LOCKS in the document: a lock splits its line here and then reflows like
-// any measure-count change — the layout never holds state the document could
-// not reproduce after a reload (Max's ruling, 2026-09-12).)
+// THE PARTITION IS ONE PURE FUNCTION OF THE DOCUMENT (docs/composer-partition-
+// consistency-spec.md; decisions.md "Partition: the reach-back curve", Max
+// 2026-10-20). Each SECTION (the measures between hard starts — every measure
+// after a user or section-level sb/pb) is partitioned by F, render/balance.ts
+// `partitionSection`: greedy lines at fill ≤ 1.00, then the best layout on the
+// reach-back curve. A load runs F over every section; an edit carries the
+// partition across by line MEMBERSHIP (which only says which sections it
+// touched and keeps pages by line) and then runs the SAME F over every touched
+// section in full. So a load and an edit compute the same layout, a reload
+// never changes the screen, and undo restores the layout exactly — there is no
+// edit algorithm to keep equivalent, no legality envelope, and no bound on how
+// far a section's answer reaches. (This replaces the 2026-08-30 "never
+// re-derived" repair loop and its [MIN_FILL, FIT_MAX] envelope, whose suffix
+// balance disagreed with the load's: undoing a one-note delete at the
+// sonata's m. 250 left 19 boundaries moved.) Manual line breaks
+// (2026-09-11/12, linebreakCommands.ts) are plain <sb> LOCKS in the document:
+// a lock is a hard start like any other, so it splits its section — the
+// layout never holds state the document could not reproduce after a reload
+// (Max's ruling, 2026-09-12).
 //
 // Lifecycle:
 //   derive render (doc load / zoom / page scale / staff filter / any fallback)
@@ -34,9 +38,9 @@
 //   edit in page view (narrow accumulated dirty range)
 //     → naturals for the dirty window are (re)measured from an offscreen
 //       breaks:'none' sub-render (spanner/ending-complete, context-padded),
-//       the partition is carried across by membership and any line the edit
-//       made illegal is repaired minimally (push/pull one measure at a time,
-//       hard breaks respected), pins are re-encoded, and the doc re-renders with
+//       the partition is carried across by membership, every section the
+//       edit touched is re-partitioned by F (hard breaks respected), pins
+//       are re-encoded, and the doc re-renders with
 //       breaks:'line' — every <sb> honored VERBATIM, pages still broken
 //       automatically by height (probed 2026-08-30: 'line', unlike 'smart',
 //       never wraps a pinned line it deems overfull, so the partition really
@@ -59,30 +63,19 @@ import type { ComposerModel } from '../model/index.js';
 import type { RenderUnitIndex } from '../model/multirest.js';
 import { expandForSpanners, expandForEndings } from './splice.js';
 import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
-import { balanceSection, boundariesChanged, startsOf } from './balance.js';
+import { partitionSection, sectionAtoms, greedyStarts, FINAL_GREEDY_BELOW } from './balance.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
-/** LEGALITY bounds — the load-bearing tuning surface (Max, 2026-08-30).
- *  Fills are (sigW + Σ natural widths)/budget: >1 = the justified line
- *  compresses, <1 = it stretches. These are NOT a packing target: the
- *  partition is never re-derived, so a line is only ever re-laid when an edit
- *  pushes it OUTSIDE this envelope (see `repartition`). Set wide enough to
- *  contain Verovio's own castoff output — the sonata's 118 lines measure
- *  0.706–1.426 by this same naturals model (spike 5) — so an adopted
- *  partition is legal by construction and the first edit in a region moves
- *  nothing. Narrowing them makes reflow more eager; widening makes lines
- *  denser/sparser before they break. */
-const FIT_MAX = 1.45;
-/** Exported because the LAST system's justification threshold is this same
- *  rule (render.ts `buildOptions` → Verovio `minLastJustification`): a final
- *  line is justified exactly when it is a legal line, and left at its natural
- *  width when it is too sparse to be one. */
-export const MIN_FILL = 0.65;
-/** Measure moves one repartition may perform before giving up (derive). */
-const MAX_REPAIR_STEPS = 64;
-/** Naturals windows one repartition may render before giving up (derive).
- *  Repairs examine a handful of lines, so this is generous. */
+/** The document's LAST system, when its section stayed greedy (a final section
+ *  under FINAL_GREEDY_BELOW lines — balance.ts), is justified only at this
+ *  fill or above (Max, 2026-10-20: "a little less eager than 0.65"); when the
+ *  final section ran through F's pick it is always justified. Fills are
+ *  (sigW + Σ natural widths)/budget. See `finalSystemJustified`. */
+export const FINAL_JUSTIFY_FILL = 0.70;
+/** Naturals windows one repartition may render before giving up (derive). An
+ *  edit's dirty range is one window; a touched section's other naturals are
+ *  cached from the load (`warmAllNaturals`), so this is generous. */
 const MAX_ENSURES = 64;
 /** A naturals window never spans more measures than this: a long governed
  *  signature range (a meter change mid-piece governs to the next change) is
@@ -92,25 +85,6 @@ const ENSURE_CHUNK = 96;
 /** A single naturals window (post spanner/ending expansion) larger than this
  *  falls back to a derive render instead. */
 const WINDOW_CAP = 260;
-/** Section balancer knobs (render/balance.ts). BALANCE_SOFT_MAX is the fill a
- *  line is not packed past when the balancer CHOOSES a section's line count:
- *  1.00 = "never compress a line past its natural width; if it would, use
- *  another line". Calibrated, not chosen — at 1.00 the line COUNT matches
- *  Verovio's own castoff count on every sonata movement (36/21/22/37, still
- *  true after the 2026-09-18 sigFirst fix), so taking the partition over from
- *  castoff changes no section's line count and therefore moves no page
- *  boundary. The line CONTENTS do differ: no cap reproduces castoff's actual
- *  breaks (measured 2026-09-18 — our naturals are not Verovio's internal
- *  widths), which is why castoff must not be a second partition authority.
- *  FIT_MAX remains the legality bound; this only decides how many lines.
- *
- *  BALANCE_LAMBDA is 0: the partition is a pure function of content, so the
- *  partition a derive computes and the one an edit computes for the same
- *  content are identical (Max, 2026-09-17 — one authority, no first-edit
- *  settling, exact undo). See balance.ts for the λ/churn/agreement table; λ > 0
- *  is what used to freeze a section's first line at a barely-legal fill. */
-export const BALANCE_SOFT_MAX = 1.00;
-export const BALANCE_LAMBDA = 0;
 /** Largest single naturals window the balancer asks for (before context and
  *  spanner/ending expansion, which WINDOW_CAP still bounds). */
 const BALANCE_WINDOW = 120;
@@ -473,8 +447,8 @@ function sectionRanges(starts: number[], ids: string[], hard: Set<string>): Arra
  *  Growing (n1 > n0): a page starting past the section shifts DOWN by the lines
  *  added — the section now needs one more system than the page grid allotted
  *  it, exactly as a repair that inserts a line does (`lineInserted`). A section
- *  can grow now that the line count is chosen from the content
- *  (balance.ts `greedyLines`) rather than only ever merged away. */
+ *  can grow because the line count is greedy's over the current content
+ *  (balance.ts `partitionSection`) rather than only ever merged away. */
 function linesReplaced(pageLines: number[], kLo: number, n0: number, n1: number, lineCount: number): void {
   const d = n0 - n1;
   if (d === 0) return;
@@ -519,15 +493,39 @@ function headExtra(model: ComposerModel): string {
 /* ── the owner ────────────────────────────────────────────────────────────── */
 
 
-/** Diagnostics of one balance pass (edit path, initial band, or one job step). */
+/** What F picked for one section (diagnostics; balance.ts `SectionPartition`). */
+export interface SectionPick {
+  /** First measure id of the section. */
+  from: string;
+  lines: number;
+  /** Line starts moved off greedy. */
+  changes: number;
+  /** Lowest fill / spread over the lines the pick changed (+ the neighbour). */
+  min: number;
+  sd: number;
+  /** Distinct layouts on the section's curve. */
+  layouts: number;
+  /** A final section under FINAL_GREEDY_BELOW lines, kept greedy. */
+  exempt: boolean;
+}
+
+/** Diagnostics of one partition pass (the load's, or an edit's). */
 export interface BalanceStats {
   sections: number;
+  /** Sections whose line starts F changed. */
   applied: number;
+  /** Line starts that moved (symmetric difference, by measure). */
   changed: number;
+  /** Lines removed (negative: the sections grew). */
   removed: number;
   reasons: string[];
+  /** One per section F ran on, document order. */
+  picks: SectionPick[];
   ms: number;
 }
+
+const emptyBalanceStats = (): BalanceStats =>
+  ({ sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], picks: [], ms: 0 });
 
 /** The owner's width caches, as the renderer's partition cache carries them
  *  across a zoom / page-scale / view round-trip (2026-09-12). Natural measure
@@ -597,6 +595,10 @@ export class PageLineBreaks {
    *  the `docVersion()` it was computed for). */
   private sigCtxKeys: string[] = [];
   private sigCtxVer = -1;
+  /** The `sigCtxVer` whose contexts `measureAllSigCtx` last measured: keys
+   *  can be refreshed without measuring (`refreshSigKeys`), so "keys current"
+   *  no longer implies "contexts measured". */
+  private sigCtxMeasuredVer = -1;
   /** Lookups that found no measured width. Should always be 0 — every context
    *  is measured up front — so a non-zero value is a defect, reported rather
    *  than absorbed. */
@@ -646,11 +648,17 @@ export class PageLineBreaks {
   /** Why the last tryRefill returned null (diagnostics/tests); '' after a
    *  successful refill. */
   lastDeriveReason = '';
-  /** Diagnostics of the last balance pass (see BalanceStats). */
-  lastBalance: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
-  /** Diagnostics of the last SYNC band balance (balanceInitialBand) — kept
-   *  apart from `lastBalance`, which every job slice overwrites. */
+  /** Diagnostics of the last partition pass, load or edit (see BalanceStats). */
+  lastBalance: BalanceStats = emptyBalanceStats();
+  /** Diagnostics of the load's pass (balanceInitialBand) — kept apart from
+   *  `lastBalance`, which every edit overwrites. */
   lastInitialBalance: BalanceStats | null = null;
+  /** Whether the document's last system is justified, for the committed
+   *  partition (`finalSystemJustified`); null = unknown (a width missing). */
+  private finalJustified: boolean | null = null;
+  /** `docVersion()` of the document the committed partition was computed
+   *  for (every commit passes `noteFinalJustified`). */
+  private committedVer = -1;
   /** The staff subset this partition describes — single-part view's staves, or
    *  null for the whole score (2026-09-05). A part has its own widths, so its
    *  own partition, naturals and cache entry; the renderer sets it before every
@@ -668,6 +676,7 @@ export class PageLineBreaks {
     this.labelIndentW = null;
     this.sigCtxKeys = [];
     this.sigCtxVer = -1;
+    this.sigCtxMeasuredVer = -1;
     this.sigCtxMisses = 0;
     this.sigCtxMissKeys.clear();
     this.sigCtxPending = 0;
@@ -677,6 +686,7 @@ export class PageLineBreaks {
     this.sigDirty.clear();
     this.sigAll = true;
     this.budgetW = 0;
+    this.finalJustified = null;
   }
 
   /** Own the partition of `viewStaves` (null = every staff). A subset other
@@ -834,9 +844,8 @@ export class PageLineBreaks {
    *  measured first (`warmAllNaturals`), then each SECTION (document start +
    *  every hard start: user `<sb>`/`<pb>`, section breaks) is filled greedily
    *  at cap 1.0 — "a line never compresses past its natural width" — which is
-   *  the same `greedyLines` count the balancer uses, so the balance that
-   *  follows (`balanceInitialBand`, λ = 0) only redistributes measures within
-   *  a section's lines. Returns the seed lines (start-measure ids) — ONE line
+   *  F's own first step, so the partition that follows (`balanceInitialBand`)
+   *  keeps each section's line count and only picks its layout. Returns the seed lines (start-measure ids) — ONE line
    *  for a document that fits on one — or null when nothing could be measured.
    *  A multi-line seed is adopted (the owner then carries it across edits);
    *  a one-line document is never owned (tryRefill's rule) and the renderer
@@ -871,7 +880,7 @@ export class PageLineBreaks {
     }
     const lines = starts.map((i) => ids[i]);
     if (lines.length > 1) {
-      this.adoptPartition(model, lines, []);
+      this.adoptPartition(model, lines, [], undefined, budget);
     } else {
       /* A one-line document is never OWNED (tryRefill's rule: it derives on
          every edit), but it is registered — signatures baselined, the one
@@ -883,6 +892,7 @@ export class PageLineBreaks {
       this.startIds = lines;
       this.pageStartIds = [];
     }
+    this.noteFinalJustified(model);
     return lines;
   }
 
@@ -925,9 +935,15 @@ export class PageLineBreaks {
    *  ('naturals incomplete'; a lock after a system's first measure left the
    *  bar orphaned at zoom 50 but not at 100, Max 2026-09-12). Zoom must not
    *  change what the owner knows. */
-  private adoptPartition(model: ComposerModel, lines: string[], pages: string[], widths?: OwnerWidths): boolean {
+  private adoptPartition(
+    model: ComposerModel, lines: string[], pages: string[], widths?: OwnerWidths, budget?: number,
+  ): boolean {
     if (lines.length <= 1) return false;   // single-line docs are never owned
     this.invalidate();
+    /* The budget the widths are judged against (the page geometry): without
+       it a restored partition could not be read as F (`partitionOfDocument`)
+       nor decide the last system's justification until the next edit. */
+    if (budget !== undefined && budget > 0) this.budgetW = budget;
     if (widths) {
       this.naturals = new Map(widths.naturals);
       this.sigWByCtx = new Map(widths.sigW);
@@ -944,6 +960,7 @@ export class PageLineBreaks {
     if (!pages.every((id) => present.has(id))) return false;
     this.startIds = lines;
     this.pageStartIds = pages;
+    this.noteFinalJustified(model);
     return true;
   }
 
@@ -962,8 +979,10 @@ export class PageLineBreaks {
    *  checked by `verifyRenderedPartition` + the page-overflow test exactly like
    *  a freshly adopted one — so a stale offer degrades to a derive, never to a
    *  wrong layout. */
-  restorePartition(model: ComposerModel, lines: string[], pages: string[], widths?: OwnerWidths): boolean {
-    return this.adoptPartition(model, lines, pages, widths);
+  restorePartition(
+    model: ComposerModel, lines: string[], pages: string[], widths?: OwnerWidths, budget?: number,
+  ): boolean {
+    return this.adoptPartition(model, lines, pages, widths, budget);
   }
 
   /** Commit a partition for the CURRENT document WITHOUT dropping the width
@@ -972,7 +991,7 @@ export class PageLineBreaks {
    *  from the one the snapshot was taken against only by a `<sb>`, so every
    *  natural and leading-signature width is still right — `adoptPartition`'s
    *  `invalidate` would throw them away and leave the next edit re-measuring
-   *  (and `balanceTouched` declining with 'naturals incomplete'). Validates
+   *  (and the edit's F refusing with 'naturals incomplete'). Validates
    *  the ids (present, ascending, line 0 = the document start, page 1 = line
    *  0), cancels any adoption/balance job, and re-baselines the signatures and
    *  the user-break sig against the current document. */
@@ -993,6 +1012,7 @@ export class PageLineBreaks {
     this.startIds = lines.slice();
     this.pageStartIds = pages.slice();
     this.lastDeriveReason = '';
+    this.noteFinalJustified(model);
     return true;
   }
 
@@ -1150,20 +1170,18 @@ export class PageLineBreaks {
       if (redraw.lo <= redraw.hi) { const [a, b] = units.snap(redraw.lo, redraw.hi); redraw = { lo: a, hi: b }; }
     }
 
-    /* Manual line-break edit (2026-09-11): an added lock splits its line. A
-       REMOVED lock changes nothing here — the boundary merely stops being
-       hard (pin-removed-only, Max). Nothing else: a lock is a document change
-       and the layout holds no state the document cannot reproduce (Max,
-       2026-09-12). */
+    /* User-break edit: an added break (lock, page break, section header)
+       splits its line and so its section; a REMOVED one joins two sections
+       into one, which F then partitions whole. A removed LOCK is no exception
+       (it used to keep the layout — "pin-removed-only", 2026-09-12 — which a
+       reload could not reproduce once the partition became a function of the
+       document: partition spec G1). The layout holds no state the document
+       cannot reproduce (Max, 2026-09-12). */
     const addStarts: number[] = [];
-    /* A REMOVED page break or section header examines its neighbours (the
-       remnant it leaves is repaired and balanced from there); a removed LOCK
-       does not — the boundary merely stops being hard (pin-removed-only,
-       Max 2026-09-12: `lock_click_unlocks_keeps_layout`). */
     const removedAt: number[] = [];
     if (lockDiff) {
       for (const id of lockDiff.added) { const i = idIdx.get(id); if (i != null && i > 0) addStarts.push(i); }
-      for (const id of lockDiff.removedStructural) { const i = idIdx.get(id); if (i != null && i > 0) removedAt.push(i); }
+      for (const id of lockDiff.removed) { const i = idIdx.get(id); if (i != null && i > 0) removedAt.push(i); }
     }
     const hasEdit = addStarts.length > 0 || removedAt.length > 0;
 
@@ -1184,7 +1202,7 @@ export class PageLineBreaks {
       changedRun = redraw.lo > redraw.hi ? null : { lo: redraw.lo, hi: redraw.hi };
       this.lastRefillLines = 0;
     } else {
-      /* Pagination is carried INSIDE the repair, by line (see repartition):
+      /* Pagination is carried INSIDE the repartition, by line (see repartition):
          a surviving line never changes page, and a page whose lines all
          vanished collapses. The renderer compares old and new page COUNTS to
          decide whether the page grid itself changed. */
@@ -1235,6 +1253,17 @@ export class PageLineBreaks {
     this.sigState = newState;
     this.userBreakSig = newBreakSig;
     this.lastDeriveReason = '';
+    /* The last system's justification is a function of the final section
+       (finalSystemJustified). When an edit flips it — the final section
+       crossed FINAL_GREEDY_BELOW lines, or its greedy last line crossed
+       FINAL_JUSTIFY_FILL — the last line must be re-engraved even if its
+       members did not change, so the run reaches it. Either side of a flip
+       is a section of at most FINAL_GREEDY_BELOW lines, so this costs a few
+       lines at most. */
+    if (this.noteFinalJustified(model, ids, hard)) {
+      const lastStart = idIdx.get(newStartIds[newStartIds.length - 1]) ?? 0;
+      changedRun = { lo: Math.min(changedRun?.lo ?? lastStart, lastStart), hi: ids.length - 1 };
+    }
     const pageSet = newPageStartIds.length > 1 ? new Set(newPageStartIds) : null;
     const mei = (): string | null => {
       const tSer = performance.now();
@@ -1253,12 +1282,11 @@ export class PageLineBreaks {
     };
   }
 
-  /** Carry the committed partition across the edit and repair ONLY what the
-   *  edit made illegal. Never re-derives: an edit that leaves every line
-   *  inside [MIN_FILL, FIT_MAX] moves no boundary at all, so a no-op edit is
-   *  a visual no-op and undo restores the original layout exactly (Max's
-   *  ruling, 2026-08-30 — see the module header). Returns the new start-id
-   *  list, or null (caller derives). */
+  /** Carry the committed partition across the edit by membership, then
+   *  re-partition every SECTION the edit touched with F, in full — the same
+   *  function the load ran, so the result equals a fresh load of this
+   *  document (module header). Returns the new start-id list, or null (caller
+   *  derives). */
   private repartition(
     model: ComposerModel,
     meiMeasures: Element[],
@@ -1279,7 +1307,13 @@ export class PageLineBreaks {
     /* `dirty` may be EMPTY (hi < lo) for a pure manual line-break edit: no
        measure changed, so no natural is dropped and nothing is re-measured. */
     const hasDirty = dirty.lo <= dirty.hi;
-    const dLo = hasDirty ? Math.max(0, Math.min(dirty.lo, n - 1)) : 0;
+    /* One measure further left than the change: a measure-initial clef in
+       measure i is DRAWN at the end of measure i−1 (model
+       `relocateInitialClefs`), so an edit that gives measure i one, or takes
+       it away, changes i−1's natural width without touching i−1 — left stale,
+       F partitioned the live document differently from its own reload
+       (2026-10-20). The window renders that measure as context anyway. */
+    const dLo = hasDirty ? Math.max(0, Math.min(dirty.lo, n - 1) - 1) : 0;
     const dHi = hasDirty ? Math.max(dLo, Math.min(dirty.hi, n - 1)) : -1;
 
     /* ── carry the partition across the edit, by MEMBERSHIP ──
@@ -1294,7 +1328,6 @@ export class PageLineBreaks {
        already sum correctly. */
     const units = model.renderUnits(this.viewStaves);
     const unitLo = (i: number): number => units.repIdxOf(i);
-    const unitHi = (i: number): number => units.unitOf(i)[1];
     const oldPos = new Map(this.sigOrder.map((id, i) => [id, i]));
     const oldStartPos: number[] = [];
     for (const id of this.startIds!) {
@@ -1329,8 +1362,9 @@ export class PageLineBreaks {
        a pagination change no edit asked for. By line, a surviving line never
        changes page; a page whose every line vanished collapses into its
        successor (the renderer removes the emptied page element). Tracked as
-       indices into `starts` through the repair loop below, because a repair
-       that INSERTS a line shifts every later page's line index. */
+       indices into `starts` through the break edits and F below, because a
+       line inserted or removed shifts every later page's line index. The
+       renderer re-fits pages from the first changed one regardless. */
     const oldLineOf = new Map(this.startIds!.map((id, k) => [id, k]));
     const pageLines: number[] = [];
     for (const pid of this.pageStartIds) {
@@ -1376,32 +1410,20 @@ export class PageLineBreaks {
       return true;
     };
 
-    /* Measure the whole dirty range in ONE window before the repair loop. A
+    /* Measure the whole dirty range in ONE window before F runs. A
        note edit dirties a measure or two, but a signature change governs a
        RANGE (sigranges.ts) that can span many lines, and the per-line ensures
        below would spend MAX_ENSURES on it and derive — the O(document) fallback
        for what is an O(range) change. One window over the range costs exactly
-       the range; the repair loop then finds every natural present. */
+       the range; F then finds every natural present. */
     if (dHi >= dLo && !ensureRange(dLo, dHi)) return null;
 
-    const budget = this.budgetW;
-    const lineEnd = (k: number): number => (k + 1 < starts.length ? starts[k + 1] : n);
-    const fillOf = (k: number): number | null => {
-      const from = starts[k], to = lineEnd(k);
-      if (!ensureRange(from, to - 1)) return null;
-      const sig = this.sigWForLine(from);
-      if (sig === null) return null;
-      let acc = sig;
-      for (let i = from; i < to; i++) acc += this.naturals.get(ids[i]) ?? 0;
-      return acc / budget;
-    };
-
-    /* ── manual line-break edit (2026-09-11) ──
-       Applied AFTER the membership carry and BEFORE the repair, so the repair
-       sees the split the lock asks for and fixes only what that made illegal
-       — the same treatment a measure insert gets. `examine` collects the
-       measure range whose lines the repair must look at even though no
-       measure content changed. */
+    /* ── user-break edit (2026-09-11) ──
+       Applied AFTER the membership carry and BEFORE F, so the sections F sees
+       are the document's: an added break becomes a line start (and so a
+       section boundary — `sectionRanges` reads hard starts off line starts).
+       `examine` collects the measures whose sections F must re-partition even
+       though no measure content changed. */
     let examineLo = -1, examineHi = -1;
     const touch = (lo: number, hi: number): void => {
       examineLo = examineLo < 0 ? lo : Math.min(examineLo, lo);
@@ -1409,8 +1431,9 @@ export class PageLineBreaks {
     };
     const lineEndAt = (k: number): number => (k + 1 < starts.length ? starts[k + 1] : n);
     if (edit) {
-      /* Added locks: split the line at the lock. A lock at an existing start
-         only examines that line — the boundary is now hard, nothing moves. */
+      /* Added breaks: split the line at the break. One at an existing start
+         still examines both sides — the section it ends and the one it
+         starts are each partitioned alone now. */
       for (const raw of edit.addStarts) {
         const at = unitLo(raw);
         if (at <= 0) continue;
@@ -1421,11 +1444,10 @@ export class PageLineBreaks {
         lineInserted(k);
         touch(starts[k - 1], lineEndAt(k) - 1);
       }
-      /* Removed page breaks / section headers (2026-10-08): the boundary is no
-         longer hard. Examine the line before it and the line it started, so
-         the remnant the break left is repaired and the section balanced from
-         here — the symmetric half of the add above. The boundary itself moves
-         only if the repair or the balance moves it. */
+      /* Removed breaks: the boundary is no longer hard. Examine the line
+         before it and the line it started, so the joined section is
+         partitioned whole — the symmetric half of the add above. The boundary
+         itself moves only if F moves it. */
       for (const raw of edit.removedAt) {
         const at = unitLo(raw);
         if (at <= 0) continue;
@@ -1435,91 +1457,41 @@ export class PageLineBreaks {
       }
     }
 
-    /* ── repair ──
-       Examine only the lines the edit touched, then whatever a repair
-       cascades into. Each step moves ONE measure across ONE boundary, so the
-       reflow is as small as the illegality demands. */
+    /* ── F over every touched section (partition spec, Phase 3) ──
+       The lines the edit touched name the SECTIONS it touched; each is
+       re-partitioned WHOLE by the function the load ran, so the result is the
+       document's own partition, not a repair of the old one. No legality
+       envelope, no repair cascade, no page bound: F reaches as far back as its
+       pick says (no cap — Max, 2026-10-20), and an untouched section keeps
+       the load's answer because its widths did not change. */
     let eLo = hasDirty ? dLo : -1, eHi = hasDirty ? dHi : -1;
     if (examineLo >= 0) { eLo = eLo < 0 ? examineLo : Math.min(eLo, examineLo); eHi = Math.max(eHi, examineHi); }
-    let first = 0, last = -1;
     if (eLo >= 0 && eHi >= eLo) {
-      last = 0;
+      let first = 0, last = 0;
       for (let k = 0; k < starts.length; k++) {
         if (starts[k] <= eLo) first = k;
         if (starts[k] <= eHi) last = k;
       }
-    }
-    /* A line that pushed must never pull the same measure back (oscillation);
-       an overfull line that cannot shed without going underfull stays as it
-       is — content over churn. */
-    let pushed = new Set<number>();
-    let steps = 0;
-    let k = first;
-    let through = last;
-    /* The step cap guards against a loop, not against a long range: a head
-       meter change governs every measure to the next change (226 on the
-       sonata, ~56 lines) and each illegal line costs a step, so a fixed 64
-       refused it ('repartition window/cap exhausted') and the document was
-       re-seeded — the O(document) answer to an O(range) edit (2026-10-08).
-       Scale with the lines examined; the `pushed` guard still forbids
-       oscillation, so the bound is linear in the range. */
-    const stepCap = Math.max(MAX_REPAIR_STEPS, 8 * (last - first + 2));
-    while (k < starts.length && k <= through) {
-      if (++steps > stepCap) return null;
-      const f = fillOf(k);
-      if (f == null) return null;
-      const from = starts[k], to = lineEnd(k);
-      const movingUnitLo = unitLo(to - 1);           // the line's last UNIT
-      if (f > FIT_MAX && movingUnitLo > from) {
-        const moving = movingUnitLo;                 // last unit of this line moves whole
-        let nat = 0;
-        for (let i = moving; i < to; i++) nat += this.naturals.get(ids[i]) ?? 0;
-        if ((f * budget - nat) / budget < MIN_FILL && unitLo(moving - 1) === from) {
-          k++; continue;                             // shedding would only trade one illegality for another
-        }
-        if (k + 1 >= starts.length) {
-          starts.push(moving);                       // new final line
-          pushed = new Set<number>();
-        } else if (hard.has(ids[starts[k + 1]])) {
-          starts.splice(k + 1, 0, moving);           // can't move a user break — new line before it
-          lineInserted(k + 1);
-          pushed = new Set<number>();
-          through++;
-        } else {
-          starts[k + 1] = moving;
-        }
-        pushed.add(k);
-        through = Math.max(through, k + 1);
-        continue;                                    // re-check this line
+      const t0 = performance.now();
+      const lb = emptyBalanceStats();
+      const secs = sectionRanges(starts, ids, hard).filter(([lo, hi]) => hi >= first && lo <= last);
+      /* Last to first, so a line-count change in one never shifts the line
+         indices of a section still to visit. */
+      for (let s = secs.length - 1; s >= 0; s--) {
+        const [kLo, kHi] = secs[s];
+        const mTo = kHi + 1 < starts.length ? starts[kHi + 1] : n;
+        /* F reads the whole section: cached from the load except what the
+           edit dirtied (measured above), so this is normally free. */
+        if (!ensureRange(starts[kLo], mTo - 1)) return null;
+        lb.sections++;
+        const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, units, lb);
+        if (r.reason) { this.lastBalance = lb; return null; }   // F never runs on partial widths
+        if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
       }
-      if (f < MIN_FILL && k + 1 < starts.length && !pushed.has(k)) {
-        const cand = starts[k + 1];
-        const candHi = unitHi(cand);                 // pull the next line's first UNIT whole
-        if (!hard.has(ids[cand]) && lineEnd(k + 1) - candHi > 1) {
-          if (!ensureRange(cand, candHi)) return null;
-          let nat = 0;
-          for (let i = cand; i <= candHi; i++) nat += this.naturals.get(ids[i]) ?? 0;
-          if ((f * budget + nat) / budget <= FIT_MAX) {
-            starts[k + 1] = candHi + 1;
-            through = Math.max(through, k + 1);
-            continue;                                // re-check this line
-          }
-        }
-      }
-      k++;
+      lb.picks.reverse();
+      lb.ms = Math.round(performance.now() - t0);
+      this.lastBalance = lb;
     }
-
-    /* ── balance (2026-09-05) ──
-       The repair pulls only from the NEXT line, so a section-final line below
-       MIN_FILL — a lone bar before a movement break, a one-bar stub while
-       composing at the end — is the one illegality it cannot fix. For every
-       section the edit touched whose final line is defective, redistribute
-       that section's measures (render/balance.ts), with the change penalty:
-       the section is on screen. Only a section whose naturals are all cached
-       is balanced here (the adoption job warms them); one still missing
-       naturals keeps today's behaviour and the job balances it when it gets
-       there — never a whole-section window on the hot path. */
-    this.balanceTouched(starts, pageLines, ids, hard, first, Math.min(through, starts.length - 1), BALANCE_LAMBDA, units);
 
     const out = starts.map((i) => ids[i]);
     const before = new Set(this.startIds!), after = new Set(out);
@@ -1530,9 +1502,11 @@ export class PageLineBreaks {
     return { starts: out, pages: pageLines.map((li) => out[li]) };
   }
 
-  /* ── section balancing (2026-09-05) ───────────────────────────────────── */
+  /* ── the partition: F per section ─────────────────────────────────────── */
 
-  /** Fill of line k of `starts` from cached naturals; null when any is missing. */
+  /** Fill of line k of `starts` from cached naturals — the fill F judges it
+   *  by (its own leading block + Σ naturals, over the budget); null when any
+   *  width is missing. Diagnostics: fixtures and probes read it. */
   private lineFill(starts: number[], k: number, ids: string[]): number | null {
     const from = starts[k], to = k + 1 < starts.length ? starts[k + 1] : ids.length;
     const sig = this.sigWForLine(from);
@@ -1546,129 +1520,43 @@ export class PageLineBreaks {
     return acc / this.budgetW;
   }
 
-  /** Balance the section occupying lines [kLo..kHi] of `starts` in place:
-   *  `starts` and `pageLines` (page-start line indices) are updated, and the
-   *  line count may shrink OR grow — it is `greedyLines` over the CURRENT
-   *  content (balance.ts), never a function of the incumbent. Requires every
-   *  natural of the section to be cached. Reasons: '' (nothing to do),
-   *  'naturals incomplete', 'no legal balance: stub kept' (document-final —
-   *  Max's rule 2), 'no legal balance: section kept', 'single-line result'. */
+  /** Partition the section occupying lines [kLo..kHi] of `starts` with F
+   *  (balance.ts `partitionSection`) and splice its answer in place: `starts`
+   *  and `pageLines` (page-start line indices) are updated, and the line count
+   *  may shrink OR grow — it is greedy's count over the CURRENT content, never
+   *  a function of the incumbent. The section is FINAL when it ends the
+   *  document (F keeps a final section under FINAL_GREEDY_BELOW lines greedy).
+   *  Each line pays its own leading block (`sigWForLine` at its first
+   *  measure). Every natural of the section must be cached: F never balances
+   *  against a phantom document. The pick is recorded in `stats.picks`.
+   *  Reasons: '' (applied, or nothing moved), 'naturals incomplete'. */
   private balanceSectionLines(
-    starts: number[], pageLines: number[], kLo: number, kHi: number, ids: string[], lambda: number,
-    units: RenderUnitIndex,
+    starts: number[], pageLines: number[], kLo: number, kHi: number, ids: string[],
+    units: RenderUnitIndex, stats: BalanceStats,
   ): { applied: boolean; reason: string; changed: number; removed: number } {
-    const none = (reason: string) => ({ applied: false, reason, changed: 0, removed: 0 });
     const n = ids.length;
     const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : n;
-    /* NO GATE (2026-09-19). Every touched section rebalances, always: the
-       partition is a pure function of content (λ = 0), so re-balancing
-       unchanged content is idempotent — it reports changed = 0 and returns.
-       There is therefore nothing for a gate to save, and every gate we have
-       tried instead FROZE a stale partition on screen.
-       The gate this replaces held a section's divisions on any sub-measure
-       edit unless its final line fell below MIN_FILL (Max, 2026-09-17:
-       "sub-measure edits should still hold divisions unless they trigger an
-       absolute min or max"). Only the MIN was ever implemented, so widening
-       measures in place — note entry, the common case — hit nothing at all:
-       a 20-bar document took 26 consecutive keystrokes at up to fill 1.433
-       (43% compression, stems into accidentals) while a fresh derive wanted
-       three lines from the 4th keystroke on, and only escaped when the line
-       crossed FIT_MAX and the REPAIR loop split it. Undo then "failed" to
-       restore the layout because the layout on screen had never been the one
-       the content implied (2026-09-19).
-       Cost of dropping it, measured on the sonata: the balance is ≤ 1.8 ms on
-       the 139-bar movement against a 342 ms edit, and moved zero boundaries
-       across a 16-edit battery — an idempotent no-op, as designed. The
-       feasibility bounds prune `dpPartition`'s inner loop to a narrow legal
-       band, so it is O(M · band · N), not the O(M²·N) worst case.
-       `lineFill` is still called to reject a section whose naturals are cold:
-       acting on partial widths would balance against a phantom document. */
-    if (this.lineFill(starts, kHi, ids) === null) return none('naturals incomplete');
-    const budget = this.budgetW;
     /* Atoms are render UNITS (model/multirest.ts): a multimeasure-rest run is
        one atom whose width is its members' naturals summed (interiors are 0),
-       so the balancer can never place a break inside a run. `unitStartsM` maps
-       an atom offset back to its first measure. */
-    const ws: number[] = [];
-    const unitStartsM: number[] = [];
-    for (let i = mFrom; i < mTo;) {
-      const [uLo, uHi] = units.unitOf(i);
-      let w = 0;
-      for (let k = uLo; k <= Math.min(uHi, mTo - 1); k++) {
-        const x = this.naturals.get(ids[k]);
-        if (x === undefined) return none('naturals incomplete');
-        w += x;
-      }
-      ws.push(w / budget);
-      unitStartsM.push(uLo);
-      i = uHi + 1;
-    }
-    const refLens: number[] = [];
-    for (let k = kLo; k <= kHi; k++) {
-      const from = starts[k], to = k + 1 < starts.length ? starts[k + 1] : n;
-      refLens.push(unitStartsM.filter((u) => u >= from && u < to).length);
-    }
-    /* balanceSection takes ONE sig/budget for the section it balances; a
-       section can still contain a key change, so this is the section's own
-       leading context rather than a per-line value. Deterministic (which is
-       the defect being fixed); per-line exactness inside the balancer is a
-       separate refinement. */
-    const sigSec = this.sigWAt(mFrom);
-    if (sigSec === null) return none('sig context unmeasured');
-    /* The section's FIRST line pays a different leading block when it is also
-       the document's first line — none at all (balance.ts `sigFirst`). */
-    const sigFirst = this.sigWForLine(mFrom);
-    if (sigFirst === null) return none('sig context unmeasured');
-    const res = balanceSection(ws, sigSec / budget, refLens, {
-      minFill: MIN_FILL, fitMax: FIT_MAX, softMax: BALANCE_SOFT_MAX, lambda,
-    }, sigFirst / budget);
-    if (!res) return none(kHi === starts.length - 1 ? 'no legal balance: stub kept' : 'no legal balance: section kept');
-    const n0 = refLens.length, n1 = res.lens.length;
-    /* A partition needs two lines to be owned at all (tryRefill's single-line
-       rule); a document that small keeps its castoff shape. */
-    if (starts.length - (n0 - n1) < 2) return none('single-line result');
-    const changed = boundariesChanged(refLens, res.lens);
-    if (changed === 0) return none('');
-    const secStarts = startsOf(res.lens).map((o) => unitStartsM[o]);
+       so no line can start inside a run. */
+    const at = sectionAtoms(mFrom, mTo, this.budgetW,
+      (i) => this.naturals.get(ids[i]), (i) => this.sigWForLine(i), (i) => units.unitOf(i));
+    if (!at) return { applied: false, reason: 'naturals incomplete', changed: 0, removed: 0 };
+    const res = partitionSection(at, mTo === n);
+    const secStarts = res.starts.map((a) => at.atomStart[a]);
+    stats.picks.push({
+      from: ids[mFrom], lines: secStarts.length, changes: res.layout?.changes ?? 0,
+      min: res.layout?.min ?? 0, sd: res.layout?.sd ?? 0, layouts: res.layouts, exempt: res.exempt,
+    });
+    const n0 = kHi - kLo + 1, n1 = secStarts.length;
+    const before = new Set(starts.slice(kLo, kHi + 1)), after = new Set(secStarts);
+    let changed = 0;
+    for (const x of before) if (!after.has(x)) changed++;
+    for (const x of after) if (!before.has(x)) changed++;
+    if (changed === 0) return { applied: false, reason: '', changed: 0, removed: 0 };
     starts.splice(kLo, n0, ...secStarts);
     linesReplaced(pageLines, kLo, n0, n1, starts.length);
     return { applied: true, reason: '', changed, removed: n0 - n1 };
-  }
-
-  /** Balance every section intersecting lines [kFrom..kTo] (edit path: the
-   *  lines the repair examined). Sections are visited last-to-first so a line
-   *  removal in one never shifts the indices of one still to visit. */
-  private balanceTouched(
-    starts: number[], pageLines: number[], ids: string[], hard: Set<string>,
-    kFrom: number, kTo: number, lambda: number, units: RenderUnitIndex,
-  ): void {
-    const t0 = performance.now();
-    const lb: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
-    const secs = sectionRanges(starts, ids, hard).filter(([lo, hi]) => hi >= kFrom && lo <= kTo);
-    for (let s = secs.length - 1; s >= 0; s--) {
-      const [kLo, kHi] = secs[s];
-      /* Only the section's suffix from the first line of the PAGE the edit
-         examined first: an edit never reaches a page before it ("Every edit
-         is a splice", Max, 2026-10-08 — a page break, a section header or a
-         meter change must not touch a page before it). Balancing the whole
-         section re-laid it from scratch whenever a hard start appeared inside
-         it or its tail was re-measured, and moved lines three pages up for a
-         page break on page four. Within the edit's own page the section is
-         still balanced whole (a one-page document behaves exactly as before:
-         a lock's sparse remainder is absorbed, a section stays a balancer
-         fixed point); the lines on earlier pages keep the partition they
-         have — the balance's own answer from the load. */
-      let pageFirst = 0;
-      for (const pl of pageLines) if (pl <= kFrom && pl > pageFirst) pageFirst = pl;
-      const lo = Math.max(kLo, pageFirst);
-      if (lo > kHi) continue;
-      lb.sections++;
-      const r = this.balanceSectionLines(starts, pageLines, lo, kHi, ids, lambda, units);
-      if (r.reason) lb.reasons.push(r.reason);
-      if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; }
-    }
-    lb.ms = Math.round(performance.now() - t0);
-    this.lastBalance = lb;
   }
 
   /** Measure the naturals still missing in ids[lo..hi], at most `cap` measures
@@ -1708,18 +1596,15 @@ export class PageLineBreaks {
     return { starts, pageLines };
   }
 
-  /** Adoption-time balance for the sections with a line on the first `pages`
-   *  pages, run SYNCHRONOUSLY before the pinned paint (decided with Max,
-   *  2026-09-05): the first paint is already balanced, so page 1 never re-flows
-   *  under the reader; every other section is left to the idle job. `budget`
-   *  is the justified system width, measured from the castoff layout since
-   *  nothing is mounted yet. The final line's naturals are measured first —
-   *  they alone decide whether the section is defective — and the rest of the
-   *  section only when it is (movement I of the sonata: 139 measures ≈ 0.9 s).
-   *  λ = 0: nothing is painted, so the fully even partition is free. */
-  balanceInitialBand(model: ComposerModel, ctx: PageBreaksCtx, budget: number, pages: number): void {
+  /** The load's partition: F over EVERY section, run SYNCHRONOUSLY before the
+   *  first paint on the greedy seed (`seedPartition`), so the first paint is
+   *  the document's own partition and nothing re-flows under the reader.
+   *  `budget` is the justified system width from the page geometry (nothing is
+   *  mounted yet). Naturals are complete beforehand (`warmAllNaturals`); a
+   *  section whose window still failed keeps its greedy seed. */
+  balanceInitialBand(model: ComposerModel, ctx: PageBreaksCtx, budget: number): void {
     const t0 = performance.now();
-    const lb: BalanceStats = { sections: 0, applied: 0, changed: 0, removed: 0, reasons: [], ms: 0 };
+    const lb = emptyBalanceStats();
     this.lastBalance = lb;
     this.lastInitialBalance = lb;
     if (this.startIds === null || this.startIds.length <= 1 || !(budget > 0)) return;
@@ -1730,33 +1615,112 @@ export class PageLineBreaks {
     if (!part) return;
     this.ensureSigCtx(model, meiMeasures, ids, ctx);   // keys before any fill (see repartition)
     const { starts, pageLines } = part;
-    const lastLine = pageLines.length > pages ? pageLines[pages] - 1 : starts.length - 1;
     const hard = hardStartIds(model);
-    const secs = sectionRanges(starts, ids, hard).filter(([lo]) => lo <= lastLine);
+    const units = model.renderUnits(this.viewStaves);
+    const secs = sectionRanges(starts, ids, hard);
     let touched = false;
     for (let s = secs.length - 1; s >= 0; s--) {
       const [kLo, kHi] = secs[s];
       lb.sections++;
       const mFrom = starts[kLo], mTo = kHi + 1 < starts.length ? starts[kHi + 1] : ids.length;
       if (this.measureMissing(model, meiMeasures, ids, mFrom, mTo - 1, ctx, Infinity) !== true) { lb.reasons.push('naturals window failed'); continue; }
-      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, 0, model.renderUnits(this.viewStaves));
+      const r = this.balanceSectionLines(starts, pageLines, kLo, kHi, ids, units, lb);
       if (r.reason) lb.reasons.push(r.reason);
       if (r.applied) { lb.applied++; lb.changed += r.changed; lb.removed += r.removed; touched = true; }
     }
+    lb.picks.reverse();
     if (touched) {
       /* Lines only. Pages are no longer carried by line index from a castoff
          (decisions.md "Composer draws the pages"): the renderer decides them from the
-         measured systems after the balance and commits them with
+         measured systems after the partition and commits them with
          `setPageStarts`. */
       this.startIds = starts.map((i) => ids[i]);
       this.pageStartIds = [];
     }
+    this.noteFinalJustified(model);
     lb.ms = Math.round(performance.now() - t0);
+  }
+
+  /** F of the whole document from the width caches, as line-start ids — what
+   *  the committed partition MUST equal (the suite's "partition is F"
+   *  invariant; probes). Read-only: measures nothing, so null when a natural
+   *  or a leading block is missing. */
+  /** True when the committed partition was computed for the document as it
+   *  is now — false after an edit that has not been rendered yet. */
+  partitionCurrent(model: ComposerModel): boolean {
+    return this.startIds !== null && this.committedVer === model.docVersion();
+  }
+
+  partitionOfDocument(model: ComposerModel): string[] | null {
+    if (!(this.budgetW > 0)) return null;
+    const meiMeasures = model.allMeasures();
+    this.refreshSigKeys(model, meiMeasures);
+    const ids = measureIds(meiMeasures);
+    if (!ids.length) return [];
+    const hard = hardStartIds(model);
+    const units = model.renderUnits(this.viewStaves);
+    const bounds = [0];
+    for (let i = 1; i < ids.length; i++) if (hard.has(ids[i])) bounds.push(i);
+    bounds.push(ids.length);
+    const out: string[] = [];
+    for (let s = 0; s + 1 < bounds.length; s++) {
+      const at = sectionAtoms(bounds[s], bounds[s + 1], this.budgetW,
+        (i) => this.naturals.get(ids[i]), (i) => this.sigWForLineQuiet(i), (i) => units.unitOf(i));
+      if (!at) return null;
+      for (const a of partitionSection(at, s + 2 === bounds.length).starts) out.push(ids[at.atomStart[a]]);
+    }
+    return out;
+  }
+
+  /** Is the document's LAST system justified? (render.ts `buildOptions` →
+   *  Verovio `minLastJustification`; Max, 2026-10-20.) Always when the final
+   *  section ran through F's pick (FINAL_GREEDY_BELOW+ greedy lines — its
+   *  last line is part of a balanced layout); when the final section stayed
+   *  greedy (1–2 lines), only at fill ≥ FINAL_JUSTIFY_FILL. Decided by OUR
+   *  fill, so it needs no slack for Verovio's own ratio. Null when unknown (a
+   *  width is missing). Recomputed whenever a partition is committed. */
+  finalSystemJustified(): boolean | null {
+    return this.finalJustified;
+  }
+
+  /** Recompute `finalJustified` for the committed partition. True when it
+   *  changed (tryRefill then re-renders the last line). */
+  private noteFinalJustified(model: ComposerModel, ids?: string[], hard?: Set<string>): boolean {
+    this.committedVer = model.docVersion();
+    const was = this.finalJustified;
+    const meiMeasures = model.allMeasures();
+    this.refreshSigKeys(model, meiMeasures);
+    this.finalJustified = this.computeFinalJustified(model, ids ?? measureIds(meiMeasures), hard ?? hardStartIds(model));
+    return was !== this.finalJustified;
+  }
+
+  private computeFinalJustified(model: ComposerModel, ids: string[], hard: Set<string>): boolean | null {
+    if (this.startIds === null || !this.startIds.length || !(this.budgetW > 0)) return null;
+    const n = ids.length;
+    if (!n) return null;
+    let h = 0;
+    for (let i = n - 1; i > 0; i--) if (hard.has(ids[i])) { h = i; break; }
+    const units = model.renderUnits(this.viewStaves);
+    const at = sectionAtoms(h, n, this.budgetW,
+      (i) => this.naturals.get(ids[i]), (i) => this.sigWForLineQuiet(i), (i) => units.unitOf(i));
+    if (!at) return null;
+    if (greedyStarts(at).length >= FINAL_GREEDY_BELOW) return true;
+    const last = ids.indexOf(this.startIds[this.startIds.length - 1]);
+    if (last < 0) return null;
+    const sig = this.sigWForLineQuiet(last);
+    if (sig === null) return null;
+    let w = sig;
+    for (let i = last; i < n; i++) {
+      const x = this.naturals.get(ids[i]);
+      if (x === undefined) return null;
+      w += x;
+    }
+    return w / this.budgetW >= FINAL_JUSTIFY_FILL;
   }
 
   /** Measure and cache the natural width of EVERY measure, synchronously.
    *
-   *  The balance and every later legality check are only as complete as the
+   *  The partition (F, at load and on every edit) is only as complete as the
    *  naturals cache. It used to be filled opportunistically — the idle balance
    *  job walked the document after the paint — so removing that job in favour
    *  of a pre-paint balance left an edit's `balanceTouched` reporting
@@ -1810,6 +1774,16 @@ export class PageLineBreaks {
    *  natural width, so charging `sigWAt` as well counted it twice and cost
    *  that line a measure (verified 2026-09-18; see balance.ts `sigFirst`).
    *  Every other line really does get a block no natural contains. */
+  /** `sigWForLine` for READ-ONLY diagnostics (`partitionOfDocument`,
+   *  `finalSystemJustified`): a miss returns null without being reported —
+   *  only the partition itself refuses, and reports, a missing width. */
+  private sigWForLineQuiet(idx: number): number | null {
+    if (idx === 0) return this.labelIndentW;
+    const key = this.sigCtxKeys[idx];
+    const w = key === undefined ? undefined : this.sigWByCtx.get(key);
+    return w !== undefined && w > 0 ? w : null;
+  }
+
   private sigWForLine(idx: number): number | null {
     if (idx !== 0) return this.sigWAt(idx);
     /* The clef+key+meter block is already inside measure 0's natural, so the
@@ -1848,9 +1822,21 @@ export class PageLineBreaks {
   private ensureSigCtx(
     model: ComposerModel, meiMeasures: Element[], ids: string[], ctx: PageBreaksCtx,
   ): void {
+    const recomputed = this.refreshSigKeys(model, meiMeasures);
+    if (!recomputed && this.sigCtxPending === 0 && this.sigCtxMeasuredVer === this.sigCtxVer) return;
+    this.measureAllSigCtx(model, meiMeasures, ids, ctx);
+    this.sigCtxMeasuredVer = this.sigCtxVer;
+  }
+
+  /** The per-measure context keys alone, recomputed when the document version
+   *  changed — no measuring. For readers of the committed partition
+   *  (`partitionOfDocument`, `finalSystemJustified`) that run without a
+   *  refill: a partition-cache restore (`adoptPartition`) brings the widths
+   *  back but `invalidate` emptied the keys, and every `sigWAt` then missed.
+   *  True when the keys were recomputed. */
+  private refreshSigKeys(model: ComposerModel, meiMeasures: Element[]): boolean {
     const ver = model.docVersion();
-    const keysCurrent = this.sigCtxVer === ver && this.sigCtxKeys.length === meiMeasures.length;
-    if (keysCurrent && this.sigCtxPending === 0) return;
+    if (this.sigCtxVer === ver && this.sigCtxKeys.length === meiMeasures.length) return false;
     const doc = model.getDoc();
     const clef = new Map<string, string>();
     let key = '';
@@ -1881,23 +1867,35 @@ export class PageLineBreaks {
     const score = doc.querySelector('score');
     for (const node of Array.from(score?.querySelectorAll('scoreDef, measure') ?? [])) {
       if (node.localName === 'scoreDef') { applyScoreDef(node); continue; }
-      out.push(keyOf());
-      seen.add(node);
-      /* Inline clefs change the clef for every LATER line. */
-      for (const c of Array.from(node.querySelectorAll('layer > clef'))) {
+      const applyClef = (c: Element): void => {
         const st = c.closest('staff')?.getAttribute('n');
-        if (!st) continue;
+        if (!st) return;
         const shape = c.getAttribute('shape'), line = c.getAttribute('line');
         const dis = c.getAttribute('dis'), place = c.getAttribute('dis.place');
         clef.set(st, (shape ?? '') + (line ?? '') + (dis ? dis + (place ?? '') : ''));
+      };
+      /* A layer-INITIAL clef is in force from its OWN measure: rendering moves
+         it before the barline (model `relocateInitialClefs` — and `serialize`
+         saves that form, the clef at the end of the previous measure), and a
+         line starting here draws it as its leading clef (the range head folds
+         it in). Keyed here, the live form and the saved form get one context —
+         a delete that made a clef measure-initial left the live key on the old
+         clef, and a reload re-broke two lines of the sonata (2026-10-20). */
+      for (const layer of Array.from(node.querySelectorAll('staff > layer'))) {
+        const first = layer.firstElementChild;
+        if (first && first.localName === 'clef') applyClef(first);
       }
+      out.push(keyOf());
+      seen.add(node);
+      /* Any other inline clef changes the clef for every LATER line. */
+      for (const c of Array.from(node.querySelectorAll('layer > clef'))) applyClef(c);
     }
     /* A document whose measures are not the section's direct children (or a
        shape this walk does not recognise) gets no keys rather than wrong ones;
        sigWAt then reports misses instead of inventing a yardstick. */
     this.sigCtxKeys = out.length === meiMeasures.length && meiMeasures.every((m) => seen.has(m)) ? out : [];
     this.sigCtxVer = ver;
-    this.measureAllSigCtx(model, meiMeasures, ids, ctx);
+    return true;
   }
 
   /** Measure the leading clef+key width of EVERY signature context in the

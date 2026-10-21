@@ -514,38 +514,55 @@ shells** (`render/pageshell.ts`), which also draw the page header.
 **The partition** (`PageLineBreaks`, `render/linebreaks.ts`, with
 `balance.ts`):
 
-- A line's fill = the sum of its measures' natural widths (measured in
-  unjustified `breaks:'none'` windows, read from the SVG path text) over the
-  budget, `(pageWidth − margins) × 10`. The first line also pays the
-  instrument-name indent; no line pays the leading clef and key, which sit
-  inside measure 0's natural width.
-- **Section balancing is the partition authority.** For each section (the
-  lines between two hard starts) the line count is the fewest lines keeping
-  every line at or under fill 1.0, and the arrangement at that count is the
-  minimum-variance one with every line in [`MIN_FILL` 0.65, `FIT_MAX` 1.45]
-  (trying N, N+1, N−1). `BALANCE_LAMBDA` is 0, so the partition is a pure
-  function of content and has no hysteresis. A section with no feasible count
-  keeps what it had.
-- On load the whole document is balanced before the first paint. On an edit
-  the refill diffs per-measure signatures against its baseline, carries the
-  partition by line membership, repairs lines the edit made illegal, and
-  rebalances every touched section from the first line of the edit's page —
-  no page before an edit moves (consequence: decisions.md "Open: the bounded
-  section balance…").
-- Hard starts — locks, page breaks, section headers — are line-start edits
-  like any other; a page break or section header also re-fits pages from its
-  page. A signature change re-engraves the range it governs
-  (`render/sigranges.ts`: to the next change of the same kind on the same
-  staff).
-- Justification: page geometry sets `minLastJustification` from `MIN_FILL`, so
-  a document-final line is justified exactly when it is a legal line.
+- A line's fill = its leading block plus the sum of its measures' natural
+  widths (measured in unjustified `breaks:'none'` windows, read from the SVG
+  path text), over the budget `(pageWidth − margins) × 10`. The leading block
+  is the clef + key a line starting at that measure draws (measured once per
+  signature context, `sigWForLine`); the document's first line pays the
+  instrument-name indent instead, since its clef and key sit inside measure
+  0's natural width.
+- **The partition is one pure function of the document, F**
+  (`balance.ts` `partitionSection`; spec:
+  `docs/composer-partition-consistency-spec.md`). Per section — the measures
+  between hard starts — over atoms (render units: a multirest run is one):
+  greedy lines at fill ≤ 1.00 give the line count N (no line is ever
+  compressed; a measure wider than a line sits alone); the reach-back curve
+  re-divides the last k greedy lines most evenly (min Σ(1−f)², one DP for
+  every k = 1..N); each distinct layout is scored on the lines it changes
+  plus the untouched line before them, and the pick is max(min − spread −
+  0.03 × boundaries moved). No `MIN_FILL`, no legality envelope. A FINAL
+  section of fewer than 3 greedy lines stays greedy.
+- The load runs F over every section before the first paint; an edit carries
+  the partition by line membership (which says only which sections it
+  touched, and keeps pages by line), then runs the same F over every touched
+  section in full. A load and an edit therefore compute the same layout, a
+  reload never changes the screen, and undo restores the layout exactly. F
+  reaches as far as its pick says — including onto earlier pages — and an
+  inserted or deleted bar re-flows the rest of its section (inherent to a
+  partition that is a function of the content). The suite checks it on every
+  fixture ("partition is F": the committed starts equal
+  `PageLineBreaks.partitionOfDocument`).
+- Hard starts — locks, page breaks, section headers — split their section;
+  removing one joins two sections, which F partitions whole. A page break or
+  section header also re-fits pages from its page. A signature change
+  re-engraves the range it governs (`render/sigranges.ts`: to the next change
+  of the same kind on the same staff).
+- Justification of the document's last system is the owner's call
+  (`finalSystemJustified` → Verovio `minLastJustification` 0 or 1): always
+  when the final section ran through F's pick, at fill ≥ 0.70 when it stayed
+  greedy. A section-final line elsewhere is never Verovio's last system and
+  always justifies.
 
 **Manual line breaks** (`Alt+Shift+↓`, `linebreakCommands.ts`): a lock is a
 plain `<sb>` in the document before the cursor's measure — saved in `.hkc`,
-exported as `<print new-system="yes"/>`, and handled by the refill like a
-measure insert. Whether the remainder folds back is the balancer's call; the
-document can say where a break must be, never where one must not. A padlock
-(`render/lockmarks.ts`) marks each locked break; a click unlocks.
+exported as `<print new-system="yes"/>`, and handled by the refill like any
+hard start: it splits its section, and each side is partitioned by F (a
+remainder just over a line becomes two lines, never one compressed one). The
+document can say where a break must be, never where one must not — locks are
+also how a user forces a layout F would not pick. A padlock
+(`render/lockmarks.ts`) marks each locked break; a click unlocks, and the
+joined section is re-partitioned (the layout a reload of the unlocked
+document shows).
 
 **The system splice** (`PageSystemSplicer`, `render/pagesplice.ts`): when a
 refill's change is local, the affected lines are re-engraved in one window
@@ -555,6 +572,18 @@ the replaced set is clipped to the band of mounted pages, and lines beyond it
 are deferred: such a page is parked and rebuilt from its committed lines when
 it next mounts. When the hunk path refuses, `PageAssembler.applyPartition`
 engraves the reached lines one window each and reuses every other system.
+
+**Only mounted pages are engraved** (2026-10-20). Pagination (first-fit,
+below) runs over every line, but a line on an unmounted page whose
+membership F changed has no measured height yet: it counts with the height
+of the line that held its first measure in the layout the pages were last
+fitted for (`PageAssembler.heightOf`, assumed heights kept apart from
+measured ones), so the unmounted region keeps its page count and scroll
+height. Any page the re-fit rebuilds that is not mounted becomes a deferred
+card, engraved from its committed lines when it mounts, after which the fit
+re-runs from it (a page boundary may shift by a system then). A line the fit
+lands on a mounted page with only an assumed height is engraved before the
+page is shown, and the fit re-run from its page.
 
 **Cross-measure render dependencies** — check this list when scoping any edit
 (both splicers implement it):

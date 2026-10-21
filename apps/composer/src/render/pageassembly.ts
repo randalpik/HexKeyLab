@@ -10,12 +10,21 @@
 //          slices. The page count is whatever the fold produces.
 //   mount  re-attach a parked page's shell (no render); unmount parks it.
 //   edit   the splicer re-engraves its hunk into the pages the refill's
-//          provisional (membership-carried) pagination names; placePage
-//          records the hunk's new extents; `repaginateFrom` runs first-fit
-//          from the first touched page over the store and rebuilds ONLY the
-//          pages up to the first one whose start comes out where it already
-//          is — a changed page never affects a page before it, and an
-//          unchanged boundary means every page after it is unchanged too.
+//          membership-carried pagination names; placePage records the hunk's
+//          new extents; `repaginateFrom` runs first-fit from the first touched
+//          page over the store and rebuilds ONLY the pages up to the first one
+//          whose start comes out where it already is — a changed page never
+//          affects a page before it, and an unchanged boundary means every
+//          page after it is unchanged too.
+//          Only MOUNTED pages are engraved (Max, 2026-10-20). A line on an
+//          unmounted page that has no measured height yet — the partition
+//          (render/balance.ts F) re-laid it — counts with the height of the
+//          line that held its first measure in the layout the pages were last
+//          fitted for (`paginatedLines`): the unmounted region stays as it
+//          was for page count and scroll height. Its page becomes a deferred
+//          card, engraved on mount, and the fit re-runs from there; a line
+//          that lands on a MOUNTED page with only such a height is engraved
+//          before the page is shown and the fit re-run from its page.
 //
 // Verovio is asked for one thing: a line window (render/systemrender.ts).
 // The page itself is Composer's (render/pageshell.ts).
@@ -60,6 +69,9 @@ export interface AssemblyHost {
   applyTheme(div: HTMLElement): void;
   /** Fold tolerance in user units (two device pixels). */
   foldTolerance(): number;
+  /** A placeholder card the assembler created after the load (a deferred
+   *  page): observe it so scrolling to it mounts it. */
+  observePlaceholder(div: HTMLElement): void;
 }
 
 export interface AssemblyStats {
@@ -153,6 +165,13 @@ export class PageAssembler {
   lastRebuiltPages: HTMLElement[] = [];
   /** Parked pages whose post passes must re-run on mount (a rescale). */
   private needsPost = new Set<number>();
+  /** The line partition the pages were last fitted for: what "as it was"
+   *  means for a line that has no measured height yet (`heightOf`). */
+  private paginatedLines: string[] = [];
+  /** Heights a fit ASSUMED for lines never engraved since their membership
+   *  changed (unmounted pages), by line start id. A measured height in the
+   *  store always wins; an estimate only stands in until the line mounts. */
+  private estimates = new Map<string, SysExtents>();
 
   constructor(private readonly host: AssemblyHost, private readonly pageBreaks: PageLineBreaks, private readonly extents: ExtentsStore) {}
 
@@ -289,6 +308,8 @@ export class PageAssembler {
     this.pageW = 0;
     this.pageH = 0;
     this.extents.clear();
+    this.estimates.clear();
+    this.paginatedLines = [];
     this.pageBreaks.setPageStarts([]);
   }
 
@@ -388,6 +409,7 @@ export class PageAssembler {
   private finishJob(job: Job): void {
     if (this.job !== job) return;
     this.job = null;
+    this.paginatedLines = this.lines().slice();
     /* The total is known now: cards past it were an estimate and go. */
     for (const div of Array.from(this.host.container.querySelectorAll('.score-page.' + PENDING)) as HTMLElement[]) {
       if ((Number(div.dataset.page) || 0) > this.pageCount) div.remove();
@@ -536,15 +558,18 @@ export class PageAssembler {
       this.ensurePageBuilt(p);
       if (this.mounted.has(p)) return true;
     }
-    const svg = this.parked.get(p);
     const div = this.pageDiv(p);
-    if (!svg || !div) return false;
+    if (!div) return false;
+    /* A deferred page (a clipped splice's stale park, or a card the fit left
+       unengraved) is built from its committed lines — it may have no shell. */
     if (this.needsRebuild.has(p)) {
       this.needsRebuild.delete(p);
       this.parked.delete(p);
       this.rebuildPage(p, div);
       return this.mounted.has(p);
     }
+    const svg = this.parked.get(p);
+    if (!svg) return false;
     div.innerHTML = '';
     div.appendChild(svg);
     div.classList.remove(PENDING);
@@ -579,7 +604,12 @@ export class PageAssembler {
     const top = c.scrollTop * scrollScale, left = c.scrollLeft * scrollScale;
     for (let p = 1; p <= this.pageCount; p++) {
       const root = this.rootOf(p);
-      if (!root) continue;
+      if (!root) {
+        /* A deferred card: only its box follows the zoom (it builds on mount). */
+        const card = this.pageDiv(p);
+        if (card) { card.style.width = this.pageW + 'px'; card.style.height = this.pageH + 'px'; }
+        continue;
+      }
       root.setAttribute('width', this.pageW + 'px');
       root.setAttribute('height', this.pageH + 'px');
       const div = this.pageDiv(p);
@@ -604,7 +634,9 @@ export class PageAssembler {
     const out: string[] = [];
     for (let p = 1; p <= this.pageCount; p++) {
       const root = this.rootOf(p);
-      if (!root) continue;
+      /* A deferred page holds no current systems (none, or the stale ones of
+         its old lines): its lines are the committed ones until it mounts. */
+      if (!root || this.needsRebuild.has(p)) { out.push(...this.committedLinesOf(p)); continue; }
       for (const sys of this.systemsOf(root)) { const id = sys.querySelector('g.measure')?.id; if (id) out.push(id); }
     }
     return out;
@@ -616,10 +648,23 @@ export class PageAssembler {
     const out: string[] = [];
     for (let p = 1; p <= this.pageCount; p++) {
       const root = this.rootOf(p);
-      const id = root ? this.systemsOf(root)[0]?.querySelector('g.measure')?.id : undefined;
+      const id = !root || this.needsRebuild.has(p)
+        ? this.committedLinesOf(p)[0]
+        : this.systemsOf(root)[0]?.querySelector('g.measure')?.id;
       if (id) out.push(id);
     }
     return out;
+  }
+
+  /** Line starts of page `p` by the committed page starts. */
+  private committedLinesOf(p: number): string[] {
+    const lines = this.lines();
+    const pages = this.pageBreaks.pageStarts();
+    const from = lines.indexOf(pages[p - 1] ?? '');
+    if (from < 0) return [];
+    const toId = pages[p];
+    const to = toId === undefined ? lines.length : lines.indexOf(toId);
+    return lines.slice(from, to < 0 ? lines.length : to);
   }
 
   /** Detach a mounted page into the park, leaving a sized placeholder. */
@@ -752,6 +797,21 @@ export class PageAssembler {
     if (!lines.length || !pages.length) { stats.ms = performance.now() - t0; return true; }
     const lineIdx = new Map(lines.map((id, i) => [id, i]));
     const oldIdx = new Map(oldLines.map((id, i) => [id, i]));
+    const measureIdx = new Map(this.host.measureIds().map((id, i) => [id, i]));
+    /* What is on screen decides what is engraved: pages mounted now, and the
+       page each measure is drawn on (a stale page's systems are the old
+       layout, so they say nothing). */
+    const mountedBefore = new Set(this.mounted);
+    const staleBefore = new Set(this.needsRebuild);
+    const pageOfMeasure = new Map<string, number>();
+    const staleRoots = new Set<Element>();
+    for (let p = 1; p <= this.pageCount; p++) {
+      const root = this.rootOf(p);
+      if (!root) continue;
+      if (staleBefore.has(p)) { staleRoots.add(root); continue; }
+      for (const g of Array.from(root.querySelectorAll('g.system g.measure'))) if (g.id) pageOfMeasure.set(g.id, p);
+    }
+    const onMountedPage = (id: string): boolean => mountedBefore.has(pageOfMeasure.get(id) ?? 0);
 
     /* Lines that need a fresh system, and the first line about which anything
        differs from the DOM: content, membership, or index. */
@@ -778,7 +838,7 @@ export class PageAssembler {
       const tl = pageStartLines[Math.min(...touchedPages) - 1];
       if (tl >= 0 && (fromLine < 0 || tl < fromLine)) fromLine = tl;
     }
-    if (fromLine < 0) { stats.ms = performance.now() - t0; return true; }   // nothing differs
+    if (fromLine < 0) { this.paginatedLines = lines.slice(); stats.ms = performance.now() - t0; return true; }   // nothing differs
     /* Start one page BEFORE the first affected page: a changed line that
        starts a page may have shrunk enough to go back onto the page before
        it — the one the first-fit closed on that line's old height. Pagination
@@ -789,10 +849,13 @@ export class PageAssembler {
     while (fromPage > 1 && pageStartLines[fromPage - 1] < 0) fromPage--;
     fromLine = pageStartLines[fromPage - 1] >= 0 ? pageStartLines[fromPage - 1] : 0;
 
-    /* Stage the fresh systems. */
+    /* Stage the fresh systems — for the lines on a mounted page only. Every
+       other changed line keeps the height it had (`heightOf`) and is engraved
+       when its page mounts, or below if the fit lands it on a mounted page. */
     const staged = new Map<string, Element>();
     let staging: { div: HTMLElement; root: SVGSVGElement } | null = null;
     for (const id of needRender) {
+      if (!onMountedPage(id)) continue;
       const li = lineIdx.get(id)!;
       const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
       if (!rl) { console.warn('[page-assembly] line ' + id + ' could not be rendered — its old system stays'); continue; }
@@ -825,7 +888,7 @@ export class PageAssembler {
     };
     const ff = firstFitLines(
       lines.length,
-      (li) => this.extents.get(lines[li]) ?? null,
+      (li) => this.heightOf(lines, li, measureIdx),
       (li) => this.lineReserve(lines[li], headers),
       (li) => this.pbStarts.has(lines[li]),
       k, y0Of, limitOf, this.host.foldTolerance(), fromLine, fromPage,
@@ -859,7 +922,7 @@ export class PageAssembler {
     while (s < newTail.length && s < oldTail.length && pairSame(s, s)) s++;
     let a = oldTail.length - 1, b = newTail.length - 1;
     while (a >= s && b >= s && pairSame(b, a)) { a--; b--; }
-    if (a < s && b < s) { disposeStaging(); stats.ms = performance.now() - t0; return true; }   // identical pagination
+    if (a < s && b < s) { this.paginatedLines = lines.slice(); disposeStaging(); stats.ms = performance.now() - t0; return true; }   // identical pagination
     const base = fromPage + s;                       // first page rebuilt (same number on both sides)
     const rebuildNew = newTail.slice(s, b + 1);
     const rebuildOld = oldTail.slice(s, a + 1);
@@ -906,21 +969,35 @@ export class PageAssembler {
     const anchorDiv = keptAfter.length ? this.pageDiv(firstUnchanged + delta) : null;
     const meta = this.host.shellMeta();
     const doc = this.host.container.ownerDocument;
+    /* A mounted page that received a line with no current system (one the
+       fit placed by an assumed height) is engraved now and the fit re-run
+       from it: nothing on screen is laid out around a guess. */
+    let refitFrom = 0;
     for (let i = 0; i < newCount; i++) {
       const p = base + i;
       const from = lineIdx.get(rebuildNew[i]) ?? 0;
       const to = i + 1 < newCount ? (lineIdx.get(rebuildNew[i + 1]) ?? rangeEnd) : rangeEnd;
       const div = doc.createElement('div');
-      div.className = 'score-page';
       div.dataset.page = String(p);
-      const shell = createPageShell(doc, this.host.shellGeom(), p, meta, this.styleText);
-      div.appendChild(shell.svg);
       if (anchorDiv) anchorDiv.before(div);
       else {
         const all = this.host.container.querySelectorAll('.score-page:not(.' + BUILDING + ')');
         const last = all.length ? all[all.length - 1] : null;
         if (last) last.after(div); else this.host.container.appendChild(div);
       }
+      if (!mountedBefore.has(p)) {
+        /* Not on screen: a deferred card, engraved from its committed lines
+           when it mounts (`rebuildPage`). Its systems, if any, are dropped. */
+        div.className = 'score-page ' + PENDING;
+        div.style.width = this.pageW + 'px';
+        div.style.height = this.pageH + 'px';
+        this.needsRebuild.add(p);
+        this.host.observePlaceholder(div);
+        continue;
+      }
+      div.className = 'score-page';
+      const shell = createPageShell(doc, this.host.shellGeom(), p, meta, this.styleText);
+      div.appendChild(shell.svg);
       for (let li = from; li < to; li++) {
         const st = staged.get(lines[li]);
         if (st && staging) {
@@ -929,12 +1006,14 @@ export class PageAssembler {
           continue;
         }
         const bk = byId.get(lines[li]);
-        if (!bk) {
-          /* A line the splice deferred (its page was not mounted): render it now. */
+        if (!bk || staleRoots.has(bk.root) || needRender.has(lines[li])) {
+          /* No current system for this line: engrave it here. */
           const rl = renderLineSystem(this.host.model(), lines, li, this.host.measureIds(), this.host.lineRenderCtx());
           if (!rl) { console.warn('[page-assembly] line ' + lines[li] + ' could not be rendered during repagination'); continue; }
           const sys = this.importSystem(rl.system, rl.host, div);
           this.host.postProcess(div, [sys]);
+          stats.renderedLines++;
+          if (!refitFrom) refitFrom = p;
           continue;
         }
         this.moveSystems(bk.root, shell.svg, [bk.el], null);
@@ -954,9 +1033,42 @@ export class PageAssembler {
       console.warn('[page-assembly] page starts refused after repagination');
       return false;
     }
+    this.paginatedLines = lines.slice();
     stats.pagesAfter = this.pageCount;
     stats.ms = performance.now() - t0;
+    if (refitFrom) {
+      /* placePage measured the lines engraved above: fit again from their
+         page with real heights. Each pass engraves only lines new to the
+         mounted pages, so this ends. */
+      const rebuilt = this.lastRebuiltPages;
+      const ok = this.applyPartition(lines, new Set(), [refitFrom]);
+      this.lastRebuiltPages = rebuilt.filter((d) => d.isConnected).concat(this.lastRebuiltPages.filter((d) => !rebuilt.includes(d)));
+      return ok;
+    }
     return true;
+  }
+
+  /** The height first-fit counts for line `li` of `lines`: its measured
+   *  extents, else the height a fit already assumed for it, else — a line no
+   *  fit has seen, re-laid by the partition on a page nobody has mounted since
+   *  — the height of the line that held its first measure in the layout the
+   *  pages were last fitted for (Max, 2026-10-20: the unmounted region stays
+   *  as it was until it mounts). Null only when nothing was ever measured. */
+  private heightOf(lines: readonly string[], li: number, measureIdx: ReadonlyMap<string, number>): SysExtents | null {
+    const id = lines[li];
+    const own = this.extents.get(id) ?? this.estimates.get(id);
+    if (own) return own;
+    const mi = measureIdx.get(id);
+    if (mi === undefined) return null;
+    let best: SysExtents | null = null, bestAt = -1;
+    for (const pid of this.paginatedLines) {
+      const at = measureIdx.get(pid);
+      if (at === undefined || at > mi || at <= bestAt) continue;
+      const e = this.extents.get(pid) ?? this.estimates.get(pid);
+      if (e) { best = e; bestAt = at; }
+    }
+    if (best) this.estimates.set(id, best);
+    return best;
   }
 
   /** A hidden shell to engrave and measure fresh systems in before they are
@@ -999,8 +1111,10 @@ export class PageAssembler {
     if (this.needsRebuild.delete(from)) this.needsRebuild.add(to);
   }
 
-  /** A page the splicer could not reach (deferred): rebuild it from its
-   *  committed lines on mount, then re-run first-fit from it. */
+  /** A deferred page — one the splicer could not reach, or a card the fit
+   *  left unengraved because it was not on screen: engrave it from its
+   *  committed lines on mount, then re-run first-fit from it with the real
+   *  heights (a page shift by a system here is expected, Max 2026-10-20). */
   private rebuildPage(p: number, div: HTMLElement): void {
     const lines = this.lines();
     const pages = this.pageBreaks.pageStarts();

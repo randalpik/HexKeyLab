@@ -21,7 +21,7 @@ import type { LayoutSnapshot } from '../history.js';
 import {
   PageLineBreaks,
   type PageBreaksCtx,
-  scheduleIdle, MIN_FILL, viewKeyOf, hardStartIds,
+  scheduleIdle, FINAL_JUSTIFY_FILL, viewKeyOf, hardStartIds,
 } from './linebreaks.js';
 import { PageSystemSplicer, type PageSpliceCtx, type SpliceRequest } from './pagesplice.js';
 import { buildWindowMei } from './pagesplice.js';
@@ -58,9 +58,6 @@ const PUMP_VELOCITY_MS = 400;
  *  it mounts on the very next frame; a drag has travel until it stops, then
  *  this much latency before its landing page draws. */
 const PUMP_SETTLE_MS = 120;
-/** How far below MIN_FILL Verovio's `minLastJustification` is set — see the
- *  comment at its use in buildOptions. */
-const LAST_JUSTIFY_SLACK = 0.05;
 
 /** First `g.system` child of a page's margin group, or null. */
 function firstSystemOf(pageEl: HTMLElement): Element | null {
@@ -464,6 +461,12 @@ class Renderer {
    *   - 'encoded' : page view with page breaks present — only encoded breaks
    *                 are honored, so the natural system breaks must already be
    *                 baked into the data (see layoutBreaks / the refill's pins). */
+  /** Verovio `minLastJustification` for page view (see its use in buildOptions). */
+  private lastSystemJustification(): number {
+    const j = this.pageBreaks.finalSystemJustified();
+    return j === null ? FINAL_JUSTIFY_FILL : j ? 0 : 1;
+  }
+
   private buildOptions(strategy: 'none' | 'auto' | 'smartSb0' | 'line' | 'encoded' = 'auto', geomMode: ViewMode = this.viewMode): object {
     /* Page view: scale the page rectangle (dims + margins) by the document's
        pageScale so the notation — rendered at the fixed crisp scale/unit —
@@ -507,35 +510,20 @@ class Renderer {
          Verovio's setOptions persists unspecified options, so an unset
          adjustPageHeight would leak true from a prior scroll render into page. */
       adjustPageHeight: geomMode === 'scroll',
-      /* The LAST system is justified by OUR OWN minimum-fill rule, not
-         Verovio's (Max, 2026-09-03). Verovio's default `minLastJustification`
-         is 0.8: a final line whose natural width fills less than 80 % of the
-         line is left unstretched. That threshold is not ours — `MIN_FILL`
-         (0.65) is the fill below which the line-break owner considers a line
-         ILLEGAL, so driving the option from the same constant makes one rule:
-         a final line is justified exactly when it is a legal line, and left at
-         its natural width when it is too sparse to be one.
-
-         End-of-section parity (2026-09-05): a section-final line is not "the
-         last system" to Verovio, so it justifies at ANY fill (measured on a
-         two-section document, a since-deleted probe: section-final 18790,
-         document-final 4290). The section balancer (render/balance.ts, driven
-         from linebreaks.ts) is what closes that gap — a section-final line
-         below MIN_FILL is redistributed into its section, so the lines Verovio
-         justifies are legal ones. What remains is the document-final stub of a
-         document too small to balance (Max's rule 2: kept, and this option
-         leaves it unstretched) and a mid-document section too small to hold
-         two legal lines (Verovio stretches it; no option value helps).
-
-         The threshold sits LAST_JUSTIFY_SLACK below MIN_FILL because the two
-         yardsticks are not the same number: our fill is the naturals sum over
-         the justified budget, Verovio's ratio is its own justifiable width,
-         and they disagree by a few percent at the boundary (lessons.md
-         2026-09-02; a balanced 9-bar document-final section measured 0.657 by
-         ours and drew UNJUSTIFIED at 12710/19010 under the bare MIN_FILL,
-         2026-09-05). With the slack, a line the balancer kept legal is always
-         drawn justified, and a stub it kept — far below 0.65 by both
-         yardsticks — is not.
+      /* The LAST system's justification is OUR rule, not Verovio's 0.8 default
+         (Max, 2026-10-20; linebreaks.ts `finalSystemJustified`): always when
+         the final section was balanced by F, and at fill ≥ FINAL_JUSTIFY_FILL
+         when it stayed greedy (a final section of 1–2 lines). The owner
+         decides it by its own fill and the option only carries the answer —
+         0 justifies any width, 1 leaves an underfull line at its natural width
+         — so no slack for Verovio's own ratio is needed (the 0.05 there used to
+         be: the two yardsticks disagree by a few percent, lessons.md
+         2026-09-02). Only the document's final line is Verovio's "last
+         system": a section-final line justifies at any fill (measured on a
+         two-section document: section-final 18790, document-final 4290), and
+         a line window that does not end the document carries a trailer stub.
+         Unknown (a width missing) falls back to the greedy threshold as
+         Verovio's ratio.
 
          Scroll keeps Verovio's default: it renders the whole score as ONE
          system against a 100 000-unit page, so there is no line to justify to
@@ -545,7 +533,7 @@ class Renderer {
          explicitly in both branches for the reason adjustPageHeight is: page
          and scroll share one toolkit and Verovio's setOptions persists any
          option that is not re-specified. */
-      minLastJustification: geomMode === 'page' ? MIN_FILL - LAST_JUSTIFY_SLACK : 0.8,
+      minLastJustification: geomMode === 'page' ? this.lastSystemJustification() : 0.8,
       scale: preset.scale,
       unit: preset.unit,
       ...lineWidthOptions(preset),
@@ -1670,7 +1658,7 @@ class Renderer {
     const lines = as.domLineStarts();
     const pages = as.domPageStarts();
     if (lines.length <= 1 || !pages.length) return false;
-    if (!this.pageBreaks.restorePartition(model, lines, pages, cached.widths)) return false;
+    if (!this.pageBreaks.restorePartition(model, lines, pages, cached.widths, this.pageBudgetW())) return false;
     const prevH = as.pageH;
     const g = this.shellGeom();
     const newH = g.pageHeight * g.scale / 100;
@@ -1990,19 +1978,19 @@ class Renderer {
        before the paint makes the settled partition a function of the document:
        there is no interruptible window to observe.
 
-       `pages: Infinity` makes `lastLine` the whole partition. This path writes
+       Every section is partitioned (F, render/balance.ts). This path writes
        `startIds`/`pageStartIds` directly rather than through a splice
        precisely because it runs pre-paint, so covering the whole document adds
-       no splice or re-entrancy risk — only work. Edits keep their own reaction
-       (`balanceTouched` with BALANCE_LAMBDA, from the refill path), which is
-       where a scoped repair belongs. */
+       no splice or re-entrancy risk — only work. An edit runs the same F over
+       the sections it touched (the refill path), so a load and an edit agree
+       by construction. */
     /* Naturals for the WHOLE document first, so the balance below judges every
        section with complete information — and so a later edit's own balance
        finds them cached instead of reporting 'naturals incomplete'. */
     if (!this.pageBreaks.warmAllNaturals(model, this.pageBreaksCtx())) {
       console.warn('[page-balance] could not measure every natural — balancing with what is cached');
     }
-    this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget, Number.POSITIVE_INFINITY);
+    this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget);
   }
 
   /** Land a PARTITION-ONLY change (the document is unchanged) — today only
@@ -2193,7 +2181,8 @@ class Renderer {
    *  naturals this budget divides do NOT carry it (their bboxes sum to the
    *  content width, 220 short of the system bbox). Measuring the system
    *  therefore inflated the budget by ~1.2 %, which made every fill ~1.2 % too
-   *  SMALL and pushed marginal lines under MIN_FILL: an 8-measure locked
+   *  SMALL and pushed marginal lines under the balancer's MIN_FILL floor of
+   *  the time (0.65, retired 2026-10-20): an 8-measure locked
    *  section computed [4,4] as 0.6707 / 0.6451 against a 0.65 floor — short by
    *  0.0049 — so every two-line split was illegal and the section collapsed
    *  onto one compressed line of 8 (fixture lock_down_sparse_remainder_kept).
@@ -2558,7 +2547,7 @@ class Renderer {
     if (reseed || !this.pageBreaks.ownershipActive()) {
       const cached = this.partitionCache.get(this.partitionKey(model));
       if (cached && cached.docVer === model.docVersion()
-          && this.pageBreaks.restorePartition(model, cached.lines, [], cached.widths)) {
+          && this.pageBreaks.restorePartition(model, cached.lines, [], cached.widths, this.pageBudgetW())) {
         lines = cached.lines;
         if (cached.pages.length) expected = cached.pages.length;
       } else {
@@ -2602,6 +2591,7 @@ class Renderer {
       removeLockMarksOf: (div, systems) => this.removeLockMarksOf(div, systems),
       applyTheme: (div) => this.applyThemeTo(div),
       foldTolerance: () => 2 * 1000 / this.currentScale(),
+      observePlaceholder: (div) => { this.pageIo?.observe(div); },
     };
   }
 

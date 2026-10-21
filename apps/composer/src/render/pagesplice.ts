@@ -1039,6 +1039,95 @@ export class PageSystemSplicer {
     return true;
   }
 
+  /** Page `pno` of the reference loaded on `tk`, prepared EXACTLY as the live
+   *  page `pageEl` is, in an offscreen host the caller removes. Shared by the
+   *  gate below and the census probe (`referenceTops`), so the two cannot
+   *  drift apart again: the census once built its own reference without
+   *  Composer's page header and placed it without the page number, and read
+   *  page 1's title block and every section-header band as splice error
+   *  (2026-10-20). Its post passes may render a window on `tk` — reload
+   *  before the next page. */
+  private referenceHost(tk: VerovioToolkit, pno: number, pageEl: HTMLElement, ctx: PageSpliceCtx): HTMLElement {
+    const refHost = document.createElement('div');
+    refHost.style.cssText = 'position:absolute;left:-99999px;top:0';
+    refHost.innerHTML = tk.renderToSVG(pno, {});
+    document.body.appendChild(refHost);
+    /* The live page's header is Composer's (render/pageshell.ts, 2026-10-08);
+       give the reference the same one, or page 1's title block anchors its
+       first system elsewhere. */
+    const refMargin = refHost.querySelector('svg g.page-margin');
+    if (refMargin) drawPageHeader(refMargin, pno, ctx.headerMeta(), pageFrameOf(refMargin).innerW);
+    /* Same post-processing the live pages and the window hosts get: the HEJI
+       pass replaces key-signature `use` glyphs with injected <text>, so a raw
+       reference would compare its E260 flats against a live page that has
+       none — a false divergence, not a wrong render (seen on the sonata's
+       line 0 the day the glyph check landed). Geometry is unaffected. */
+    /* Snap the reference's system right edges on the LIVE page's horizontal
+       phase. `snapSystemRightEdge` lands them on an ABSOLUTE device pixel, so
+       a host at left:-99999px otherwise snaps to a different one — up to a
+       whole device pixel of disagreement, which is 10 user units at scale 100
+       (exactly TOL, so invisible here) but 20 at scale 50, and that is the
+       entire content of `lock_after_zoom_reflows` (2026-09-18). Same argument,
+       and the same `g.page-margin` origin, as the vertical `alignStaves`
+       transfer below. */
+    ctx.postProcess(refHost, undefined, ctx.originPhaseXOf(pageEl));
+    /* The reference must be prepared EXACTLY as a live page is, decoration
+       included. `decorateHost` (styleVoltaNumbers) restyles a tspan inside
+       `g.voltaBracket` — font, weight and a trailing '.' — which changes the
+       bracket's bbox, and a volta is content ABOVE the staff, so it changes
+       the `above` this gate then places from. Omitting it made every
+       reference disagree with the live page by that amount on any system
+       carrying a volta (measured: above 1303 vs 1275), which read as a splice
+       defect and was very nearly "fixed" by widening TOL. It runs BEFORE
+       alignment and measurement, mirroring the live order (postProcess →
+       decorate → place). */
+    ctx.decorateHost(refHost);
+    /* Same phase alignment the live pages get (2026-09-03) — see alignStaves. */
+    ctx.alignStaves(refHost, ctx.originPhaseOf(pageEl));
+    return refHost;
+  }
+
+  /** Probe API (sonata-probes/splice-exactness-census.js): the gate's own
+   *  comparison with NO tolerance — for every given live page, the reference's
+   *  staff tops placed by Composer's rule (distributed, page-numbered, exactly
+   *  as the gate places them) minus the live page's measured staff tops
+   *  (`ds`), and the live page's self-consistency (`self`: its own placement
+   *  minus the same). A page whose system count differs reports both counts. */
+  referenceTops(mei: string | null, pageEls: Iterable<HTMLElement>, ctx: PageSpliceCtx):
+    Array<{ page: number; sys: number; ds: number[]; self: number[] } | { page: number; refSys: number; liveSys: number }> {
+    const out: Array<{ page: number; sys: number; ds: number[]; self: number[] } | { page: number; refSys: number; liveSys: number }> = [];
+    if (mei === null) return out;
+    const tk = ctx.toolkit;
+    let loaded = false;
+    for (const pageEl of pageEls) {
+      if (!pageEl.isConnected) continue;
+      if (!loaded) { tk.setOptions(ctx.liveOptions()); if (!tk.loadData(mei)) return out; loaded = true; }
+      const pno = Number(pageEl.dataset.page);
+      if (!(pno >= 1) || pno > tk.getPageCount()) continue;
+      const refHost = this.referenceHost(tk, pno, pageEl, ctx);
+      loaded = false;
+      try {
+        const refSys = Array.from(refHost.querySelectorAll('g.system')) as SVGGElement[];
+        const liveSys = Array.from(pageEl.querySelectorAll('g.system')) as SVGGElement[];
+        if (refSys.length !== liveSys.length) { out.push({ page: pno, refSys: refSys.length, liveSys: liveSys.length }); continue; }
+        const expect = ctx.placeFor(refSys, { distribute: true, pageNo: pno });
+        const self = ctx.placeFor(liveSys, { distribute: true, pageNo: pno });
+        if (!expect || !self) continue;
+        const ds: number[] = [], sc: number[] = [];
+        for (let i = 0; i < liveSys.length; i++) {
+          const lp = systemProfile(liveSys[i]);
+          if (!lp) { ds.push(NaN); sc.push(NaN); continue; }
+          ds.push(+(expect[i].top - lp.staffTop).toFixed(2));
+          sc.push(+(self[i].top - lp.staffTop).toFixed(2));
+        }
+        out.push({ page: pno, sys: liveSys.length, ds, self: sc });
+      } finally {
+        refHost.remove();
+      }
+    }
+    return out;
+  }
+
   /** HKL_INDEX_CHECK deep gate (the design doc's parity harness, inline):
    *  full-render the pinned MEI offscreen and assert every given page's system
    *  sequence + geometry matches the spliced DOM. Called by the renderer once
@@ -1102,43 +1191,8 @@ export class PageSystemSplicer {
       if (!(pno >= 1) || pno > tk.getPageCount()) {
         throw new Error(`[page-splice] reference lost page ${pageEl.dataset.page}`);
       }
-      const refHost = document.createElement('div');
-      refHost.style.cssText = 'position:absolute;left:-99999px;top:0';
-      refHost.innerHTML = tk.renderToSVG(pno, {});
-      document.body.appendChild(refHost);
-      /* The live page's header is Composer's (render/pageshell.ts, 2026-10-08);
-         give the reference the same one, or page 1's title block anchors its
-         first system elsewhere. */
-      const refMargin = refHost.querySelector('svg g.page-margin');
-      if (refMargin) drawPageHeader(refMargin, pno, ctx.headerMeta(), pageFrameOf(refMargin).innerW);
-      /* Same post-processing the live pages and the window hosts get: the HEJI
-         pass replaces key-signature `use` glyphs with injected <text>, so a raw
-         reference would compare its E260 flats against a live page that has
-         none — a false divergence, not a wrong render (seen on the sonata's
-         line 0 the day the glyph check landed). Geometry is unaffected. */
-      /* Snap the reference's system right edges on the LIVE page's horizontal
-         phase. `snapSystemRightEdge` lands them on an ABSOLUTE device pixel, so
-         a host at left:-99999px otherwise snaps to a different one — up to a
-         whole device pixel of disagreement, which is 10 user units at scale 100
-         (exactly TOL, so invisible here) but 20 at scale 50, and that is the
-         entire content of `lock_after_zoom_reflows` (2026-09-18). Same argument,
-         and the same `g.page-margin` origin, as the vertical `alignStaves`
-         transfer below. */
-      ctx.postProcess(refHost, undefined, ctx.originPhaseXOf(pageEl));
-      refLoaded = false;   // may have rendered a window on this toolkit
-      /* The reference must be prepared EXACTLY as a live page is, decoration
-         included. `decorateHost` (styleVoltaNumbers) restyles a tspan inside
-         `g.voltaBracket` — font, weight and a trailing '.' — which changes the
-         bracket's bbox, and a volta is content ABOVE the staff, so it changes
-         the `above` this gate then places from. Omitting it made every
-         reference disagree with the live page by that amount on any system
-         carrying a volta (measured: above 1303 vs 1275), which read as a splice
-         defect and was very nearly "fixed" by widening TOL. It runs BEFORE
-         alignment and measurement, mirroring the live order (postProcess →
-         decorate → place). */
-      ctx.decorateHost(refHost);
-      /* Same phase alignment the live pages get (2026-09-03) — see alignStaves. */
-      ctx.alignStaves(refHost, ctx.originPhaseOf(pageEl));
+      const refHost = this.referenceHost(tk, pno, pageEl, ctx);
+      refLoaded = false;   // its post passes may have rendered a window on this toolkit
       try {
         const refSys = Array.from(refHost.querySelectorAll('g.system')) as SVGGElement[];
         const liveSys = Array.from(pageEl.querySelectorAll('g.system')) as SVGGElement[];

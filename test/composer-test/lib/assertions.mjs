@@ -552,6 +552,46 @@ export const ASSERTION_LIB = `
     return fails.length ? { ok: false, detail: fails.join('; ') } : { ok: true, detail: pages.length + ' pages checked' };
   }
 
+  /* The partition is ONE pure function of the document (partition spec G1,
+     docs/composer-partition-consistency-spec.md): the committed line starts
+     equal F over every section from the owner's width caches, and every
+     mounted system starts at the committed start of its position — so a load
+     and any edit history agree. Unowned documents (one line, scroll view)
+     have nothing to check. */
+  function assertPartitionIsF() {
+    const r = window.__hkl_composer.renderer;
+    if (r.getViewMode() !== 'page') return { ok: true };
+    const pb = r['pageBreaks'];
+    if (!pb.ownershipActive()) return { ok: true, detail: 'unowned' };
+    /* A fixture that edits the document after its last render leaves nothing
+       rendered to judge. */
+    if (!pb.partitionCurrent(m())) return { ok: true, detail: 'document changed since the last render' };
+    const committed = pb.lineStarts();
+    const f = pb.partitionOfDocument(m());
+    if (!f) return { ok: false, detail: 'F unjudgeable: a natural or leading block is missing from the caches' };
+    if (f.join() !== committed.join()) {
+      let i = 0; while (i < Math.min(f.length, committed.length) && f[i] === committed[i]) i++;
+      return { ok: false, detail: 'committed partition is not F at line ' + i + ' (' + committed.length + ' lines vs F ' + f.length + '): committed '
+        + JSON.stringify(committed.slice(Math.max(0, i - 1), i + 4)) + ' F ' + JSON.stringify(f.slice(Math.max(0, i - 1), i + 4)) };
+    }
+    const pages = Array.from(document.querySelectorAll('#score .score-page:not(.score-page-pending)'));
+    const pos = new Map(committed.map((id, k) => [id, k]));
+    const fails = [];
+    let prev = -1;
+    for (const page of pages) {
+      const mg = page.querySelector('svg.definition-scale > g.page-margin');
+      if (!mg) continue;
+      for (const sys of Array.from(mg.children).filter((c) => c.classList.contains('system'))) {
+        const id = (sys.querySelector('g.measure') || {}).id || '';
+        const k = pos.get(id);
+        if (k === undefined) { fails.push('p' + page.dataset.page + ': a system starts at ' + id + ', not a committed line start'); continue; }
+        if (k <= prev) fails.push('p' + page.dataset.page + ': system ' + id + ' out of order');
+        prev = k;
+      }
+    }
+    return fails.length ? { ok: false, detail: fails.slice(0, 4).join('; ') } : { ok: true, detail: committed.length + ' lines' };
+  }
+
   window.__test = {
     assertModelState,
     assertCursorConvention,
@@ -559,6 +599,7 @@ export const ASSERTION_LIB = `
     assertNoTieOrphans,
     assertPlaceholderInvariant,
     assertPaginationFirstFit,
+    assertPartitionIsF,
     assertBracketRendered,
     assertTupletPlaceholdersHidden,
     assertColorIsolation,

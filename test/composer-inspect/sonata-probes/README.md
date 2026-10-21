@@ -11,8 +11,16 @@ Requires `pnpm dev`, `chromium` on `PATH`, and the sonata (override with
 
 ```bash
 node test/composer-inspect/sonata-probes/run-probe.mjs \
-  test/composer-inspect/sonata-probes/<probe>.js [--arg "k=v,k2=v2"] [--no-sonata] [--screenshot out.png]
+  test/composer-inspect/sonata-probes/<probe>.js [--arg "k=v,k2=v2"] [--no-sonata] [--screenshot out.png] [--firefox] [--console]
 ```
+
+`--firefox` runs the same probe in headless Firefox (Max's browser) over its
+built-in WebDriver BiDi agent — own temporary profile, no geckodriver, only the
+spawned process is killed. Use it for timings and for anything layout-cost
+related: Chromium under-reports Firefox layout costs. (Firefox 158 refuses
+`browsingContext.setViewport` without `-remote-allow-system-access`, which the
+runner does not request: the window size is set at launch, and `--screenshot`
+lets `#score` grow to its content instead of resizing the viewport.)
 
 `run-probe.mjs` loads Composer in its own headless Chromium, loads the
 sonata through `window.__composerLoadHkc`, waits for the render to settle,
@@ -80,7 +88,19 @@ Run these after any change to the refill, splicer, partition or pagination.
   must restore partition and geometry exactly (`geomAfterUndo.changed` 0).
   The edit itself may reflow its section.
 - **`splice-exactness-census.js`** — no-tolerance census of spliced pages vs
-  the reference after every edit (the evidence behind the gate's `TOL`).
+  the reference after every edit (the evidence behind the gate's `TOL`). The
+  reference is the gate's own (`PageSystemSplicer.referenceTops`, shared with
+  `verifyAgainstReference`); before 2026-10-20 the census built its own without
+  Composer's page header and page-numbered placement and misread every title
+  block and section-header band as splice error. A fresh load reads 30/32 pages
+  exact, pages 2 and 25 one device pixel (the `renderToSVG` header residual).
+  After edits (2026-10-20, both browsers): 322/344 pairs exact in Chromium; the
+  11 pairs over one pixel are all UNTOUCHED neighbour pages (p. 12 for edits on
+  lines 49–52, p. 18 for 70–72, p. 20 for 76–79) where Verovio's full-document
+  engrave disagrees with Composer's line windows — checked spliced ≡ fresh
+  assembly at lines 49, 70, 76 and 79 (the gate itself checks only touched
+  pages). Firefox adds sub-pixel `self` values from its `placeFor` header
+  measurement (lessons.md 2026-10-20).
 - **`load-reference-gate.js`** — fresh load, every page through
   `verifyAgainstReference`.
 - **`pagination-fold-check.js`** — page-by-page first-fit check plus assembly

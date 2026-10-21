@@ -1467,7 +1467,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   pageKeyChangeSplicesGovernedRange: [
-    { name: 'a key change with a later key change splices exactly the lines up to the reset (reference-clean)',
+    { name: 'a key change with a later key change splices the governed range and the lines F re-laid, no further (reference-clean)',
       expr: `(async () => {
         const H = window.__hkl_composer;
         const m = H.model;
@@ -1526,6 +1526,7 @@ export const ASSERTIONS = {
            splicer's diagnostics first — a derive leaves them from the previous
            render, which would read as a stale "spliced". */
         const editMi = ids.indexOf(startIds[2]);
+        const linesBefore = pb.lineStarts().slice();
         ps.lastOutcome = ''; ps.lastRun = null; ps.lastSkipReason = '';
         const snapBefore = m.snapshotState();
         const ver = m.docVersion();
@@ -1567,9 +1568,17 @@ export const ASSERTIONS = {
            a line start. A mid-measure reset CLEF leaves the start of its own
            measure in the changed clef, so that line joins the range too. */
         const lastGoverned = KIND === 'clef' ? resetLineNow : lineOf(resetMi - 1);
-        const maxB = lastGoverned;
+        /* The change widens every line start it governs, so F may re-lay
+           lines past the reset (the partition is a function of the content —
+           partition spec, "Edit churn"). The run must reach every line F
+           changed (start or end moved) and stop there. */
+        const endOf = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
+        let lastChanged = -1;
+        startIds.forEach((id, k) => { if (endOf(linesBefore, id) !== endOf(startIds, id)) lastChanged = k; });
+        const maxB = Math.max(lastGoverned, lastChanged);
         if (run.b < lastGoverned) return { ok: false, detail: 'run stops before the governed range ends: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
-        if (run.b > maxB) return { ok: false, detail: 'run overshoots the reset: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned };
+        if (run.b < lastChanged) return { ok: false, detail: 'run misses a line F re-laid: run=' + JSON.stringify(run) + ' lastChanged=' + lastChanged };
+        if (run.b > maxB) return { ok: false, detail: 'run overshoots the lines F re-laid and the governed range: run=' + JSON.stringify(run) + ' reset line=' + resetLineNow + ' lastGoverned=' + lastGoverned + ' lastChanged=' + lastChanged };
         /* The UNDO is the same range in reverse and must splice too. restoreSnapshot
            swaps the document object: interior scoreDefs are matched by their
            successor measure's id, never by element identity — identity read every
@@ -3616,11 +3625,11 @@ export const ASSERTIONS = {
            (the new blank measure and its line), not for the renumbered tail. */
         const nat = pb.lastRefillStats.windowMeasures;
         if (!(nat < renumbered / 2)) return { ok: false, detail: 'naturals measured ' + nat + ' measures for ' + renumbered + ' renumbered — the flow/redraw split is not in effect' };
-        /* And the partition did not move because of a renumber: every old line
-           start still starts a line (the insert may add one). */
-        const now = new Set(pb.lineStarts());
-        const lost = linesBefore.filter((id) => !now.has(id) && m.allMeasures().some((x) => x.getAttribute('xml:id') === id));
-        if (lost.length) return { ok: false, detail: lost.length + ' surviving line starts stopped starting lines (e.g. ' + lost[0] + ') — the renumber re-flowed the partition' };
+        /* And the partition is F of the document: the insert re-flows the rest
+           of its section (inherent to a partition that is a function of the
+           content — partition spec, "Edit churn"), the renumber adds nothing. */
+        const F = pb.partitionOfDocument(m);
+        if (!F || F.join() !== pb.lineStarts().join()) return { ok: false, detail: 'partition is not F after the insert (' + linesBefore.length + ' -> ' + pb.lineStarts().length + ' lines)' };
         /* The rendered numbers are right on every drawn page: that is what the
            redraw run is for. */
         const byId = new Map(m.allMeasures().map((x) => [x.getAttribute('xml:id'), x.getAttribute('n') ?? '']));
