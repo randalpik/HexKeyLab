@@ -1141,7 +1141,7 @@ export class PageLineBreaks {
        into one, which F then partitions whole. A removed LOCK is no exception
        (it used to keep the layout — "pin-removed-only", 2026-09-12 — which a
        reload could not reproduce once the partition became a function of the
-       document: partition spec G1). The layout holds no state the document
+       document: partition G1). The layout holds no state the document
        cannot reproduce (Max, 2026-09-12). */
     const addStarts: number[] = [];
     const removedAt: number[] = [];
@@ -1387,7 +1387,7 @@ export class PageLineBreaks {
       }
     }
 
-    /* ── F over every touched section (partition spec, Phase 3) ──
+    /* ── F over every touched section ──
        The lines the edit touched name the SECTIONS it touched; each is
        re-partitioned WHOLE by the function the load ran, so the result is the
        document's own partition, not a repair of the old one. No legality

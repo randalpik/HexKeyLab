@@ -1,5 +1,5 @@
 // Apply an arbitrary line partition to the live page view (2026-10-20,
-// partition spec Phase 0 — screenshots of candidate partitions). `--arg` is a
+// partition F's Phase 0 — screenshots of candidate partitions). `--arg` is a
 // comma list of line-start measure INDICES (0-based, document order). The
 // owner adopts the lines (`replacePartition`, no pages) and the document is
 // re-assembled without reseeding, so the PageAssembler paginates the given

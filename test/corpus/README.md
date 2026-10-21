@@ -1,7 +1,8 @@
 # MuseScore MusicXML corpus — import + partition study
 
-Arbitrary real music for the partition work (docs/composer-partition-consistency-spec.md)
-and for import gaps, instead of the one document Composer was built on.
+Arbitrary real music for the partition work (partition F: docs/architecture/composer.md
+→ "The partition"; design record in docs/decisions.md, 2026-10-19 – 10-21) and for
+import gaps, instead of the one document Composer was built on.
 Started 2026-10-20; next step: batch through the whole archive.
 
 ## The archive
@@ -96,9 +97,11 @@ the remedy).
 Batch through the archive: shard `listing.txt` into lists (by bucket), run
 `batch-import.mjs` per list (resumable), aggregate with `corpus-report.mjs`
 (add a `--set` from the shard if useful), and record new import gaps as they
-appear — note them, then ask Max what is in scope. Once the app implements F
-(spec Phases 1–4), re-run the sample and require the app's partition to equal the
-simulation's pick.
+appear — note them, then ask Max what is in scope. The app's partition must
+equal the simulation's pick on every owned document: on the 450-file sample after
+F landed (2026-10-20) all 445 owned documents (511 sections) did, with 0 console
+errors and Verovio "highly compressed" warnings 29 → 24. Re-check it on each
+batch.
 
 ## Files
 

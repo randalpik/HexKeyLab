@@ -1,5 +1,5 @@
-// Line-break undo/redo exactness on the SONATA (2026-10-20, partition spec
-// Phase 4). Line-break commands carry no layout on their history entry: the
+// Line-break undo/redo exactness on the SONATA (2026-10-20, partition F
+// clean-up). Line-break commands carry no layout on their history entry: the
 // partition is F of the document, so undo/redo must land exactly on the layout
 // the other side of the command had. Per target (mid-system on pages 3, 40 %,
 // 65 % and 90 % through, plus a section-final line): lock, undo, redo, undo;

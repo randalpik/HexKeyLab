@@ -552,8 +552,8 @@ export const ASSERTION_LIB = `
     return fails.length ? { ok: false, detail: fails.join('; ') } : { ok: true, detail: pages.length + ' pages checked' };
   }
 
-  /* The partition is ONE pure function of the document (partition spec G1,
-     docs/composer-partition-consistency-spec.md): the committed line starts
+  /* The partition is ONE pure function of the document (partition G1,
+     docs/architecture/composer.md → The partition): the committed line starts
      equal F over every section from the owner's width caches, and every
      mounted system starts at the committed start of its position — so a load
      and any edit history agree. Unowned documents (one line, scroll view)

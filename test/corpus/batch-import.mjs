@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Batch MusicXML import + probe (2026-10-20, partition spec Phase 0 over the
+// Batch MusicXML import + probe (2026-10-20, partition F's Phase 0 over the
 // MuseScore corpus). One headless Chromium, one Composer page: for each file
 // the bytes go through the app's own decoder (__composerImportMusicXmlBytes),
 // the render is waited out, the probe runs (default partition-inputs.js), and

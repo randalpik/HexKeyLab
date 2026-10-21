@@ -3648,7 +3648,7 @@ alternates "pull one bar back" (2 boundaries) and "fold the last line" (1). The
 penalty is dropped (λ = 0) only when nothing of the section is mounted — then
 the even optimum costs nothing visible. (`test/balance/run.mjs` replayed this on
 the sonata's measured widths until the pre-F balancer and its cases were
-removed, 2026-10-20 — partition spec Phase 4.)
+removed, 2026-10-20 — decisions.md "Partition F clean-up".)
 
 ## Our line fill and Verovio's justification ratio are not the same number (2026-09-05)
 
@@ -5437,9 +5437,13 @@ With F (render/balance.ts), an inserted or deleted bar shifts every later line o
 
 Found running the undo gate in headless Firefox (`run-probe.mjs --firefox`): with a 1600 px window narrower than the 2161 px page card, the cursor's scroll-into-view scrolls `#score` horizontally, and Firefox scrolls by FRACTIONAL pixels (the page's left read 0, −17.25, −183.233, −125.633 across edits; Chromium scrolls whole pixels). `snapSystemRightEdge` lands a system's right edge on an ABSOLUTE device pixel at the page's current phase, so a system re-engraved by a splice is snapped at a different phase than its neighbours were at assembly: the last measure's width wandered 6750 → 6752.33 / 6747.5 / 6753.33 (≤ 0.35 device px) and an undo did not restore it exactly. In a window wide enough that the page never scrolls horizontally, the same gate is exact (0 changed on all sites). Pre-existing (the snap predates the partition work); real wherever the page is wider than the viewport in Firefox. Run Firefox gates with `--window 2600x1400` unless this is what is being measured.
 
+**Ruled (Max, 2026-10-21)**: not relevant; Firefox tolerance-gate failures of this kind are accepted for now.
+
 ## Firefox: `placeFor`'s first-content top differs from the assembler's fit by a few units (2026-10-20)
 
 The pagination fold check in Firefox flagged sonata p. 8 as overflowing by 21 units against a 20-unit tolerance; the assembler's own fit had closed the page at 17.75 over (within its tolerance, by design). Stored extents equal the live ones exactly; the difference is the page's first-content top — `renderer.placeFor` computed 892.83 where the assembler's `firstContentTop` gave 900 (p. 5: 992.83 vs 990), sub-pixel header measurement in Firefox. A check whose threshold equals the fit's tolerance then fails on a page the fit placed legally near the edge. Chromium reads both the same.
+
+**Ruled (Max, 2026-10-21)**: not relevant; Firefox tolerance-gate failures of this kind are accepted for now.
 
 ## The width model must follow what is DRAWN, not the live document's form (2026-10-20)
 

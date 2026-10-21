@@ -92,7 +92,8 @@ Run these after any change to the refill, splicer, partition or pagination.
   "mi=<n>"`): line and page starts as sets before, after and after undo, the
   balancer's report, and whether the undone document is byte-identical. The
   reproduction and acceptance check for the load-vs-edit balance defect
-  (`docs/composer-partition-consistency-spec.md`).
+  (decisions.md 2026-10-19 "Open: the bounded section balance…", resolved by
+  partition F — 2026-10-21 "The partition spec is retired").
 - **`undo-reversibility-gate.js`** — delete + undo at several sites: the undo
   must restore partition and geometry exactly (`geomAfterUndo.changed` 0).
   The edit itself may reflow its section.
@@ -173,6 +174,17 @@ Whole-document inventories for the render-clone and DOM layout passes.
   `test/composer-test/heatmap.py` (254 dpi = the screen's 2159 px over 8.5 in at
   zoom 100). Expect edge anti-aliasing only, plus the known `Times, serif`
   width residual.
+- **`partition-inputs.js`** — dumps everything partition F reads from the live
+  document (per-measure naturals, `sigWForLine` per measure, hard starts,
+  render units, the budget, the committed line and page starts) as JSON: the
+  input of `test/balance/curve-batch.mjs`, of `test/corpus/batch-import.mjs`
+  records, and of `test/balance/sonata-inputs.json` (re-dump it when the width
+  model changes).
+- **`apply-partition.js --arg <line-start indices>`** — adopts an arbitrary
+  line partition (no pages) and re-assembles, so the assembler paginates it
+  first-fit. With `page-screenshots.mjs` it shows a layout the app would not
+  pick — e.g. F's answer on an older width dump, for a before/after review
+  (2026-10-21, page 5 of the sonata).
 
 Findings from these probes are recorded in docs/decisions.md and
 docs/lessons.md under the dates they were made.

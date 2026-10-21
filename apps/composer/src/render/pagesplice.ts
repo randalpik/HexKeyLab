@@ -87,7 +87,6 @@ function indexCheckEnabled(): boolean {
 
 /** Everything the splicer needs from the Renderer. */
 export interface PageSpliceCtx {
-  container: HTMLElement;
   /** Isolated toolkit (spliceTk) — never the live one. */
   toolkit: VerovioToolkit;
   /** Single-part view's staves (null = all): a window must render the same
@@ -100,18 +99,12 @@ export interface PageSpliceCtx {
   /** The exact options the live pinned render uses (reference verification). */
   liveOptions: () => object;
   /** Renderer.postProcessRendered (crisp pinning, notehead z-order, HEJI,
-   *  theme). The page splicer calls it on the LIVE page with `scope` = the
-   *  systems it just imported (A11): the window itself is never laid out, so
-   *  every geometry-dependent pass runs where the systems actually sit. */
+   *  theme) — run on the reference host exactly as on a live page. (The
+   *  engraved hunk is post-processed by PageAssembler.applyPartition.) */
   postProcess: (el: HTMLElement, scope?: Element[], originPhaseX?: number) => void;
   /** Non-geometry page decorations that live in main.ts for mounted pages
    *  (volta number styling) — idempotent, content-level. */
   decorateHost: (el: HTMLElement) => void;
-  /** Renderer.placePage — the vertical placement pass (render/pagefit.ts,
-   *  Phase 1): measures every system on the page, computes each staff top and
-   *  header band from Composer's rule, writes the transforms, stamps band tops
-   *  and re-places titles. Runs after post-processing, before the snap. */
-  placePage: (pageEl: HTMLElement) => unknown;
   /** Where the placement rule would put these systems (staff tops in the
    *  page-margin frame), measured on the given laid-out elements, writing
    *  nothing — the reference gate's expectation. Null when unreadable. */
@@ -306,10 +299,10 @@ export interface SpliceRequest {
   oldStartIds: string[];
   /** Partition the DOM must render afterwards. */
   newStartIds: string[];
-  /** Pagination before / after (page-start line ids, page 1 first). Old numbers
-   *  are DOM page numbers; the count differs only when a page collapsed. */
+  /** Pagination the DOM was built for (page-start line ids, page 1 first, DOM
+   *  page numbers): where each line is drawn NOW, so the hunk is clipped to the
+   *  mounted band. Where lines go after the edit is the assembler's fit. */
   oldPageStartIds: string[];
-  newPageStartIds: string[];
   /** Measure run the edit changed (NEW measure indices), or null when nothing
    *  in the document changed (a pure move). */
   changedRun: { lo: number; hi: number } | null;

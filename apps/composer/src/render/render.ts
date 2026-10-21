@@ -1535,7 +1535,7 @@ class Renderer {
             if (refill.changedRun !== null) {
               const req: SpliceRequest = {
                 oldStartIds: refill.oldStartIds, newStartIds: refill.newStartIds,
-                oldPageStartIds: refill.oldPageStartIds, newPageStartIds: refill.newPageStartIds,
+                oldPageStartIds: refill.oldPageStartIds,
                 changedRun: refill.changedRun,
                 partitionOnly: refill.partitionOnly,
                 spanners: this.spanners,
@@ -1777,7 +1777,6 @@ class Renderer {
     const owned = strategy === 'encoded';
     const base = this.buildOptions(strategy, 'page');
     return {
-      container: this.container!,
       toolkit: this.spliceTk!,
       viewStaves: this.viewStaves,
       /* With pagination owned the window uses the LIVE page options verbatim:
@@ -1810,7 +1809,6 @@ class Renderer {
         else { this.substituteHiddenStaffSystems(el); this.postProcessRendered(el, undefined, originPhaseX); }
       },
       decorateHost: (el: HTMLElement) => styleVoltaNumbers(el),
-      placePage: (el: HTMLElement) => this.placePage(el),
       placeFor: (systems: Element[], opts?: PlaceOpts) => this.placeFor(systems, opts),
       alignStaves: (host: HTMLElement, originPhase?: number) => this.alignStavesIn(host, originPhase),
       originPhaseOf: (pageEl: HTMLElement) => this.originPhaseOf(pageEl),

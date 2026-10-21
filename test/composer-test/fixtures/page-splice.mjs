@@ -1559,7 +1559,7 @@ export const ASSERTIONS = {
         /* The run starts at the edit line, one line above it (the end-of-line
            courtesy), or where F re-laid lines from: F partitions the whole
            section, so a width change can move line starts BEFORE the edit
-           (partition spec, "Accepted consequences"; 2026-10-21). */
+           (architecture/composer.md, The partition: accepted consequences; 2026-10-21). */
         const endBefore = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
         let firstChanged = startIds.length;
         startIds.forEach((id, k) => { if (k < firstChanged && endBefore(linesBefore, id) !== endBefore(startIds, id)) firstChanged = k; });
@@ -1578,7 +1578,7 @@ export const ASSERTIONS = {
         const lastGoverned = KIND === 'clef' ? resetLineNow : lineOf(resetMi - 1);
         /* The change widens every line start it governs, so F may re-lay
            lines past the reset (the partition is a function of the content —
-           partition spec, "Edit churn"). The run must reach every line F
+           architecture/composer.md, The partition: accepted consequences). The run must reach every line F
            changed (start or end moved) and stop there. */
         const endOf = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
         let lastChanged = -1;
@@ -1692,7 +1692,7 @@ export const ASSERTIONS = {
         /* The run starts at the edit line, one line above it (the end-of-line
            courtesy), or where F re-laid lines from: F partitions the whole
            section, so a width change can move line starts BEFORE the edit
-           (partition spec, "Accepted consequences"; 2026-10-21). */
+           (architecture/composer.md, The partition: accepted consequences; 2026-10-21). */
         const endBefore = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
         let firstChanged = startIds.length;
         startIds.forEach((id, k) => { if (k < firstChanged && endBefore(linesBefore, id) !== endBefore(startIds, id)) firstChanged = k; });
@@ -1817,7 +1817,7 @@ export const ASSERTIONS = {
         /* The run starts at the edit line, one line above it (the end-of-line
            courtesy), or where F re-laid lines from: F partitions the whole
            section, so a width change can move line starts BEFORE the edit
-           (partition spec, "Accepted consequences"; 2026-10-21). */
+           (architecture/composer.md, The partition: accepted consequences; 2026-10-21). */
         const endBefore = (L, id) => { const k = L.indexOf(id); return k < 0 ? null : (L[k + 1] ?? '$'); };
         let firstChanged = startIds.length;
         startIds.forEach((id, k) => { if (k < firstChanged && endBefore(linesBefore, id) !== endBefore(startIds, id)) firstChanged = k; });
@@ -3653,7 +3653,7 @@ export const ASSERTIONS = {
         if (!(nat < renumbered / 2)) return { ok: false, detail: 'naturals measured ' + nat + ' measures for ' + renumbered + ' renumbered — the flow/redraw split is not in effect' };
         /* And the partition is F of the document: the insert re-flows the rest
            of its section (inherent to a partition that is a function of the
-           content — partition spec, "Edit churn"), the renumber adds nothing. */
+           content — architecture/composer.md, The partition: accepted consequences), the renumber adds nothing. */
         const F = pb.partitionOfDocument(m);
         if (!F || F.join() !== pb.lineStarts().join()) return { ok: false, detail: 'partition is not F after the insert (' + linesBefore.length + ' -> ' + pb.lineStarts().length + ' lines)' };
         /* The rendered numbers are right on every drawn page: that is what the

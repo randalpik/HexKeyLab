@@ -48,7 +48,8 @@ const LOCK_SETUP = lockSetup(48);
 
 const LOCK_SETUP_18 = lockSetup(72);
 
-/* The partition spec's justification rule (2026-10-20), read off the mounted
+/* Partition F's justification rule (2026-10-20; architecture/composer.md, The
+ * partition), read off the mounted
  * systems: every system but the document's last is justified, and the last is
  * justified exactly when the owner says so (`finalSystemJustified`: its section
  * was balanced by F, or it stayed greedy at fill ≥ 0.70). An expression taking
@@ -347,7 +348,7 @@ export const FIXTURES = {
   },
   /* 13-bar section I + 8-bar section II. Section II is the FINAL section and
    * greedy needs only two lines for it (6+2), so F keeps it greedy — the
-   * small-document rule that replaced MIN_FILL (partition spec, 2026-10-20) —
+   * small-document rule that replaced MIN_FILL (partition F, 2026-10-20) —
    * rather than balancing it to [4,4] as the old balancer did, and its sparse
    * last system stays at natural width (fill < 0.70). Asserted via
    * FIXTURE_ASSERTIONS.pageBalanceDocFinalSmallDocKeepsStub. */
@@ -364,8 +365,8 @@ export const FIXTURES = {
     `,
     skipCursorTrace: true,
   },
-  /* The short-final-section rule (Max's rule 2 of 2026-09-18, restated by the
-   * partition spec 2026-10-20): a FINAL section of fewer than three greedy
+  /* The short-final-section rule (Max's rule 2 of 2026-09-18, restated by
+   * partition F 2026-10-20): a FINAL section of fewer than three greedy
    * lines stays greedy, and its last system is justified only at fill ≥ 0.70.
    * 13 bars of section I + a 2-bar section II, whose whole content is ~0.35 of
    * a line: one line, kept as it is, at natural width. Asserted via
@@ -878,14 +879,14 @@ export const FIXTURES = {
   },
   /* Undo restores the exact pre-command partition and redo the post-command
    * one, with no layout carried on the history entry: the partition is F of
-   * the document (partition spec G4; the LayoutSnapshot restore was retired
+   * the document (partition G4, architecture/composer.md; the LayoutSnapshot restore was retired
    * 2026-10-20). */
   lock_undo_restores_partition: {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
   },
   /* The padlock click removes the <sb>: the two sections join and F
    * re-partitions them as one — the layout a reload of the unlocked document
-   * engraves (partition spec G1; this was "pin removed only" until
+   * engraves (partition G1, architecture/composer.md; this was "pin removed only" until
    * 2026-10-20, a layout no reload could reproduce). */
   lock_click_unlocks_keeps_layout: {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
@@ -935,7 +936,7 @@ export const FIXTURES = {
     setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
   },
 
-  /* ── Partition F (docs/composer-partition-consistency-spec.md, 2026-10-20) ──
+  /* ── Partition F (docs/architecture/composer.md → The partition, 2026-10-20) ──
    * The partition is one pure function of the document: these pin the
    * contracts that follow from it. */
 
@@ -1780,7 +1781,7 @@ export const ASSERTIONS = {
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const idIdx = new Map(ids.map((id, i) => [id, i]));
         const starts = pb['startIds'].map((id) => idIdx.get(id));
-        /* What must hold (partition spec): the partition is F of the document
+        /* What must hold (partition G1): the partition is F of the document
            — what a reload engraves — and no line is compressed past its
            natural width (the defect this fixture was born for: 4,5,5,5,5,9
            with the last line at 1.42). The section has 3+ lines, so F picked
@@ -2047,7 +2048,7 @@ export const ASSERTIONS = {
         const before = sysOf(1);
         if (before.length < 2) return { ok: false, detail: 'page 1 has ' + before.length + ' systems' };
         /* F re-partitions the whole section and may reach back onto page 1
-           (no cap on reach: partition spec G3); what must hold is locality —
+           (no cap on reach: partition G3); what must hold is locality —
            a line whose start and end F left alone is not re-engraved. */
         const L0 = pb.lineStarts().slice();
         r.clearRenderLedger();

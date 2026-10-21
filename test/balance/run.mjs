@@ -57,7 +57,7 @@ function varianceDp(ws, sig, sigFirst, N, cap) {
 }
 const startsOfLens = (lens) => { const st = []; let acc = 0; for (const L of lens) { st.push(acc); acc += L; } return st; };
 
-/* ── F: the reach-back curve (partition spec Phase 1) ─────────────────────
+/* ── F: the reach-back curve ──────────────────────────────────────────────
  * The function both load and edit run (balance.ts). Inputs: the
  * sonata as dumped by sonata-probes/partition-inputs.js (per-measure naturals
  * and sigWForLine, so each line pays its OWN leading block), plus random
@@ -80,10 +80,13 @@ const sameLayouts = (a, b) => a.length === b.length && a.every((r, i) => r.start
   && r.changes === b[i].chg && r.kFrom === b[i].kFrom && r.kTo === b[i].kTo && r.lines === b[i].lines
   && Math.abs(r.min - b[i].min) < 1e-12 && Math.abs(r.sd - b[i].sd) < 1e-12);
 
-/* F1. The sonata at γ 0.03 reproduces the spec's Phase 0 picks (Max's own:
- *     I 1 change, II 0, III 3, IV 1) with their min / spread. */
+/* F1. The sonata's picks at γ 0.03 with their min / spread, on the widths
+ *     dumped 2026-10-21 (leading blocks measured from the staff line's start;
+ *     the resulting layout approved by Max): I 2 changes, II 0, III 1, IV 1.
+ *     (On the pre-fix widths γ 0.03 had reproduced Max's Phase 0 picks —
+ *     I 1, II 0, III 3, IV 1.) */
 {
-  const want = [[1, 0.672, 0.089], [0, 0.862, 0.020], [3, 0.693, 0.082], [1, 0.691, 0.051]];
+  const want = [[2, 0.672, 0.092], [0, 0.854, 0.024], [1, 0.811, 0.030], [1, 0.691, 0.051]];
   sonata.forEach((sec, si) => {
     check(`F sonata movement ${si + 1}: atoms built (no missing width)`, sec.at !== null);
     if (!sec.at) return;

@@ -75,7 +75,7 @@ export function pushToNextSystem(ctx: LineBreakCtx): void {
 }
 
 /** Lock-glyph click: remove the manual break before measure `mi`. The two
- *  sections join and F partitions them as one (partition spec G1; supersedes
+ *  sections join and F partitions them as one (partition G1, architecture/composer.md; supersedes
  *  the 2026-09-11 "pin removed only" rule). */
 export function unlockAt(ctx: LineBreakCtx, mi: number): void {
   if (ctx.model.hardBreakBefore(mi) !== 'lock') { ctx.setStatus('No manual line break before m' + (mi + 1) + '.', 'info'); return; }

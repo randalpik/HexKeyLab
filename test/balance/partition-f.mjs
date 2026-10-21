@@ -1,5 +1,5 @@
 // Partition function F — the SIMULATION twin of apps/composer/src/render/
-// balance.ts (docs/composer-partition-consistency-spec.md, Phase 0): the
+// balance.ts (docs/architecture/composer.md → The partition; Phase 0): the
 // reach-back curve, written independently of the app so test/balance/run.mjs
 // can hold the port to it; curve-batch.mjs adds the distinct layouts and the
 // pick. Pure, DOM-free.
@@ -11,7 +11,8 @@
 // The rejected Phase 0 candidates (greedy + one target T with deficit windows,
 // the page-causal partition, anchored balances) and their comparisons against
 // the pre-F balancer were removed with that balancer on 2026-10-20; their
-// measurements are in the spec's "Phase 0 results" (git history has the code).
+// measurements are in decisions.md (2026-10-21, "The partition spec is
+// retired"); git history has the code.
 
 export function makeSeg(ws, sigs) {
   const M = ws.length, pre = new Float64Array(M + 1);

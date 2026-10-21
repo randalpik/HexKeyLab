@@ -1,11 +1,11 @@
-// The page-view line partition F (docs/composer-partition-consistency-spec.md;
+// The page-view line partition F (docs/architecture/composer.md → The partition;
 // decisions.md "Partition: the reach-back curve", Max 2026-10-20).
 //
 // ONE pure function of a section's widths, run by the load (linebreaks.ts
 // `balanceInitialBand`: every section, before the first paint) and by every
 // edit (`repartition` → `balanceSectionLines`: every touched section, in full).
 // A load and an edit therefore compute the same layout, a reload never changes
-// the screen, and undo restores the layout exactly (spec G1, G4). There is no
+// the screen, and undo restores the layout exactly (G1, G4). There is no
 // incumbent partition, no repair loop and no legality window. Per section:
 //   1. greedy lines at ≤ PARTITION_CAP — N lines, the fewest possible;
 //   2. for every k = 1..N, the last k greedy lines re-divided into the same k

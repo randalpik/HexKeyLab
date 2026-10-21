@@ -535,8 +535,7 @@ shells** (`render/pageshell.ts`), which also draw the page header.
   instrument-name indent instead, since its clef and key sit inside measure
   0's natural width.
 - **The partition is one pure function of the document, F**
-  (`balance.ts` `partitionSection`; spec:
-  `docs/composer-partition-consistency-spec.md`). Per section — the measures
+  (`balance.ts` `partitionSection`). Per section — the measures
   between hard starts — over atoms (render units: a multirest run is one):
   greedy lines at fill ≤ 1.00 give the line count N (no line is ever
   compressed; a measure wider than a line sits alone); the reach-back curve
@@ -547,14 +546,51 @@ shells** (`render/pageshell.ts`), which also draw the page header.
   section of fewer than 3 greedy lines stays greedy.
 - The load runs F over every section before the first paint; an edit carries
   the partition by line membership (which says only which sections it
-  touched, and keeps pages by line), then runs the same F over every touched
-  section in full. A load and an edit therefore compute the same layout, a
+  touched; pages are never carried — every refill re-fits them, below), then
+  runs the same F over every touched section in full. A load and an edit therefore compute the same layout, a
   reload never changes the screen, and undo restores the layout exactly. F
   reaches as far as its pick says — including onto earlier pages — and an
   inserted or deleted bar re-flows the rest of its section (inherent to a
   partition that is a function of the content). The suite checks it on every
   fixture ("partition is F": the committed starts equal
   `PageLineBreaks.partitionOfDocument`).
+- **Requirements** (Max, 2026-10-19/20). **G1** one function: the partition
+  is a pure function of the document — a load and an edit compute the same
+  layout, a reload never changes the screen. **G2** quality is judged against
+  the section's full balance (the curve's far end) on line appearance — the
+  lowest fill and the spread — never on agreement of boundaries (near ties are
+  real: whole movements rearrange for a spread change of 0.004). **G3** no cap
+  on reach (Max: "There cannot be a hard cap on how far a repair can reach");
+  edit cost is measured, not argued. **G4** exact undo, which follows from G1.
+  No line is packed past its natural width (compressed lines collide); there
+  is no MIN_FILL — a stub before another section or a lock is a bug, and only
+  a FINAL section of fewer than 3 lines stays greedy (the small-document
+  convenience MIN_FILL was for).
+- **Accepted consequences** (Max, 2026-10-20). A section just over one line
+  long becomes two lines around fill 0.5–0.6, never one compressed line. A
+  long uniform section can keep a sparse-ish last line when the next
+  improvement needs many moves at once (a 203-bar corpus section: 1 change →
+  0.57, 9 → 0.85, nothing between) — locks are the remedy. Lines outside the
+  picked window keep greedy's breaks (the sonata's movement II keeps a 0.681
+  line, bars 52–53, which only the full balance would lift; reviewed by Max).
+  An inserted or deleted bar re-flows the rest of its section in every scheme
+  measured (p90 25–33 lines in the sonata simulation), so it is inherent; a
+  ±5 % width edit moved nothing at p90 there.
+- **Where it lives.** `balance.ts`: `partitionSection` (greedy, curve, pick,
+  final-section rule), `sectionAtoms` (render units → atoms, each line paying
+  its own leading block), `greedyStarts`, `curveTable`, `reachBackCurve`,
+  `distinctLayouts`, `pickLayout`; `PARTITION_CAP` 1.00, `PARTITION_GAMMA`
+  0.03, `FINAL_GREEDY_BELOW` 3. `linebreaks.ts`: `balanceInitialBand` (load,
+  after `seedPartition` + `warmAllNaturals`), `repartition` →
+  `balanceSectionLines` (edit), `partitionOfDocument` / `partitionCurrent`
+  (read-only F of the document, and whether the committed partition is for the
+  current version), `finalSystemJustified` (`FINAL_JUSTIFY_FILL` 0.70).
+  Tests: `test/balance/run.mjs` holds F to its independent simulation twin
+  (`test/balance/partition-f.mjs` + `curve-batch.mjs`) on the sonata's dumped
+  inputs (`sonata-inputs.json`) and 600 random sections; the suite's universal
+  "partition is F" (`assertPartitionIsF`) and the `partF_*` fixtures
+  (page-layout); the corpus pipeline in `test/corpus/README.md`; the design
+  record in decisions.md (2026-10-19 – 10-21, "Partition: …").
 - Hard starts — locks, page breaks, section headers — split their section;
   removing one joins two sections, which F partitions whole. A page break or
   section header also re-fits pages from its page. A signature change

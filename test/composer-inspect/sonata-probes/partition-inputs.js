@@ -1,4 +1,4 @@
-// Partition inputs dump (2026-10-19, partition-consistency spec Phase 0).
+// Partition inputs dump (2026-10-19, partition F's Phase 0).
 // Everything the partition function F reads, from the live document, as JSON:
 // per-measure naturals, the leading-block width a line starting at each measure
 // pays (`sigWForLine`), hard starts (a measure after an sb/pb — mirrors

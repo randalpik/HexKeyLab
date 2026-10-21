@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Corpus report over batch-import.mjs records (2026-10-20, partition spec
+// Corpus report over batch-import.mjs records (2026-10-20, partition F's
 // Phase 0): import outcomes and the change-weighted reach-back curve per
 // section, aggregated per sample set. Records carry the partition-inputs dump;
 // the optional survey (mxl survey.json) supplies the set each file belongs to.

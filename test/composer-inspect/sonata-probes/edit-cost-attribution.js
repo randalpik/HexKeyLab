@@ -47,18 +47,17 @@ const install = () => {
   wrapPhase(pb, 'tryRefill', 'refill');
   wrapPhase(pb, 'measureWindow', 'naturals');
   wrapPhase(ps, 'trySplice', 'splice');
-  wrapPhase(ps, 'spliceDom', 'spliceDom');
-  wrapPhase(ps, 'liveSystem', 'liveSys');
+  /* Since 2026-10-21 the splicer only engraves; every refill lands through
+     PageAssembler.applyPartition (placement + first-fit). */
+  if (r['assembler']) wrapPhase(r['assembler'], 'applyPartition', 'land');
   wrapPhase(r, 'snapSystems', 'snap');
   wrapPhase(r, 'postProcessRendered', 'post');
   wrapPhase(H.cursor, 'update', 'cursor');
-  /* Phase 2 cascade phases (absent on older code: wrapPhase skips). */
-  wrapPhase(r, 'repairPagination', 'cascade');
+  /* Mount phases (absent on older code: wrapPhase skips). */
   wrapPhase(r, 'finishPageMount', 'mountPass');
   wrapPhase(r, 'createPageFromShell', 'createShell');
   wrapPhase(r, 'mountPage', 'mountPage');
   wrapPhase(r, 'armExtentsJob', 'armJob');
-  wrapPhase(r, 'registerSpliceEffects', 'effects');
   wrapPhase(pb, 'verifyRenderedPartition', 'verifyPartition');
   wrapPhase(model, 'insertChordAtCursor', 'mutate');
   wrapPhase(model, 'insertMeasureAt', 'mutate');

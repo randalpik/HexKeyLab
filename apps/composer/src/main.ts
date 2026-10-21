@@ -845,9 +845,9 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
     /* The page's box and viewBox are NOT touched (Max, 2026-09-02). A header is
        a component with a reserved height in the page's vertical budget, like a
        system: it consumes paper, it does not add any. A page whose systems no
-       longer fit below the reserve OVERFLOWS, and the owned pagination repairs
-       it by moving the spilled tail onto the next page (Renderer.repairPagination,
-       after every mount and every splice). Since the vertical-ownership plan's
+       longer fit below the reserve is re-fitted by the owned pagination
+       (PageAssembler's first-fit, after every mount and every edit), which
+       moves the spilled tail onto the next page. Since the vertical-ownership plan's
        Phase 1 (2026-09-02) the renderer places systems and bands itself
        (render/pagefit.ts); this injector only draws the title. */
   }
