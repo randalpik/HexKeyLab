@@ -17,7 +17,6 @@ import type { ShellGeom, ShellMeta } from './pageshell.js';
 import { ScrollSplicer, snapshotSpanners, type SpliceCtx, type SpannerSnapshot } from './splice.js';
 import { refreshLockMarks, LOCK_SELECTOR } from './lockmarks.js';
 import { lockStartIds, type OwnerWidths } from './linebreaks.js';
-import type { LayoutSnapshot } from '../history.js';
 import {
   PageLineBreaks,
   type PageBreaksCtx,
@@ -1993,84 +1992,6 @@ class Renderer {
     this.pageBreaks.balanceInitialBand(model, this.pageBreaksCtx(), budget);
   }
 
-  /** Land a PARTITION-ONLY change (the document is unchanged) — today only
-   *  line-break undo/redo, through `restoreLayout`; the balancer's idle job,
-   *  the other caller, is gone (the whole document balances before the paint): the hunk of lines whose starts differ is spliced
-   *  where mounted and deferred (stale) elsewhere, exactly like an edit's
-   *  refill, then the page-fit cascade runs. False when the splicer refused —
-   *  nothing was touched and the owner reverts. A landed surgery whose spill no
-   *  cascade step could move falls back to a full pinned render of the
-   *  committed partition (the DOM is part-way) — still the balanced layout,
-   *  never a wrong page. */
-  private applyPartitionChange(
-    oldStartIds: string[], newStartIds: string[], oldPageStartIds: string[], newPageStartIds: string[],
-  ): boolean {
-    const model = this.lastModel;
-    if (!model || !this.container || !this.assembler || this.spliceDepth !== 0) return false;
-    if (this.container.querySelector('.score-page svg') === null) return false;
-    const ids = model.allMeasures().map((m) => m.getAttribute('xml:id') ?? '');
-    const idIdx = new Map(ids.map((id, i) => [id, i]));
-    const N = oldStartIds.length, M = newStartIds.length;
-    let pre = 0;
-    while (pre < Math.min(N, M) && oldStartIds[pre] === newStartIds[pre]) pre++;
-    let suf = 0;
-    while (suf < Math.min(N, M) - pre && oldStartIds[N - 1 - suf] === newStartIds[M - 1 - suf]) suf++;
-    if (N === M && pre === N) return true;                       // nothing moved
-    const a = Math.max(0, pre - 1), bNew = M - 1 - suf;
-    const lo = idIdx.get(newStartIds[a]);
-    const hiEnd = bNew + 1 < M ? idIdx.get(newStartIds[bNew + 1]) : ids.length;
-    if (lo == null || hiEnd == null) return false;
-    const req: SpliceRequest = {
-      oldStartIds, newStartIds, oldPageStartIds, newPageStartIds,
-      changedRun: { lo, hi: Math.max(lo, hiEnd - 1) },
-      partitionOnly: true,
-    };
-    this.spliceDepth++;
-    this.touchedPages = [];
-    let spliced = false, landed = false;
-    try {
-      if (this.pageSplicer.trySplice(model, req, this.pageSpliceCtx())) {
-        spliced = true;
-        this.registerSpliceEffects();
-        landed = this.assembler.repaginateFrom(this.pageSplicer.lastPages.slice());
-        this.noteRepagination();
-      }
-    } finally {
-      this.spliceDepth--;
-    }
-    if (!spliced) {
-      /* Apply it line by line instead (2026-10-08): the hunk's lines re-engrave,
-         the rest is reused. */
-      this.spliceDepth++;
-      try {
-        landed = this.assembler.applyPartition(oldStartIds, this.changedLineIdsFor(model, req.changedRun, newStartIds), []);
-      } finally {
-        this.spliceDepth--;
-      }
-      this.noteRepagination();
-      if (!landed) {
-        console.info('[page-balance] partition change could not be applied (' + this.pageSplicer.lastSkipReason + ') — left for the next derive');
-        return false;
-      }
-      this.pageSplicer.noteApplied();
-      for (const el of this.assembler.lastRebuiltPages) if (!this.touchedPages.includes(el)) this.touchedPages.push(el);
-    }
-    if (landed) {
-      for (const el of this.touchedPages) this.onPageMountedCb?.(el);
-      for (const el of this.touchedPages) this.drawLockMarks(el);
-      this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler.pageCount, this.pageBreaksCtx());
-      if (indexCheckEnabled()) {
-        this.pageSplicer.verifyAgainstReference(this.pinnedMeiForCurrentModel(), this.touchedPages, this.pageSpliceCtx());
-      }
-    } else {
-      console.warn('[page-balance] repagination refused (' + this.pageSplicer.lastSkipReason + ') — re-assembling');
-      this.assembleDocument(model, this.viewStaves, false);
-      this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
-    }
-    this.rememberPartition(model);
-    return true;
-  }
-
   /* ── manual line breaks (2026-09-11) ─────────────────────────────────── */
 
   /** Draw the manual line-break padlocks of one mounted page
@@ -2104,8 +2025,8 @@ class Renderer {
   }
 
   /** After a page render: when the set of locks changed (a lock added or
-   *  removed — an UNLOCK renders as a signature no-op, so no placement runs),
-   *  redraw every mounted page's padlocks. */
+   *  removed), redraw every mounted page's padlocks — a placement redraws only
+   *  the pages it touched. */
   private syncLockMarks(model: ComposerModel): void {
     const sig = Array.from(lockStartIds(model)).join(',');
     if (sig === this.lastLockSig) return;
@@ -2130,39 +2051,6 @@ class Renderer {
     const endIdx = (k + 1 < starts.length ? starts[k + 1] : ids.length) - 1;
     if (mi < startIdx || mi > endIdx) return null;
     return { lineIdx: k, startIdx, endIdx };
-  }
-
-  /** The partition on screen, keyed by its layout inputs — what a line-break
-   *  command's history entry carries (history.ts LayoutSnapshot). Null when
-   *  nothing is owned. */
-  captureLayout(): LayoutSnapshot | null {
-    const model = this.lastModel;
-    if (!model || this.viewMode !== 'page' || !this.pageBreaks.ownershipActive()) return null;
-    return { key: this.partitionKey(model), lines: this.pageBreaks.lineStarts(), pages: this.pageBreaks.pageStarts() };
-  }
-
-  /** Put a captured partition back (undo/redo of a line-break command). The
-   *  document has already been swapped to the state the snapshot describes,
-   *  so the key must match the current layout inputs and every id must
-   *  resolve; the owner re-baselines against the current document WITHOUT
-   *  dropping its width caches (replacePartition), the DOM lands the move as a
-   *  partition-only splice (or a full pinned render when the splicer
-   *  refuses), and the render that follows is a signature no-op. False when
-   *  not applicable — the caller lets the ordinary refill decide. */
-  restoreLayout(snap: LayoutSnapshot): boolean {
-    const model = this.lastModel;
-    if (!model || this.viewMode !== 'page' || !this.container) return false;
-    if (snap.key !== this.partitionKey(model)) return false;
-    const oldLines = this.pageBreaks.lineStarts(), oldPages = this.pageBreaks.pageStarts();
-    if (oldLines.length <= 1) return false;
-    if (!this.pageBreaks.replacePartition(model, snap.lines, snap.pages)) return false;
-    const same = oldLines.join('|') === snap.lines.join('|') && oldPages.join('|') === snap.pages.join('|');
-    if (!same && !this.applyPartitionChange(oldLines, snap.lines, oldPages, snap.pages)) {
-      this.assembleDocument(model, this.viewStaves, false);
-      this.pageBreaks.verifyRenderedPartition(this.container, model, this.assembler?.pageCount ?? 1, this.pageBreaksCtx());
-    }
-    this.rememberPartition(model);
-    return true;
   }
 
   /** Max justified system width (SVG user units) from the mounted page DOM. */

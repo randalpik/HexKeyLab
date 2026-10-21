@@ -4,7 +4,8 @@
 // pays (`sigWForLine`), hard starts (a measure after an sb/pb — mirrors
 // linebreaks.ts `hardStartIds`), render units (multirest runs), the justified
 // budget, and the committed line and page starts. Consumed by
-// test/balance/partition-sim.mjs. Read-only: no edit, no render.
+// test/balance/run.mjs (its sonata-inputs.json is this dump) and
+// curve-batch.mjs. Read-only: no edit, no render.
 const H = window.__hkl_composer; const r = H.renderer, model = H.model;
 const pb = r['pageBreaks'];
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));

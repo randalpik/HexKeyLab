@@ -358,8 +358,7 @@ function diffBreakSigs(oldSig: string, newSig: string): { added: string[]; remov
 /** Measure range (CURRENT indices) of the lines whose starts differ between
  *  two partitions — from the line BEFORE the first moved start (its end moved)
  *  through the last moved line — i.e. what a partition-only splice redraws.
- *  Null when the partitions are equal or an id is unknown. Mirrors
- *  Renderer.applyPartitionChange's hunk. */
+ *  Null when the partitions are equal or an id is unknown. */
 export function partitionHunk(
   oldStartIds: readonly string[], newStartIds: readonly string[], idIdx: Map<string, number>, n: number,
 ): { lo: number; hi: number } | null {
@@ -985,16 +984,16 @@ export class PageLineBreaks {
     return this.adoptPartition(model, lines, pages, widths, budget);
   }
 
-  /** Commit a partition for the CURRENT document WITHOUT dropping the width
-   *  caches (manual line breaks, 2026-09-11). The renderer restores a layout
-   *  snapshot on undo/redo of a line-break command; the document then differs
-   *  from the one the snapshot was taken against only by a `<sb>`, so every
-   *  natural and leading-signature width is still right — `adoptPartition`'s
-   *  `invalidate` would throw them away and leave the next edit re-measuring
-   *  (and the edit's F refusing with 'naturals incomplete'). Validates
-   *  the ids (present, ascending, line 0 = the document start, page 1 = line
-   *  0), cancels any adoption/balance job, and re-baselines the signatures and
-   *  the user-break sig against the current document. */
+  /** Commit an ARBITRARY partition for the CURRENT document WITHOUT dropping
+   *  the width caches — diagnostics only: sonata-probes/apply-partition.js
+   *  lays out candidate partitions for screenshots. The result is not F of the
+   *  document; the next edit re-partitions only the sections it touches.
+   *  (Until 2026-10-20 line-break undo/redo restored layout snapshots through
+   *  here; F made that redundant.) `adoptPartition`'s `invalidate` would throw
+   *  the widths away and leave the next edit re-measuring. Validates the ids
+   *  (present, ascending, line 0 = the document start, page 1 = line 0) and
+   *  re-baselines the signatures and the user-break sig against the current
+   *  document. */
   replacePartition(model: ComposerModel, lines: string[], pages: string[]): boolean {
     if (lines.length <= 1) return false;
     const meiMeasures = model.allMeasures();
@@ -1772,8 +1771,10 @@ export class PageLineBreaks {
    *  Zero for the document's first line: the clef+key+meter block there is
    *  drawn inside measure 0 and is therefore already inside that measure's
    *  natural width, so charging `sigWAt` as well counted it twice and cost
-   *  that line a measure (verified 2026-09-18; see balance.ts `sigFirst`).
-   *  Every other line really does get a block no natural contains. */
+   *  that line a measure (verified 2026-09-18: in an unwrapped render the
+   *  clef's bbox sits at x≈99 INSIDE measure 0's bbox, and measure 0 measures
+   *  3963 against 2930 for a plain measure). Every other line really does get
+   *  a block no natural contains. */
   /** `sigWForLine` for READ-ONLY diagnostics (`partitionOfDocument`,
    *  `finalSystemJustified`): a miss returns null without being reported —
    *  only the partition itself refuses, and reports, a missing width. */

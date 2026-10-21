@@ -19,6 +19,7 @@ import {
   extractNoteElements,
 } from './note-elements.js';
 import { setTieFlag } from './ties.js';
+import { isPlaceholder } from './placeholders.js';
 import {
   isTupletPlaceholder,
   ticksOf,
@@ -323,7 +324,14 @@ export function insertWithSplit(
 }
 
 /** Insert `child` at the content-child index `index` of `parent`. Uses
- *  contentChildren so the index excludes placeholders. */
+ *  contentChildren so the index excludes placeholders. Past the last content
+ *  child the insertion lands at the FILL POINT — before the first placeholder
+ *  after it — never after a clef at the layer's end: that clef is the barline
+ *  clef stored where it is drawn, before the closing barline
+ *  (model/clef-slot.ts), and appending past it moved it to the layer's head
+ *  once the placeholder went (`[space, clef]` + a rest became `[clef, rest]`:
+ *  a clef written at the barline after an empty bar jumped to that bar's
+ *  start as soon as the bar was filled, 2026-10-20). */
 export function insertAt(
   model: ComposerModel,
   parent: Element,
@@ -331,6 +339,15 @@ export function insertAt(
   index: number,
 ): void {
   const kids = model.contentChildren(parent);
-  if (index >= kids.length) parent.appendChild(child);
-  else parent.insertBefore(child, kids[index]);
+  if (index < kids.length) { parent.insertBefore(child, kids[index]); return; }
+  let ref: Element | null = kids.length ? kids[kids.length - 1].nextElementSibling : parent.firstElementChild;
+  while (ref && !isPlaceholder(ref)) ref = ref.nextElementSibling;
+  if (!ref) {
+    /* No placeholder after the content: before a trailing clef run, if any. */
+    let tail: Element | null = null;
+    for (let c = parent.lastElementChild; c && c.localName === 'clef'; c = c.previousElementSibling) tail = c;
+    ref = tail;
+  }
+  if (ref) parent.insertBefore(child, ref);
+  else parent.appendChild(child);
 }

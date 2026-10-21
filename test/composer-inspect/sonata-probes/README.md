@@ -45,6 +45,10 @@ probe. Rules learned the hard way:
 - **Inventories, not breadcrumbs**: record every deviation, never just the
   worst; chunk with `from=`/`limit=`, never sample with `stride` (stride 5 read
   0/23 where stride 1 read 4/25).
+- **Quiesce before a layout baseline**: after load or a mount, deferred pages
+  engrave and the page fit re-runs, so page starts can move after the render
+  has settled. Wait until line and page starts are stable (1.5 s in
+  `line-lock-undo-gate.js`) before recording a "before" to compare against.
 
 ## Edit-path gates
 
@@ -77,6 +81,11 @@ Run these after any change to the refill, splicer, partition or pagination.
   asserts that a *command* splices.
 - **`line-lock-commands.js`** — Alt+Shift+↓ locks with undo/redo and the
   padlock: derive reason must be empty and undo byte-identical.
+- **`line-lock-undo-gate.js`** — lock and unlock with undo/redo chains at
+  five sites (four pages + a section-final line): every step must land on the
+  expected line AND page starts, be F of the document, and keep pins in order
+  with no overflow (`allEq: true`). Line-break history entries carry no
+  layout, so this is what holds their undo exact.
 - **`governed-range-edits.js`** — key, clef and meter changes far from their
   next reset, each with its undo; `check=1` under the reference gate.
 - **`balance-consistency.js`** — one delete + undo on a fresh load (`--arg

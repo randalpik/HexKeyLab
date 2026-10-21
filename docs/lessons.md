@@ -3646,8 +3646,9 @@ stays ≤ 1.2; at ≤ 1.0 merges never fired and a section under deletion thinne
 toward MIN_FILL instead of dropping a line). With both, delete-at-section-end
 alternates "pull one bar back" (2 boundaries) and "fold the last line" (1). The
 penalty is dropped (λ = 0) only when nothing of the section is mounted — then
-the even optimum costs nothing visible. `test/balance/run.mjs` replays this on
-the sonata's measured widths.
+the even optimum costs nothing visible. (`test/balance/run.mjs` replayed this on
+the sonata's measured widths until the pre-F balancer and its cases were
+removed, 2026-10-20 — partition spec Phase 4.)
 
 ## Our line fill and Verovio's justification ratio are not the same number (2026-09-05)
 
@@ -5443,3 +5444,11 @@ The pagination fold check in Firefox flagged sonata p. 8 as overflowing by 21 un
 ## The width model must follow what is DRAWN, not the live document's form (2026-10-20)
 
 Reload ≡ live failed on the sonata (a reload re-broke two lines of movement III) after a delete made a mid-measure clef measure-initial (m. 313). `relocateInitialClefs` draws a measure-initial clef at the END of the previous measure, and `serialize` SAVES that form, so the live document (clef at the head of 313) and its reload (clef at the tail of 312) are different documents that draw identically — while F's inputs followed the document form: measure 312's natural was never re-measured (the edit's dirty range was 313), and the signature-context key at 313 ignored a clef at the head of its own layer. Fixed: layer-initial clefs key from their own measure, and an edit re-measures one measure to the left (fixture `partF_clefInitialReload`, proven failing without the fix: bar 10 natural 2930 live vs 2998 reloaded). **Open**: a context's leading-block width is measured from its first measure's bbox x, which includes the measure number hanging left of the staff, so the same context measured under bar "11" and bar "12" differs by ~10 units (688.70 vs 678.08) and the cache keeps whichever was measured first — a near-tie could still make a reload differ. Measuring from the staff line's start removes it but moves every leading block by the overhang (a layout change everywhere); not done without Max.
+
+## Verovio draws a measure-initial clef before the barline when the measure holds an `mRest` (2026-10-20)
+
+Probed on the live toolkit: a layer-initial `<clef>` in a measure with notes, or with a `<space>`, draws AFTER the opening barline; the same clef in a measure whose staff holds an `<mRest>` or `<multiRest>` (in any layer) draws BEFORE it, at the previous measure's end — where it collides with a clef actually stored there. An in-section `<scoreDef>` clef change before the measure draws after the barline with the rest centred, but full size (E062) rather than as a change clef (E07C). Composer renders every empty bar as an `mRest`, so any design that draws a head clef after the barline breaks on exactly the empty bar. (Also: a layer-initial clef at a pinned SYSTEM start draws as a second clef after the system clef, and a `<scoreDef>` clef change at a system break draws a FULL-size courtesy at the end of the previous system.)
+
+## Appending past a layer's last note put content after a barline clef (2026-10-20)
+
+`insertAt` (model/insertion-plan.ts) appended whenever the insertion point was past the last content child, so in an empty layer `[space, clef]` — a barline clef stored at the bar's end, the form every reload produced since the 2026-09-27 placeholder fix — entering a rest gave `[space, clef, rest]`, and the placeholder pass then left `[clef, rest]`: the clef had moved from the bar's END to its START, a whole bar early. Past the last content the insertion now lands at the fill point (before the first placeholder after it), else before a trailing clef run. Fixture `clef_tailStaysOnFill`.

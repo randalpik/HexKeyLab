@@ -313,6 +313,36 @@ export const FIXTURES = {
       r();
     `,
   },
+  /* A clef written at the barline after an EMPTY bar is stored at that bar's
+     end — and stays there when the bar is filled (2026-10-20: entering a rest
+     used to append past it, leaving the clef at the bar's start). */
+  clef_tailStaysOnFill: {
+    setup: `
+      m.setVoice(1);
+      m.appendMeasure();
+      m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+      m.setClefAt('F', '4', null, null);
+      m.setCursor(0, 1);
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 };
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      r();
+    `,
+  },
+  /* A clef written at a full measure's barline is stored at that measure's
+     end, where it is drawn, and a save writes it there unchanged — no shift
+     between what is shown, what is stored and what is saved (Max,
+     2026-10-20). */
+  clef_barline_storedWhereDrawn: {
+    setup: `
+      m.setVoice(1); m.setCursor(0, 1);
+      const A = { q: 0, r: 0, pname: 'a', accid: '', oct: 4, midi: 69, colorHex: '#888', velocity: 80 };
+      for (let i = 0; i < 8; i++) m.insertChordAtCursor({ notes: [A], duration: '4', dots: 0 });
+      m.setCursor(4, 1);
+      m.setClefAt('F', '4', null, null);
+      m.setCursor(0, 1);
+      r();
+    `,
+  },
 };
 
 export const ASSERTIONS = {
@@ -371,7 +401,7 @@ export const ASSERTIONS = {
   ],
   /* ── Clef slot model (2026-09-27) ──────────────────────────────────────── */
   clef_repro_barlineOverlap: [
-    { name: 'live doc holds ONE clef: alto, layer-initial in M2 (canonical barline form)',
+    { name: 'live doc holds ONE clef: alto, at the END of M1’s layer (stored where it is drawn, before the barline)',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const clefs = [...m.getDoc().querySelectorAll('clef')];
@@ -379,8 +409,8 @@ export const ASSERTIONS = {
         const c = clefs[0];
         if (c.getAttribute('shape') !== 'C' || c.getAttribute('line') !== '3') return { ok: false, detail: 'clef=' + c.getAttribute('shape') + '/' + c.getAttribute('line') + ' (expected C/3)' };
         const mi = m.allMeasures().indexOf(c.closest('measure'));
-        if (mi !== 1) return { ok: false, detail: 'clef in measure idx ' + mi + ' (expected 1)' };
-        if (c.previousElementSibling !== null) return { ok: false, detail: 'clef not layer-initial (prev=' + c.previousElementSibling.localName + ')' };
+        if (mi !== 0) return { ok: false, detail: 'clef in measure idx ' + mi + ' (expected 0)' };
+        if (c.nextElementSibling !== null) return { ok: false, detail: 'clef not last in M1 (next=' + c.nextElementSibling.localName + ')' };
         return { ok: true };
       })()` },
     { name: 'render: exactly one clef-change glyph and no two clef glyphs overlap',
@@ -407,7 +437,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   clef_barline_twoCursorsOneSlot: [
-    { name: 'dialog at "past last of full M1" pre-selects the Bass at M2’s head; choosing Treble removes it',
+    { name: 'dialog at "past last of full M1" pre-selects the barline’s Bass; choosing Treble removes it',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const n = m.getDoc().querySelectorAll('clef').length;
@@ -500,7 +530,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   clef_range_barlineEnd: [
-    { name: 'restore at a full-measure barline lands on M2’s head clef: two clefs total, nothing on M1’s tail',
+    { name: 'restore at a full-measure barline reuses the barline’s bass, moved to M1’s tail where it is drawn: two clefs total, none at M2’s head',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const measures = m.allMeasures();
@@ -508,10 +538,9 @@ export const ASSERTIONS = {
         const clefs = [...m.getDoc().querySelectorAll('clef')];
         const desc = () => clefs.map(c => c.getAttribute('shape') + c.getAttribute('line') + '@m' + measures.indexOf(c.closest('measure')) + '>' + (c.nextElementSibling ? notes.indexOf(c.nextElementSibling) : 'end')).join(',');
         if (clefs.length !== 2) return { ok: false, detail: 'clef count=' + clefs.length + ' (expected 2): ' + desc() };
-        const l1 = m.layerInMeasure(measures[0], 1);
-        if (l1.lastElementChild && l1.lastElementChild.localName === 'clef') return { ok: false, detail: 'clef appended to M1 tail: ' + desc() };
-        const head = m.layerInMeasure(measures[1], 1).firstElementChild;
-        if (!head || head.localName !== 'clef' || head.getAttribute('shape') !== 'F') return { ok: false, detail: 'M2 head is not the bass clef: ' + desc() };
+        const tail = m.layerInMeasure(measures[0], 1).lastElementChild;
+        if (!tail || tail.localName !== 'clef' || tail.getAttribute('shape') !== 'F') return { ok: false, detail: 'M1 does not end with the bass clef: ' + desc() };
+        if (m.layerInMeasure(measures[1], 1).firstElementChild?.localName === 'clef') return { ok: false, detail: 'a clef is still at M2’s head: ' + desc() };
         const rendered = document.querySelectorAll('#score g.clef').length;
         if (rendered !== 4) return { ok: false, detail: 'rendered g.clef=' + rendered + ' (expected 4: 2 opening + alto + bass)' };
         return { ok: true };
@@ -570,6 +599,32 @@ export const ASSERTIONS = {
         if (clefs[0].getAttribute('shape') !== 'F') return { ok: false, detail: 'first clef shape=' + clefs[0].getAttribute('shape') + ' (expected F/bass)' };
         if (clefs[1].getAttribute('shape') !== 'G') return { ok: false, detail: 'second clef shape=' + clefs[1].getAttribute('shape') + ' (expected G/treble restore)' };
         return { ok: true };
+      })()` },
+  ],
+  clef_tailStaysOnFill: [
+    { name: 'the barline clef stays the LAST child of the bar it closes after the bar is filled',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const l1 = m.layerInMeasure(m.allMeasures()[0], 1);
+        const kids = [...l1.children].map((c) => c.localName + (c.localName === 'clef' ? c.getAttribute('shape') : ''));
+        const clefs = [...m.getDoc().querySelectorAll('clef')];
+        if (clefs.length !== 1) return { ok: false, detail: 'clef count=' + clefs.length };
+        return l1.lastElementChild === clefs[0] ? { ok: true } : { ok: false, detail: 'M1 layer: ' + kids.join(',') };
+      })()` },
+  ],
+  clef_barline_storedWhereDrawn: [
+    { name: 'stored at M1’s end (before the barline), drawn there, and saved there',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const where = (doc) => { const ms = [...doc.querySelectorAll('measure')]; return [...doc.querySelectorAll('clef')].map((c) => 'm' + ms.indexOf(c.closest('measure')) + (c.nextElementSibling ? '' : '$') + (c.previousElementSibling ? '' : '^')).join(','); };
+        const live = where(m.getDoc());
+        if (live !== 'm0$') return { ok: false, detail: 'live ' + live + ' (expected m0$ — last child of M1)' };
+        const saved = where(new DOMParser().parseFromString(m.serialize(), 'application/xml'));
+        if (saved !== live) return { ok: false, detail: 'save moved it: live ' + live + ' saved ' + saved };
+        const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
+        const g = document.getElementById(ids[0]);
+        const drawn = g ? [...g.querySelectorAll('g.clef use')].some((u) => (u.getAttribute('xlink:href') || '').startsWith('#E07C')) : false;
+        return drawn ? { ok: true } : { ok: false, detail: 'the change clef is not drawn in M1' };
       })()` },
   ],
 };

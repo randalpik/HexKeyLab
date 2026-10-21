@@ -267,8 +267,9 @@ Rendering: see Hidden staves and Multimeasure rests below.
 
 `history.ts`: full-state snapshots (the MEI plus cursors and the active
 voice) before and after each user action, the AFTER snapshot taken lazily; a
-cut followed by a paste merges into one entry. A line-break command also carries a
-`LayoutSnapshot` so undo restores the exact partition.
+cut followed by a paste merges into one entry. No entry carries layout: the
+page-view partition is F of the document, so undo and redo restore it exactly,
+line-break commands included.
 
 ## Input
 
@@ -437,7 +438,16 @@ barline is never followed by a clef. Section starts keep their clef (the
 restart pass draws it). Because of this relocation a measure's render depends
 on the next measure's first clef, so both splicers widen a changed run one
 measure left when its first measure holds one. Saved documents carry the
-relocated spelling; `clefSlotAt` reads both.
+relocated spelling; `clefSlotAt` reads both. A clef written at a barline
+(the clef dialog, `applyClefAt`) is STORED in that relocated spelling from the
+start — at the end of the previous measure, where it is drawn and saved — and
+an existing barline clef edited there moves to it, so what is shown, stored and
+saved never differ (2026-10-20). A movement start keeps its head clef. Content
+entered past a layer's last note lands before a trailing clef run
+(`insertAt`), so filling a bar never pushes its closing barline clef to the
+bar's start. The relocation pass remains for head clefs other paths still
+produce (the MusicXML importer's boundary clefs, a delete that leaves a
+mid-measure clef at a measure's start).
 
 ### Post-processing
 

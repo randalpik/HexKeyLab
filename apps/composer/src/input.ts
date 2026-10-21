@@ -46,7 +46,7 @@ import {
 import type { Cell, EmptyFlag, FlagToggleResult } from './model/empty-flags.js';
 import { resolveVoiceCursorAnchor } from './cursor/cursor.js';
 import { serializeClipboard, parseClipboard, type ClipboardContents } from './selection/clipboard.js';
-import type { LayoutSnapshot, HistoryManager } from './history.js';
+import type { HistoryManager } from './history.js';
 import { pushToNextSystem, unlockAt, type LineBreakCtx } from './linebreakCommands.js';
 
 const TUNING_LABELS: Record<string, string> = {
@@ -198,12 +198,10 @@ export interface InputHooks {
   /** Run `cb` once the render the current edit triggers has completed. */
   afterRender?: (cb: () => void) => void;
   /* Manual line breaks (2026-09-11; linebreakCommands.ts) — the renderer's
-     owned partition and layout snapshots. All optional: without them the
-     commands report "layout not owned". */
+     owned partition. Optional: without them the commands report "layout not
+     owned". */
   isPageView?: () => boolean;
   systemOfMeasure?: (measureIdx: number) => { lineIdx: number; startIdx: number; endIdx: number } | null;
-  captureLayout?: () => LayoutSnapshot | null;
-  restoreLayout?: (snap: LayoutSnapshot) => boolean;
   /** Ctrl+S (save) / Ctrl+O (open .hkc) — main.ts owns the file flows. */
   fileCommand?: (cmd: 'save' | 'open') => void;
   /** Undo/redo manager. Constructed once in main.ts and shared with any
@@ -1147,7 +1145,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
   function withHistory(
     label: string,
     fn: () => boolean | void,
-    opts: { sourceSelection?: SelectionState; mergeable?: boolean; mergeIfTopMergeable?: boolean; layoutBefore?: LayoutSnapshot } = {},
+    opts: { sourceSelection?: SelectionState; mergeable?: boolean; mergeIfTopMergeable?: boolean } = {},
   ): boolean {
     /* BEFORE-MEI reuse (Phase B3): the doc is unchanged since the last committed
        edit, so its serialization equals HistoryManager's cached AFTER-MEI — reuse
@@ -1171,10 +1169,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       cursorMeasureIdx: () => model.cursorMeasureIdx(model.getCurrentVoice(), state.mode),
       isPageView: () => hooks.isPageView?.() ?? false,
       systemOf: (mi) => hooks.systemOfMeasure?.(mi) ?? null,
-      withHistory: (label, fn, opts) => withHistory(label, fn, opts ?? {}),
-      captureLayout: () => hooks.captureLayout?.() ?? null,
-      annotateLayoutAfter: (snap) => hooks.history.annotateTopLayoutAfter(snap),
-      afterRender: (cb) => (hooks.afterRender ? hooks.afterRender(cb) : cb()),
+      withHistory: (label, fn) => withHistory(label, fn),
       setStatus: (msg, kind) => hooks.setStatus?.(msg, kind),
       onStateChange: () => hooks.onStateChange(),
       onChange: () => hooks.onChange(),
@@ -2058,14 +2053,6 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (!entry) {
       hooks.setStatus?.(isUndo ? 'Nothing to undo.' : 'Nothing to redo.', 'info');
       return true;
-    }
-    /* A manual line-break command carries the partition it moved: put it
-       back BEFORE the render, so that render is a signature no-op
-       (Renderer.restoreLayout). When the layout key no longer matches (zoom
-       or page scale changed in between) the ordinary refill decides. */
-    const layoutSnap = isUndo ? entry.layoutBefore : entry.layoutAfter;
-    if (layoutSnap && hooks.restoreLayout && !hooks.restoreLayout(layoutSnap)) {
-      console.info('[line-break] layout snapshot not restorable (layout inputs changed since) — the refill decides');
     }
     refreshExprCursor(model);
     refreshPedalCursor(model);

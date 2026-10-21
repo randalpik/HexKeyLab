@@ -7,24 +7,26 @@
  * ELSE (Max's ruling, 2026-09-12): the layout must never hold state the
  * document cannot reproduce after a reload, so there is no side channel that
  * dissolves a soft start or keeps a line over-tight. The page line-break
- * owner splits the line at the lock and then reflows exactly like a measure
- * insert — carry, repair, section balance (render/linebreaks.ts). Every
- * command lands as one history entry carrying the layout it changed, so undo
- * puts the partition back exactly (history.ts LayoutSnapshot).
+ * owner treats it as a hard start: the refill splits or joins sections there
+ * and F partitions every touched section whole (render/linebreaks.ts
+ * `repartition`). Each command is one ordinary history entry — the partition
+ * is a function of the document, so undo and redo restore the layout exactly
+ * with nothing carried beside the MEI (the layout snapshot they carried until
+ * 2026-10-20 was redundant under F; decisions.md).
  *
  * Cursor measure m in system [a, b):
- *   lock (↓): lock before m. The line splits there; [m, b) is under-filled and
- *             pulls from below, [a, m) is now section-final and the balancer
- *             redistributes its section if it is too sparse (a one-bar
- *             remainder folds into the previous system when it fits). At a
- *             system start (m === a) the existing boundary is simply locked.
- *   unlock:   the `<sb>` goes; the partition stays (pin removed only).
+ *   lock (↓): lock before m. The section splits there and F partitions each
+ *             side: a remainder that fits on the previous system at its
+ *             natural width joins it, one that doesn't becomes evenly filled
+ *             lines of its own. At a system start (m === a) the existing
+ *             boundary becomes a hard start.
+ *   unlock:   the `<sb>` goes; the two sections join and F partitions them
+ *             as one — the layout a reload of the unlocked document shows.
  * The backlog's Alt+Shift+↑ ("pull onto the previous system") was dropped
  * 2026-09-12: under this rule it was exactly ↓ at m+1 plus an unlock — the
  * document can say where a break MUST be, never where one must NOT be. */
 
 import type { ComposerModel } from './model/index.js';
-import type { LayoutSnapshot } from './history.js';
 
 export interface SystemSpan { lineIdx: number; startIdx: number; endIdx: number }
 
@@ -36,10 +38,7 @@ export interface LineBreakCtx {
   /** The owned system holding measure `mi`, or null when the layout is not
    *  owned (scroll view, single-line score, still engraving). */
   systemOf(mi: number): SystemSpan | null;
-  withHistory(label: string, fn: () => boolean | void, opts?: { layoutBefore?: LayoutSnapshot }): boolean;
-  captureLayout(): LayoutSnapshot | null;
-  annotateLayoutAfter(snap: LayoutSnapshot | null): void;
-  afterRender(cb: () => void): void;
+  withHistory(label: string, fn: () => boolean | void): boolean;
   setStatus(msg: string, kind?: 'info' | 'error' | 'state' | 'action'): void;
   onStateChange(): void;
   onChange(): void;
@@ -52,16 +51,13 @@ function requireSystem(ctx: LineBreakCtx, mi: number): SystemSpan | null {
   return sys;
 }
 
-/** Snapshot the layout, run the mutation as one history entry, render, and
- *  record the settled layout on the entry. */
+/** Run the mutation as one history entry and render. */
 function commit(ctx: LineBreakCtx, label: string, mutate: () => boolean, status: string): boolean {
-  const layoutBefore = ctx.captureLayout();
-  const ok = ctx.withHistory(label, mutate, layoutBefore ? { layoutBefore } : {});
+  const ok = ctx.withHistory(label, mutate);
   if (!ok) { ctx.setStatus('Nothing to change.', 'info'); return false; }
   ctx.setStatus(status, 'action');
   ctx.onStateChange();
   ctx.onChange();
-  ctx.afterRender(() => ctx.annotateLayoutAfter(ctx.captureLayout()));
   return true;
 }
 
@@ -78,9 +74,9 @@ export function pushToNextSystem(ctx: LineBreakCtx): void {
   commit(ctx, 'line-lock', () => ctx.model.setLineLockAt(m, true), 'Line break before m' + (m + 1) + ' locked.');
 }
 
-/** Lock-glyph click: remove the manual break before measure `mi`. The
- *  partition is left as it is (pin removed only — Max, 2026-09-11); the
- *  boundary is merely soft again. */
+/** Lock-glyph click: remove the manual break before measure `mi`. The two
+ *  sections join and F partitions them as one (partition spec G1; supersedes
+ *  the 2026-09-11 "pin removed only" rule). */
 export function unlockAt(ctx: LineBreakCtx, mi: number): void {
   if (ctx.model.hardBreakBefore(mi) !== 'lock') { ctx.setStatus('No manual line break before m' + (mi + 1) + '.', 'info'); return; }
   commit(ctx, 'unlock', () => ctx.model.setLineLockAt(mi, false), 'Line break before m' + (mi + 1) + ' unlocked.');

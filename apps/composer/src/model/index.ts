@@ -2661,15 +2661,21 @@ export class ComposerModel {
     let changed = false;
     const had = slot.existing.length > 0;
     if (had) {
-      /* Keep the LAST clef in the write layer (the one Verovio applies last
-         and the canonical spelling at a barline), else the last of the run. */
-      const inLayer = slot.existing.filter((e) => e.parentElement === slot.layer);
+      /* Keep the LAST clef in the write layer (where the slot's clef is
+         stored — at a barline the previous measure's tail, where it is drawn
+         and saved), else the last of the run, moved there. */
+      const inLayer = slot.existing.filter((e) => e.parentElement === slot.writeLayer);
       clef = inLayer.length > 0 ? inLayer[inLayer.length - 1] : slot.existing[slot.existing.length - 1];
       for (const e of slot.existing) if (e !== clef) { e.remove(); changed = true; }
+      if (clef.parentElement !== slot.writeLayer) {
+        if (slot.writeRef) slot.writeLayer.insertBefore(clef, slot.writeRef);
+        else slot.writeLayer.appendChild(clef);
+        changed = true;
+      }
     } else {
       clef = el(this.doc, 'clef', { 'xml:id': newId('clf') });
-      if (slot.ref) slot.layer.insertBefore(clef, slot.ref);
-      else slot.layer.appendChild(clef);
+      if (slot.writeRef) slot.writeLayer.insertBefore(clef, slot.writeRef);
+      else slot.writeLayer.appendChild(clef);
       changed = true;
     }
     const setAttr = (name: string, value: string | null): void => {
@@ -4751,8 +4757,15 @@ export class ComposerModel {
       /* A measure holding an inline clef change is not "empty" for deletion:
          removing it would silently drop the clef and revert every later
          measure — a cascade the direct-only clef rule forbids (Max,
-         2026-09-27). Skip left, as for a non-empty wrapper, and say why. */
-      if (this.measureHoldsClef(target)) {
+         2026-09-27). Skip left, as for a non-empty wrapper, and say why.
+         The clef at this measure's opening barline is stored at the END of
+         the previous measure (model/clef-slot.ts, 2026-10-20) — it counts
+         too: deleting the measure would leave it dangling at the end. */
+      const allM = this.allMeasures();
+      const ti = allM.indexOf(target);
+      const barlineClef = ti > 0 && Array.from(allM[ti - 1].querySelectorAll('layer'))
+        .some((l) => l.lastElementChild?.localName === 'clef');
+      if (this.measureHoldsClef(target) || barlineClef) {
         this.deleteNote = 'Measure holds a clef change — remove it with Ctrl+Shift+C first.';
         this.cursors[v] = Math.max(0, c - 1);
         return true;

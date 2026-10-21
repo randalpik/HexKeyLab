@@ -3,7 +3,7 @@
 // comma list of line-start measure INDICES (0-based, document order). The
 // owner adopts the lines (`replacePartition`, no pages) and the document is
 // re-assembled without reseeding, so the PageAssembler paginates the given
-// lines first-fit — the path `Renderer.restoreLayout` falls back to. Reports
+// lines first-fit. Reports
 // the committed lines (must equal the request) and, for the measures named
 // in `window.__probeTargets` (optional), their page and @n.
 const H = window.__hkl_composer; const r = H.renderer, model = H.model;

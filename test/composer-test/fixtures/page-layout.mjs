@@ -876,8 +876,10 @@ export const FIXTURES = {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 0), 1);`,
     setupKeys: [{ key: 'ArrowDown', alt: true, shift: true }],
   },
-  /* Undo restores the exact pre-command partition (a layout snapshot on the
-   * history entry, not a repair); redo restores the post-command one. */
+  /* Undo restores the exact pre-command partition and redo the post-command
+   * one, with no layout carried on the history entry: the partition is F of
+   * the document (partition spec G4; the LayoutSnapshot restore was retired
+   * 2026-10-20). */
   lock_undo_restores_partition: {
     setup: LOCK_SETUP + `m.setCursor(m.getMeasureStartCursor(1, 7), 1);`,
   },
@@ -1218,7 +1220,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   lock_undo_restores_partition: [
-    { name: 'Alt+Shift+↓ then Ctrl+Z restores the exact pre-command partition as a no-op render; Ctrl+Y restores the post-command one',
+    { name: 'Alt+Shift+↓ then Ctrl+Z restores the exact pre-command partition (F of the document, no full render); Ctrl+Y restores the post-command one',
       expr: `(() => { const H = window.__hkl_composer, m = H.model, r = H.renderer, pb = r['pageBreaks'];
         const ids = m.allMeasures().map((x) => x.getAttribute('xml:id'));
         const L = () => pb.lineStarts().map((id) => ids.indexOf(id));
@@ -1242,13 +1244,14 @@ export const ASSERTIONS = {
         const J = JSON.stringify;
         key('ArrowDown', { altKey: true, shiftKey: true });
         const post = L(); const postLocks = locks();
+        const F = () => (pb.partitionOfDocument(m) ?? []).map((id) => ids.indexOf(id));
         key('z', { ctrlKey: true });
-        const afterUndo = L(); const undoLedger = last(); const hbUndo = m.hardBreakBefore(7); const undoLocks = locks();
+        const afterUndo = L(); const undoF = F(); const undoLedger = last(); const hbUndo = m.hardBreakBefore(7); const undoLocks = locks();
         key('y', { ctrlKey: true });
-        const afterRedo = L(); const hbRedo = m.hardBreakBefore(7); const redoLocks = locks();
-        const ok = J(post) !== J(pre) && J(afterUndo) === J(pre) && hbUndo === null && undoLocks.length === 0 && undoLedger.outcome === 'noop' && undoLedger.deriveReason === ''
-          && J(afterRedo) === J(post) && hbRedo === 'lock' && J(redoLocks) === J(postLocks) && pb.lastDeriveReason === '';
-        return { ok, detail: J({ pre, post, afterUndo, afterRedo, undoLedger, hbUndo, hbRedo, undoLocks, redoLocks, postLocks }) };
+        const afterRedo = L(); const redoF = F(); const redoLedger = last(); const hbRedo = m.hardBreakBefore(7); const redoLocks = locks();
+        const ok = J(post) !== J(pre) && J(afterUndo) === J(pre) && J(afterUndo) === J(undoF) && hbUndo === null && undoLocks.length === 0 && !undoLedger.full && undoLedger.deriveReason === ''
+          && J(afterRedo) === J(post) && J(afterRedo) === J(redoF) && hbRedo === 'lock' && J(redoLocks) === J(postLocks) && !redoLedger.full && pb.lastDeriveReason === '' && pinsInOrder();
+        return { ok, detail: J({ pre, post, afterUndo, undoF, afterRedo, redoF, undoLedger, redoLedger, hbUndo, hbRedo, undoLocks, redoLocks, postLocks }) };
       })()` },
   ],
   lock_click_unlocks_keeps_layout: [
