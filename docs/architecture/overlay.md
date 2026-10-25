@@ -55,6 +55,12 @@ relay**, for both dev and production.
   `.woff2`/`.wasm`, extensionless → `index.html`).
 - **`src/overlay-relay.mjs`** — the relay (`ws` `noServer`): pub/sub fan-out that **retains
   last-value per message type**, so an OBS source opened mid-performance reconstructs immediately.
+  **Handshake gate**: WebSockets skip CORS and Firefox lets any public page dial localhost, so an
+  ungated relay let any site read the retained state (incl. the mirrored score's MEI) and inject
+  frames the overlay draws. An upgrade is refused (403) unless `Host` is `127.0.0.1`/`localhost` at
+  the listen port and the `Origin`, when present, is on the allowlist — the file bridge's HKL origins
+  (`HKL_FS_ORIGINS` extends both) plus the host's own (`server.mjs`). No `Origin` is admitted: only
+  a non-browser local process omits it (decisions.md 2026-10-24).
 - **`src/fs-bridge.mjs`** — the Composer **local file bridge** at `/fs/*` (see below). Not
   overlay-related; it lives here because this is the one local server Max always has running.
 - **`embedded/`** — the lean overlay build, copied in by `vite/assemble-overlay-host.mjs`
@@ -263,6 +269,26 @@ reach the overlay". The performer at `localhost:5170/` and an overlay at `localh
 both auto-dial the host's `:5190` relay — HMR for both, no `?obsrelay` needed for the default port.
 (There is **no** dev-proxy relay — one relay, no dev/prod divergence. A dev performer is NOT
 same-origin-routed; it dials `127.0.0.1:5190` exactly like production does.)
+
+**On Max's machine the host runs permanently as a systemd user service** (since 2026-10-24), so
+"relay first" is already met there and no terminal holds it. Unit:
+`~/.config/systemd/user/hkl-overlay-host.service` — `WorkingDirectory` = the repo,
+`ExecStart=/usr/bin/node apps/overlay-host/src/server.mjs` (node directly: the `pnpm overlay:host`
+wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (2 s), `WantedBy=` +
+`PartOf=graphical-session.target`. It runs the checkout's code directly, so:
+- **Graphical session, not `default.target`.** The `/fs/*` dialogs need the session's display +
+  D-Bus env, which Plasma's systemd startup imports into the user manager (`systemctl --user
+  show-environment` carries `WAYLAND_DISPLAY`, `DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`). Started
+  earlier (`default.target`, lingering) the relay would work but the dialogs would not.
+- **Edits to `apps/overlay-host/src/*.mjs` need `systemctl --user restart hkl-overlay-host`**, as do
+  `HKL_OVERLAY_PORT` / `HKL_FS_*` / picker changes (all read once at startup). `pnpm overlay:dist`
+  does not: `static.mjs` reads `embedded/` per request and `index.html` is `no-cache`.
+- **Don't also run `pnpm overlay:host` by hand** — the second instance exits on `EADDRINUSE`. The
+  reverse crash-loops the service until the port frees (9 restarts at install, while the old terminal
+  instance still held it). `test/overlay-inspect/` and `test/fs-bridge/` bind their own ports and are
+  unaffected.
+- Output goes to `journalctl --user -u hkl-overlay-host`; the startup banner names the detected picker
+  and roots.
 
 ---
 

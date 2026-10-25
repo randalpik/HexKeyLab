@@ -54,6 +54,11 @@ Port defaults to **5190** (`HKL_OVERLAY_PORT` env or first CLI arg overrides it;
 you change it, also set `localStorage.hklOverlayPort` in the performing tab so it
 dials the right port — it's hardcoded to the default otherwise).
 
+**Who may connect to the relay**: the same HKL origins as the file bridge below
+(`HKL_FS_ORIGINS` extends both) plus this host's own origin (the OBS page), with
+`Host` = `127.0.0.1`/`localhost` at the port. A handshake with no `Origin` (a local
+non-browser process) is admitted; any other web page gets 403.
+
 **Internet required:** the Bravura font + Verovio WASM load from CDNs (no local
 copies in the lean build) — fine for a machine that's online while streaming.
 

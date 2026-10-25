@@ -45,7 +45,12 @@ const server = http.createServer((req, res) => {
   else serveStatic(req, res);
 });
 
-const relay = attachOverlayRelay(server, '/overlay-ws');
+/* The relay admits the file bridge's HKL app origins (one allowlist;
+   HKL_FS_ORIGINS extends both) plus this host's own origin, which the overlay
+   page it serves dials. */
+const relay = attachOverlayRelay(server, '/overlay-ws', {
+  origins: [...fsBridge.origins, `http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`],
+});
 server.on('upgrade', (req, socket, head) => {
   if (relay.owns(req.url || '')) relay.handleUpgrade(req, socket, head);
   else socket.destroy();

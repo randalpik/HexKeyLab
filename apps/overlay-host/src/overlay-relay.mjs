@@ -16,6 +16,16 @@
 // `/overlay-ws` upgrades here. The ONLY caller is this app's server.mjs — the
 // overlay-host is the single relay for both dev and production (in dev, run
 // `pnpm overlay:host` alongside `pnpm dev`; the 5170 tabs dial it).
+//
+// Handshake gate. WebSockets are exempt from CORS and Firefox lets any public
+// page dial localhost, so without a gate any site could read the retained
+// state (lattice, the mirrored score's MEI) and inject frames the OBS overlay
+// draws. Before upgrading:
+//   1. Host is 127.0.0.1/localhost:<listen port>   (defeats DNS rebinding)
+//   2. Origin, when present, is on `origins`        (fail-closed: empty = no
+//      browser page at all). A handshake with NO Origin is admitted: every
+//      browser sends one, so none means a local non-browser process (the test
+//      tools), which already has the user's rights.
 
 import { WebSocketServer } from 'ws';
 
@@ -27,9 +37,11 @@ const RETAINED = new Set([
 ]);
 
 /** Attach the overlay relay to an existing HTTP server. Returns a predicate the
- *  caller uses to decide whether an upgrade belongs to the relay. */
-export function attachOverlayRelay(server, pathPrefix = '/overlay-ws') {
+ *  caller uses to decide whether an upgrade belongs to the relay.
+ *  `origins`: the browser Origins allowed to connect (see the gate above). */
+export function attachOverlayRelay(server, pathPrefix = '/overlay-ws', { origins = [] } = {}) {
   const wss = new WebSocketServer({ noServer: true });
+  const allowed = new Set(origins);
   /** Last value per retained message type. */
   const retained = new Map();
 
@@ -69,7 +81,18 @@ export function attachOverlayRelay(server, pathPrefix = '/overlay-ws') {
     });
   });
 
+  function admits(req) {
+    const port = server.address()?.port;
+    const hostOk = req.headers.host === `127.0.0.1:${port}` || req.headers.host === `localhost:${port}`;
+    const origin = req.headers.origin;
+    return hostOk && (origin === undefined || allowed.has(origin));
+  }
+
   function handleUpgrade(req, socket, head) {
+    if (!admits(req)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   }
 

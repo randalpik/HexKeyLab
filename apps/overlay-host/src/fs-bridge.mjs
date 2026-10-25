@@ -431,6 +431,7 @@ export async function createFsBridge(opts) {
       }
     },
     roots,
+    origins,
     pickerName: pickerName ?? null,
   };
 }
