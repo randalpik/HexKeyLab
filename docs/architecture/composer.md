@@ -661,8 +661,14 @@ page is shown, and the fit re-run from its page.
 (10 × Verovio's `unit`, constant across zoom presets):
 
 - **Rule v1 (minimum)**: first content top = header bottom + 2 units (5.25
-  without a header); between systems `max(below, 6) + 4 + max(above, 6)`; a
-  section header reserves a band (`SECTION_HEADER_RESERVE`) above its system.
+  without a header); between systems `max(below, 6) + G + max(above, 6)`, with
+  G = 4, or 8 when the rendered score has one staff (a one-staff document or
+  the part view of a one-staff instrument — keyed on the staff set, not per
+  system, so hide-empty systems keep the score's spacing). A section header
+  reserves a 15-unit band (`SECTION_HEADER_RESERVE`) above its system; its
+  8-unit title's baseline sits 11 units in, putting the cap top ~5.7 units
+  below the band top and the baseline 4 above the system's content, so the
+  numeral reads with the system below it and clears a page header.
   Verovio's stacking is never read.
 - **Rule v2 (distribution)**: the gaps between systems and below the last
   equalize at a level L solving `Σ max(gap_k, L) + L = C`, capped at 14 units
@@ -807,7 +813,9 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   overlapping release on instruments that replay on transpose, a glide
   handoff on sustained ones, an overlap when the pedal is down.
 - **Structure**: repeats `{`/`}`, endings `Ctrl+E`, double bar `]`, ottava
-  `Ctrl+8` (sounds `q ± 3` per octave), trill/tremolo `Ctrl+R` (a tremolo
+  `Ctrl+8` (sounds `q ± 3` per octave; a note's stored `data-q`/`oct` stay the
+  written pitch, and playback and performance acceptance shift each note of the
+  staff whose onset tick lies in `[data-hkl-t0, data-hkl-t1)`), trill/tremolo `Ctrl+R` (a tremolo
   occupies one wrapped note's value; playback alternates), page break
   `Ctrl+B`, section header `Ctrl+Shift+H` (measure numbering restarts).
   Playback expands repeats and endings (`expandPlayOrder`).

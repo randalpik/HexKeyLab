@@ -144,3 +144,64 @@ just write the files. Iterate on `--end` / `--fade-out` here; encode once.
 - A thump at the seam on bass-heavy endings means the ramp is shorter than a
   quarter period of the lowest partial: raise `--fade-out` to 10–20 ms.
 - `--audio-track N` selects an OBS audio track (default 0).
+
+## `align.py` — per-note performance data for the library
+
+`align.py` pairs every `<lib>/<name>.mp4` with `<lib>/<name>.hkc` and writes one
+JSON file: per video a manifest (file, title, composer, exact duration =
+frames / fps, time/key signatures with beat grouping, tempo marks, pickup, score
+end) and every note, ties merged:
+
+| field | meaning |
+| --- | --- |
+| `q`, `r`, `name`, `midi` | the key that was **played** (sounding: 8va spans applied) |
+| `score_q`, `score_r` | the score's own `data-q`/`data-r`, only when they differ (8va, or an alternate key for the same pitch) |
+| `onset_s` | onset in video seconds, at the audio attack |
+| `onset_beats`, `dur_beats` | beats from the first downbeat (a pickup is negative); `hkl:beat-groups` defines the beat, else compound meters beat in dotted units |
+| `onset_quarters`, `dur_quarters` | the same in quarter notes |
+| `timing` | where `onset_s` came from (below) |
+
+```sh
+tools/obs-trim/align.py --out perf.json          # whole library
+tools/obs-trim/align.py furelise tetris --out x.json
+tools/obs-trim/align.py --score-only             # parse + self-checks, no video
+```
+
+**Key-downs** are read per hex, not per cell: lighting blobs give the hex
+spacing and angle, and the `(q, r)` labelling (12 orientations × integer
+offset) is fitted against the score's key histogram. Each key's *whiteness*
+(min of R, G, B over a disk at its centre) is sampled per frame — a lit key is
+its colour blended toward white, which a luma series misses on pale keys (a
+pale-yellow key gains ~12 luma levels lit). A key-down is an unlit→lit
+transition (hysteresis at 60 % / 40 % of the key's range; a key needs ≥ 30 of
+contrast and a ≥ 30 jump between frames, which edge hexes over the camera never
+reach), or the darkening of HKL's re-strike flash, as in `trim.py`. Each one is
+then moved to its audio attack (`trim.TakeAudio`), or by the take's median
+overlay lead when crowded.
+
+**Matching** is per key and in order, against a tempo map seeded from keys
+whose press and key-down counts agree. A press with no key-down on its key that
+coincides with a spare key-down of the same nominal pitch elsewhere is that key
+(`score_q`/`score_r` record the difference). Loop structures:
+
+- **wrap** — the video stops at the loop downbeat, so a closing section that
+  restates the opening (the pickup, or a last bar repeating bar 1) is sounded
+  by the loop restart: `timing: "loop"`, onset = duration + the opening note's
+  onset. The period is the barline that explains the most such notes
+  (`loop_period_beats`).
+- **rotation** — a video may start at a later barline and play the opening bars
+  after the last (badapple: m5–m20 then m1–m4); chosen when it orders the seed
+  clearly better (`video_starts_at_beat`).
+
+`timing` values: `audio` / `lead` (detected; attack found / lead-shifted),
+`loop`, `audio_only` (visible key showed nothing — a re-strike whose 60 ms
+flash the overlay did not publish — but an attack sits within ±60 ms of the
+prediction), `after_end` (past the end of the video and not sounded by the
+loop), `offscreen` (key outside the sampled lattice), `interp` (visible, not
+detected). The last three take the tempo-map time. `alignment` per video
+counts each and lists `extra_key_downs` (trills, ornaments and notes not in the
+score) with an estimated beat; `order_violations` counts matched onsets more
+than 60 ms earlier than an onset at an earlier beat.
+
+`LATTICE_OVERRIDES` holds crops for videos made with an older OBS scene than
+`trim.LAYOUTS` describes (moonlight: lattice ~100 px lower, score right below).

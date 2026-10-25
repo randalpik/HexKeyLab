@@ -789,7 +789,7 @@ function injectHeaderFooter(scoreEl: HTMLElement, footer: string, title: string)
  * find that measure's rendered <g.system>, translate it (and everything below
  * it in the page) DOWN to reserve room, grow the page, and inject the centered
  * title into the freed space. */
-const SECTION_HEADER_FONT = 560;
+const SECTION_HEADER_FONT = 640;   // 4 staff spaces; band geometry: render/pagefit.ts SECTION_HEADER_*
 
 function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void {
   const doc = model.getDoc();

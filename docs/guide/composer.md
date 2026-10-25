@@ -307,7 +307,11 @@ rest of the space empty at the bottom rather than smearing them across the
 paper; on such a page a little extra room also opens above the first system
 (never on page 1, whose first system keeps its distance from the title). The
 running footer lives in the bottom margin, so adding or removing one never
-changes how many systems fit on a page.
+changes how many systems fit on a page. A one-staff part (a solo document, or
+the part view of a one-staff instrument) keeps twice the minimum room between
+systems that a score does, so a part never reads crowded. A section header's
+numeral sits close above the system it begins and well clear of whatever is
+above it, including the page header.
 
 **Page furniture and engraving conventions**: from page 2 on, the page number
 sits in the outer top corner (left on even pages, right on odd) and the title

@@ -681,9 +681,18 @@ class Renderer {
 
   /** Measure the given laid-out systems and place them by Composer's rule,
    *  writing nothing. Null when a system has no readable extents. */
+  /** Placement constants for the live zoom and staff set. The one source for
+   *  both placement and first-fit pagination: they must agree on every gap or
+   *  a page the fold accepted would overflow when placed. */
+  private fitConstants(): PageFitConstants {
+    const p = CRISP_PRESETS[this.zoom];
+    const staves = this.lastModel ? visibleStavesFor(this.lastModel, this.viewStaves, []) : [];
+    return pageFitConstants(p.unit, p.scale, p.evenWidth, staves.length === 1);
+  }
+
   private measureAndPlace(systems: Element[], opts?: PlaceOpts): { placed: PlacedSystem[]; exts: SysExtents[] } | null {
     const headers = this.headerMeasureIds();
-    const k = pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth);
+    const k = this.fitConstants();
     const y0 = this.firstContentTop(systems[0]?.parentElement ?? null, k);
     const headBottom = this.headBottomOf(systems[0]?.parentElement ?? null);
     const items: Array<{ ext: SysExtents; reserve: number }> = [];
@@ -2419,7 +2428,7 @@ class Renderer {
       lineRenderCtx: () => this.lineRenderCtx(),
       shellGeom: () => this.shellGeom(),
       shellMeta: () => this.shellMeta(),
-      fitConstants: () => pageFitConstants(CRISP_PRESETS[this.zoom].unit, CRISP_PRESETS[this.zoom].scale, CRISP_PRESETS[this.zoom].evenWidth),
+      fitConstants: () => this.fitConstants(),
       gridUser: () => 1000 / this.currentScale(),
       postProcess: (div, scope) => {
         const scoped = this.substituteHiddenStaffSystems(div, scope);
