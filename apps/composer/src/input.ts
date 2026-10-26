@@ -58,6 +58,8 @@ const TUNING_LABELS: Record<string, string> = {
   D: 'Semiditonal',
   '7': 'Septimal',
   V: 'Schismatic',
+  S: 'Syntonic',
+  Y: 'Polysyntonic',
 };
 function tuningLabel(mode: string): string {
   return TUNING_LABELS[mode] ?? mode;
@@ -69,14 +71,23 @@ function layoutLabel(mode: string, mapping: Mapping): string {
 }
 
 /** HKL's layout when it differs from the score's (tuning mode or note-name
- *  mapping), else null. Null too before HKL has announced its layout. */
+ *  mapping; in Syntonic / Polysyntonic also the anchor — the home band, which
+ *  the score derives from the key at the cursor), else null. Null too before
+ *  HKL has announced its layout. */
 function hklLayoutMismatch(model: ComposerModel, hooks: InputHooks): { hkl: string; score: string } | null {
   const hklMode = hooks.getHklTuningMode?.() ?? null;
   if (hklMode === null) return null;
   const hklMapping = hooks.getHklMapping?.() ?? 'euler';
   const req = model.getLayoutReq();
-  if (hklMode === req.tuningMode && hklMapping === req.mapping) return null;
-  return { hkl: layoutLabel(hklMode, hklMapping), score: layoutLabel(req.tuningMode, req.mapping) };
+  if (hklMode !== req.tuningMode || hklMapping !== req.mapping) {
+    return { hkl: layoutLabel(hklMode, hklMapping), score: layoutLabel(req.tuningMode, req.mapping) };
+  }
+  if (req.tuningMode !== 'S' && req.tuningMode !== 'Y') return null;
+  const hklAnchor = hooks.getHklAnchor?.() ?? null;
+  const scoreAnchor = model.anchorAt(model.getCursorMeasureIdx());
+  if (hklAnchor === null || hklAnchor === scoreAnchor) return null;
+  const label = layoutLabel(req.tuningMode, req.mapping);
+  return { hkl: label + ' · home band ' + hklAnchor, score: label + ' · home band ' + scoreAnchor };
 }
 
 export type EntryMode = 'insert' | 'overwrite';
@@ -205,6 +216,8 @@ export interface InputHooks {
   getHklTuningMode?: () => string | null;
   /** HKL's note-name mapping (null before it is announced). */
   getHklMapping?: () => Mapping | null;
+  /** HKL's Syntonic / Polysyntonic anchor (null before it is announced). */
+  getHklAnchor?: () => number | null;
   /** Send an `apply-layout` bridge message asking HKL to switch to the
    *  score's pinned layout. Wired in main.ts. */
   requestApplyLayout?: () => void;

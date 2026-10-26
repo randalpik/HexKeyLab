@@ -242,11 +242,17 @@ export class PerformanceMatcher {
   private mode: TuningMode;
   private mapping: Mapping;
   private dupMode: boolean;
+  /** Per measure occurrence, the Syntonic / Polysyntonic anchor of its key
+   *  (model.anchorAt) — 0 in every other mode. */
+  private occAnchor: number[] = [];
 
   constructor(model: ComposerModel) {
     this.mode = model.getLayoutReq().tuningMode as TuningMode;
     this.mapping = model.getLayoutReq().mapping;
-    this.dupMode = this.mode === 'P' || this.mode === 'D';
+    const anchored = this.mode === 'S' || this.mode === 'Y';
+    /* Duplicate-key layouts: P/D's comma siblings, and S/Y's equally-shifted
+       bands (Syntonic's return bands), hold the same pitch on two keys. */
+    this.dupMode = this.mode === 'P' || this.mode === 'D' || anchored;
 
     const ornaments = ornamentIds(model);
 
@@ -275,12 +281,14 @@ export class PerformanceMatcher {
       if (mi !== prevMi) {
         occ++;
         occMeasure.push(mi);
+        this.occAnchor.push(anchored ? model.anchorAt(mi, this.mapping) : 0);
         prevMi = mi;
       }
+      const anchor = this.occAnchor[this.occAnchor.length - 1];
       const notes: ExpectedNote[] = e.notes.map((c) => ({
         pitchKey: pitchKeyFor(c.q, c.r, this.mapping),
         color: colorOf(c.q, c.r),
-        hz: freqAt(c.q, c.r, this.mode, this.mapping),
+        hz: freqAt(c.q, c.r, this.mode, this.mapping, anchor),
         satisfied: false,
         fromP: false,
       }));
@@ -384,8 +392,10 @@ export class PerformanceMatcher {
    *  matches no expected voice returns []. */
   onStrike(note: ResolvedNote): PerfAdvance[] {
     const pid = pitchKeyFor(note.q, note.r, this.mapping);
-    const phz = freqAt(note.q, note.r, this.mode, this.mapping);
     const cur = this.currentOcc();
+    /* HKL sounded the strike under its anchor, which the layout-match gate
+       holds equal to the current measure's */
+    const phz = freqAt(note.q, note.r, this.mode, this.mapping, this.occAnchor[cur] ?? 0);
     const advanced: PerfAdvance[] = [];
     const hits = (en: ExpectedNote): boolean => this.matches(en, pid, phz, note.colorHex);
 

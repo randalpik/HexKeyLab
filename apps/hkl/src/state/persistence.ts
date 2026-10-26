@@ -8,6 +8,7 @@
 // breaking schema changes and stale prefs are simply ignored.
 
 import { isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { TUNING_MODES } from '@hkl/shared/freq.js';
 
 const STORAGE_KEY = 'hkl.prefs.v1';
 
@@ -19,8 +20,19 @@ export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
      'V' Schismatic (experimental: PM3+M3+PM3 per band, ~2c octave drift —
          every band sums to octave + schisma, hence the name; this is a
          layout-level schisma stacking, NOT the historical schismatic
-         temperament of fifths) */
-export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
+         temperament of fifths)
+     'S' Syntonic · 'Y' Polysyntonic — Pythagorean bands shifted by whole
+         syntonic commas around the always-unaltered home band (the anchor):
+         Syntonic 0,+1,0,−1 per band, Polysyntonic stacking without bound */
+export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
+/* The modes the offline bounds probes (test/bounds-probe/) bucket. Syntonic /
+   Polysyntonic read Pythagorean's buckets: their home band is Pythagorean and
+   the buckets only draw the valid-ref boundary and size the canvas — the live
+   picker (validateRefNoteCandidate) stays authoritative. */
+export type ProbedMode = Exclude<TuningMode, 'S' | 'Y'>;
+export function probedMode(m: TuningMode): ProbedMode {
+  return m === 'S' || m === 'Y' ? 'P' : m;
+}
 /* Note-name mapping ('euler' | 'wickiHayden'), orthogonal to the tuning mode.
    Single definition in @hkl/shared/mapping.js (no dual-definition here). */
 export type { Mapping };
@@ -217,7 +229,7 @@ function isHexSize(s: unknown): s is HexSize {
   return s === 'small' || s === 'medium' || s === 'large';
 }
 function isTuningMode(s: unknown): s is TuningMode {
-  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
+  return (TUNING_MODES as ReadonlyArray<unknown>).includes(s);
 }
 function isPedalMode(s: unknown): s is PedalMode {
   return s === 'sustain' || s === 'sostenuto';

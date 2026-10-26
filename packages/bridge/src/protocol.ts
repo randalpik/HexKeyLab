@@ -157,8 +157,10 @@ export type HklEvent =
    *  carries only the mode + human description for status text) — this message
    *  exists so Composer can mirror HKL's full layout when opening a blank
    *  score, and so the match indicator can re-check on ref changes (which
-   *  don't fire `tuning-changed`). */
-  | { type: 'hkl-layout-state'; tuningMode: string; mapping: string; refQ: number; refR: number }
+   *  don't fire `tuning-changed`). `anchor` is the Syntonic / Polysyntonic
+   *  home band; the match gate compares it with the score's anchor at the
+   *  cursor in those modes. */
+  | { type: 'hkl-layout-state'; tuningMode: string; mapping: string; refQ: number; refR: number; anchor: number }
   /** Active layout outline + per-cell color, broadcast whenever the footprint
    *  composition or colors change (layout switch, outline mode change, QWERTY
    *  transpose, tuning toggle). Composer uses this to validate SC shifts

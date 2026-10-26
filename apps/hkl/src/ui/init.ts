@@ -28,8 +28,9 @@ import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persis
 import type { PrefsV1, OutlineMode } from '../state/persistence.js';
 import {
   referenceNote, setSelectionFromManual,
-  clearSelection as clearRefSelection,
+  clearSelection as clearRefSelection, setAnchorListener,
 } from '../state/reference.js';
+import { onAnchorChanged } from '../effects/onAnchorChanged.js';
 import { sizeCanvas } from '../render/canvas.js';
 import { cv, draw, hexAtPoint, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
 import { updateInfo } from '../render/info.js';
@@ -540,6 +541,10 @@ initHklBridge();
    Composer-frame on/off so the first snapshot matches current state. */
 setOverlayPublishing(true);
 publishComposerView(prefs.composerView);
+
+/* Anchor changes (Syntonic / Polysyntonic re-anchoring) retune from here on;
+   the boot-time anchor was already read by the first render. */
+setAnchorListener(onAnchorChanged);
 
 function onResize(): void {
   const oldCW = view.CW;

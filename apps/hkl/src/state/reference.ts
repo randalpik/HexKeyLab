@@ -25,6 +25,18 @@
 // `referenceNote: { q, r }` is the effective coord — kept in sync with the
 // tiers on every mutation so existing read-only consumers (src/render/draw.ts,
 // src/midi/piano.ts, src/ui/controls.ts) don't need to change.
+//
+// The anchor (`tuning.anchor`, the Syntonic / Polysyntonic home band) is
+// recomputed alongside: the band of manual selection ?? scoreRef ?? A3. A
+// composer-source selection never moves it — the cursor's prior note can sit
+// in another band, and entering one note there must not retune the layout and
+// the score. Recording playback and the OBS-overlay mirror pin it to a given
+// value (setAnchorOverride). A change
+// notifies the registered listener once, in a microtask after the synchronous
+// caller has finished re-anchoring kbAnchor / migrating voices.
+
+import { tuning } from './tuning.js';
+import { anchorOf } from '@hkl/shared/freq.js';
 
 interface RefSelection {
   q: number;
@@ -38,6 +50,9 @@ interface RefScoreRef {
 
 let selection: RefSelection | null = null;
 let scoreRef: RefScoreRef | null = null;
+let anchorOverride: number | null = null;
+let anchorListener: (() => void) | null = null;
+let anchorNotifyQueued = false;
 
 /** The effective reference note. Mutated by recompute() after any tier
  *  change. Consumers should read .q / .r and never mutate. */
@@ -57,6 +72,7 @@ function selectionActive(): boolean {
 /** Recompute the effective ref from tiers. Mutates `referenceNote` in place.
  *  Returns true iff the effective coord changed. */
 function recompute(): boolean {
+  recomputeAnchor();
   const sel = selectionActive() ? selection : null;
   const tQ = sel ? sel.q : (scoreRef ? scoreRef.q : 0);
   const tR = sel ? sel.r : (scoreRef ? scoreRef.r : 0);
@@ -64,6 +80,29 @@ function recompute(): boolean {
   referenceNote.q = tQ;
   referenceNote.r = tR;
   return true;
+}
+
+function recomputeAnchor(): void {
+  const src = selection !== null && selection.source === 'manual' ? selection : scoreRef;
+  const a = anchorOverride ?? anchorOf(src ? src.q : 0, tuning.mapping);
+  if (a === tuning.anchor) return;
+  tuning.anchor = a;
+  if (anchorListener === null || anchorNotifyQueued) return;
+  anchorNotifyQueued = true;
+  queueMicrotask(() => { anchorNotifyQueued = false; anchorListener?.(); });
+}
+
+/** Register the anchor-change fan-out (ui/init.ts → onAnchorChanged). */
+export function setAnchorListener(fn: () => void): void {
+  anchorListener = fn;
+}
+
+/** Pin the anchor to a given value — recording playback (the anchor a note was
+ *  recorded under) and the overlay mirror (the publisher's anchor). null
+ *  releases it back to the tiers. */
+export function setAnchorOverride(a: number | null): void {
+  anchorOverride = a;
+  recomputeAnchor();
 }
 
 /** Called by setOutline() when the outline mode changes — a composer-source

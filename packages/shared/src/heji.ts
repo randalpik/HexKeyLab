@@ -5,10 +5,9 @@
 // src/shared/ contract.
 //
 // Two responsibilities:
-//   1. hejiCommasFor(mode, q, r) — the signed syntonic/septimal comma counts
-//      for a lattice cell under a tuning mode. Mirrors the region rules in
-//      src/tuning/regions.ts (kept in lockstep — the rules are documented in
-//      CLAUDE.md "Tuning modes").
+//   1. hejiCommasFor(mode, q, r, mapping, anchor) — the signed syntonic/septimal
+//      comma counts for a lattice cell, derived from coordExps (the one place
+//      the per-mode tuning lives).
 //   2. hejiChain(accVal, syn5, sept7) — the ordered SMuFL glyph chain that
 //      follows the letter: stacked accidentals carrying syntonic-comma arrows,
 //      then an optional standalone septimal hook. This is hejiLabel() steps
@@ -20,8 +19,8 @@
 //   syn5 < 0 → up-arrows.
 //   sept7 > 0 → down-hooks; sept7 < 0 → up-hooks.
 
-import type { TuningMode } from './freq.js';
-import { eulerOf, type Mapping } from './mapping.js';
+import { coordExps, solveCommas, type TuningMode } from './freq.js';
+import type { Mapping } from './mapping.js';
 
 /* ── glyph tables ──────────────────────────────────────────────────────────
  * Each row indexed by [bare, 1-down, 1-up, 2-down, 2-up]. Column 0 is the
@@ -75,59 +74,23 @@ export interface HejiGlyphInfo {
 
 /* ── comma math ─────────────────────────────────────────────────────────── */
 
-function posInBand(q: number): number { return ((q + 1) % 3 + 3) % 3; }
-
-export function modeHasShifts(mode: TuningMode): boolean {
-  return mode === 'P' || mode === 'D' || mode === '7' || mode === 'V';
-}
-
-interface RegionShift { aDepth: number; aUpper: boolean; isB: boolean; }
-
-/** Per-cell shift profile for HEJI comma purposes — the (mode, qmod3) table
- *  from src/tuning/regions.ts, reduced to what comma counting needs. aUpper
- *  true → −SC (lowering); aDepth is the SC count; isB → +63/64 septimal. */
-function regionShiftFor(mode: TuningMode, q: number): RegionShift {
-  const qm = ((q % 3) + 3) % 3;
-  switch (mode) {
-    case 'E':
-    case '5':
-      return { aDepth: 0, aUpper: false, isB: false };
-    case 'D':
-    case 'V':
-      return qm === 2 ? { aDepth: 1, aUpper: true, isB: false }
-                      : { aDepth: 0, aUpper: false, isB: false };
-    case 'P':
-      return qm === 2 ? { aDepth: 1, aUpper: true,  isB: false }
-           : qm === 1 ? { aDepth: 1, aUpper: false, isB: false }
-                      : { aDepth: 0, aUpper: false, isB: false };
-    case '7':
-      return qm === 2 ? { aDepth: 1, aUpper: true, isB: true }
-                      : { aDepth: 0, aUpper: false, isB: false };
-  }
-}
-
 export interface HejiCommas {
   syn5: number;
   sept7: number;
 }
 
-/** HEJI comma counts for cell (q, r) relative to the A3 origin under `mode`.
- *  Pure; mirrors src/tuning/heji.ts hejiCommas exactly (that function now
- *  delegates here). Equal mode and the Pythagorean spine return {0, 0}. */
-export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping): HejiCommas {
+/** HEJI comma counts for cell (q, r) under `mode` (and, for S/Y, `anchor`).
+ *  Every cell's lattice spelling is Pythagorean exactly under mode 'P', so the
+ *  arrows and hooks are the syntonic / septimal commas between the cell's
+ *  pitch and its 'P' pitch. A schisma (Schismatic's band stacking) isn't
+ *  notated — it re-spells, and colour carries it. Equal returns {0, 0}. */
+export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping, anchor: number): HejiCommas {
   if (mode === 'E') return { syn5: 0, sept7: 0 };
-  q = eulerOf(q, r, mapping).q; /* band-independent: a copy shares its column's commas */
-  const dp = posInBand(q) - posInBand(0);
-  let e5 = dp, e7 = 0;
-  if (modeHasShifts(mode)) {
-    const apply = (ri: RegionShift, sign: number): void => {
-      if (ri.aDepth > 0) e5 += sign * (ri.aUpper ? ri.aDepth : -ri.aDepth);
-      if (ri.isB) e7 += sign;
-    };
-    apply(regionShiftFor(mode, q), +1);
-    apply(regionShiftFor(mode, 0), -1);
-  }
-  return { syn5: e5, sept7: e7 };
+  const e = coordExps(q, r, mode, mapping, anchor);
+  const p = coordExps(q, r, 'P', mapping, anchor);
+  /* every mode's cells differ from 'P' by whole commas, so this always solves */
+  const [s, z] = solveCommas(e.map((x, i) => x - p[i]))!;
+  return { syn5: 0 - s, sept7: 0 - z };
 }
 
 /* ── glyph chain ────────────────────────────────────────────────────────── */

@@ -337,7 +337,7 @@ HKL records every performance (Lumatone, QWERTY, mouse) as a stream of lattice-c
 
 ### Architecture
 
-- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning, septimalW, instrument, pedal mode, A3 ref) + flat event list `[{t, k, q, r, …}]`. Version-stamped (`format:"hkr", version:1`); event kinds `on/off/pa/cc4/cc64/warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the engine's ramp-schedule clock). No back-compat with pre-legacy-purge files.
+- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning, mapping, anchor, septimalW, instrument, pedal mode, A3 ref) + flat event list `[{t, k, q, r, …}]`. In Syntonic/Polysyntonic a note-on recorded after a mid-take re-anchor carries its own `a` (anchor); absent → the snapshot's (absent in older files → 0, which no older mode reads). Playback pins the live anchor per note-on (`setAnchorOverride`) and releases it on stop; MPE export reads the same field. Version-stamped (`format:"hkr", version:1`); event kinds `on/off/pa/cc4/cc64/warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the engine's ramp-schedule clock). No back-compat with pre-legacy-purge files.
 - **`.mid` (binary, derived)**: exported/re-imported deterministically against the same snapshot. The two files travel **separately** — not bundled.
 - **MPE export**: single-track format-0. Channel 1 = manager (CC4/CC64 + MPE Configuration Message); channels 2–16 = members (one voice each). Per-member pitch-bend range ±48 semitones via RPN 0. Tempo fixed 120 BPM, PPQ 960.
 - **MIDI → `.hkr` inverse**: requires the originating snapshot (UI prompts "Load matching .hkr first"). Builds a frequency index over the lattice under the snapshot's tuning; each noteOn's `(note, channel-bend)` → frequency → nearest-match. 25-cent sanity gate; farther emits a `warn` event.
@@ -488,7 +488,7 @@ Three module groups:
   - `hkr.ts` — JSON serialize/parse with field validation; `HkrParseError` on schema mismatch.
 - **`apps/hkl/src/midi-io/`** — `.hkr` ↔ MIDI, no DOM.
   - `allocator.ts` — `MpeAllocator` (LRU over channels 2..16; on exhaustion evicts oldest + emits forced note-off).
-  - `mpe.ts` — `coordToMidi(q,r,snapshot) → {note, bend14}` and `midiToFreq(note, bend14)`. Anchored MIDI 69 = A4 = 440 Hz (HKL's A3=220 lies at MIDI 57).
+  - `mpe.ts` — `coordToMidi(q,r,snapshot,anchor = snapshot.anchor) → {note, bend14}` and `midiToFreq(note, bend14)`. Anchored MIDI 69 = A4 = 440 Hz (HKL's A3=220 lies at MIDI 57).
   - `export.ts` — `sessionToMidi(session)`: MPE Config Message + per-member RPN bend-range preamble, sorts by `(t, ord)`, emits via `midi-file`.
   - `import.ts` — `midiToSession(bytes, snapshot)`: builds `freqIndex` over q∈[−30,30], r∈[−16,16] under the snapshot's tuning; nearest-frequency 25-cent gate. `selfTestRoundTrip(snapshot)` for `?hklrec=1`.
 - **`apps/hkl/src/ui/recorder.ts`** — DOM glue: transport buttons, file `<input>` triggers, Blob downloads, status text via RAF. `initRecorderUI()` from `ui/init.ts`.

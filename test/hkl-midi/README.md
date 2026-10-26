@@ -69,6 +69,21 @@ with its pitch kept, release leaves nothing behind, both directions, and with a
 reference change between switch and release. **Run it before declaring any
 change to `setMapping`, the held-input registry, or ref anchoring done.**
 
+## Syntonic / Polysyntonic anchor
+
+```sh
+node test/hkl-midi/anchor.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for the anchor (home band) the live app derives from the
+reference tiers (docs/syntonic-spec.md §3): a Ctrl+click re-anchors and re-pitches
+in place with one deferred fan-out; a composer-source selection never moves it;
+the score-ref drives it unless a manual selection overrides; `setAnchorOverride`
+pins and releases it; piano input stays in `k = 0` bands; a mid-take re-anchor
+writes `a` on the next note-on; outside S/Y nothing reads it. **Run it before
+declaring any change to `state/reference.ts`, the 88-cell picker, or recording
+capture done.**
+
 ## Why it is shaped this way
 
 The modules are imported live from the dev server (`/src/midi/handler.ts`), so

@@ -305,9 +305,9 @@ const out = `// Precomputed valid-reference-note coordinate sets per mapping × 
 //   • the ±3-accidental rule in validateRefNoteCandidate changes, or
 //   • the scan range in test/bounds-probe/compute-refbounds.mjs changes.
 
-import type { Mapping, TuningMode } from '../state/persistence.js';
+import type { Mapping, ProbedMode } from '../state/persistence.js';
 
-export const VALID_REF_TABLE: Record<Mapping, Record<TuningMode, ReadonlyArray<readonly [number, number]>>> = {
+export const VALID_REF_TABLE: Record<Mapping, Record<ProbedMode, ReadonlyArray<readonly [number, number]>>> = {
 ${bucketBlocks}
 };
 `;

@@ -45,13 +45,14 @@ import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComp
 import { publishComposerScore, publishComposerPlayback, publishComposerZoom } from './overlay-publish.js';
 import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote } from '../state/reference.js';
+import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote, isSelectionManual } from '../state/reference.js';
 import { refSpine } from '../tuning/refspine.js';
 import { view } from '../state/view.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { setTuning, setMapping } from '../ui/controls.js';
 import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
-import { loadPrefs, type TuningMode } from '../state/persistence.js';
+import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
+import { TUNING_MODES } from '@hkl/shared/freq.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
 import { voiceId, coordOf } from '../types.js';
 import type { KeyId, VoiceId } from '../types.js';
@@ -94,6 +95,8 @@ function tuningDescription(): string {
     case 'D': return 'Semiditonal JI';
     case '7': return 'Septimal JI';
     case 'V': return 'Schismatic JI';
+    case 'S': return 'Syntonic JI';
+    case 'Y': return 'Polysyntonic JI';
   }
 }
 
@@ -214,10 +217,10 @@ export function broadcastLayoutState(): void {
   const mode = tuning.mode;
   const q = referenceNote.q;
   const r = referenceNote.r;
-  const sig = mode + ':' + tuning.mapping + ':' + q + ':' + r;
+  const sig = mode + ':' + tuning.mapping + ':' + q + ':' + r + ':' + tuning.anchor;
   if (sig !== lastLayoutStateSig) {
     lastLayoutStateSig = sig;
-    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, mapping: tuning.mapping, refQ: q, refR: r });
+    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, mapping: tuning.mapping, refQ: q, refR: r, anchor: tuning.anchor });
   }
 }
 
@@ -1288,7 +1291,7 @@ export function reconcileSelectionOnSyncEnable(): void {
 }
 
 function isTuningMode(s: string): s is TuningMode {
-  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
+  return (TUNING_MODES as ReadonlyArray<string>).includes(s);
 }
 
 const TUNING_LABELS: Record<TuningMode, string> = {
@@ -1298,6 +1301,8 @@ const TUNING_LABELS: Record<TuningMode, string> = {
   D: 'Semiditonal',
   '7': 'Septimal',
   V: 'Schismatic',
+  S: 'Syntonic',
+  Y: 'Polysyntonic',
 };
 function tuningLabelFor(m: string): string {
   return TUNING_LABELS[m as TuningMode] ?? m;
@@ -1321,6 +1326,22 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
   if (selMapping && selMapping.value !== req.mapping) {
     selMapping.value = req.mapping;
     setMapping();
+  }
+  /* Syntonic / Polysyntonic: the anchor must be the score's, which reaches HKL
+     through the score-ref tier below. A manual Ctrl+click selection is the one
+     tier that overrides it, so applying the score's layout drops it (the same
+     re-anchor sequence as a Sync-on score-ref arrival). */
+  if ((req.tuningMode === 'S' || req.tuningMode === 'Y') && isSelectionManual()) {
+    const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
+    clearSelection();
+    savePrefs({ manualRef: undefined });
+    const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
+    view.kbAnchorQ = sp.q;
+    view.kbAnchorR = sp.r;
+    invalidatePianoOutline();
+    draw();
+    onRefChanged(sp.q - oldAQ, sp.r - oldAR);
+    broadcastAllToComposer();
   }
   /* No ref here — the score carries none. The ref reaches HKL via its own
      `set-score-ref` message → the score-ref tier (reference.ts), derived from

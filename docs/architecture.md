@@ -85,13 +85,13 @@ Origin: **A3 = 220 Hz** at `(0,0)` (`bandOf=0, posInBand=1`), middle of the boar
 
 ### Tuning modes
 
-`TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V'`, declared in **both**
+`TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y'`, declared in **both**
 `apps/hkl/src/state/persistence.ts` (app state) and `@hkl/shared/freq.js` (shared, self-contained)
-— keep them in sync (see CLAUDE.md). Each cell's offset is a
-`RegionInfo = {type:'A'|'B', aDepth, aUpper}`; `apps/hkl/src/tuning/regions.ts:regionInfoWithState`
-maps `(mode, qmod3)` → RegionInfo, and the frequency builder applies it: `aDepth>0` multiplies by
-`(80/81)^d` (aUpper) or `(81/80)^d`; `type='B'` additionally multiplies by `63/64`. Selector order:
-**Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic**.
+— keep them in sync (see CLAUDE.md). The per-mode tuning lives in exactly one place,
+`coordExps` in `@hkl/shared/freq.js`: a per-`qmod3` column shift (SC = 81/80, septimal 63/64) on
+the 5-limit base, plus a per-band offset for Schismatic and Syntonic/Polysyntonic. Frequency,
+ratios, HEJI arrows and colour all derive from it. Selector order:
+**Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic · Syntonic · Polysyntonic**.
 
 | Mode | qm0 | qm1 | qm2 | Produces |
 |---|---|---|---|---|
@@ -101,6 +101,8 @@ maps `(mode, qmod3)` → RegionInfo, and the frequency builder applies it: `aDep
 | `'D'` Semiditonal | A-d0 | A-d0 | −SC | 5-limit major; Pythagorean minor (32/27) band-local in qm2. |
 | `'7'` Septimal | A-d0 | A-d0 | B (−SC + 63/64) | Uniform 7-limit (below). |
 | `'V'` Schismatic | A-d0 | A-d0 | −SC | Like Semiditonal, but `freqAt` also multiplies the band factor by `SCHISMA^band` (≈1.95¢) — pure-thirds octave stretch; the band crossing spells as a `d4`. Study mode. |
+| `'S'` Syntonic | A-d0 | +SC | −SC | Every band Pythagorean; whole bands shifted by `k` SC around the home band: `k = 0, +1, 0, −1` by band distance (period 4). Designed for Wicki-Hayden. |
+| `'Y'` Polysyntonic | A-d0 | +SC | −SC | As Syntonic, but `k` = band distance, unbounded (stacks on the whole lattice). |
 
 **Uniform septimal (`'7'`)** — qm2 is region B `(aDepth=1, aUpper=true)`, qm∈{0,1} is region A.
 Octave-invariant (shares `qmod3`). Every qm0 spine cell has its harmonic 7th (7/4) two rows up in
@@ -109,6 +111,24 @@ qm2 at the same `r`, so dominant 7 (4:5:6:7) is reachable from any qm0 root and 
 note, not tuning state). **Trade**: 5-limit minor (10:12:15) is unreachable — minor becomes
 Pythagorean (32:27) or septimal subminor (7:6); use `'5'` for 5-limit minor. The same trade applies
 to `'D'`/`'V'`.
+
+**Syntonic / Polysyntonic (`'S'`/`'Y'`)** — each band is internally Pythagorean (pure octaves and
+scales within a band, the Wicki-Hayden use case), and the bands around it are shifted by whole
+syntonic commas, lowered band LEFT / raised RIGHT — under Wicki-Hayden each band holds at most one
+key per MIDI note (the 12-TET unison vector `(7,−2)` outruns the 6-wide band), so comma
+alternatives (9/8 vs 10/9, 81/64 vs 5/4) live in neighbouring bands, and the left neighbour holds
+the sharp-side spellings a 5-limit third lowers. **The home band is always unaltered**: it is the
+**anchor**, `anchorOf(refQ, mapping)` = the band (in the cell's own frame) of the *anchor reference*
+— manual Ctrl+click selection ?? score-ref ?? A3; Composer's cursor prior-note selection never moves
+it (it can sit in another band, and one entered note must not retune everything). Moving the
+anchor re-anchors: pitch, HEJI arrows and colour change; MIDI, spelling and band boundaries never
+do. Polysyntonic re-anchoring is a global −n·SC shift (every interval preserved); Syntonic depends
+only on `anchor mod 4`. In every other mode the band offset is constant, so the anchor drops out
+(`tuning.anchor` still exists; nothing reads it). `state/reference.ts` recomputes `tuning.anchor`
+with the ref tiers; a change in S/Y runs `onAnchorChanged` (= `onTuningChanged`: held voices ramp,
+re-render, Lumatone colour diff, Composer rebroadcast). Recording playback and the overlay mirror pin
+it (`setAnchorOverride`). Piano input prefers `k = 0` bands (the picker's primary key), so it stays
+unaltered — 5-limit pitches are played on the lattice. Spec: `docs/syntonic-spec.md`.
 
 Persistence has no back-compat shims: any unrecognized `tuning` value reverts to `'5'`.
 
@@ -120,8 +140,10 @@ Persistence has no back-compat shims: any unrecognized `tuning` value reverts to
 Equal:    freq(q,r) = 220 · 2^((4q + 7r)/12)
 ```
 
-Modes `'P'/'D'/'7'/'V'` use the 5-limit base times the RegionInfo multiplications above (`'V'` adds
-`SCHISMA^band`). The canonical quantity is `coordExps(q, r, mode)` (`@hkl/shared/freq.js`): a cell's
+Modes `'P'/'D'/'7'/'V'` use the 5-limit base times the column shifts above (`'V'` adds
+`SCHISMA^band`; `'S'`/`'Y'` are `'P'` times `(81/80)^bandOffset(mode, band − anchor)`). The
+canonical quantity is `coordExps(q, r, mode, mapping, anchor)` (`@hkl/shared/freq.js`; `anchor` is
+read only by S/Y but required, so every caller decides): a cell's
 prime-exponent vector `[e2,e3,e5,e7]` relative to 220 Hz, with the per-mode region/schisma shifts
 baked in. `freqAt` multiplies it into Hz once (`220·2^e2·3^e3·5^e5·7^e7`); the **JI ratio** between
 two keys is just the difference of their `coordExps` vectors (base layout: `e5=Δp`, `e3=Δr`,
@@ -208,19 +230,28 @@ band `[qm2, qm2′, qm0, qm0′, qm1, qm1′]` by `((Q+2) mod 6)`, A3 at `(0,0)`
 
 ## Color scheme
 
-Hue encodes lattice position; light/dark encodes the 12-TET black/white key.
+**Colour belongs to the pitch, not the layout**: one function of a cell's prime exponents colours
+every JI mode under both mappings, so the same pitch gets the same colour wherever it appears; a
+mode only decides which pitch sits on a cell. Light/dark encodes the 12-TET black/white key.
+Implemented once, purely, in `@hkl/shared/keycolor.js` (`keyColor`, `keyColorHex`,
+`lightSourceHex`, `inkColorHex`); HKL's `render/colors.ts` only supplies its live layout, and
+Composer recolours notes with the same functions.
 
-- **5-/7-limit — 7 hues × {light,dark}** (+14 B-region warm-shifted variants in 7-limit):
-  `hueCycle = [PU,PK,OR,YE,GR,TE,BL]`, indexed by `(floor(midi/12) − bandOf(q) − 4) % 7`
-  (`midi = 57+4q+7r`). B-region (septimal qm2) keys get `.sl`/`.sd` variants, a 50% lerp toward the
-  next hue. Pure-SC-shift modes (`'P'`/`'D'`/`'V'`) color shifted cells as their SC sibling via
-  `keyColorVariant` in `apps/hkl/src/render/colors.ts` (no new variants needed).
-- **Equal — 3 hues**: `[BL,PU,PK][floor(midi/12) % 3]`, rotated so A3 = purple.
-- **Light vs dark**: by pitch class `(57+4q+7r) % 12` — light if ∈ {0,2,4,5,7,9,11}, else dark.
-- **Wicki-Hayden mapping**: hue is computed on an Euler cell — Equal colours every cell by its sounding
-  octave (its Euler-equivalent); the JI modes give a copy its column's colour (`columnSourceOf`; in
-  Schismatic the hue carries the band's schisma count, which the copy shares). Light/dark follows the
-  cell's own pitch class.
+- **JI modes — 7 hues × {light,dark}**, `hueCycleOrder = [PU,PK,OR,YE,GR,TE,BL]` indexed by
+  `floor((57 + 7·e3 + 4·e5 + 10·e7) / 12) − 4 (mod 7)` on `coordExps`. Each prime is weighted by its
+  12-TET step reduced into the octave (3/2 = 7, 5/4 = 4, 7/4 = 10), so the hue is the pitch's 12-TET
+  octave minus the octaves its factorisation contains; octave (`e2`) never enters. Steps per comma:
+  syntonic 2, schisma 5, Pythagorean 7 ≡ 0, 35/36 0. Hence Ptolemaic's `floor(midi/12) − band`,
+  P/D's "colour as the SC sibling", Schismatic's +5 per band, Septimal's "Ptolemaic hue", a
+  Wicki-Hayden copy's "its column's colour", and Syntonic/Polysyntonic's +2 per comma (purple A →
+  orange → green … raised, teal → yellow … lowered) are all this one function.
+- **Septimal variant**: a cell with `e7 ≠ 0` takes `.sl`/`.sd`, a 50% lerp toward the next hue.
+- **Equal — 3 hues**: `[BL,PU,PK][floor(midi/12) % 3]` by sounding octave, rotated so A3 = purple —
+  the one genuinely separate rule.
+- **Light vs dark**: by the cell's own MIDI pitch class — light if ∈ {0,2,4,5,7,9,11}, else dark.
+
+Regression gate: `test/color-gate/gate.mjs` pins hue/light/septimal and the three hex outputs for
+every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended colour change).
 
 Base palette (light/dark hex): PK `#FF4C79`/`#59002C`, PU `#C94CFF`/`#3E0059`, BL `#4C96FF`/`#002559`,
 TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF884C`/`#591D00`.

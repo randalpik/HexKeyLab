@@ -17,7 +17,7 @@ import { isMapping } from '@hkl/shared/mapping.js';
 import { view } from '../state/view.js';
 import { selection } from '../state/selection.js';
 import { tuning } from '../state/tuning.js';
-import { setSelectionFromManual } from '../state/reference.js';
+import { setSelectionFromManual, setAnchorOverride } from '../state/reference.js';
 import {
   applyRotation, applyHexSize, applyTuningRender, applyOutlineRender,
 } from '../render/controls-core.js';
@@ -62,6 +62,9 @@ function applySnapshot(s: OverlaySnapshot): void {
   tuning.septimalEnabled = s.tuning === '7';
   tuning.hejiEnabled = s.heji;
   setSelectionFromManual(s.refQ, s.refR);
+  /* the publisher's anchor, not one derived from its effective ref (that may
+     be a composer-source selection, which never moves the anchor) */
+  setAnchorOverride(s.anchor ?? 0);
   applyRotation(s.rotation as RotationMode);
   applyHexSize(s.hexSize as HexSize);
   applyTuningRender();

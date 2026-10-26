@@ -106,6 +106,15 @@ function needsInjection(alter: number, syn5: number, sept7: number): boolean {
   return syn5 !== 0 || sept7 !== 0 || Math.abs(alter) > 3;
 }
 
+/** The anchor (Syntonic / Polysyntonic home band) a render-MEI note sounds
+ *  under: its render-only `data-anchor` (stamped per measure from the key by
+ *  Composer, written by buildChordMei for HKL's inset). Absent → 0, which every
+ *  other mode ignores. */
+export function noteAnchor(note: Element): number {
+  const a = note.getAttribute('data-anchor');
+  return a === null ? 0 : parseInt(a, 10);
+}
+
 /** Step 1 — rewrite notes needing injection into tagged placeholder rows.
  *  Operates on the render clone AFTER the visible @accid has been set (so only
  *  notes with a visible @accid are touched). Idempotent. */
@@ -121,7 +130,7 @@ export function transformDocForHeji(doc: Document, mode: TuningMode, mapping: Ma
     const rs = note.getAttribute('data-r');
     const hasCoord = qs !== null && rs !== null;
     const { syn5, sept7 } = (hejiEnabled && hasCoord)
-      ? hejiCommasFor(mode, parseInt(qs!, 10), parseInt(rs!, 10), mapping)
+      ? hejiCommasFor(mode, parseInt(qs!, 10), parseInt(rs!, 10), mapping, noteAnchor(note))
       : { syn5: 0, sept7: 0 };
     if (!needsInjection(alter, syn5, sept7)) continue;
 

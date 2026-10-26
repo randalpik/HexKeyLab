@@ -38,6 +38,7 @@ import * as selection from './selection.mjs';
 import * as signatures from './signatures.mjs';
 import * as slurs from './slurs.mjs';
 import * as structure from './structure.mjs';
+import * as syntonic from './syntonic.mjs';
 import * as ties from './ties.mjs';
 import * as tuplets from './tuplets.mjs';
 import * as undo from './undo.mjs';
@@ -67,6 +68,7 @@ export const CATEGORIES = {
   signatures: signatures,
   slurs: slurs,
   structure: structure,
+  syntonic: syntonic,
   ties: ties,
   tuplets: tuplets,
   undo: undo,

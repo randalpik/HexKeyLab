@@ -28,6 +28,8 @@ const TUNING_LABELS: Record<TuningMode, string> = {
   D: 'Semiditonal',
   '7': 'Septimal',
   V: 'Schismatic',
+  S: 'Syntonic',
+  Y: 'Polysyntonic',
 };
 
 const MAPPING_LABELS: Record<Mapping, string> = {
@@ -215,7 +217,7 @@ export function openSetupDialog(
       || prevLayout.mapping !== values.layoutReq.mapping;
     let proceedWithLayout = true;
     if (layoutChanged && model.hasNotes()) {
-      const plan = planRetune(model.getDoc(), prevLayout, values.layoutReq);
+      const plan = planRetune(model.getDoc(), prevLayout, values.layoutReq, (n, m) => model.anchorOfNote(n, m));
       const summary = summarizePlan(plan);
       proceedWithLayout = window.confirm(summary);
       if (proceedWithLayout) applyRetune(model, plan);
@@ -232,6 +234,9 @@ export function openSetupDialog(
     setGradualPercents(model.getDoc(), values.gradual);
     if (proceedWithLayout) {
       model.setLayoutReq(values.layoutReq);
+      /* Retuned notes' baked colours follow their (possibly relocated) pitch
+         under the new layout. */
+      if (layoutChanged) model.recolorNotes();
     }
     model.setHejiEnabled(values.hejiEnabled);
     model.setIgnoreColor(values.ignoreColor);

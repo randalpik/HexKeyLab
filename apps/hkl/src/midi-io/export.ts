@@ -71,7 +71,7 @@ export function sessionToMidi(session: HkrSession): Uint8Array {
             heldNote.delete(evicted);
           }
         }
-        const { note, bend14 } = coordToMidi(ev.q, ev.r, session.snapshot);
+        const { note, bend14 } = coordToMidi(ev.q, ev.r, session.snapshot, ev.a);
         timed.push({ t: ev.t, ord: ord++, event: {
           deltaTime: 0, type: 'pitchBend', channel: ch0, value: bend14 - 8192,
         }});

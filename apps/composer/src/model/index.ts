@@ -34,7 +34,8 @@ import { settleSlurSides } from '../notation/slurSides.js';
 import { unifySlurStems } from '../notation/slurStems.js';
 import { separateSameMomentMarks } from '../notation/unstack.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
-import { computeAccidentalDisplay } from '../notation/accidentals.js';
+import { computeAccidentalDisplay, keySigToTonic } from '../notation/accidentals.js';
+import { findTonicCoord } from '../cursor/refNote.js';
 import { alterFromCount, alterFromToken, tokenFromAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
 import {
   el,
@@ -48,7 +49,10 @@ import {
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, getIgnoreColor, setIgnoreColor, getPageScale, setPageScale, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
-import { coordToMidi, type TuningMode } from '@hkl/shared/freq.js';
+import { coordToMidi, anchorOf, type TuningMode } from '@hkl/shared/freq.js';
+import type { Mapping } from '@hkl/shared/mapping.js';
+import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
+import { sanctionedLightForInk } from '@hkl/shared/colors.js';
 import { realTicks, writtenTicks, decomposeTicks } from './ticks.js';
 export { decomposeTicks };
 import {
@@ -895,6 +899,7 @@ export class ComposerModel {
        then beams (wraps them). */
     const clone = this.doc.cloneNode(true) as Document;
     const { tuningMode: mode, mapping } = this.getLayoutReq();
+    if (forRender) this.stampAnchors(clone, 0);
     computeAccidentalDisplay(clone, this.getKeySig(), mapping,
       forRender ? { mode, enabled: forRender.hejiEnabled } : undefined);
     if (forRender) {
@@ -955,6 +960,7 @@ export class ComposerModel {
     if (headSd) stampRunningCtx(headSd, ctx);
     /* identical passes to serialize(), now over only the kept measures */
     const { tuningMode: mode, mapping } = this.getLayoutReq();
+    this.stampAnchors(clone, loIdx);
     computeAccidentalDisplay(clone, ctx.keySig ?? this.getKeySig(), mapping, { mode, enabled: forRender.hejiEnabled });
     transformDocForHeji(clone, mode, mapping, forRender.hejiEnabled);
     if (getIgnoreColor(clone)) {
@@ -1979,6 +1985,60 @@ export class ComposerModel {
     return mi;
   }
 
+  /** Syntonic / Polysyntonic home band at measure `mi` under `mapping`: the
+   *  band of the key tonic HKL's score-ref carries there (findTonicCoord, as
+   *  computeSongKeyRefAt), so Composer and HKL derive the same anchor. Derived
+   *  from the key, never stored — a key-signature edit re-anchors its measures. */
+  anchorAt(mi: number, mapping: Mapping = this.getLayoutReq().mapping): number {
+    const tonic = keySigToTonic(this.keySigAt(mi), this.keyModeAt(mi));
+    return anchorOf(findTonicCoord(tonic, mapping).q, mapping);
+  }
+
+  /** anchorAt for the measure holding `note` (the head key outside any measure). */
+  anchorOfNote(note: Element, mapping?: Mapping): number {
+    const m = this.measureElementOf(note);
+    return this.anchorAt(m ? this.measureIdxOf(m) : -1, mapping);
+  }
+
+  /** Render-only: stamp every note of a render clone with its measure's anchor
+   *  (`data-anchor`, read by the HEJI and accidental passes via noteAnchor).
+   *  Syntonic / Polysyntonic only — every other mode ignores the anchor. `lo` is
+   *  the document index of the clone's first measure (the clone holds measures
+   *  lo, lo+1, … in document order). Never runs on the save path. */
+  private stampAnchors(clone: Document, lo: number): void {
+    const { tuningMode, mapping } = this.getLayoutReq();
+    if (tuningMode !== 'S' && tuningMode !== 'Y') return;
+    Array.from(clone.querySelectorAll('measure')).forEach((m, i) => {
+      const a = String(this.anchorAt(lo + i, mapping));
+      for (const n of Array.from(m.querySelectorAll('note'))) n.setAttribute('data-anchor', a);
+    });
+  }
+
+  /** Rewrite each note's baked colours (@color ink, data-light-color) from
+   *  its pitch under the current layout and its measure's anchor — colour is
+   *  one function of the pitch (@hkl/shared/keycolor.js), so the baked values
+   *  are a cache. Call after anything that changes a note's pitch without
+   *  re-entering it: a retune, a key edit in a Syntonic / Polysyntonic score.
+   *  A note whose @color isn't a lattice ink (an import's plain black) keeps it. */
+  recolorNotes(): void {
+    const { tuningMode: mode, mapping } = this.getLayoutReq();
+    const anchored = mode === 'S' || mode === 'Y';
+    this.allMeasures().forEach((measure, mi) => {
+      const anchor = anchored ? this.anchorAt(mi, mapping) : 0;
+      for (const n of Array.from(measure.querySelectorAll('note'))) {
+        const color = n.getAttribute('color');
+        if (color === null || sanctionedLightForInk(color) === null) continue;
+        const q = parseInt(n.getAttribute('data-q') ?? '', 10);
+        const r = parseInt(n.getAttribute('data-r') ?? '', 10);
+        if (!Number.isFinite(q) || !Number.isFinite(r)) continue;
+        const ink = inkColorHex(q, r, mode, mapping, anchor);
+        const light = lightSourceHex(q, r, mode, mapping, anchor);
+        if (color !== ink) n.setAttribute('color', ink);
+        if (n.getAttribute('data-light-color') !== light) n.setAttribute('data-light-color', light);
+      }
+    });
+  }
+
   /** Index of a `<measure>` element in document order, or -1. */
   measureIdxOf(measure: Element): number {
     return this.meterTable().measures.indexOf(measure);
@@ -2461,6 +2521,15 @@ export class ComposerModel {
    *  `pruneEmptyScoreDef` keeps a node that still has an attribute, and
    *  sectionRestart keys on `key.sig` so no spurious restart appears. */
   setKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {
+    this.applyKeySigAt(mi, sig, mode);
+    /* Syntonic / Polysyntonic: the key decides each measure's anchor, so a key
+       edit re-pitches (and recolours) the notes it governs (anchorAt). The meter
+       invalidation above already widened the render dirty range to 'all'. */
+    const m = this.getLayoutReq().tuningMode;
+    if (m === 'S' || m === 'Y') this.recolorNotes();
+  }
+
+  private applyKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {
     if (mi <= 0) { this.setKeySig(sig); this.setKeyMode(mode); this.invalidateMeterCache(); return; }
     const inheritedSig = this.keySigAt(mi - 1);
     const inheritedMode = this.keyModeAt(mi - 1);

@@ -14,6 +14,12 @@ export const tuning = {
      KeyId / (q, r) is interpreted in (@hkl/shared/mapping.js). Set by
      setMapping() in ui/controls.ts. */
   mapping: 'euler' as Mapping,
+  /* Home band for Syntonic / Polysyntonic (anchorOf in @hkl/shared/freq.js):
+     the band of the anchor reference (manual selection ?? score-ref ??
+     default A3 — never the composer-source selection). Recomputed by
+     state/reference.ts; read by every pitch function, ignored by the other
+     modes. */
+  anchor: 0,
   septimalEnabled: false,
   equalEnabled: false,
   /* band width: alternating A/B regions along lattice r axis (constant) */

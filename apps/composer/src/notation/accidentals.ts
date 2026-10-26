@@ -30,6 +30,7 @@
 
 import { realTicks } from '../model/ticks.js';
 import { hejiCommasFor } from '@hkl/shared/heji.js';
+import { noteAnchor } from '@hkl/notation/heji-render.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
 import type { Mapping } from '@hkl/shared/mapping.js';
 import { tokenFromAlter, gesturalTokenFromAlter, noteAlter, getNoteAlter } from '@hkl/notation/accidentals.js';
@@ -251,7 +252,7 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, mapp
         if (qs === null || rs === null) return { syn5: 0, sept7: 0 };
         const q = parseInt(qs, 10), r = parseInt(rs, 10);
         if (!Number.isFinite(q) || !Number.isFinite(r)) return { syn5: 0, sept7: 0 };
-        return hejiCommasFor(heji.mode, q, r, mapping);
+        return hejiCommasFor(heji.mode, q, r, mapping, noteAnchor(note));
       };
 
       const events: Array<{ note: Element; startTick: number; pname: string; key: string; alter: number; id: AccidIdentity }> = [];

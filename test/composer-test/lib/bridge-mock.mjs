@@ -7,6 +7,7 @@
 //
 // Exposed in-page as window.__bridgeMock with methods:
 //   sendHeldKeys(notes, mapping?), sendTuningChanged(mode, mapping?),
+//   sendLayoutState(mode, mapping, refQ, refR, anchor),
 //   sendPlaybackPosition(meiId, timeMs),
 //   sendPlaybackFinished(), captured(), drain(), reset().
 //
@@ -50,6 +51,10 @@ export const MOCK_BRIDGE_LIB = `
     /* HKL's layout announcement (tuning mode + note-name mapping). */
     sendTuningChanged(mode, mapping = 'euler') {
       ch.postMessage({ type: 'tuning-changed', mode, mapping, description: '' });
+    },
+    /* HKL's full layout state, incl. the Syntonic / Polysyntonic anchor. */
+    sendLayoutState(tuningMode, mapping, refQ, refR, anchor) {
+      ch.postMessage({ type: 'hkl-layout-state', tuningMode, mapping, refQ, refR, anchor });
     },
     sendPlaybackPosition(meiId, timeMs, voice) {
       const msg = { type: 'playback-position', meiId, timeMs };

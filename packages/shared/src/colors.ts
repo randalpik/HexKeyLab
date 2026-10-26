@@ -1,8 +1,7 @@
 // Lattice color palette — pure data tables. Shared between HKL (lattice
 // rendering, MIDI feedback, screen readback) and HKC (notehead colors via
 // data-q/data-r → resolved color through the bridge). No runtime state, no
-// tuning dependency — stateful color computation (computeHue, keyColorHex)
-// lives in src/render/colors.ts and reads tuning state.
+// tuning dependency — the colour function (pitch → hue) is keycolor.ts.
 //
 // The septimal-variant fields (`sl`/`sd`) are populated by the load-time IIFE
 // at the bottom of this file by linear-interpolating each hue toward the next
@@ -21,10 +20,6 @@ export interface HueColors {
   /** septimal-dark (B-band) variant — set by load-time IIFE */
   sd?: string;
 }
-
-/* No `colorTable` cache — `computeHue(q, r)` in src/render/colors.ts is
-   invariant under (q→q+3) and (r→r+12), so it depends only on (qmod3, r%12)
-   and is the single source of base hue. */
 
 export const hueC: Record<Hue, HueColors> = {
   PK: { l: '#FF4C79', d: '#59002C' },
@@ -55,8 +50,8 @@ export const hueCycle: ReadonlyArray<Hue> = ['PK', 'PU', 'BL', 'TE', 'GR', 'YE',
 
 export const whiteSet: ReadonlySet<number> = new Set([0, 2, 4, 5, 7, 9, 11]);
 
-/* hueCycle walked backward, starting at the A3 hue (PU). Used as the index
-   space for octave-based coloring and SC redirects in computeHue. */
+/* hueCycle walked backward, starting at the A3 hue (PU). The index space of
+   keycolor.ts's pitch → hue function (+2 per syntonic comma). */
 export const hueCycleOrder: ReadonlyArray<Hue> = (() => {
   const start = hueCycle.indexOf('PU');
   return Array.from({ length: 7 }, (_, i) => hueCycle[((start - i) % 7 + 7) % 7]);
@@ -68,14 +63,14 @@ for (let hi = 0; hi < 7; hi++) hueIdx[hueCycleOrder[hi]] = hi;
 export const equalHueCycle: ReadonlyArray<Hue> = ['BL', 'PU', 'PK'];
 
 /* ── ink-on-paper hue profiles + sanctioned reverse-map ────────────────────
-   Notehead colors on white paper (light theme) are computed by darkColorHex
-   (apps/hkl): remap the lattice hue to one of these 7 per-hue (H,S,L) targets.
+   Notehead colors on white paper (light theme) are computed by inkColorHex
+   (keycolor.ts): remap the lattice hue to one of these 7 per-hue (H,S,L) targets.
    So the set of sanctioned INK colors is exactly {hslToRgb(profile)} — 7 fixed
    hexes. On a DARK surface noteheads instead use the bright light-source hue
    (hueC.l / .sl). When a file is imported WITHOUT the baked light variant we
    reverse-map its ink color to the sanctioned light color via these tables; an
    unrecognized color isn't approximated (the renderer flags it white/black so a
-   bad import is obvious). darkColorHex shares these helpers + profiles so its
+   bad import is obvious). inkColorHex shares these helpers + profiles so its
    outputs match the map keys exactly. */
 
 export function hexToRgb(hex: string): [number, number, number] {
@@ -141,8 +136,8 @@ export function profileForHue(h01: number): HueProfile {
   return best;
 }
 
-/** Sanctioned ink hex (a darkColorHex output) → sanctioned light-source hex.
- *  Keys/values lowercase. Built with the SAME hsl→rgb→hex path darkColorHex
+/** Sanctioned ink hex (an inkColorHex output) → sanctioned light-source hex.
+ *  Keys/values lowercase. Built with the SAME hsl→rgb→hex path inkColorHex
  *  uses, so the keys match its outputs exactly. */
 export const SANCTIONED_INK_TO_LIGHT: ReadonlyMap<string, string> = (() => {
   const m = new Map<string, string>();

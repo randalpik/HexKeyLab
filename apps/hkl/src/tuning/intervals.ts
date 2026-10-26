@@ -18,7 +18,7 @@
 import { jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
 import { noteName, parseNote, keyOctave } from '@hkl/shared/notes.js';
-import { coordToMidi } from '@hkl/shared/freq.js';
+import { coordToMidi, solveCommas } from '@hkl/shared/freq.js';
 import type { Mapping } from '@hkl/shared/mapping.js';
 
 type PrimeExp = [number, number, number, number];
@@ -32,15 +32,7 @@ export function factor7(n: number): PrimeExp | null {
   return n === 1 ? e : null;
 }
 
-/* solve difference vector for comma counts: s(syntonic) z(septimal) h(schisma)
-   syntonic=(-4,4,-1,0) septimal=(6,-2,0,-1) schisma=(-15,8,1,0) */
-export function solveCommas(de: PrimeExp): [number, number, number] | null {
-  const z = -de[3], hN = de[1] + 4 * de[2] - 2 * de[3];
-  if (hN % 12 !== 0) return null;
-  const h = hN / 12, s = h - de[2];
-  if (de[0] !== -4 * s + 6 * z - 15 * h) return null;
-  return [s, z, h];
-}
+export { solveCommas };
 
 /* Convert raw comma counts to displayable items. Each item corresponds to one
    HEJI glyph (arrow, hook, schisma marker). */

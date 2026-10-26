@@ -1,17 +1,35 @@
 // Pure frequency math: (q, r, mode, mapping) → Hz. Self-contained so the
 // Composer side can compute pitches without pulling in HKL's live tuning state.
 //
-// A3 = 220 Hz sits at (q=0, r=0). The reference note doesn't appear here on
-// purpose: it doesn't affect (q, r) → Hz under any of HKL's tuning systems.
-// It only shifts which physical key maps to which (q, r) during input.
+// A3 = 220 Hz sits at (q=0, r=0). The reference note itself doesn't appear
+// here: it only shifts which physical key maps to which (q, r) during input.
+// What it does decide, in Syntonic ('S') and Polysyntonic ('Y'), is the
+// `anchor` — the home band, the one band left unaltered — so every pitch
+// function takes the anchor explicitly (`anchorOf`). Only S and Y read it.
 // Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden cells
 // resolve through their Euler-equivalent.
 
-import { eulerOf, type Mapping } from './mapping.js';
+import { eulerOf, bandOfCell, type Mapping } from './mapping.js';
 
-export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
+export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 
-export const TUNING_MODES: ReadonlyArray<TuningMode> = ['E', '5', 'P', 'D', '7', 'V'];
+export const TUNING_MODES: ReadonlyArray<TuningMode> = ['E', '5', 'P', 'D', '7', 'V', 'S', 'Y'];
+
+/** The anchor (home band) for a reference cell: its band in its own frame.
+ *  Syntonic / Polysyntonic leave this band unaltered (Pythagorean) and shift
+ *  every other band by whole syntonic commas (`bandOffset`). */
+export function anchorOf(refQ: number, mapping: Mapping): number {
+  return bandOfCell(refQ, mapping);
+}
+
+/** Syntonic-comma offset (+ = raised ×81/80) of a band `d` bands from the
+ *  anchor. Syntonic returns home every 4 bands (0, +1, 0, −1); Polysyntonic
+ *  stacks without bound. Every other mode is band-uniform: 0. */
+export function bandOffset(mode: TuningMode, d: number): number {
+  if (mode === 'S') return [0, 1, 0, -1][((d % 4) + 4) % 4];
+  if (mode === 'Y') return d;
+  return 0;
+}
 
 /** 2·PM3 + M3 − octave. The comma that distinguishes the Pythagorean dim4
  *  (8192:6561, ~384c) from a pure 5-limit M3 (5:4, ~386c). In Schismatic
@@ -42,18 +60,24 @@ export function coordToMidi(q: number, r: number, mapping: Mapping): number {
  *  callers in Equal take a separate path and never request exps.
  *
  *  Base layout: 220 · 2^b · (5/4)^(p−1) · (3/2)^r where b = band, p = position
- *  in band. Per-mode region shift mirrors the qm column rules in
- *  src/tuning/regions.ts (Ptolemaic = none; the rest shift by a syntonic comma
- *  and, for Septimal, a septimal comma; Schismatic adds schisma^b octave
- *  stacking — see SCHISMA above).
+ *  in band. Per-mode region shift by qm column (Ptolemaic = none; the rest
+ *  shift by a syntonic comma and, for Septimal, a septimal comma; Schismatic
+ *  adds schisma^b octave stacking — see SCHISMA above).
+ *
+ *  Syntonic / Polysyntonic: every band is Pythagorean, then shifted by
+ *  `bandOffset(mode, band − anchor)` syntonic commas, the band taken in the
+ *  cell's OWN frame (a Wicki-Hayden copy shares its column's 6-band). `anchor`
+ *  is ignored by every other mode.
  *
  *  Wicki-Hayden cells take their Euler-equivalent's vector. A Schismatic copy
  *  is its column an exact octave down, so it keeps the column's schisma count
  *  — one more than its Euler-equivalent one band lower. */
-export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping): [number, number, number, number] {
+export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number): [number, number, number, number] {
   const c = eulerOf(q, r, mapping);
-  const e = eulerExps(c.q, c.r, mode);
+  const e = eulerExps(c.q, c.r, mode === 'S' || mode === 'Y' ? 'P' : mode);
   if (c.copy && mode === 'V') { e[0] += -15; e[1] += 8; e[2] += 1; }
+  const k = bandOffset(mode, bandOfCell(q, mapping) - anchor);
+  if (k) { e[0] += -4 * k; e[1] += 4 * k; e[2] += -k; }             /* ×(81/80)^k */
   return e;
 }
 
@@ -76,13 +100,23 @@ function eulerExps(q: number, r: number, mode: TuningMode): [number, number, num
   return [e2, e3, e5, e7];
 }
 
-/** Frequency in Hz of (q, r) under `mode`. Independent of reference note.
+/** Frequency in Hz of (q, r) under `mode` (and, for S/Y, `anchor`).
  *  JI modes multiply the canonical exponent vector (`coordExps`) into Hz once;
  *  Equal is 12-TET and returns directly. */
-export function freqAt(q: number, r: number, mode: TuningMode, mapping: Mapping): number {
+export function freqAt(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number): number {
   if (mode === 'E') return 220 * Math.pow(2, (coordToMidi(q, r, mapping) - 57) / 12);
-  const [e2, e3, e5, e7] = coordExps(q, r, mode, mapping);
+  const [e2, e3, e5, e7] = coordExps(q, r, mode, mapping, anchor);
   return 220 * Math.pow(2, e2) * Math.pow(3, e3) * Math.pow(5, e5) * Math.pow(7, e7);
+}
+
+/* solve difference vector for comma counts: s(syntonic) z(septimal) h(schisma)
+   syntonic=(-4,4,-1,0) septimal=(6,-2,0,-1) schisma=(-15,8,1,0) */
+export function solveCommas(de: ReadonlyArray<number>): [number, number, number] | null {
+  const z = -de[3], hN = de[1] + 4 * de[2] - 2 * de[3];
+  if (hN % 12 !== 0) return null;
+  const h = hN / 12, s = h - de[2];
+  if (de[0] !== -4 * s + 6 * z - 15 * h) return null;
+  return [s, z, h];
 }
 
 /** Octave-reduce + complement-reduce a prime-exponent vector. Returns the

@@ -3,6 +3,7 @@
 
 import type { HkrSession, HkrEvent, LayoutSnapshot } from './types.js';
 import { isMapping } from '@hkl/shared/mapping.js';
+import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
 
 export class HkrParseError extends Error {}
 
@@ -10,8 +11,8 @@ export function serializeHkr(session: HkrSession): string {
   return JSON.stringify(session, null, 2);
 }
 
-function isTuningMode(s: unknown): s is 'E' | '5' | 'P' | 'D' | '7' | 'V' {
-  return s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
+function isTuningMode(s: unknown): s is TuningMode {
+  return (TUNING_MODES as ReadonlyArray<unknown>).includes(s);
 }
 function isPedalMode(s: unknown): s is 'sustain' | 'sostenuto' {
   return s === 'sustain' || s === 'sostenuto';
@@ -29,9 +30,12 @@ function parseSnapshot(o: unknown): LayoutSnapshot {
   if (typeof s.refHz !== 'number') throw new HkrParseError('snapshot.refHz invalid');
   /* absent in recordings made before mappings existed → Euler */
   if (s.mapping !== undefined && !isMapping(s.mapping)) throw new HkrParseError('snapshot.mapping invalid');
+  /* absent in recordings made before Syntonic / Polysyntonic → 0 (ignored by the older modes) */
+  if (s.anchor !== undefined && !Number.isInteger(s.anchor)) throw new HkrParseError('snapshot.anchor invalid');
   return {
     tuning: s.tuning,
     mapping: s.mapping ?? 'euler',
+    anchor: typeof s.anchor === 'number' ? s.anchor : 0,
     septimalEnabled: s.septimalEnabled,
     equalEnabled: s.equalEnabled,
     septimalW: s.septimalW,
@@ -48,6 +52,7 @@ function parseEvent(o: unknown): HkrEvent | null {
   switch (e.k) {
     case 'on':
       if (typeof e.q !== 'number' || typeof e.r !== 'number' || typeof e.v !== 'number') return null;
+      if (Number.isInteger(e.a)) return { t: e.t, k: 'on', q: e.q, r: e.r, v: e.v, a: e.a as number };
       return { t: e.t, k: 'on', q: e.q, r: e.r, v: e.v };
     case 'off':
       if (typeof e.q !== 'number' || typeof e.r !== 'number') return null;

@@ -21,7 +21,8 @@
 import { baseKeys } from '../layout/baseKeys.js';
 import { qwertyKeys } from '../input/qwerty.js';
 import { hexR, dxH, dyH, hexScale, cosT, sinT, hexToScreen, currentRotationMode } from '../layout/geometry.js';
-import type { Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
+import type { Mapping, OutlineMode, RotationMode, ProbedMode } from '../state/persistence.js';
+import { probedMode } from '../state/persistence.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 
@@ -64,7 +65,7 @@ interface CanvasMetrics { kbMinW: number; CH: number; }
    JI math (see compute88PianoCoords), so its footprint matches D exactly.
    Lumatone and QWERTY outlines are projected live. "none" = union of
    lumatone + qwerty + piano per tuning. */
-const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode, CanvasMetrics>>> = {
+const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<ProbedMode, CanvasMetrics>>> = {
   euler: {
     verticalFreq: {
       'E': { kbMinW: 1115, CH: 418 },
@@ -168,7 +169,7 @@ export function recomputeCanvasBounds(outlineOverride?: OutlineMode): void {
   if (outline === 'piano' || outline === 'none') {
     /* Piano table is keyed by tuning mode — each mode has its own picker
        output and therefore its own canvas extent. */
-    const m = PIANO_BOUNDS_TABLE[tuning.mapping][currentRotationMode][tuning.mode];
+    const m = PIANO_BOUNDS_TABLE[tuning.mapping][currentRotationMode][probedMode(tuning.mode)];
     /* Table values are raw px baked at the medium baseline (hexR=16). Bounds
        are linear in scale, so scale by hexScale for small/large presets. */
     /* For "none", take the max of piano vs lumatone+qwerty already computed. */

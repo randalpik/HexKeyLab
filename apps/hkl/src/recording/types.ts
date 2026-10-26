@@ -14,6 +14,10 @@ export interface LayoutSnapshot {
   /** Coordinate frame of every event's (q, r). Absent in files recorded
    *  before mappings existed → 'euler'. */
   mapping: Mapping;
+  /** Syntonic / Polysyntonic home band at record-start (anchorOf). Absent in
+   *  older files → 0, which every mode before S/Y ignores. A note-on recorded
+   *  after a mid-take re-anchor carries its own `a`. */
+  anchor: number;
   septimalEnabled: boolean;
   equalEnabled: boolean;
   septimalW: number;
@@ -26,7 +30,9 @@ export interface LayoutSnapshot {
    engine clock (audioCtxSec) — that's the same clock the capture hook reads.
    `warn` is informational only (e.g. layout changed mid-record); playback
    ignores it. */
-export type HkrEventOn   = { t: number; k: 'on';   q: number; r: number; v: number };
+/* `a`: the anchor this note sounded under, present only when it differs from
+   snapshot.anchor (a Syntonic / Polysyntonic re-anchor during the take). */
+export type HkrEventOn   = { t: number; k: 'on';   q: number; r: number; v: number; a?: number };
 export type HkrEventOff  = { t: number; k: 'off';  q: number; r: number };
 export type HkrEventPa   = { t: number; k: 'pa';   q: number; r: number; p: number };
 export type HkrEventCc4  = { t: number; k: 'cc4';  v: number };

@@ -22,11 +22,15 @@ import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
  *  lighter `keys` / `view` deltas; this carries their current value too so a
  *  fresh snapshot is self-sufficient. */
 export interface OverlaySnapshot {
-  /** TuningMode ('E'|'5'|'P'|'D'|'7'|'V'). */
+  /** TuningMode ('E'|'5'|'P'|'D'|'7'|'V'|'S'|'Y'). */
   tuning: string;
   /** Note-name mapping — the frame of every coordinate in this snapshot.
    *  Absent from an older publisher → 'euler'. */
   mapping?: string;
+  /** Syntonic / Polysyntonic home band (anchorOf) — published explicitly
+   *  because the effective ref below may be a composer-source selection,
+   *  which never moves it. Absent from an older publisher → 0. */
+  anchor?: number;
   /** HEJI accidentals enabled. */
   heji: boolean;
   /** Effective reference-note lattice coord. */

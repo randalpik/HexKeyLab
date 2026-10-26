@@ -74,7 +74,7 @@ function parseArgs(): Args {
 }
 
 function makeState(mode: Mode): TuningStateLike {
-  return { mode, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
+  return { mode, mapping: 'euler', anchor: 0, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
 }
 
 const log3 = Math.log2(3), log5 = Math.log2(5), log7 = Math.log2(7);

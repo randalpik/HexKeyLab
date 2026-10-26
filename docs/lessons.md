@@ -5496,3 +5496,23 @@ the Wicki-Hayden mapping (whole-tone columns, twice the q range) put valid refs 
 `(74, −14)`). Centre the cover rect on the view: `(viewQ·dxH + viewR·dxH/2, −viewR·dyH)`. Diagnosis path
 that found it: the cell set was right (live validator = table, 11 713 cells), and a port of the outline
 tracer reproduced membership exactly under evenodd — so the fault had to be the cover rect.
+
+## Tools outside the typecheck drift silently when a shared signature grows (2026-10-26)
+
+`pnpm typecheck` covers `apps` + `packages` only. The `test/` tools that import app or shared modules
+directly (run through `register-ts.mjs`, which strips types without checking them) keep calling an old
+signature without complaint: after the note-name mapping became a required argument, `test/interval-names/
+smoke.ts` passed none, so `noteName`/`classifyDiatonic` got `undefined` and its spelling and class columns
+printed nonsense ("A3 D#4", "AAAAAAA") while the ratio column stayed right. Found only when the Syntonic
+work made someone read the output. When a required parameter is added to a shared function, grep
+`test/` and `tools/` for its callers too — the compiler enumerates only half of them.
+
+## Live-module harnesses: a missed import edge silently loads a second module instance (2026-10-26)
+
+The `test/hkl-midi/` harnesses reach HKL's live modules through `depUrl(importer, '/src/x.ts')`, which
+reads the importer's Vite-transformed source for the dependency's `?t=…` URL — and falls back to the
+bare path when the importer doesn't import it. The bare path is a *different URL*, so the browser loads a
+fresh copy of the module with its own state: reads look plausible and are disconnected from the app
+(`draw.ts` doesn't import `tuning/frequency.ts`; `engine.ts` does). Workspace packages are served as
+`/@fs/<abs path>?t=…`, which `depUrl`'s forward slice truncates. Before trusting a new harness, curl the
+importer (`curl -s localhost:5170/src/x.ts | grep dep`) for every edge it resolves.

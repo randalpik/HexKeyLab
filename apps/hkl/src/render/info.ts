@@ -12,7 +12,7 @@ import {
   intervalNameFromCoords, shortenInterval, equalIntervalName, letterIdx,
 } from '../tuning/intervals.js';
 import { analyzeChord } from '../tuning/chords.js';
-import { keyColorVariant, hueC } from './colors.js';
+import { keyColorVariant, lightSourceHex } from './colors.js';
 import { renderStaffInset } from './staff-inset.js';
 
 interface InfoKey {
@@ -60,8 +60,8 @@ export function updateInfo(): void {
     const f = keyFreq(q, r);
     const v = keyColorVariant(q, r);
     /* note card always picks the light variant (text-on-dark legibility),
-       but uses the warm-shifted .sl for B-region cells to signal septimal. */
-    const col = v.isB ? hueC[v.hue].sl! : hueC[v.hue].l;
+       including the warm-shifted .sl for septimal cells. */
+    const col = lightSourceHex(q, r);
     keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r, tuning.mapping)), oct: keyOctave(q, r, tuning.mapping), col, inB: v.isB });
   });
   keys.sort(function (a, b) { return a.freq - b.freq; });

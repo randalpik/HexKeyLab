@@ -8,6 +8,7 @@
 
 import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
+import { tuning } from '../state/tuning.js';
 import { nowSec } from './clock.js';
 import { captureSnapshot, snapshotMatchesLive } from './snapshot.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
@@ -59,6 +60,13 @@ function checkDivergence(): void {
   }
 }
 
+/* A note-on's own anchor, when a Syntonic / Polysyntonic re-anchor has moved it
+   off the snapshot's — playback and export then sound it under that anchor. */
+function eventAnchor(): { a?: number } {
+  if (!snapshot || (tuning.mode !== 'S' && tuning.mode !== 'Y')) return {};
+  return tuning.anchor === snapshot.anchor ? {} : { a: tuning.anchor };
+}
+
 export function startRecording(): void {
   if (active) return;
   snapshot = captureSnapshot();
@@ -79,7 +87,7 @@ export function startRecording(): void {
     const parts = key.split(',');
     const q = +parts[0], r = +parts[1];
     const v = audio.keyVelocity[key] ?? DEFAULT_DYNAMIC_MAP.f;
-    pushEvent({ t: tNow(), k: 'on', q, r, v });
+    pushEvent({ t: tNow(), k: 'on', q, r, v, ...eventAnchor() });
   }
 }
 
@@ -111,7 +119,7 @@ export function stopRecording(): HkrSession | null {
 export function recordOn(key: KeyId, velocity: number): void {
   if (!active) return;
   const parts = key.split(',');
-  pushEvent({ t: tNow(), k: 'on', q: +parts[0], r: +parts[1], v: velocity });
+  pushEvent({ t: tNow(), k: 'on', q: +parts[0], r: +parts[1], v: velocity, ...eventAnchor() });
   checkDivergence();
 }
 

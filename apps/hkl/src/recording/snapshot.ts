@@ -16,6 +16,7 @@ export function captureSnapshot(): LayoutSnapshot {
   return {
     tuning: t,
     mapping: tuning.mapping,
+    anchor: tuning.anchor,
     septimalEnabled: tuning.septimalEnabled,
     equalEnabled: tuning.equalEnabled,
     septimalW: tuning.septimalW,

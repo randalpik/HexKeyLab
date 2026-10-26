@@ -227,6 +227,11 @@ The **Setup…** button opens a dialog for the whole-document settings:
   There is no reference-note setting: HKL always centers its lattice on the **root of the key signature where you are** — the tonic on
   the Pythagorean spine nearest C4, so a piece in B minor centers on B3. It follows you across a mid-piece key change, and during
   playback or Performance mode it follows the music rather than the parked editing cursor.
+  In **Syntonic** and **Polysyntonic** scores that key root also decides the *home band* (the unaltered band; see the HKL
+  guide): each note sounds, and is colored and arrowed, relative to the key of its own measure. So **changing a key
+  signature re-pitches the notes it covers** — same keys, new comma arrows, tunings and colors. If HKL's home band differs
+  from the score's (you Ctrl+clicked a reference in another band), the layout indicator shows ⚠ and note entry offers to
+  switch HKL back to the score's, which drops that Ctrl+click reference.
 - **Page size** (%): how big the page is relative to the notation. A *larger* page fits more bars per line and makes the score look smaller on the page; a *smaller* page does the reverse. This changes the paper, not the note size — use **zoom** (`Shift`+`=` / `Shift`+`-`) to change how big the notation itself appears. Saved with the document (and reflected in PDF export). Page view only.
 - **HEJI accidentals**: show comma arrows & septimal hooks. On by default; untick it for a plain conventional score. The choice is saved in the document, and a MusicXML import starts with it off.
 - **Ignore color**: render noteheads plain black instead of in lattice colors.

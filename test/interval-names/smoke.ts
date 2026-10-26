@@ -1,5 +1,6 @@
 // Smoke test: enumerate representative (q,r)→(q',r') intervals per mode and print the
-// new spelling-driven names. Run: `npx tsx test/interval-names/smoke.ts`.
+// new spelling-driven names. Run:
+// `node --import ./test/orchestrator-smoke/register-ts.mjs test/interval-names/smoke.ts`.
 //
 // Used during the intervals.ts refactor (spelling-driven naming) to verify:
 //   - V mode A3→A4 across a band → "perfect octave + schisma"
@@ -10,10 +11,10 @@
 import { intervalNameFromCoords, classifyDiatonic } from '../../apps/hkl/src/tuning/intervals.ts';
 import { jiRatioWithState } from '../../apps/hkl/src/tuning/ratios.ts';
 import type { TuningStateLike } from '../../apps/hkl/src/tuning/regions.ts';
-import { noteName, keyOctave } from '@hkl/shared/notes.js';
+import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 
-function st(mode: 'E' | '5' | 'P' | 'D' | '7' | 'V'): TuningStateLike {
-  return { mode, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
+function st(mode: TuningStateLike['mode']): TuningStateLike {
+  return { mode, mapping: 'euler', anchor: 0, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
 }
 
 interface Case { label: string; q1: number; r1: number; q2: number; r2: number; }
@@ -38,15 +39,15 @@ const cases: Case[] = [
   { label: 'E4→C5 (m6 across 1 band)',     q1: 0, r1: 1, q2: 2, r2: 1 },
 ];
 
-const modes: Array<'E' | '5' | 'P' | 'D' | '7' | 'V'> = ['E', '5', 'P', 'D', '7', 'V'];
+const modes: Array<TuningStateLike['mode']> = ['E', '5', 'P', 'D', '7', 'V', 'S', 'Y'];
 
 console.log('mode | label | spelling | exp | name | ratio');
 console.log('---|---|---|---|---|---');
 for (const m of modes) {
   for (const c of cases) {
-    const cls = classifyDiatonic(c.q1, c.r1, c.q2, c.r2);
-    const nn1 = noteName(c.q1, c.r1), o1 = keyOctave(c.q1, c.r1);
-    const nn2 = noteName(c.q2, c.r2), o2 = keyOctave(c.q2, c.r2);
+    const cls = classifyDiatonic(c.q1, c.r1, c.q2, c.r2, 'euler');
+    const nn1 = noteName(c.q1, c.r1, 'euler'), o1 = keyOctave(c.q1, c.r1, 'euler');
+    const nn2 = noteName(c.q2, c.r2, 'euler'), o2 = keyOctave(c.q2, c.r2, 'euler');
     const { num, den, e } = jiRatioWithState(c.q1, c.r1, c.q2, c.r2, st(m));
     const name = intervalNameFromCoords(c.q1, c.r1, c.q2, c.r2, st(m));
     const sigBand = `[${nn1}${o1} ${nn2}${o2}]`;

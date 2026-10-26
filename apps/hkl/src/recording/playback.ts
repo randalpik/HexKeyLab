@@ -17,6 +17,7 @@ import {
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
 import { draw } from '../render/draw.js';
+import { setAnchorOverride } from '../state/reference.js';
 import type { HkrEvent, HkrSession } from './types.js';
 import type { KeyId } from '../types.js';
 
@@ -94,6 +95,10 @@ function dispatch(ev: HkrEvent): void {
          exists for this coordinate, leave it alone so our 'off' doesn't kill
          their key. The audio engine's noteOn is a no-op in that case anyway. */
       if (!audio.activeOscs[key]) {
+        /* Syntonic / Polysyntonic: sound under the anchor the note was played
+           under — a re-anchor retunes the lattice exactly as it did live. */
+        const snap = curSession?.snapshot;
+        if (snap && (snap.tuning === 'S' || snap.tuning === 'Y')) setAnchorOverride(ev.a ?? snap.anchor);
         audio.keyVelocity[key] = ev.v;
         noteOn(key, ev.v);
         if (audio.activeOscs[key]) playbackKeys.add(key);
@@ -148,6 +153,7 @@ export function stopPlayback(): void {
     selection.selectedKeys.delete(key);
   });
   playbackKeys.clear();
+  setAnchorOverride(null);
   draw();
   if (onEndCb) {
     const cb = onEndCb;

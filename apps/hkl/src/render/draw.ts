@@ -13,7 +13,7 @@
 
 import { baseKeys } from '../layout/baseKeys.js';
 import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
-import { coordToMidi, TUNING_MODES } from '@hkl/shared/freq.js';
+import { coordToMidi, bandOffset, TUNING_MODES } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { qwertyKeys } from '../input/qwerty.js';
 import { tuning } from '../state/tuning.js';
@@ -22,7 +22,8 @@ import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
 import type { TuningMode } from '../state/persistence.js';
-import { whiteSet, hueC, computeHue, keyColorVariant } from './colors.js';
+import { probedMode } from '../state/persistence.js';
+import { whiteSet, hueC, keyColorVariant } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
@@ -255,7 +256,7 @@ function byMappingAndMode<T>(f: (cells: ReadonlyArray<readonly [number, number]>
   const out = {} as Record<Mapping, Record<TuningMode, T>>;
   for (const m of MAPPINGS) {
     out[m] = {} as Record<TuningMode, T>;
-    for (const t of TUNING_MODES) out[m][t] = f(VALID_REF_TABLE[m][t]);
+    for (const t of TUNING_MODES) out[m][t] = f(VALID_REF_TABLE[m][probedMode(t)]);
   }
   return out;
 }
@@ -312,7 +313,14 @@ function activeValidRefPaths(): Point[][] {
    TH 0, so the lineage wins by construction at every octave, and the
    picker output matches D mode exactly. Playback still uses freqAt(…, 'V')
    so the schisma stretch remains audible — the substitution only affects
-   which cells get drawn under each MIDI in the piano outline. */
+   which cells get drawn under each MIDI in the piano outline.
+
+   Syntonic / Polysyntonic: piano input stays unaltered wherever it can. The
+   primary key is the candidate band's comma count |bandOffset| (so k = 0
+   bands win — home, and in Syntonic the return bands ±2, ±4 …), then TH under
+   Pythagorean ('P') ratios, then the projection tiebreak. 5-limit pitches are
+   reached on the lattice, not through piano input. Every other mode has
+   k ≡ 0, so the primary key never decides there. */
 export function compute88PianoCoords(
   refQ: number, refR: number,
 ): Array<[number, number]> {
@@ -328,15 +336,17 @@ export function compute88PianoCoords(
   const Q_PER_OCT = 12 / c, R_PER_OCT = 0;
   const PROJ_PER_OCT = 7 * Q_PER_OCT - c * R_PER_OCT;
   const refMidi = coordToMidi(refQ, refR, mapping);
-  const pickerState: TuningStateLike = tuning.mode === 'V'
-    ? { ...tuning, mode: 'D' }
+  const pickerState: TuningStateLike = tuning.mode === 'V' ? { ...tuning, mode: 'D' }
+    : tuning.mode === 'S' || tuning.mode === 'Y' ? { ...tuning, mode: 'P' }
     : tuning;
+  const commasOf = (q: number): number =>
+    Math.abs(bandOffset(tuning.mode, bandOfCell(q, mapping) - tuning.anchor));
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
     /* q ≡ inv·N (mod 7); start there. */
     const q0 = (((inv * N) % 7) + 7) % 7;
     let bestQ = q0, bestR = (N - c * q0) / 7;
-    let bestTh = Infinity, bestAbsNProj = Infinity, found = false;
+    let bestK = Infinity, bestTh = Infinity, bestAbsNProj = Infinity, found = false;
     /* Each MIDI lives in an "octave block" relative to ref; the natural
        lineage of the ref-pitch-class at this MIDI has proj ≈ PROJ_PER_OCT ×
        octaveDelta. Tiebreak by |proj − that target| so all pitch classes
@@ -357,8 +367,9 @@ export function compute88PianoCoords(
       const th = tenneyHeightFromExps(ratio.e);
       const proj = 7 * (q - refQ) - c * (r - refR);
       const absNProj = Math.abs(proj - projTarget);
-      if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
-        bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
+      const kk = commasOf(q);
+      if (!found || kk < bestK || (kk === bestK && (th < bestTh || (th === bestTh && absNProj < bestAbsNProj)))) {
+        bestK = kk; bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
       }
     }
     cells.push([bestQ, bestR]);
@@ -447,7 +458,7 @@ let pendingTweenEnd: [number, number] | null = null;
 function ensurePianoOutline(): void {
   const refQ = referenceNote.q, refR = referenceNote.r;
   const tMode = tuning.mode;
-  const key = refQ + ',' + refR + ',' + tMode + ',' + tuning.mapping;
+  const key = refQ + ',' + refR + ',' + tMode + ',' + tuning.mapping + ',' + tuning.anchor;
   if (key === pianoOutlineCacheKey) return;
   pianoOutlineCacheKey = key;
   const cells = compute88PianoCoords(refQ, refR);

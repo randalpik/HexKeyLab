@@ -25,7 +25,7 @@ A3 = 220 Hz sits at the center. Every key is colored by pitch class (same color 
 
 ## Tunings
 
-The **Tuning** dropdown switches between six systems, shown as **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic**. The lattice doesn't change shape: only the frequencies and the colors do.
+The **Tuning** dropdown switches between eight systems, shown as **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic · Syntonic · Polysyntonic**. The lattice doesn't change shape: only the frequencies and the colors do.
 
 - **Equal (12-TET)**: the familiar even-tempered tuning. Three colors cycle by octave; a reference, not a JI mode.
 - **Ptolemaic (5-limit JI)** *(default)*: pure just intonation from primes 2, 3, and 5. The keyboard divides into **3-key-wide bands** along the q-axis; inside a band every interval is a clean 5-limit ratio, and between bands you cross a **seam** (visible as dark wedges if "Band seams" is on).
@@ -33,6 +33,7 @@ The **Tuning** dropdown switches between six systems, shown as **Equal · Ptolem
 - **Semiditonal**: 5-limit major, but the Pythagorean minor third (semiditone) becomes reachable compactly from the root while keeping some 5-limit intervals. Most practical for playing tonal harmony.
 - **Septimal (7-limit JI)**: adds prime 7. Every third column is flattened by a septimal diesis (35/36), turning a minor 7th into the harmonic 7th (7/4), so "barbershop" 7th chords (4:5:6:7) and half-diminished 7th chords (5:6:7:9) are reachable from any root.
 - **Schismatic**: like Semiditonal, but octaves are stretched out by a schisma (about 2 cents). In this mode, the diminished 4th across octave seams becomes identical to a Pythagorean major 3rd, allowing the most fluid isomorphic play across seams.
+- **Syntonic** and **Polysyntonic** (made for the Wicki-Hayden mapping): every band is Pythagorean, so scales and octaves inside a band are pure and consistent, and whole neighbouring bands are shifted by a syntonic comma (81/80). The band to the **left** of the home band is lowered, the one to the **right** raised — so a 5-limit major third (5/4) is the same key one band to the left, and a 5-limit minor third (6/5) one band to the right. **Syntonic** returns to unaltered every second band (0, +1, 0, −1 commas going right); **Polysyntonic** keeps stacking (each band one more comma than the last), which shows a note's comma variants side by side. The **home band** is always the band holding your reference note (Ctrl+click, or the score's key from Composer): move the reference into another band and that band becomes home — the keys keep their notes, but tunings, arrows and colors re-anchor around it. Colors follow the comma count: from a purple A, one comma up is orange, two is green; one down is teal. Piano-keyboard input stays in unaltered bands; reach for 5-limit pitches on the lattice.
 
 Switching tunings ramps audio frequencies smoothly over 150ms; sustained notes glide from one tuning to the next.
 

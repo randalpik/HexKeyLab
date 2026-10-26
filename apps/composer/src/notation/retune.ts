@@ -66,8 +66,13 @@ const CENTS_EPS = 0.001;
 const SEARCH_RADIUS = 15;
 
 /** Compute the retune plan for changing this document's layout. Pure
- *  inspection — does not mutate the doc. */
-export function planRetune(doc: Document, from: RetuneLayout, to: RetuneLayout): RetunePlan {
+ *  inspection — does not mutate the doc. `anchorOf` gives a note's Syntonic /
+ *  Polysyntonic anchor under a mapping (the model's anchorOfNote — derived from
+ *  its measure's key); every other mode ignores it. */
+export function planRetune(
+  doc: Document, from: RetuneLayout, to: RetuneLayout,
+  anchorOf: (note: Element, mapping: Mapping) => number,
+): RetunePlan {
   const noteEls = Array.from(doc.querySelectorAll('note'));
   const entries: RetuneNoteEntry[] = [];
   let exactCount = 0;
@@ -80,9 +85,9 @@ export function planRetune(doc: Document, from: RetuneLayout, to: RetuneLayout):
     const oldQ = parseInt(qStr, 10);
     const oldR = parseInt(rStr, 10);
     if (!Number.isFinite(oldQ) || !Number.isFinite(oldR)) continue;
-    const oldFreq = freqAt(oldQ, oldR, from.tuningMode, from.mapping);
+    const oldFreq = freqAt(oldQ, oldR, from.tuningMode, from.mapping, anchorOf(noteEl, from.mapping));
     const [seedQ, seedR] = convertCell(oldQ, oldR, from.mapping, to.mapping);
-    const best = findBestCell(seedQ, seedR, oldFreq, to);
+    const best = findBestCell(seedQ, seedR, oldFreq, to, anchorOf(noteEl, to.mapping));
     if (best.cents <= CENTS_EPS) exactCount++;
     if (best.cents > maxCents) maxCents = best.cents;
     entries.push({
@@ -124,7 +129,7 @@ export function planRetune(doc: Document, from: RetuneLayout, to: RetuneLayout):
 
 interface Candidate { q: number; r: number; cents: number; taxi: number }
 
-function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout): Candidate {
+function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout, anchor: number): Candidate {
   let best: Candidate = { q: origQ, r: origR, cents: Infinity, taxi: Infinity };
   /* a Wicki-Hayden column is a whole tone: twice the q radius, same span */
   const qRadius = to.mapping === 'wickiHayden' ? 2 * SEARCH_RADIUS : SEARCH_RADIUS;
@@ -134,7 +139,7 @@ function findBestCell(origQ: number, origR: number, origFreq: number, to: Retune
       const r = origR + dr;
       const midi = coordToMidi(q, r, to.mapping);
       if (midi < MIDI_LOW || midi > MIDI_HIGH) continue;
-      const f = freqAt(q, r, to.tuningMode, to.mapping);
+      const f = freqAt(q, r, to.tuningMode, to.mapping, anchor);
       const cents = Math.abs(1200 * Math.log2(f / origFreq));
       const taxi = Math.abs(dq) + Math.abs(dr);
       const delta = best.cents - cents;
@@ -176,6 +181,8 @@ const MODE_LABELS: Record<TuningMode, string> = {
   D: 'Semiditonal',
   '7': 'Septimal',
   V: 'Schismatic',
+  S: 'Syntonic',
+  Y: 'Polysyntonic',
 };
 
 function labelForMode(m: TuningMode): string {
@@ -249,9 +256,8 @@ function rewriteNoteCoord(note: Element, q: number, r: number, mapping: Mapping)
        (heji-render.ts). */
     note.setAttribute('accid', token);
   }
-  /* Color is footprint-derived and gets recomputed downstream via the next
-     footprint-changed broadcast from HKL. Leave the existing @color in place;
-     it'll be overwritten by the post-retune layout sync. */
+  /* Colour is rewritten by model.recolorNotes() once the new layout is set
+     (setupDialog) — it's a function of the pitch under that layout. */
 }
 
 function sortChordNotes(chord: Element, mapping: Mapping): void {

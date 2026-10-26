@@ -28,7 +28,7 @@ export type { HejiCommas, HejiGlyphFamily, HejiGlyphInfo };
 /** HEJI comma counts for the cell (q, r) under the given tuning state.
  *  Delegates to the pure shared implementation, keyed on the state's mode. */
 export function hejiCommas(q: number, r: number, state: TuningStateLike): HejiCommas {
-  return hejiCommasFor(state.mode, q, r, state.mapping);
+  return hejiCommasFor(state.mode, q, r, state.mapping, state.anchor);
 }
 
 type AccKind = Exclude<HejiGlyphFamily, 'septimal'>;

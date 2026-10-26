@@ -13,6 +13,7 @@
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
 import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
@@ -64,6 +65,11 @@ let hklTuningMode: string | null = null;
 /* HKL's current note-name mapping, cached alongside hklTuningMode (the
  * entry-mismatch gate and the match indicator compare both). */
 let hklMapping: Mapping | null = null;
+/* HKL's Syntonic / Polysyntonic anchor (home band) from `hkl-layout-state`;
+ * null before it arrives or from an HKL that doesn't send it. In S/Y the
+ * entry-mismatch gate and the match indicator compare it with the score's
+ * anchor (model.anchorAt — the key at the position). */
+let hklAnchor: number | null = null;
 /* Latched once we've consumed the first hkl-layout-state at this session's
  * startup. The first arrival of that message on a blank score silently adopts
  * HKL's tuning + ref into the score's layoutReq, so the user doesn't have to
@@ -334,10 +340,10 @@ bridge.on((msg: HklEvent) => {
          user may have made in between. */
       hklTuningMode = msg.tuningMode;
       hklMapping = mappingOf(msg.mapping);
+      hklAnchor = typeof msg.anchor === 'number' ? msg.anchor : null;
       if (!autoAdoptedHklLayout && !model.hasNotes()) {
         autoAdoptedHklLayout = true;
-        const isMode = (s: string): s is 'E' | '5' | 'P' | 'D' | '7' | 'V' =>
-          s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
+        const isMode = (s: string): s is TuningMode => (TUNING_MODES as ReadonlyArray<string>).includes(s);
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
         model.setLayoutReq({ tuningMode, mapping: hklMapping });
         broadcastLayoutReq();
@@ -502,7 +508,9 @@ function refreshLayoutMatchIndicator(): void {
     return;
   }
   const lr = model.getLayoutReq();
-  const match = hklTuningMode === lr.tuningMode && (hklMapping ?? 'euler') === lr.mapping;
+  const anchored = lr.tuningMode === 'S' || lr.tuningMode === 'Y';
+  const match = hklTuningMode === lr.tuningMode && (hklMapping ?? 'euler') === lr.mapping
+    && (!anchored || hklAnchor === null || hklAnchor === model.anchorAt(refSourceMeasure()));
   el.textContent = match ? '✓' : '⚠ mismatch';
   el.classList.toggle('mismatch', !match);
 }
@@ -557,6 +565,9 @@ function maybeBroadcastScoreRef(): void {
   if (scoreRefChanged(coord)) {
     bridge.send({ type: 'set-score-ref', q: coord.q, r: coord.r, mapping: model.getLayoutReq().mapping });
   }
+  /* S/Y: the score's anchor follows the position, so the match can change on
+     a cursor move even when HKL's anchor (pinned by a Ctrl+click) doesn't */
+  refreshLayoutMatchIndicator();
 }
 
 /** Last instrument SET broadcast to HKL (diff filter). */
@@ -1271,6 +1282,7 @@ initInput(model, {
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
   getHklMapping: () => hklMapping,
+  getHklAnchor: () => hklAnchor,
   requestApplyLayout: () => requestApplyLayout(),
   isCellRendered: (mi, staffN) => renderer.isCellRendered(mi, staffN),
   layerMarkRect: (mark) => layerMarkRect(mark),
@@ -1952,6 +1964,7 @@ void bootRenderer();
     hklConnected = false;
     hklTuningMode = null;
     hklMapping = null;
+    hklAnchor = null;
     autoAdoptedHklLayout = false;
     footprintColors = null;
     footprintRaw = null;

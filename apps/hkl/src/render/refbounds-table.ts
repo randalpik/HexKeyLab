@@ -14,9 +14,9 @@
 //   • the ±3-accidental rule in validateRefNoteCandidate changes, or
 //   • the scan range in test/bounds-probe/compute-refbounds.mjs changes.
 
-import type { Mapping, TuningMode } from '../state/persistence.js';
+import type { Mapping, ProbedMode } from '../state/persistence.js';
 
-export const VALID_REF_TABLE: Record<Mapping, Record<TuningMode, ReadonlyArray<readonly [number, number]>>> = {
+export const VALID_REF_TABLE: Record<Mapping, Record<ProbedMode, ReadonlyArray<readonly [number, number]>>> = {
   euler: {
     'E': [
       [28, -21], [31, -21], [34, -21], [37, -21], [40, -21], [43, -21], [46, -21], [49, -21],

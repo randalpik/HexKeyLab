@@ -331,7 +331,7 @@ for (const mapping of MAPPINGS) {
 }
 
 console.log('\nPIANO_BOUNDS_TABLE block for apps/hkl/src/render/canvas.ts:\n');
-console.log('const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode, CanvasMetrics>>> = {');
+console.log('const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<ProbedMode, CanvasMetrics>>> = {');
 for (const mapping of MAPPINGS) {
   console.log(`  ${mapping}: {`);
   for (const rotName of rotationNames) {

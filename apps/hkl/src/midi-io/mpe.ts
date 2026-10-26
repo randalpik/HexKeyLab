@@ -10,10 +10,11 @@ import type { TuningStateLike } from '../tuning/regions.js';
 
 export const MPE_BEND_RANGE_SEMITONES = 48;
 
-export function snapshotToTuningState(s: LayoutSnapshot): TuningStateLike {
+export function snapshotToTuningState(s: LayoutSnapshot, anchor: number = s.anchor): TuningStateLike {
   return {
     mode: s.tuning,
     mapping: s.mapping,
+    anchor,
     equalEnabled: s.equalEnabled,
     septimalEnabled: s.septimalEnabled,
     septimalW: s.septimalW,
@@ -23,8 +24,8 @@ export function snapshotToTuningState(s: LayoutSnapshot): TuningStateLike {
 /* Compute the MIDI note + 14-bit pitch-bend that represents the coordinate's
    frequency under the snapshot. bend14 is 0..16383 (unsigned); convert to
    signed (subtract 8192) when emitting via midi-file. */
-export function coordToMidi(q: number, r: number, snapshot: LayoutSnapshot): { note: number; bend14: number } {
-  const state = snapshotToTuningState(snapshot);
+export function coordToMidi(q: number, r: number, snapshot: LayoutSnapshot, anchor: number = snapshot.anchor): { note: number; bend14: number } {
+  const state = snapshotToTuningState(snapshot, anchor);
   const f = keyFreqWithState(q, r, state);
   const midiFloat = 69 + 12 * Math.log2(f / 440);
   const noteSnap = Math.max(0, Math.min(127, Math.round(midiFloat)));
