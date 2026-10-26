@@ -55,9 +55,13 @@ The Lumatone sends MIDI on a fixed (channel, note) scheme. HKL maps those addres
 A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout · Playback · Analysis · Recording · Lumatone · Piano`, plus a `Reset` prefs button) shows one fixed-height `.toolbar-group` at a time — tabs just flip `.tb-hidden`. Within a group, controls are stacked vertically wherever they fit, to keep the row narrow:
 
 - **Layout**: two columns of stacked selectors — Tuning + Mapping + Hex size, and Outline + Rotation (paired selects made equal-width via `.lsel-col`) — flanking the Note names / Band seams / Extend pattern checkbox column.
-- **Playback**: Audio + Diagnostics checkboxes stacked, then instrument/waveform selector · Import · Transpose · Clear.
-- **Lumatone**: Calibrate Pedal stacked beneath the Pedals selector (`luma-conn-only`, so it shows only when connected).
-- **Analysis / Recording / Piano**: checkbox columns and button pairs (see the table below and the Recording section).
+- **Playback**: the instrument/waveform selector, with the Audio + Diagnostics checkboxes and the Import button beneath it (`.pb-stack`) · Transpose · Clear.
+- **Analysis**: two checkbox columns of four — Show analysis / coordinates / factors / Short intervals, and Show staff notation / Dark staff notation / Composer view / HEJI accidentals.
+- **Recording**: the Rec/Play, Save/Load .hkr and Export/Import .mid button pairs, then one column of status pill · Export to Composer · Capture audio (`.rec-stack`).
+- **Lumatone**: connection status · Auto-sync + sync pill · Pedals selector stacked in one column; Calibrate Pedal and Calibrate Keys beside it (`luma-conn-only`, so they show only when connected).
+- **Piano**: status + Device selector, and the Piano input / output / Valid ref bounds checkbox column.
+- **Composer** (only while connected): connection status · Sync to Composer · score layout + match indicator on one row.
+- Every group has the same fixed 87px height (three stacked select rows), so switching tabs never moves the canvas.
 
 | Control | Behavior |
 |---|---|

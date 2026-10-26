@@ -5484,3 +5484,15 @@ Euler geometry: `57 + 4*q + 7*r` (14 sites, Composer included), octave steps `q 
 `(q + 7, r − 4)`, `(q % 3)` lineage keys, and Q-range constants. Those compile fine and are silently wrong
 in another frame (wrong chord sort order, wrong harmonic pitch, wrong SC target). After any change to what
 a coordinate means, grep for these patterns as well as following the type errors.
+
+## An evenodd "everything outside" mask must surround the view, not the origin (2026-10-26)
+
+The Ctrl-held valid-ref darkening and the piano outline's out-of-bounds mask both fill a big rect plus the
+region's polygons with `evenodd`, in a context translated by the lattice scroll. The rect was
+`rect(−diag, −diag, 2·diag, 2·diag)` — centred on the lattice ORIGIN, sized by the canvas diagonal. Once the
+view is more than one diagonal from `(0, 0)` the visible canvas falls outside the rect, every pixel loses
+one parity flip, and the mask inverts (valid cells dimmed, invalid ones clear). Euler never got that far;
+the Wicki-Hayden mapping (whole-tone columns, twice the q range) put valid refs ~1 900 px out (e.g.
+`(74, −14)`). Centre the cover rect on the view: `(viewQ·dxH + viewR·dxH/2, −viewR·dyH)`. Diagnosis path
+that found it: the cell set was right (live validator = table, 11 713 cells), and a port of the outline
+tracer reproduced membership exactly under evenodd — so the fault had to be the cover rect.

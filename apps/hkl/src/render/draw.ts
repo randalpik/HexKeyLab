@@ -1420,9 +1420,15 @@ export function draw(): void {
         -view.viewQ * dxH - view.viewR * dxH * 0.5,
         view.viewR * dyH,
       );
+      /* The evenodd cover rect must surround the VIEW, not the lattice origin:
+         the context is lattice-translated, and past one canvas diagonal from
+         (0, 0) an origin-centred rect stops covering the canvas, so the fill
+         parity flips (valid cells dimmed, invalid ones clear). Wicki-Hayden's
+         doubled column range puts valid refs that far out. */
       const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
+      const vx = view.viewQ * dxH + view.viewR * dxH * 0.5, vy = -view.viewR * dyH;
       ctx.beginPath();
-      ctx.rect(-diag, -diag, diag * 2, diag * 2);
+      ctx.rect(vx - diag, vy - diag, diag * 2, diag * 2);
       validPaths.forEach((poly) => {
         for (let i = 0; i < poly.length; i++) {
           if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
@@ -1450,12 +1456,17 @@ export function draw(): void {
        lattice space (see compute88PianoCoords). We translate by the lattice
        scroll offset so the polygon tracks the cells it encompasses. */
     let activePaths: Point[][];
+    /* Centre of the visible canvas in the current transform — where the mask's
+       cover rect must sit (see the Ctrl-darkening note above). */
+    let maskCX = 0, maskCY = 0;
     if (outlineMode === "piano") {
       ensurePianoOutline();
       ctx.translate(
         -view.viewQ * dxH - view.viewR * dxH * 0.5,
         view.viewR * dyH,
       );
+      maskCX = view.viewQ * dxH + view.viewR * dxH * 0.5;
+      maskCY = -view.viewR * dyH;
       activePaths = pianoOutlinePaths;
     } else if (outlineMode === "qwerty") {
       activePaths = qwertyOutlinePaths;
@@ -1468,7 +1479,7 @@ export function draw(): void {
        animation-margin hexes the layer renders just beyond the outline. */
     const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
     ctx.beginPath();
-    ctx.rect(-diag, -diag, diag * 2, diag * 2);
+    ctx.rect(maskCX - diag, maskCY - diag, diag * 2, diag * 2);
     activePaths.forEach((poly) => {
       for (let i = 0; i < poly.length; i++) {
         if (i === 0) ctx.moveTo(poly[i][0], poly[i][1]);
