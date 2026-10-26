@@ -1,4 +1,8 @@
 // Algorithmic note naming — handles any r value with no lookup table.
+// Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden cells take
+// their Euler-equivalent's spelling and octave.
+
+import { eulerOf, type Mapping } from './mapping.js';
 
 export const letterSemi: Record<string, number> = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
 
@@ -66,7 +70,12 @@ export function fifthName(r: number): string {
   }
 }
 
-export function noteName(q: number, r: number): string {
+export function noteName(q: number, r: number, mapping: Mapping): string {
+  const c = eulerOf(q, r, mapping);
+  return eulerNoteName(c.q, c.r);
+}
+
+function eulerNoteName(q: number, r: number): string {
   const fn = fifthName(r);
   const pos = ((q + 1) % 3 + 3) % 3;
   if (pos === 1) return fn;
@@ -95,8 +104,9 @@ export function fmtNote(name: string): string {
 
 /* octave boundary is determined by letter name only, ignoring accidentals:
    Cb4 is octave 4 (C-letter), B#3 is octave 3 (B-letter) */
-export function keyOctave(q: number, r: number): number {
-  const name = noteName(q, r);
+export function keyOctave(q: number, r: number, mapping: Mapping): number {
+  ({ q, r } = eulerOf(q, r, mapping));
+  const name = eulerNoteName(q, r);
   const v = accToVal(parseNote(name).acc);
   const natMidi = 57 + 4 * q + 7 * r - v; /* strip accidental to get natural-letter MIDI */
   return Math.floor(natMidi / 12) - 1;

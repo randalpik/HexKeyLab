@@ -129,6 +129,15 @@ export function selectionDiffersFromScoreRef(): boolean {
   return selection.q !== scoreRef.q || selection.r !== scoreRef.r;
 }
 
+/** Re-express every tier in a new coordinate frame (mapping switch): `convert`
+ *  maps a cell of the old frame to its cell in the new one. Returns true iff
+ *  the effective coord changed. The default A3 is (0, 0) in every frame. */
+export function convertReferenceFrame(convert: (q: number, r: number) => [number, number]): boolean {
+  if (selection) { const [q, r] = convert(selection.q, selection.r); selection = { ...selection, q, r }; }
+  if (scoreRef) { const [q, r] = convert(scoreRef.q, scoreRef.r); scoreRef = { q, r }; }
+  return recompute();
+}
+
 /** Apply composer-bye semantics: drop the score-ref tier, and drop the
  *  selection tier iff it was composer-set. A manual selection persists. */
 export function onComposerBye(): boolean {

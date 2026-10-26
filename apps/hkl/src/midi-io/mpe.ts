@@ -13,6 +13,7 @@ export const MPE_BEND_RANGE_SEMITONES = 48;
 export function snapshotToTuningState(s: LayoutSnapshot): TuningStateLike {
   return {
     mode: s.tuning,
+    mapping: s.mapping,
     equalEnabled: s.equalEnabled,
     septimalEnabled: s.septimalEnabled,
     septimalW: s.septimalW,

@@ -23,7 +23,7 @@ export function hkrToOnsets(session: HkrSession): Onset[] {
         tOff: null,
         q: ev.q,
         r: ev.r,
-        midi: coordToMidi(ev.q, ev.r),
+        midi: coordToMidi(ev.q, ev.r, session.snapshot.mapping),
         v: ev.v,
         strength: ev.v / 127,
         colorHex: darkColorHex(ev.q, ev.r),

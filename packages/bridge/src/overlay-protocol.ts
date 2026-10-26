@@ -24,6 +24,9 @@ import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 export interface OverlaySnapshot {
   /** TuningMode ('E'|'5'|'P'|'D'|'7'|'V'). */
   tuning: string;
+  /** Note-name mapping — the frame of every coordinate in this snapshot.
+   *  Absent from an older publisher → 'euler'. */
+  mapping?: string;
   /** HEJI accidentals enabled. */
   heji: boolean;
   /** Effective reference-note lattice coord. */

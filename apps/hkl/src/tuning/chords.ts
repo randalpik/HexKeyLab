@@ -5,7 +5,8 @@ import { gcd, jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
 import { noteName, parseNote } from '@hkl/shared/notes.js';
 import { letterIdx } from './intervals.js';
-import { bandOf } from '../layout/coords.js';
+import { bandOfCell } from '@hkl/shared/mapping.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 
 interface ChordTemplate {
   /** semitone intervals from root */
@@ -90,8 +91,8 @@ export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): Cho
   const ratState: TuningStateLike = mode === 'V' ? { ...state, mode: 'D' } : state;
   /* keys already sorted by freq; each has q, r, name, col */
   let notes: ChordNote[] = keys.map(k => {
-    const midi = 57 + 4 * k.q + 7 * k.r;
-    const nn = noteName(k.q, k.r);
+    const midi = coordToMidi(k.q, k.r, state.mapping);
+    const nn = noteName(k.q, k.r, state.mapping);
     const li = letterIdx[parseNote(nn).letter];
     return { pc: ((midi % 12) + 12) % 12, midi, name: k.name, col: k.col, rawName: nn, li, q: k.q, r: k.r };
   });
@@ -103,7 +104,7 @@ export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): Cho
   if (mode === 'V') {
     outer: for (let i = 0; i < notes.length; i++) {
       for (let j = i + 1; j < notes.length; j++) {
-        if (bandOf(notes[i].q) !== bandOf(notes[j].q)) { isSchismatic = true; break outer; }
+        if (bandOfCell(notes[i].q, state.mapping) !== bandOfCell(notes[j].q, state.mapping)) { isSchismatic = true; break outer; }
       }
     }
   }

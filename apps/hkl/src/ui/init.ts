@@ -44,7 +44,7 @@ import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
 import {
-  setTuning, setOutline, clearSelection,
+  setTuning, setMapping, setOutline, clearSelection,
   applyRotation, setRotationFromDom, syncViewToOutline,
   applyHexSize, setHexSizeFromDom,
 } from './controls.js';
@@ -103,6 +103,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
+  $<HTMLSelectElement>('selMapping').value = p.mapping;
   $<HTMLSelectElement>('selHexSize').value = p.hexSize;
   $<HTMLInputElement>('cbAudio').checked = p.audioEnabled;
   $<HTMLSelectElement>('waveform').value = p.waveform;
@@ -125,6 +126,10 @@ initInstrumentBundlesUi();
 
 const prefs = loadPrefs();
 applyPrefsToDom(prefs);
+/* The persisted mapping is the frame every other persisted coordinate
+   (manualRef) was saved in: set it directly — no frame conversion — before
+   anything reads coordinates (the verticalFreq tilt below included). */
+tuning.mapping = prefs.mapping;
 /* Apply persisted rotation before first paint — resets geometry tilt,
    canvas bounds, and cv.style.height to match the saved mode. */
 applyRotation(prefs.rotation);
@@ -240,7 +245,7 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
     const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
     const changed = isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r);
     if (changed) {
-      const newSp = refSpine(referenceNote.q, referenceNote.r);
+      const newSp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
       view.kbAnchorQ = newSp.q;
       view.kbAnchorR = newSp.r;
       onRefChanged(newSp.q - oldAQ, newSp.r - oldAR);
@@ -397,6 +402,7 @@ $<HTMLInputElement>('cbComposerView').addEventListener('change', (e) => {
 
 // Tuning + outline + clear
 $<HTMLSelectElement>('selTuning').addEventListener('change', setTuning);
+$<HTMLSelectElement>('selMapping').addEventListener('change', setMapping);
 
 $<HTMLSelectElement>('selOutline').addEventListener('change', () => setOutline());
 $<HTMLSelectElement>('selRotation').addEventListener('change', setRotationFromDom);
@@ -465,6 +471,7 @@ function resetToDefaults(): void {
   pedal.mode = p.pedalMode;
 
   setTuning();
+  setMapping();  /* back to Euler: a real switch, so held notes convert */
   setOutline();  /* user-initiated path; tween view to new home position */
   applyRotation(p.rotation);
   applyHexSize(p.hexSize);
@@ -505,7 +512,7 @@ if (prefs.manualRef) {
     /* Restore kbAnchor to match — the persisted manualRef was a user-driven
        ref change in a prior session, so the Lumatone/QWERTY layout should
        come back anchored to it, not at the default (0, 0). */
-    const sp = refSpine(referenceNote.q, referenceNote.r);
+    const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
     view.kbAnchorQ = sp.q;
     view.kbAnchorR = sp.r;
   }

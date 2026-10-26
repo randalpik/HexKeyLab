@@ -14,6 +14,7 @@ import { openSignatureModal } from './sigDialog.js';
 import { openInstrumentsModal, instrEditsFromModel, summarizeInstrEdits, reconcileInstruments, type InstrEdit } from './instrumentsDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
+import { MAPPINGS, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { planRetune, summarizePlan, applyRetune } from './notation/retune.js';
 import type { HistoryManager } from './history.js';
 
@@ -27,6 +28,11 @@ const TUNING_LABELS: Record<TuningMode, string> = {
   D: 'Semiditonal',
   '7': 'Septimal',
   V: 'Schismatic',
+};
+
+const MAPPING_LABELS: Record<Mapping, string> = {
+  euler: 'Euler',
+  wickiHayden: 'Wicki-Hayden',
 };
 
 function populateSelect(sel: HTMLSelectElement, options: ReadonlyArray<{ value: string; label: string }>, current: string): void {
@@ -47,6 +53,12 @@ function setupSelects(model: ComposerModel): void {
     populateSelect(tuningSel,
       TUNING_MODES.map((m) => ({ value: m, label: TUNING_LABELS[m] })),
       layoutReq.tuningMode);
+  }
+  const mappingSel = $<HTMLSelectElement>('setupMapping');
+  if (mappingSel) {
+    populateSelect(mappingSel,
+      MAPPINGS.map((m) => ({ value: m, label: MAPPING_LABELS[m] })),
+      layoutReq.mapping);
   }
   const hejiChk = $<HTMLInputElement>('setupHeji');
   if (hejiChk) hejiChk.checked = model.getHejiEnabled();
@@ -78,7 +90,9 @@ function readForm(): {
   };
   const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
   const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
-  const layoutReq: LayoutReq = { tuningMode };
+  const mappingRaw = $<HTMLSelectElement>('setupMapping')?.value ?? 'euler';
+  const mapping: Mapping = isMapping(mappingRaw) ? mappingRaw : 'euler';
+  const layoutReq: LayoutReq = { tuningMode, mapping };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? true;
   const ignoreColor = $<HTMLInputElement>('setupIgnoreColor')?.checked ?? false;
   const pageScaleRaw = parseInt($<HTMLInputElement>('setupPageScale')?.value ?? '', 10);
@@ -190,18 +204,18 @@ export function openSetupDialog(
        no-op push will be skipped by HistoryManager when before === after). */
     const beforeSnapshot = history ? model.snapshotState() : null;
 
-    /* Layout requirement change. Tuning mode is the only thing the score pins
-       now — the ref note is derived from the key signature at the current
-       position (cursor/refNote.ts), not stored. A tuning-mode change retunes
-       existing notes (frequency invariant: each note's old freq is preserved
-       as closely as possible by moving to a different (q, r) under the new
-       mode). */
+    /* Layout requirement change. The score pins its tuning mode and note-name
+       mapping — the ref note is derived from the key signature at the current
+       position (cursor/refNote.ts), not stored. Either change retunes existing
+       notes (frequency invariant: each note's old freq is preserved as closely
+       as possible by moving to a different (q, r) under the new layout; a
+       mapping change relocates by the exact frame conversion). */
     const prevLayout = model.getLayoutReq();
-    const tuningChanged = prevLayout.tuningMode !== values.layoutReq.tuningMode;
-    const layoutChanged = tuningChanged;
+    const layoutChanged = prevLayout.tuningMode !== values.layoutReq.tuningMode
+      || prevLayout.mapping !== values.layoutReq.mapping;
     let proceedWithLayout = true;
-    if (tuningChanged && model.hasNotes()) {
-      const plan = planRetune(model.getDoc(), prevLayout.tuningMode, values.layoutReq.tuningMode);
+    if (layoutChanged && model.hasNotes()) {
+      const plan = planRetune(model.getDoc(), prevLayout, values.layoutReq);
       const summary = summarizePlan(plan);
       proceedWithLayout = window.confirm(summary);
       if (proceedWithLayout) applyRetune(model, plan);

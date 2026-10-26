@@ -21,6 +21,7 @@
 //   sept7 > 0 → down-hooks; sept7 < 0 → up-hooks.
 
 import type { TuningMode } from './freq.js';
+import { eulerOf, type Mapping } from './mapping.js';
 
 /* ── glyph tables ──────────────────────────────────────────────────────────
  * Each row indexed by [bare, 1-down, 1-up, 2-down, 2-up]. Column 0 is the
@@ -113,8 +114,9 @@ export interface HejiCommas {
 /** HEJI comma counts for cell (q, r) relative to the A3 origin under `mode`.
  *  Pure; mirrors src/tuning/heji.ts hejiCommas exactly (that function now
  *  delegates here). Equal mode and the Pythagorean spine return {0, 0}. */
-export function hejiCommasFor(mode: TuningMode, q: number, _r: number): HejiCommas {
+export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping): HejiCommas {
   if (mode === 'E') return { syn5: 0, sept7: 0 };
+  q = eulerOf(q, r, mapping).q; /* band-independent: a copy shares its column's commas */
   const dp = posInBand(q) - posInBand(0);
   let e5 = dp, e7 = 0;
   if (modeHasShifts(mode)) {

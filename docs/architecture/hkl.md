@@ -54,7 +54,7 @@ The Lumatone sends MIDI on a fixed (channel, note) scheme. HKL maps those addres
 
 A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout · Playback · Analysis · Recording · Lumatone · Piano`, plus a `Reset` prefs button) shows one fixed-height `.toolbar-group` at a time — tabs just flip `.tb-hidden`. Within a group, controls are stacked vertically wherever they fit, to keep the row narrow:
 
-- **Layout**: two columns of stacked selectors — Tuning + Hex size, and Outline + Rotation (paired selects made equal-width via `.lsel-col`) — flanking the Note names / Band seams / Extend pattern checkbox column.
+- **Layout**: two columns of stacked selectors — Tuning + Mapping + Hex size, and Outline + Rotation (paired selects made equal-width via `.lsel-col`) — flanking the Note names / Band seams / Extend pattern checkbox column.
 - **Playback**: Audio + Diagnostics checkboxes stacked, then instrument/waveform selector · Import · Transpose · Clear.
 - **Lumatone**: Calibrate Pedal stacked beneath the Pedals selector (`luma-conn-only`, so it shows only when connected).
 - **Analysis / Recording / Piano**: checkbox columns and button pairs (see the table below and the Recording section).
@@ -62,6 +62,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 | Control | Behavior |
 |---|---|
 | Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic}. Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
+| Mapping selector | {Euler, Wicki-Hayden} (`#selMapping`, pref `mapping`). `setMapping()` re-expresses the reference, anchor and held mouse / piano-input / pedal-sustained notes in the new coordinate frame (same pitch); held Lumatone / QWERTY voices keep their `(q,r)` and retune in place; rebuilds layers, footprint, Lumatone colours, tilt; broadcasts to Composer. See architecture.md → Note-name mapping. |
 | Outline selector | {Lumatone, QWERTY, Piano, None}. Selects the footprint outline; lattice slides via refSpine (Lumatone/QWERTY/None) or piano-viewport math (Piano). Ctrl+click any hex sets the ref note → drives positioning. |
 | Transpose | 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC), always visible. Key-repeat 400ms initial / 80ms subsequent. Selection transpose only — positioning is via ref note. |
 | Audio | Toggle + instrument/waveform selector. Piano default. Samples lazy-load with a blue "loading…" state. |
@@ -89,7 +90,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 ### Chord transposition (5 axes)
 
-Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4).
+Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vectors; under the Wicki-Hayden mapping each goes through `vecFromEuler` (q doubles: M3 (+2,0), P8 (+6,0), SC (−14,+4)).
 
 - **Bounds check**: blocked if any note's screen center would leave canvas.
 - **Audio**: 100ms slide (`exponentialRampToValueAtTime`); sustained samples glide-and-fade; decaying instruments stop+retrigger.

@@ -12,7 +12,8 @@
 // the screen-space lookup table.
 
 import { baseKeys } from '../layout/baseKeys.js';
-import { bandOf } from '../layout/coords.js';
+import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
+import { coordToMidi, TUNING_MODES } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { qwertyKeys } from '../input/qwerty.js';
 import { tuning } from '../state/tuning.js';
@@ -47,7 +48,7 @@ import type { KeyId } from '../types.js';
  *  respelling is gone (the schisma is signaled by color + band seam instead
  *  of by accumulating accidentals across bands). */
 function displayedNoteName(q: number, r: number): string {
-  return noteName(q, r);
+  return noteName(q, r, tuning.mapping);
 }
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -247,24 +248,19 @@ export function invalidatePianoOutline(): void {
      V7-uniform — used in 7-limit (septimalEnabled=true; qm=2 all B-d1-upper).
    Both are pure functions of the picker logic + accidental rule, so they're
    precomputed offline by tools/bounds-probe/compute-refbounds.mjs and stored
-   in VALID_REF_TABLE. The outline polygons are cheap to derive (edge tracing
+   in VALID_REF_TABLE, per mapping × tuning mode (each mapping's cells are in
+   its own frame). The outline polygons are cheap to derive (edge tracing
    over the cell set); built once at module load. */
-const validRefSetByMode: Record<TuningMode, Set<KeyId>> = {
-  'E': new Set(VALID_REF_TABLE['E'].map(([q, r]) => (q + ',' + r) as KeyId)),
-  '5': new Set(VALID_REF_TABLE['5'].map(([q, r]) => (q + ',' + r) as KeyId)),
-  'P': new Set(VALID_REF_TABLE['P'].map(([q, r]) => (q + ',' + r) as KeyId)),
-  'D': new Set(VALID_REF_TABLE['D'].map(([q, r]) => (q + ',' + r) as KeyId)),
-  '7': new Set(VALID_REF_TABLE['7'].map(([q, r]) => (q + ',' + r) as KeyId)),
-  'V': new Set(VALID_REF_TABLE['V'].map(([q, r]) => (q + ',' + r) as KeyId)),
-};
-let validRefPathsByMode: Record<TuningMode, Point[][]> = {
-  'E': computeOutlinePaths(VALID_REF_TABLE['E']),
-  '5': computeOutlinePaths(VALID_REF_TABLE['5']),
-  'P': computeOutlinePaths(VALID_REF_TABLE['P']),
-  'D': computeOutlinePaths(VALID_REF_TABLE['D']),
-  '7': computeOutlinePaths(VALID_REF_TABLE['7']),
-  'V': computeOutlinePaths(VALID_REF_TABLE['V']),
-};
+function byMappingAndMode<T>(f: (cells: ReadonlyArray<readonly [number, number]>) => T): Record<Mapping, Record<TuningMode, T>> {
+  const out = {} as Record<Mapping, Record<TuningMode, T>>;
+  for (const m of MAPPINGS) {
+    out[m] = {} as Record<TuningMode, T>;
+    for (const t of TUNING_MODES) out[m][t] = f(VALID_REF_TABLE[m][t]);
+  }
+  return out;
+}
+const validRefSetByMode = byMappingAndMode((cells) => new Set(cells.map(([q, r]) => (q + ',' + r) as KeyId)));
+let validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
 
 /** Rebuild every scale-dependent cache after a hex-size change. The cell sets
  *  (baseKeys, qwertyKeys, VALID_REF_TABLE, validRefSetByMode) are in lattice
@@ -278,31 +274,28 @@ export function rebuildScaleGeometry(): void {
   qwertyOutlinePaths = computeOutlinePaths(qwertyKeys);
   lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
   qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
-  validRefPathsByMode = {
-    'E': computeOutlinePaths(VALID_REF_TABLE['E']),
-    '5': computeOutlinePaths(VALID_REF_TABLE['5']),
-    'P': computeOutlinePaths(VALID_REF_TABLE['P']),
-    'D': computeOutlinePaths(VALID_REF_TABLE['D']),
-    '7': computeOutlinePaths(VALID_REF_TABLE['7']),
-    'V': computeOutlinePaths(VALID_REF_TABLE['V']),
-  };
+  validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
   invalidatePianoOutline();
 }
 
 function activeValidRefSet(): Set<KeyId> {
-  return validRefSetByMode[tuning.mode];
+  return validRefSetByMode[tuning.mapping][tuning.mode];
 }
 
 function activeValidRefPaths(): Point[][] {
-  return validRefPathsByMode[tuning.mode];
+  return validRefPathsByMode[tuning.mapping][tuning.mode];
 }
 
-/* For each MIDI 21..108, pick the (q, r) with `4q + 7r = midi − 57` that
+/* For each MIDI 21..108, pick the (q, r) with `coordToMidi(q, r) = midi` that
    minimizes reduced Tenney Height of the JI ratio to (refQ, refR), tiebroken
-   by largest syntonic-axis projection (octave-invariant — see resolve.ts
-   header for derivation). Solutions live on a 1-parameter family
-   (q0+7k, r0−4k); k ∈ [−20, 20] is comfortably wider than any sensible
-   enharmonic excursion. Exported for callers that need to inspect the
+   by largest isotone-axis projection (octave-invariant — see resolve.ts
+   header for derivation). With c the column step in semitones (4 Euler,
+   2 Wicki-Hayden), solutions live on a 1-parameter family (q0+7k, r0−c·k);
+   k ∈ [−20, 20] (Euler) is comfortably wider than any sensible enharmonic
+   excursion. Under Wicki-Hayden every other step is the pitch-equal copy of
+   an Euler candidate, so k runs twice as far; copies are candidates like any
+   cell, and a copy and its pitch-equal original differ by 7·7 + 2·2 = 53 in
+   projection, so the tiebreak never ties. Exported for callers that need to inspect the
    resulting cell set under a hypothetical refNote (e.g. Ctrl+click
    validation in src/ui/init.ts). Tuning state is read from the live `tuning`
    module via jiRatio — for hypothetical-state probing under non-live tuning,
@@ -324,21 +317,25 @@ export function compute88PianoCoords(
   refQ: number, refR: number,
 ): Array<[number, number]> {
   const cells: Array<[number, number]> = [];
-  /* Octave step in (q, r) lattice is (+3, 0): 4·3 + 7·0 = 12 semitones. The
-     syntonic projection 7(q−refQ) − 4(r−refR) shifts by 7·3 − 4·0 per octave
-     — derive PROJ_PER_OCT from the octave step so it stays in sync if the
+  const mapping = tuning.mapping;
+  /* Octave step is (12/c, 0): (+3, 0) Euler, (+6, 0) Wicki-Hayden. The
+     isotone projection 7(q−refQ) − c(r−refR) shifts by 7·12/c per octave —
+     derive PROJ_PER_OCT from the octave step so it stays in sync if the
      lattice geometry ever changes. */
-  const Q_PER_OCT = 3, R_PER_OCT = 0;
-  const PROJ_PER_OCT = 7 * Q_PER_OCT - 4 * R_PER_OCT;
-  const refMidi = 57 + 4 * refQ + 7 * refR;
+  const c = mapping === 'wickiHayden' ? 2 : 4;
+  const inv = c === 4 ? 2 : 4; /* c·inv ≡ 1 (mod 7) */
+  const K = mapping === 'wickiHayden' ? 40 : 20;
+  const Q_PER_OCT = 12 / c, R_PER_OCT = 0;
+  const PROJ_PER_OCT = 7 * Q_PER_OCT - c * R_PER_OCT;
+  const refMidi = coordToMidi(refQ, refR, mapping);
   const pickerState: TuningStateLike = tuning.mode === 'V'
     ? { ...tuning, mode: 'D' }
     : tuning;
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
-    /* q ≡ 2N (mod 7) since 4·2 ≡ 1 (mod 7); start there. */
-    const q0 = (((2 * N) % 7) + 7) % 7;
-    let bestQ = q0, bestR = (N - 4 * q0) / 7;
+    /* q ≡ inv·N (mod 7); start there. */
+    const q0 = (((inv * N) % 7) + 7) % 7;
+    let bestQ = q0, bestR = (N - c * q0) / 7;
     let bestTh = Infinity, bestAbsNProj = Infinity, found = false;
     /* Each MIDI lives in an "octave block" relative to ref; the natural
        lineage of the ref-pitch-class at this MIDI has proj ≈ PROJ_PER_OCT ×
@@ -353,12 +350,12 @@ export function compute88PianoCoords(
        never falls outside its own footprint. */
     const octaveDelta = Math.round((midi - refMidi) / 12);
     const projTarget = PROJ_PER_OCT * octaveDelta;
-    for (let k = -20; k <= 20; k++) {
+    for (let k = -K; k <= K; k++) {
       const q = q0 + 7 * k;
-      const r = (N - 4 * q) / 7;
+      const r = (N - c * q) / 7;
       const ratio = jiRatioWithState(refQ, refR, q, r, pickerState);
       const th = tenneyHeightFromExps(ratio.e);
-      const proj = 7 * (q - refQ) - 4 * (r - refR);
+      const proj = 7 * (q - refQ) - c * (r - refR);
       const absNProj = Math.abs(proj - projTarget);
       if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
         bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
@@ -419,7 +416,7 @@ export function snapViewForOutline(outline: OutlineMode): void {
  *  2. Every cell in the 88-cell set the picker produces under this refNote
  *     must spell with ≤ ±3 accidentals (matching Composer's own clamp). */
 export function validateRefNoteCandidate(q: number, r: number): string | null {
-  const midi = 57 + 4 * q + 7 * r;
+  const midi = coordToMidi(q, r, tuning.mapping);
   if (midi < 21 || midi > 108) {
     return 'Reference note out of 88-key piano range (MIDI ' + midi + ')';
   }
@@ -429,7 +426,7 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
      authoritative validator. */
   const cells = compute88PianoCoords(q, r);
   for (const [cq, cr] of cells) {
-    const name = noteName(cq, cr);
+    const name = noteName(cq, cr, tuning.mapping);
     const acc = Math.abs(accToVal(parseNote(name).acc));
     if (acc > 3) return 'Reference would require ' + acc + '× accidentals (' + name + ')';
   }
@@ -450,7 +447,7 @@ let pendingTweenEnd: [number, number] | null = null;
 function ensurePianoOutline(): void {
   const refQ = referenceNote.q, refR = referenceNote.r;
   const tMode = tuning.mode;
-  const key = refQ + ',' + refR + ',' + tMode;
+  const key = refQ + ',' + refR + ',' + tMode + ',' + tuning.mapping;
   if (key === pianoOutlineCacheKey) return;
   pianoOutlineCacheKey = key;
   const cells = compute88PianoCoords(refQ, refR);
@@ -980,7 +977,7 @@ function buildTextLayer(): void {
   if ((document.getElementById('cbNotes') as HTMLInputElement).checked) {
     const savedCtx = ctx; ctx = gc;
     gKeys.forEach((k) => {
-      const midi = 57 + 4 * k.q + 7 * k.r; const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
+      const midi = coordToMidi(k.q, k.r, tuning.mapping); const pc = ((midi % 12) + 12) % 12; const isW = whiteSet.has(pc);
       drawNoteName(
         k.sx,
         k.sy,
@@ -1293,7 +1290,7 @@ export function draw(): void {
         const nq = kq + d[0],
           nr = kr + d[1];
         if (!allSet.has(packQR(nq, nr))) continue;
-        if (bandOf(kq) === bandOf(nq)) continue;
+        if (bandOfCell(kq, tuning.mapping) === bandOfCell(nq, tuning.mapping)) continue;
         const nb = posMap[nq + "," + nr];
         if (!nb) continue;
         const mx = (k.ux + nb.ux) / 2,
@@ -1367,7 +1364,7 @@ export function draw(): void {
       if (flashingSet.has(key)) return;
       const k = posMap[key];
       if (!k) return;
-      const midi = 57 + 4 * k.q + 7 * k.r;
+      const midi = coordToMidi(k.q, k.r, tuning.mapping);
       const pc = ((midi % 12) + 12) % 12;
       const isW = whiteSet.has(pc);
       drawNoteName(
@@ -1389,7 +1386,7 @@ export function draw(): void {
   ) {
     const hk = posMap[selection.hoverKey];
     if (hk) {
-      const hmidi = 57 + 4 * hk.q + 7 * hk.r;
+      const hmidi = coordToMidi(hk.q, hk.r, tuning.mapping);
       const hpc = ((hmidi % 12) + 12) % 12;
       const hW = whiteSet.has(hpc);
       drawNoteName(

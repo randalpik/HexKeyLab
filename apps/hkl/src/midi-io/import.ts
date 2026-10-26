@@ -12,7 +12,11 @@ import { keyFreqWithState } from '../tuning/frequency.js';
 import type { HkrSession, HkrEvent, LayoutSnapshot } from '../recording/types.js';
 
 const TOLERANCE_CENTS = 25;
-const Q_MIN = -30, Q_MAX = 30;
+/* Euler q range; a Wicki-Hayden column is a whole tone, so its q range doubles
+   to cover the same pitch span. Pitch-equal cells (a Wicki-Hayden original and
+   its copy one board over) share a frequency: MIDI carries pitch only, so the
+   import resolves to whichever the index meets first. */
+const Q_SPAN = 30;
 const R_MIN = -16, R_MAX = 16;
 
 interface FreqIndexEntry { logF: number; q: number; r: number }
@@ -20,7 +24,8 @@ interface FreqIndexEntry { logF: number; q: number; r: number }
 function buildFreqIndex(snapshot: LayoutSnapshot): FreqIndexEntry[] {
   const state = snapshotToTuningState(snapshot);
   const entries: FreqIndexEntry[] = [];
-  for (let q = Q_MIN; q <= Q_MAX; q++) {
+  const qSpan = snapshot.mapping === 'wickiHayden' ? 2 * Q_SPAN : Q_SPAN;
+  for (let q = -qSpan; q <= qSpan; q++) {
     for (let r = R_MIN; r <= R_MAX; r++) {
       const f = keyFreqWithState(q, r, state);
       if (f > 0 && Number.isFinite(f)) entries.push({ logF: Math.log(f), q, r });
@@ -150,7 +155,8 @@ export function midiToSession(bytes: ArrayLike<number>, snapshot: LayoutSnapshot
 export function selfTestRoundTrip(snapshot: LayoutSnapshot, epsilon = 0.5): Array<{ q: number; r: number; cents: number }> {
   const drift: Array<{ q: number; r: number; cents: number }> = [];
   const state = snapshotToTuningState(snapshot);
-  for (let q = Q_MIN; q <= Q_MAX; q++) {
+  const qSpan = snapshot.mapping === 'wickiHayden' ? 2 * Q_SPAN : Q_SPAN;
+  for (let q = -qSpan; q <= qSpan; q++) {
     for (let r = R_MIN; r <= R_MAX; r++) {
       const f0 = keyFreqWithState(q, r, state);
       const { note, bend14 } = coordToMidi(q, r, snapshot);

@@ -12,6 +12,7 @@
 
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
+import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
@@ -42,7 +43,10 @@ const $ = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
 
 let hklConnected = false;
+/* HKL's held keys as received — coordinates in HKL's mapping (`heldMapping`);
+   heldKeysInScoreFrame() re-expresses them in the score's frame on use. */
 let lastHeldKeys: ReadonlyArray<ResolvedNote> = [];
+let heldMapping: Mapping = 'euler';
 let isPlaying = false;
 /* Performance mode (input-driven playback): the player plays the Lumatone live
  * and Composer advances each voice's bar as its notes are struck (see
@@ -57,6 +61,9 @@ let perfFinishedAnnounced = false;
  * until first broadcast arrives. Used by the entry-mismatch gate (input.ts)
  * to compare against the score's pinned layoutReq.tuningMode. */
 let hklTuningMode: string | null = null;
+/* HKL's current note-name mapping, cached alongside hklTuningMode (the
+ * entry-mismatch gate and the match indicator compare both). */
+let hklMapping: Mapping | null = null;
 /* Latched once we've consumed the first hkl-layout-state at this session's
  * startup. The first arrival of that message on a blank score silently adopts
  * HKL's tuning + ref into the score's layoutReq, so the user doesn't have to
@@ -72,6 +79,12 @@ let autoAdoptedHklLayout = false;
  * `color` / `data-light-color` attributes on a transposed note, keeping
  * HKL/Composer in sync. */
 let footprintColors: FootprintColorMap = null;
+/* The footprint as received (coordinates in `footprintRawMapping`); the
+   score-frame map above is rebuilt from it whenever either mapping differs
+   from the one it was built for (footprintBuiltFor). */
+let footprintRaw: ReadonlyArray<FootprintCell> | null = null;
+let footprintRawMapping: Mapping = 'euler';
+let footprintBuiltFor = '';
 /* Editing cursor snapshot taken at playback start, restored on stop/finish. */
 let preplaybackVoice: Voice = 1;
 let preplaybackCursor = 0;
@@ -286,6 +299,7 @@ bridge.on((msg: HklEvent) => {
       break;
     case 'held-keys':
       lastHeldKeys = msg.keys;
+      heldMapping = mappingOf(msg.mapping);
       /* Echo held-keys as STATE while any are down; clear back to default
          when the user releases — but only if the bar is still showing the
          held-keys echo (don't clobber an unrelated state/action message). */
@@ -300,13 +314,14 @@ bridge.on((msg: HklEvent) => {
       }
       break;
     case 'player-note-struck':
-      onPlayerNoteStruck(msg.note);
+      onPlayerNoteStruck(toScoreFrame(msg.note, mappingOf(msg.mapping)));
       break;
     case 'tuning-changed':
       /* Cache HKL's current tuning mode for the entry-mismatch gate. The
          layoutReq pins what the score requires; comparing the two tells us
          whether entry/playback would change pitch from what the user expects. */
       hklTuningMode = msg.mode;
+      hklMapping = mappingOf(msg.mapping);
       refreshLayoutMatchIndicator();
       break;
     case 'hkl-layout-state': {
@@ -318,12 +333,13 @@ bridge.on((msg: HklEvent) => {
          subsequent tuning change on HKL doesn't override a Setup edit the
          user may have made in between. */
       hklTuningMode = msg.tuningMode;
+      hklMapping = mappingOf(msg.mapping);
       if (!autoAdoptedHklLayout && !model.hasNotes()) {
         autoAdoptedHklLayout = true;
         const isMode = (s: string): s is 'E' | '5' | 'P' | 'D' | '7' | 'V' =>
           s === 'E' || s === '5' || s === 'P' || s === 'D' || s === '7' || s === 'V';
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
-        model.setLayoutReq({ tuningMode });
+        model.setLayoutReq({ tuningMode, mapping: hklMapping });
         broadcastLayoutReq();
       }
       refreshLayoutMatchIndicator();
@@ -374,12 +390,11 @@ bridge.on((msg: HklEvent) => {
       finalizePlaybackEnd('Playback finished.');
       break;
     case 'footprint-changed': {
-      /* Rebuild the cache. Empty cells = outline='none' = no constraint. */
-      const map: NonNullable<FootprintColorMap> = new Map();
-      for (const cell of msg.cells) {
-        map.set(cell[0] + ',' + cell[1], { ink: cell[2], light: cell[3] });
-      }
-      footprintColors = map;
+      /* Keep the raw cells; footprintInScoreFrame() rebuilds the score-frame
+         map. Empty cells = outline='none' = no constraint. */
+      footprintRaw = msg.cells;
+      footprintRawMapping = mappingOf(msg.mapping);
+      footprintBuiltFor = '';
       break;
     }
     case 'import-score': {
@@ -404,7 +419,46 @@ bridge.on((msg: HklEvent) => {
  *  to 'none' (also "no constraint" — caller decides whether to allow), or
  *  a populated map keyed by "q,r" with the fresh per-cell color. */
 export function getFootprintColors(): FootprintColorMap {
+  return footprintInScoreFrame();
+}
+
+/** A bridge message's `mapping` field ('euler' when absent: an older peer). */
+function mappingOf(raw: string | undefined): Mapping {
+  return isMapping(raw) ? raw : 'euler';
+}
+
+/** Re-express a note HKL resolved (in mapping `from`) in the score's frame. */
+function toScoreFrame(note: ResolvedNote, from: Mapping): ResolvedNote {
+  const [q, r] = convertCell(note.q, note.r, from, model.getLayoutReq().mapping);
+  return q === note.q && r === note.r ? note : { ...note, q, r };
+}
+
+/** HKL's held keys, in the score's frame. */
+function heldKeysInScoreFrame(): ReadonlyArray<ResolvedNote> {
+  return lastHeldKeys.map((k) => toScoreFrame(k, heldMapping));
+}
+
+/** HKL's footprint keyed by score-frame "q,r", rebuilt when HKL's or the
+ *  score's mapping has changed since it was last built. */
+function footprintInScoreFrame(): FootprintColorMap {
+  if (footprintRaw === null) return null;
+  const to = model.getLayoutReq().mapping;
+  const key = footprintRawMapping + '>' + to;
+  if (footprintColors === null || footprintBuiltFor !== key) {
+    const map: NonNullable<FootprintColorMap> = new Map();
+    for (const cell of footprintRaw) {
+      const [q, r] = convertCell(cell[0], cell[1], footprintRawMapping, to);
+      map.set(q + ',' + r, { ink: cell[2], light: cell[3] });
+    }
+    footprintColors = map;
+    footprintBuiltFor = key;
+  }
   return footprintColors;
+}
+
+/** HKL's most-recently-broadcast note-name mapping, or null if none yet. */
+export function getHklMapping(): Mapping | null {
+  return hklMapping;
 }
 
 /** HKL's most-recently-broadcast tuning mode, or null if no broadcast yet.
@@ -422,6 +476,7 @@ function broadcastLayoutReq(): void {
   bridge.send({
     type: 'layout-req-changed',
     tuningMode: lr.tuningMode,
+    mapping: lr.mapping,
   });
 }
 
@@ -434,6 +489,7 @@ export function requestApplyLayout(): void {
   bridge.send({
     type: 'apply-layout',
     tuningMode: lr.tuningMode,
+    mapping: lr.mapping,
   });
 }
 
@@ -446,8 +502,9 @@ function refreshLayoutMatchIndicator(): void {
     return;
   }
   const lr = model.getLayoutReq();
-  el.textContent = hklTuningMode === lr.tuningMode ? '✓' : '⚠ mismatch';
-  el.classList.toggle('mismatch', hklTuningMode !== lr.tuningMode);
+  const match = hklTuningMode === lr.tuningMode && (hklMapping ?? 'euler') === lr.mapping;
+  el.textContent = match ? '✓' : '⚠ mismatch';
+  el.classList.toggle('mismatch', !match);
 }
 
 bridge.send({ type: 'composer-hello', version: PROTOCOL_VERSION });
@@ -460,7 +517,7 @@ bridge.send({ type: 'request-state' });
 function maybeBroadcastReference(): void {
   const coord = computePrevNoteRef(model);
   if (coord !== null && refNoteChanged(coord)) {
-    bridge.send({ type: 'set-reference-note', q: coord.q, r: coord.r });
+    bridge.send({ type: 'set-reference-note', q: coord.q, r: coord.r, mapping: model.getLayoutReq().mapping });
   } else if (coord === null) {
     /* Mark cache so the next non-null coord re-broadcasts even if equal to
        the prior broadcast (HKL's tier may have been cleared meanwhile). */
@@ -498,7 +555,7 @@ function refSourceMeasure(): number {
 function maybeBroadcastScoreRef(): void {
   const coord = computeSongKeyRefAt(model, refSourceMeasure());
   if (scoreRefChanged(coord)) {
-    bridge.send({ type: 'set-score-ref', q: coord.q, r: coord.r });
+    bridge.send({ type: 'set-score-ref', q: coord.q, r: coord.r, mapping: model.getLayoutReq().mapping });
   }
 }
 
@@ -1110,7 +1167,7 @@ function stepZoom(dir: 'in' | 'out'): void {
    can be tested independently). */
 installSCTransposeImpl((m, hooks, sel, dir) => {
   const before = m.snapshotState();
-  const result = scTransposeChordNote(m, hooks, sel, dir, footprintColors);
+  const result = scTransposeChordNote(m, hooks, sel, dir, footprintInScoreFrame());
   if (!result.ok) return;
   history.push(before, m.snapshotState(), 'sc-transpose');
   hooks.onStateChange();
@@ -1129,6 +1186,7 @@ installSCTransposeImpl((m, hooks, sel, dir) => {
         durationMs,
         notes: result.previewNotes,
       }],
+      mapping: m.getLayoutReq().mapping,
     });
   }
 });
@@ -1191,7 +1249,7 @@ function composerOnStateChange(): void {
 cursor.onPlaybackChange = () => maybeBroadcastComposerPlayback();
 
 initInput(model, {
-  getHeldKeys: () => lastHeldKeys,
+  getHeldKeys: () => heldKeysInScoreFrame(),
   fileCommand: (cmd) => { if (cmd === 'save') saveCommand(false); else openCommand('score'); },
   onChange: composerOnContentChange,
   onStateChange: composerOnStateChange,
@@ -1212,6 +1270,7 @@ initInput(model, {
   seekPlaybackByMeasure: (dir) => seekPlaybackByMeasure(dir),
   onZoomChange: (dir) => stepZoom(dir),
   getHklTuningMode: () => hklTuningMode,
+  getHklMapping: () => hklMapping,
   requestApplyLayout: () => requestApplyLayout(),
   isCellRendered: (mi, staffN) => renderer.isCellRendered(mi, staffN),
   layerMarkRect: (mark) => layerMarkRect(mark),
@@ -1266,7 +1325,7 @@ function startPlayback(): void {
   cursor.setPlaybackMode(true);
   cursor.update(model, cursorOpts());
   refreshPlayButton();
-  bridge.send({ type: 'play-score', events, pedalEvents });
+  bridge.send({ type: 'play-score', events, pedalEvents, mapping: model.getLayoutReq().mapping });
   setStatus('Playing ' + events.length + ' event(s)…', 'state');
 }
 
@@ -1855,7 +1914,7 @@ void bootRenderer();
 /* DevTools handle. */
 (window as unknown as { __hkl_composer: unknown }).__hkl_composer = {
   bridge, model, renderer, cursor, reRender,
-  getHeldKeys: () => lastHeldKeys,
+  getHeldKeys: () => heldKeysInScoreFrame(),
   /* Test-only: true while a render is queued behind the heavy-render defer
      (reRender's double-rAF + timeout) or running. A fixture that reads splice
      state straight after reRender() must await this — reRender returns BEFORE
@@ -1892,8 +1951,12 @@ void bootRenderer();
     pendingStopAcks = 0;
     hklConnected = false;
     hklTuningMode = null;
+    hklMapping = null;
     autoAdoptedHklLayout = false;
     footprintColors = null;
+    footprintRaw = null;
+    footprintBuiltFor = '';
+    heldMapping = 'euler';
     /* Both ref tiers are diff-gated by module-global snapshots. The score-ref
        is now derived and broadcast on every cursor move / edit / transport
        step, so a snapshot left behind by the previous fixture would silently

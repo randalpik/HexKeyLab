@@ -7,7 +7,7 @@
 // works around both with a two-step transform, applied ONLY on the render path
 // (never to the saved/.hkc doc — (q, r) stays the source of truth):
 //
-//   1. transformDocForHeji(doc, mode, hejiEnabled): for each note whose label
+//   1. transformDocForHeji(doc, mode, mapping, hejiEnabled): for each note whose label
 //      needs more than Verovio can draw natively (any syntonic arrow, any
 //      septimal hook, or |alter| > 3), replace its single @accid with a row of
 //      DISTINCT placeholder <accid> children. Distinct tokens force Verovio to
@@ -24,6 +24,7 @@
 
 import { hejiChain, hejiCommasFor, type HejiGlyphFamily } from '@hkl/shared/heji.js';
 import type { TuningMode } from '@hkl/shared/freq.js';
+import type { Mapping } from '@hkl/shared/mapping.js';
 import { noteAlter } from './accidentals.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -108,19 +109,19 @@ function needsInjection(alter: number, syn5: number, sept7: number): boolean {
 /** Step 1 — rewrite notes needing injection into tagged placeholder rows.
  *  Operates on the render clone AFTER the visible @accid has been set (so only
  *  notes with a visible @accid are touched). Idempotent. */
-export function transformDocForHeji(doc: Document, mode: TuningMode, hejiEnabled: boolean): void {
+export function transformDocForHeji(doc: Document, mode: TuningMode, mapping: Mapping, hejiEnabled: boolean): void {
   for (const note of Array.from(doc.querySelectorAll('note'))) {
     /* Visible accidental can live either as the @accid attribute OR as an
        <accid> child element (the latter is how paren-cautionary marks are
        encoded, via @enclose="paren" on the child). Check both forms. */
     const childAccid = Array.from(note.children).find((c) => c.localName === 'accid' && c.hasAttribute('accid')) as Element | undefined;
     if (!note.hasAttribute('accid') && !childAccid) continue;
-    const alter = noteAlter(note);
+    const alter = noteAlter(note, mapping);
     const qs = note.getAttribute('data-q');
     const rs = note.getAttribute('data-r');
     const hasCoord = qs !== null && rs !== null;
     const { syn5, sept7 } = (hejiEnabled && hasCoord)
-      ? hejiCommasFor(mode, parseInt(qs!, 10), parseInt(rs!, 10))
+      ? hejiCommasFor(mode, parseInt(qs!, 10), parseInt(rs!, 10), mapping)
       : { syn5: 0, sept7: 0 };
     if (!needsInjection(alter, syn5, sept7)) continue;
 

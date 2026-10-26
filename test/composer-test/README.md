@@ -121,6 +121,7 @@ Categories (`fixtures/<name>.mjs`):
 | `structure` | repeats, voltas, ottava, section headers, page breaks |
 | `expression` | pedal, expressive text, tempo, hairpins, mark placement |
 | `layer-cursor` | expr/pedal/tempo layer stops and bar geometry |
+| `mapping` | Euler / Wicki-Hayden note-name mapping: Setup retune across mappings, entry gate, held-key frame conversion |
 | `instruments` | multi-instrument, part view, harmonics, pizz/arco |
 | `musicxml` | MusicXML import/export |
 | `files` | save/load via the local file bridge, PDF export |

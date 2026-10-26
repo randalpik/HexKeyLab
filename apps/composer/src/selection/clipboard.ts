@@ -11,6 +11,7 @@ import { type ComposerModel, type Voice, MEI_NS } from '../model/index.js';
 import type { SelectionState, Staff } from './selection.js';
 import { beatBoundariesInVoice } from './selection.js';
 import { realTicks } from '../model/ticks.js';
+import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 
 const HKL_NS = 'https://hexkeylab.com/ns/mei';
 const CLIPBOARD_LOCAL = 'clipboard';
@@ -188,6 +189,10 @@ export function serializeClipboard(model: ComposerModel, sel: SelectionState): s
   const doc = document.implementation.createDocument(HKL_NS, 'hkl:clipboard', null);
   const root = doc.documentElement;
   root.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns', MEI_NS);
+  /* The source score's note-name mapping: data-q/data-r are in its frame.
+     Implicit when Euler (the default). */
+  const mapping = model.getLayoutReq().mapping;
+  if (mapping !== 'euler') root.setAttribute('mapping', mapping);
 
   if (sel.kind === 'beat') {
     const boundaries = beatBoundariesInVoice(model, sel.voice);
@@ -237,7 +242,10 @@ export function serializeClipboard(model: ComposerModel, sel: SelectionState): s
 
 /** Parse an <hkl:clipboard> fragment back into ClipboardContents. Returns
  *  null on parse failure or non-HKL root. */
-export function parseClipboard(text: string): ClipboardContents | null {
+/** Parse clipboard text into contents whose note coordinates are in
+ *  `destMapping`'s frame (converted from the source score's mapping when the
+ *  two differ — a paste across scores). */
+export function parseClipboard(text: string, destMapping: Mapping): ClipboardContents | null {
   if (!text || !text.trim()) return null;
   let doc: Document;
   try {
@@ -248,6 +256,17 @@ export function parseClipboard(text: string): ClipboardContents | null {
   if (doc.querySelector('parsererror')) return null;
   const root = doc.documentElement;
   if (!root || root.namespaceURI !== HKL_NS || root.localName !== CLIPBOARD_LOCAL) return null;
+  const srcRaw = root.getAttribute('mapping');
+  const srcMapping: Mapping = isMapping(srcRaw) ? srcRaw : 'euler';
+  if (srcMapping !== destMapping) {
+    for (const n of Array.from(root.getElementsByTagNameNS(MEI_NS, 'note'))) {
+      const qs = n.getAttribute('data-q'), rs = n.getAttribute('data-r');
+      if (qs === null || rs === null) continue;
+      const [q, r] = convertCell(parseInt(qs, 10), parseInt(rs, 10), srcMapping, destMapping);
+      n.setAttribute('data-q', String(q));
+      n.setAttribute('data-r', String(r));
+    }
+  }
   const kind = root.getAttribute('kind');
   if (kind === 'beat') {
     const voiceRaw = parseInt(root.getAttribute('voice') ?? '1', 10);

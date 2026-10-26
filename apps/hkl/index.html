@@ -229,10 +229,12 @@ body.composer-view #composerFrame{display:flex}
 .toolbar-selector{row-gap:6px}
 .toolbar-row{margin-top:2px}
 /* Fixed integer height (not min-height) so every toolbar group is identical —
-   the tallest content is the Recording group's stacked button-pairs (~57.2px),
-   so 58px clears it without clipping. Integer keeps the row off a fractional
-   device pixel (see the .tbtn note above re: blurred Composer-view staff lines). */
-.toolbar-group{display:inline-flex;flex-wrap:nowrap;flex-shrink:0;align-items:center;gap:4px 8px;padding:3px 8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;height:58px}
+   the tallest content is the Layout group's three stacked selects (Tuning /
+   Mapping / Hex size: 3 × 25px rows + 2 × 2px gaps = 79px), so 87px (79 +
+   2 × 3px padding + 2 × 1px border, border-box) clears it without clipping.
+   Integer keeps the row off a fractional device pixel (see the .tbtn note
+   above re: blurred Composer-view staff lines). */
+.toolbar-group{display:inline-flex;flex-wrap:nowrap;flex-shrink:0;align-items:center;gap:4px 8px;padding:3px 8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;height:87px}
 .tb-hidden{display:none !important}
 .cb-column{display:inline-flex;flex-direction:column;align-items:flex-start;gap:0}
 .cb-column label{height:16px;line-height:16px}
@@ -291,6 +293,13 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <option value="D">Semiditonal</option>
 <option value="7">Septimal</option>
 <option value="V">Schismatic</option>
+</select>
+</div>
+<div class="lsel">
+<span>Mapping:</span>
+<select id="selMapping" autocomplete="off">
+<option value="euler" selected>Euler</option>
+<option value="wickiHayden">Wicki-Hayden</option>
 </select>
 </div>
 <div class="lsel">

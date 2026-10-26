@@ -18,6 +18,7 @@ import type { CoordRef } from '@hkl/bridge/protocol.js';
 import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
 import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import { vecFromEuler, type Mapping } from '@hkl/shared/mapping.js';
 import { realTicks } from '../model/ticks.js';
 
 /** Fresh per-cell notehead colors: `ink` for light theme (the @color attr),
@@ -72,10 +73,10 @@ function noteCoord(note: Element): { q: number; r: number } | null {
   return { q, r };
 }
 
-function noteMidiSortKey(note: Element): number {
+function noteMidiSortKey(note: Element, mapping: Mapping): number {
   const c = noteCoord(note);
   if (!c) return 0;
-  return coordToMidi(c.q, c.r);
+  return coordToMidi(c.q, c.r, mapping);
 }
 
 /** Find the flat-index of `target` (a top-level element) in `voice`. Returns
@@ -124,7 +125,8 @@ function gatherSoundingAt(model: ComposerModel, atTick: number): CoordRef[] {
 
 const FAILED_SC: SCResult = { ok: false, previewNotes: [], previewTicks: 0 };
 
-/** Apply enharmonic-axis hop (±(7, −4)) to the note identified by sel.noteId.
+/** Apply enharmonic-axis hop (±(7, −4) in Euler terms, ±(14, −4) under the
+ *  Wicki-Hayden mapping) to the note identified by sel.noteId.
  *  Handles both chord-child notes (parent is `<chord>`) and bare notes
  *  (parent is `<layer>`). On success, also collects the post-shift vertical
  *  slice (every note from every voice that's sounding at the element's start
@@ -148,8 +150,10 @@ export function scTransposeChordNote(
     hooks.setStatus?.('Note missing lattice coordinates.', 'error');
     return FAILED_SC;
   }
-  const newQ = oldCoord.q + 7 * dir;
-  const newR = oldCoord.r - 4 * dir;
+  const mapping = model.getLayoutReq().mapping;
+  const [dq, dr] = vecFromEuler(7 * dir, -4 * dir, mapping);
+  const newQ = oldCoord.q + dq;
+  const newR = oldCoord.r + dr;
   const newKey = newQ + ',' + newR;
   /* Layout-outline constraint: when HKL has broadcast a non-empty footprint,
      reject SC shifts that would land outside it. Empty footprint or null
@@ -158,10 +162,10 @@ export function scTransposeChordNote(
     hooks.setStatus?.('SC blocked — target (' + newQ + ',' + newR + ') outside HKL layout outline.', 'error');
     return FAILED_SC;
   }
-  const newName = noteName(newQ, newR);
+  const newName = noteName(newQ, newR, mapping);
   const parsed = parseNote(newName);
   const alter = accToVal(parsed.acc);
-  const oct = keyOctave(newQ, newR);
+  const oct = keyOctave(newQ, newR, mapping);
   /* @accid is a display cache only (clamped to a valid MEI token); (newQ, newR)
      is the source of truth and the render pipeline stacks accidentals beyond
      ±3 from it (heji-render.ts). */
@@ -193,7 +197,7 @@ export function scTransposeChordNote(
   if (isInChord) {
     const chord = parent!;
     const before = chordNotes(chord);
-    const after = before.slice().sort((a, b) => noteMidiSortKey(a) - noteMidiSortKey(b));
+    const after = before.slice().sort((a, b) => noteMidiSortKey(a, mapping) - noteMidiSortKey(b, mapping));
     /* Re-append in sorted order. The chord may have non-<note> children
        (verse/syl/lyric tags etc.) — preserve them in original order at the
        end. */

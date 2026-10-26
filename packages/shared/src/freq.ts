@@ -1,9 +1,13 @@
-// Pure frequency math: (q, r, mode) → Hz. Self-contained so the Composer
-// side can compute pitches without pulling in HKL's live tuning state.
+// Pure frequency math: (q, r, mode, mapping) → Hz. Self-contained so the
+// Composer side can compute pitches without pulling in HKL's live tuning state.
 //
 // A3 = 220 Hz sits at (q=0, r=0). The reference note doesn't appear here on
 // purpose: it doesn't affect (q, r) → Hz under any of HKL's tuning systems.
 // It only shifts which physical key maps to which (q, r) during input.
+// Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden cells
+// resolve through their Euler-equivalent.
+
+import { eulerOf, type Mapping } from './mapping.js';
 
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
 
@@ -23,9 +27,11 @@ export const MIDI_LOW = 21;
 export const MIDI_HIGH = 108;
 
 /** Nominal 12-TET MIDI note number for the lattice cell. Origin: A3 (MIDI 57)
- *  at (0, 0). Used to bound the retune search and to validate cells. */
-export function coordToMidi(q: number, r: number): number {
-  return 57 + 4 * q + 7 * r;
+ *  at (0, 0). Used to bound the retune search and to validate cells. A column
+ *  step is a major third (4 semitones) under 'euler', a whole tone (2) under
+ *  'wickiHayden'; a row step is a fifth in both. */
+export function coordToMidi(q: number, r: number, mapping: Mapping): number {
+  return 57 + (mapping === 'wickiHayden' ? 2 : 4) * q + 7 * r;
 }
 
 /** Prime-exponent vector [e2, e3, e5, e7] of (q, r)'s frequency under a JI
@@ -39,8 +45,19 @@ export function coordToMidi(q: number, r: number): number {
  *  in band. Per-mode region shift mirrors the qm column rules in
  *  src/tuning/regions.ts (Ptolemaic = none; the rest shift by a syntonic comma
  *  and, for Septimal, a septimal comma; Schismatic adds schisma^b octave
- *  stacking — see SCHISMA above). */
-export function coordExps(q: number, r: number, mode: TuningMode): [number, number, number, number] {
+ *  stacking — see SCHISMA above).
+ *
+ *  Wicki-Hayden cells take their Euler-equivalent's vector. A Schismatic copy
+ *  is its column an exact octave down, so it keeps the column's schisma count
+ *  — one more than its Euler-equivalent one band lower. */
+export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping): [number, number, number, number] {
+  const c = eulerOf(q, r, mapping);
+  const e = eulerExps(c.q, c.r, mode);
+  if (c.copy && mode === 'V') { e[0] += -15; e[1] += 8; e[2] += 1; }
+  return e;
+}
+
+function eulerExps(q: number, r: number, mode: TuningMode): [number, number, number, number] {
   const b = Math.floor((q + 1) / 3);
   const p = ((q + 1) % 3 + 3) % 3;
   /* 2^b·(5/4)^(p−1)·(3/2)^r decomposed: (5/4)=5·2⁻², (3/2)=3·2⁻¹ */
@@ -62,9 +79,9 @@ export function coordExps(q: number, r: number, mode: TuningMode): [number, numb
 /** Frequency in Hz of (q, r) under `mode`. Independent of reference note.
  *  JI modes multiply the canonical exponent vector (`coordExps`) into Hz once;
  *  Equal is 12-TET and returns directly. */
-export function freqAt(q: number, r: number, mode: TuningMode): number {
-  if (mode === 'E') return 220 * Math.pow(2, (4 * q + 7 * r) / 12);
-  const [e2, e3, e5, e7] = coordExps(q, r, mode);
+export function freqAt(q: number, r: number, mode: TuningMode, mapping: Mapping): number {
+  if (mode === 'E') return 220 * Math.pow(2, (coordToMidi(q, r, mapping) - 57) / 12);
+  const [e2, e3, e5, e7] = coordExps(q, r, mode, mapping);
   return 220 * Math.pow(2, e2) * Math.pow(3, e3) * Math.pow(5, e5) * Math.pow(7, e7);
 }
 

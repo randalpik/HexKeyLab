@@ -1,5 +1,5 @@
 // Retune existing score content when the user changes the score's required
-// tuning mode in Setup. Frequency is the invariant: each note's old freq
+// layout (tuning mode and/or note-name mapping) in Setup. Frequency is the invariant: each note's old freq
 // (computed under the previous tuning mode at its (q, r)) is preserved as
 // closely as possible by relocating the note to a different (q, r) under
 // the new mode.
@@ -12,6 +12,10 @@
 //   - Score: |1200 · log2(newFreq / oldFreq)| cents.
 //   - Tiebreak: taxicab distance |Δq| + |Δr| from the original (q, r), so
 //     octave / SC-equivalent matches stay in the original neighborhood.
+//   - Mapping change: the search is seeded at the closed-form frame conversion
+//     (convertCell) instead of the original (q, r) — coordinates of different
+//     mappings aren't comparable — so an exact counterpart (every cell but a
+//     Schismatic Wicki-Hayden copy going to Euler) is found at taxicab 0.
 //
 // Edge cases:
 //   - Chord collapse: two notes in the same <chord> retune to the same
@@ -22,6 +26,7 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '@hkl/shared/freq.js';
+import { convertCell, type Mapping } from '@hkl/shared/mapping.js';
 import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
 import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { pruneDanglingSlurs } from '../slurs.js';
@@ -39,9 +44,12 @@ export interface RetuneNoteEntry {
   drop: boolean;
 }
 
+/** The two layout fields a retune relocates across. */
+export interface RetuneLayout { tuningMode: TuningMode; mapping: Mapping }
+
 export interface RetunePlan {
-  fromMode: TuningMode;
-  toMode: TuningMode;
+  from: RetuneLayout;
+  to: RetuneLayout;
   notes: ReadonlyArray<RetuneNoteEntry>;
   /** Notes within 0.001¢ of their original frequency. */
   exactCount: number;
@@ -57,9 +65,9 @@ const CENTS_EPS = 0.001;
  *  any exact match that exists, and any reasonable approximation otherwise. */
 const SEARCH_RADIUS = 15;
 
-/** Compute the retune plan for changing this document's tuning mode. Pure
+/** Compute the retune plan for changing this document's layout. Pure
  *  inspection — does not mutate the doc. */
-export function planRetune(doc: Document, fromMode: TuningMode, toMode: TuningMode): RetunePlan {
+export function planRetune(doc: Document, from: RetuneLayout, to: RetuneLayout): RetunePlan {
   const noteEls = Array.from(doc.querySelectorAll('note'));
   const entries: RetuneNoteEntry[] = [];
   let exactCount = 0;
@@ -72,8 +80,9 @@ export function planRetune(doc: Document, fromMode: TuningMode, toMode: TuningMo
     const oldQ = parseInt(qStr, 10);
     const oldR = parseInt(rStr, 10);
     if (!Number.isFinite(oldQ) || !Number.isFinite(oldR)) continue;
-    const oldFreq = freqAt(oldQ, oldR, fromMode);
-    const best = findBestCell(oldQ, oldR, oldFreq, toMode);
+    const oldFreq = freqAt(oldQ, oldR, from.tuningMode, from.mapping);
+    const [seedQ, seedR] = convertCell(oldQ, oldR, from.mapping, to.mapping);
+    const best = findBestCell(seedQ, seedR, oldFreq, to);
     if (best.cents <= CENTS_EPS) exactCount++;
     if (best.cents > maxCents) maxCents = best.cents;
     entries.push({
@@ -96,7 +105,7 @@ export function planRetune(doc: Document, fromMode: TuningMode, toMode: TuningMo
   let dropCount = 0;
   for (const arr of byChord.values()) {
     const sorted = arr.slice().sort(
-      (a, b) => coordToMidi(a.oldQ, a.oldR) - coordToMidi(b.oldQ, b.oldR),
+      (a, b) => coordToMidi(a.oldQ, a.oldR, from.mapping) - coordToMidi(b.oldQ, b.oldR, from.mapping),
     );
     const seen = new Set<string>();
     for (const e of sorted) {
@@ -110,20 +119,22 @@ export function planRetune(doc: Document, fromMode: TuningMode, toMode: TuningMo
     }
   }
 
-  return { fromMode, toMode, notes: entries, exactCount, maxCents, dropCount };
+  return { from, to, notes: entries, exactCount, maxCents, dropCount };
 }
 
 interface Candidate { q: number; r: number; cents: number; taxi: number }
 
-function findBestCell(origQ: number, origR: number, origFreq: number, newMode: TuningMode): Candidate {
+function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout): Candidate {
   let best: Candidate = { q: origQ, r: origR, cents: Infinity, taxi: Infinity };
-  for (let dq = -SEARCH_RADIUS; dq <= SEARCH_RADIUS; dq++) {
+  /* a Wicki-Hayden column is a whole tone: twice the q radius, same span */
+  const qRadius = to.mapping === 'wickiHayden' ? 2 * SEARCH_RADIUS : SEARCH_RADIUS;
+  for (let dq = -qRadius; dq <= qRadius; dq++) {
     for (let dr = -SEARCH_RADIUS; dr <= SEARCH_RADIUS; dr++) {
       const q = origQ + dq;
       const r = origR + dr;
-      const midi = coordToMidi(q, r);
+      const midi = coordToMidi(q, r, to.mapping);
       if (midi < MIDI_LOW || midi > MIDI_HIGH) continue;
-      const f = freqAt(q, r, newMode);
+      const f = freqAt(q, r, to.tuningMode, to.mapping);
       const cents = Math.abs(1200 * Math.log2(f / origFreq));
       const taxi = Math.abs(dq) + Math.abs(dr);
       const delta = best.cents - cents;
@@ -140,7 +151,10 @@ export function summarizePlan(plan: RetunePlan): string {
   const total = plan.notes.length;
   const moved = total - plan.exactCount;
   const lines: string[] = [];
-  lines.push(`Changing tuning from "${labelForMode(plan.fromMode)}" to "${labelForMode(plan.toMode)}" will retune ${total} note${total === 1 ? '' : 's'}.`);
+  const what = plan.from.mapping === plan.to.mapping
+    ? `Changing tuning from "${labelForMode(plan.from.tuningMode)}" to "${labelForMode(plan.to.tuningMode)}"`
+    : `Changing layout from "${labelForLayout(plan.from)}" to "${labelForLayout(plan.to)}"`;
+  lines.push(`${what} will retune ${total} note${total === 1 ? '' : 's'}.`);
   if (plan.exactCount > 0) {
     lines.push(`  ${plan.exactCount} exact match${plan.exactCount === 1 ? '' : 'es'} (no pitch change).`);
   }
@@ -168,6 +182,15 @@ function labelForMode(m: TuningMode): string {
   return MODE_LABELS[m];
 }
 
+const MAPPING_LABELS: Record<Mapping, string> = {
+  euler: 'Euler',
+  wickiHayden: 'Wicki-Hayden',
+};
+
+function labelForLayout(l: RetuneLayout): string {
+  return MODE_LABELS[l.tuningMode] + ', ' + MAPPING_LABELS[l.mapping] + ' mapping';
+}
+
 /** Apply the plan to the model in-place. Rewrites lattice attrs for non-dropped
  *  notes, removes dropped notes (with tie-reference cleanup), and re-sorts any
  *  affected chord's notes by MIDI ascending. */
@@ -175,12 +198,13 @@ export function applyRetune(model: ComposerModel, plan: RetunePlan): void {
   const doc = model.getDoc();
   const affectedChords = new Set<Element>();
 
+  const mapping = plan.to.mapping;
   /* Pass 1: rewrite kept notes. */
   for (const e of plan.notes) {
     if (e.drop) continue;
     const parent = e.noteEl.parentElement;
     if (parent && parent.localName === 'chord') affectedChords.add(parent);
-    rewriteNoteCoord(e.noteEl, e.newQ, e.newR);
+    rewriteNoteCoord(e.noteEl, e.newQ, e.newR, mapping);
   }
 
   /* Pass 2: remove dropped notes + clean up tie references that pointed at
@@ -197,7 +221,7 @@ export function applyRetune(model: ComposerModel, plan: RetunePlan): void {
   /* Pass 3: sort each affected chord's notes ascending by MIDI under the
      new lattice. Sibling order matters for chord-internal cursor selection
      and for accidentals.ts's left-to-right rendering. */
-  for (const chord of affectedChords) sortChordNotes(chord);
+  for (const chord of affectedChords) sortChordNotes(chord, mapping);
 
   /* Dropped notes may have been slur endpoints. Kept notes are rewritten in
      place (xml:id preserved), so their slurs survive; only drops can dangle.
@@ -206,13 +230,13 @@ export function applyRetune(model: ComposerModel, plan: RetunePlan): void {
   pruneDanglingSlurs(doc);
 }
 
-function rewriteNoteCoord(note: Element, q: number, r: number): void {
+function rewriteNoteCoord(note: Element, q: number, r: number, mapping: Mapping): void {
   note.setAttribute('data-q', String(q));
   note.setAttribute('data-r', String(r));
-  const name = noteName(q, r);
+  const name = noteName(q, r, mapping);
   const parsed = parseNote(name);
   const alter = accToVal(parsed.acc);
-  const oct = keyOctave(q, r);
+  const oct = keyOctave(q, r, mapping);
   note.setAttribute('pname', parsed.letter.toLowerCase());
   note.setAttribute('oct', String(oct));
   note.removeAttribute('accid.ges');
@@ -230,7 +254,7 @@ function rewriteNoteCoord(note: Element, q: number, r: number): void {
      it'll be overwritten by the post-retune layout sync. */
 }
 
-function sortChordNotes(chord: Element): void {
+function sortChordNotes(chord: Element, mapping: Mapping): void {
   const notes = Array.from(chord.children).filter((c) => c.localName === 'note');
   if (notes.length < 2) return;
   const nonNotes = Array.from(chord.children).filter((c) => c.localName !== 'note');
@@ -239,7 +263,7 @@ function sortChordNotes(chord: Element): void {
     const ar = parseInt(a.getAttribute('data-r') ?? '0', 10);
     const bq = parseInt(b.getAttribute('data-q') ?? '0', 10);
     const br = parseInt(b.getAttribute('data-r') ?? '0', 10);
-    return coordToMidi(aq, ar) - coordToMidi(bq, br);
+    return coordToMidi(aq, ar, mapping) - coordToMidi(bq, br, mapping);
   });
   for (const n of notes) chord.removeChild(n);
   for (const n of sorted) chord.appendChild(n);

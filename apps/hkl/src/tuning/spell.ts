@@ -10,6 +10,7 @@ import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { darkColorHex } from '../transcription/pitch.js';
 import { lightSourceHex } from '../render/colors.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import { tuning } from '../state/tuning.js';
 
 export interface NoteSpec {
   q: number;
@@ -36,13 +37,13 @@ export function accToMei(acc: string): string {
 /** Resolve (q, r) to its spelled note + color. Velocity-free; callers that need
  *  velocity (the bridge) layer it on top. */
 export function resolveNoteSpec(q: number, r: number): NoteSpec {
-  const parsed = parseNote(noteName(q, r));
+  const parsed = parseNote(noteName(q, r, tuning.mapping));
   return {
     q, r,
     pname: parsed.letter.toLowerCase(),
     accid: accToMei(parsed.acc),
-    oct: keyOctave(q, r),
-    midi: coordToMidi(q, r),
+    oct: keyOctave(q, r, tuning.mapping),
+    midi: coordToMidi(q, r, tuning.mapping),
     colorHex: darkColorHex(q, r),
     lightColorHex: lightSourceHex(q, r),
   };

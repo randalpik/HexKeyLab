@@ -9,6 +9,7 @@
 // Composer's computeAccidentalDisplay comma-natural rule — no measure carry).
 
 import type { TuningMode } from '@hkl/shared/freq.js';
+import type { Mapping } from '@hkl/shared/mapping.js';
 import { hejiCommasFor } from '@hkl/shared/heji.js';
 import { alterFromCount, tokenFromAlter } from './accidentals.js';
 import { transformDocForHeji } from './heji-render.js';
@@ -37,11 +38,11 @@ function escapeAttr(s: string): string {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function noteXml(n: StaffChordNote, mode: TuningMode, hejiEnabled: boolean): string {
+function noteXml(n: StaffChordNote, mode: TuningMode, mapping: Mapping, hejiEnabled: boolean): string {
   const alter = alterFromCount(n.accid);
   let token = alter !== 0 ? tokenFromAlter(alter) : null;
   if (hejiEnabled && !token) {
-    const { syn5, sept7 } = hejiCommasFor(mode, n.q, n.r);
+    const { syn5, sept7 } = hejiCommasFor(mode, n.q, n.r, mapping);
     /* Comma on a conventionally-natural note: force an explicit natural so the
        HEJI transform sees an @accid and renders the arrow/hook on it. */
     if (syn5 !== 0 || sept7 !== 0) token = 'n';
@@ -55,13 +56,13 @@ function noteXml(n: StaffChordNote, mode: TuningMode, hejiEnabled: boolean): str
 /** Build the content of one staff layer: a whole-note chord, a single whole
  *  note, or an invisible whole-measure space when the staff has no notes (no
  *  rest glyph — this is a live chord view, not an engraved score). */
-function staffContent(notes: StaffChordNote[], mode: TuningMode, hejiEnabled: boolean): string {
+function staffContent(notes: StaffChordNote[], mode: TuningMode, mapping: Mapping, hejiEnabled: boolean): string {
   if (notes.length === 0) return '<space dur="1"/>';
   if (notes.length === 1) {
     /* Single note still needs dur="1" (whole note). */
-    return noteXml(notes[0], mode, hejiEnabled).replace('<note ', '<note dur="1" ');
+    return noteXml(notes[0], mode, mapping, hejiEnabled).replace('<note ', '<note dur="1" ');
   }
-  const inner = notes.map(n => noteXml(n, mode, hejiEnabled)).join('');
+  const inner = notes.map(n => noteXml(n, mode, mapping, hejiEnabled)).join('');
   return `<chord dur="1">${inner}</chord>`;
 }
 
@@ -69,7 +70,7 @@ function staffContent(notes: StaffChordNote[], mode: TuningMode, hejiEnabled: bo
  *  HEJI/stack accidental transform applied (render-only — (q, r) stays truth).
  *  Assumes at least one note; an empty selection should clear the inset
  *  upstream rather than render an empty staff. */
-export function buildChordMei(notes: StaffChordNote[], mode: TuningMode, hejiEnabled: boolean): string {
+export function buildChordMei(notes: StaffChordNote[], mode: TuningMode, mapping: Mapping, hejiEnabled: boolean): string {
   const sorted = [...notes].sort((a, b) => a.midi - b.midi);
   const treble = sorted.filter(n => n.midi >= MIDDLE_C);
   const bass = sorted.filter(n => n.midi < MIDDLE_C);
@@ -86,14 +87,14 @@ export function buildChordMei(notes: StaffChordNote[], mode: TuningMode, hejiEna
     </scoreDef>
     <section>
       <measure n="1" right="single">
-        <staff n="1"><layer n="1">${staffContent(treble, mode, hejiEnabled)}</layer></staff>
-        <staff n="2"><layer n="1">${staffContent(bass, mode, hejiEnabled)}</layer></staff>
+        <staff n="1"><layer n="1">${staffContent(treble, mode, mapping, hejiEnabled)}</layer></staff>
+        <staff n="2"><layer n="1">${staffContent(bass, mode, mapping, hejiEnabled)}</layer></staff>
       </measure>
     </section>
   </score></mdiv></body></music>
 </mei>`;
 
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
-  transformDocForHeji(doc, mode, hejiEnabled);
+  transformDocForHeji(doc, mode, mapping, hejiEnabled);
   return new XMLSerializer().serializeToString(doc);
 }

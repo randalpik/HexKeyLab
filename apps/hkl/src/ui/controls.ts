@@ -1,5 +1,5 @@
-// Toolbar/keyboard control handlers: tuning select, clear selection,
-// transpose-by-(dq, dr) buttons.
+// Toolbar/keyboard control handlers: tuning select, mapping select, clear
+// selection, transpose-by-(dq, dr) buttons.
 //
 // Each handler mutates state then fires a single `effects/on…Changed()` for
 // the fan-out — replaces the old chained sync-call pattern. The transpose
@@ -9,11 +9,15 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import { referenceNote, clearSelection as clearRefSelection, recomputeReferenceForOutline } from '../state/reference.js';
+import {
+  referenceNote, clearSelection as clearRefSelection, recomputeReferenceForOutline,
+  convertReferenceFrame, isSelectionManual,
+} from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
-import type { HexSize, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
+import type { HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
+import { eulerOf, fromEuler, vecFromEuler } from '@hkl/shared/mapping.js';
 import { refSpine } from '../tuning/refspine.js';
-import { dxH, dyH, cosT, sinT } from '../layout/geometry.js';
+import { dxH, dyH, cosT, sinT, currentRotationMode } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { SampleEngine } from '../audio/samples.js';
@@ -21,14 +25,15 @@ import {
   noteOff, syncAudio,
   instrReplaysOnTranspose,
 } from '../audio/engine.js';
-import { stopAllMidi, syncMidi } from '../midi/engine.js';
+import { stopAllMidi, syncMidi, buildMidiReverse } from '../midi/engine.js';
 import { draw, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
 import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender } from '../render/controls-core.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
+import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
 import { coordOf } from '../types.js';
-import { clearAllHeld } from '../input/held.js';
+import { clearAllHeld, rekeyHeld, isHeldKey, moveVoices } from '../input/held.js';
 import type { KeyId, Voice } from '../types.js';
 
 /* Render-only primitives now live in render/controls-core.ts (engine-free, so
@@ -71,7 +76,7 @@ export function setTuning(): void {
       const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
       clearRefSelection();
       savePrefs({ manualRef: undefined });
-      const sp = refSpine(referenceNote.q, referenceNote.r);
+      const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
       view.kbAnchorQ = sp.q;
       view.kbAnchorR = sp.r;
       onRefChanged(sp.q - oldAQ, sp.r - oldAR);
@@ -80,6 +85,75 @@ export function setTuning(): void {
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
   savePrefs({ tuning: val });
+}
+
+/** Switch the note-name mapping (docs/wicki-hayden-spec.md §5). Every
+ *  coordinate is in the active mapping's frame, so the switch re-expresses the
+ *  reference, the keyboard anchor, and held mouse / piano-input / pedal-
+ *  sustained notes in the new frame — same pitch (a Schismatic copy moves by
+ *  one schisma). Held Lumatone / QWERTY voices keep their (q, r) and retune in
+ *  place, as on a tuning-mode change; they release through the key they
+ *  struck (input/held.ts), so the converted anchor cannot orphan them. */
+export function setMapping(): void {
+  const sel = document.getElementById('selMapping') as HTMLSelectElement;
+  const val = sel.value as Mapping;
+  const prev = tuning.mapping;
+  sel.blur();
+  if (val === prev) return;
+  const convert = (q: number, r: number): [number, number] => {
+    const e = eulerOf(q, r, prev);
+    return fromEuler(e.q, e.r, val);
+  };
+  const convertKey = (k: KeyId): KeyId => {
+    const p = k.split(',');
+    const [q, r] = convert(+p[0], +p[1]);
+    return q + ',' + r;
+  };
+  /* Notes that convert: everything live except keys a Lumatone / QWERTY key
+     is physically holding (playback voices are composite VoiceIds, owned by
+     the scheduler). Collected in the OLD frame. */
+  const stays = (k: KeyId): boolean => isHeldKey('lumatone', k) || isHeldKey('qwerty', k);
+  const converting = new Set<KeyId>();
+  selection.selectedKeys.forEach((k) => { if (coordOf(k) === k && !stays(k)) converting.add(k); });
+  audio.sustainedKeys.forEach((k) => { if (coordOf(k) === k && !stays(k)) converting.add(k); });
+
+  tuning.mapping = val;
+  rekeyHeld('piano', convertKey);
+  const pairs: { oldKey: KeyId; newKey: KeyId }[] = [];
+  converting.forEach((oldKey) => {
+    const newKey = convertKey(oldKey);
+    if (newKey === oldKey) return;
+    if (stays(newKey)) {
+      /* a physically held key already sounds that cell — it carries the note */
+      noteOff(oldKey);
+      selection.selectedKeys.delete(oldKey);
+      audio.sustainedKeys.delete(oldKey);
+      return;
+    }
+    pairs.push({ oldKey, newKey });
+  });
+  moveVoices(pairs);
+
+  /* Reference + anchor in the new frame. Deliberately NOT onRefChanged: that
+     would migrate held physical voices, which stay on their (q, r). */
+  convertReferenceFrame(convert);
+  if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
+    clearRefSelection();
+    savePrefs({ manualRef: undefined });
+  } else if (isSelectionManual()) {
+    savePrefs({ manualRef: { q: referenceNote.q, r: referenceNote.r } });
+  }
+  const sp = refSpine(referenceNote.q, referenceNote.r, val);
+  view.kbAnchorQ = sp.q;
+  view.kbAnchorR = sp.r;
+  buildMidiReverse();
+  invalidatePianoOutline();
+  applyRotation(currentRotationMode); /* the verticalFreq tilt depends on the mapping */
+  /* Retunes held physical voices in place, rebuilds the layers + footprint,
+     resyncs Lumatone colours, broadcasts to Composer. */
+  onTuningChanged();
+  onSelectionChanged();
+  savePrefs({ mapping: val });
 }
 
 export function setRotationFromDom(): void {
@@ -115,7 +189,7 @@ export function setOutline(): void {
   const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
   const refChanged = recomputeReferenceForOutline();
   if (refChanged) {
-    const newSp = refSpine(referenceNote.q, referenceNote.r);
+    const newSp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
     view.kbAnchorQ = newSp.q;
     view.kbAnchorR = newSp.r;
     invalidatePianoOutline();
@@ -134,6 +208,9 @@ export function setOutline(): void {
 
 export function transposeSelection(dq: number, dr: number): void {
   if (selection.selectedKeys.size === 0) return;
+  /* The buttons name Euler intervals (P5, M3, m3, P8, SC); express the step in
+     the active mapping's frame. */
+  [dq, dr] = vecFromEuler(dq, dr, tuning.mapping);
   /* vertical bounds check — block if any note's center would leave the canvas */
   const cyC = view.CH / 2 + view.kbOffY;
   const vq = view.viewQ, vr = view.viewR;

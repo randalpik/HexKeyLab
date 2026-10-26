@@ -24,6 +24,7 @@ import { collectSlurs } from '../slurs.js';
 import { articulationsOn, type ArticKind } from '../articulations.js';
 import { realTicks } from '../model/ticks.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
+import { vecFromEuler, type Mapping } from '@hkl/shared/mapping.js';
 
 /* Articulation playback shaping constants. Tuned by ear; all configurable
  * here so a future Setup-dialog control can expose them. */
@@ -312,17 +313,21 @@ function harmonicParts(noteEls: Element[]): { diamond: Element | null; ref: Elem
  *   - Artificial: the interval from the reference up to the diamond decides —
  *     P4 → 2 octaves above the reference (q+6); M3 → 2 octaves + P5 above the
  *     reference (q+6, r+1); anything else → +1 octave above the diamond.
- *  Coord deltas: octave = q+3 (band structure), P5 = r+1, M3 = q+1,
- *  P4 = octave−P5 = (q+3, r−1). Returns null if the diamond lacks coords. */
-function harmonicSoundingCoord(diamond: Element, ref: Element | null): CoordRef | null {
+ *  Coord deltas (Euler): octave = q+3 (band structure), P5 = r+1, M3 = q+1,
+ *  P4 = octave−P5 = (q+3, r−1); expressed in the score's `mapping` via
+ *  vecFromEuler (Wicki-Hayden doubles q). Returns null if the diamond lacks
+ *  coords. */
+function harmonicSoundingCoord(diamond: Element, ref: Element | null, mapping: Mapping): CoordRef | null {
   const d = extractCoords(diamond);
   if (!d) return null;
+  const v = (dq: number, dr: number): [number, number] => vecFromEuler(dq, dr, mapping);
+  const [oq] = v(3, 0), [oq2] = v(6, 0), [m3q] = v(1, 0), [p4q] = v(3, -1);
   const lo = ref ? extractCoords(ref) : null;
-  if (!lo) return { q: d.q + 3, r: d.r };                          /* natural → +octave */
+  if (!lo) return { q: d.q + oq, r: d.r };                         /* natural → +octave */
   const dq = d.q - lo.q, dr = d.r - lo.r;
-  if (dq === 1 && dr === 0) return { q: lo.q + 6, r: lo.r + 1 };    /* M3 → 2 oct + P5 */
-  if (dq === 3 && dr === -1) return { q: lo.q + 6, r: lo.r };       /* P4 → 2 oct */
-  return { q: d.q + 3, r: d.r };                                    /* fallback → +octave */
+  if (dq === m3q && dr === 0) return { q: lo.q + oq2, r: lo.r + 1 }; /* M3 → 2 oct + P5 */
+  if (dq === p4q && dr === -1) return { q: lo.q + oq2, r: lo.r };    /* P4 → 2 oct */
+  return { q: d.q + oq, r: d.r };                                    /* fallback → +octave */
 }
 
 /** The slot-bearing element for a note. A note inside a chord inherits the
@@ -757,7 +762,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       const byDuration = new Map<number, CoordRef[]>();
       const isHarmonic = child.getAttribute('data-hkl-harmonic') === 'true';
       const { diamond, ref } = isHarmonic ? harmonicParts(noteEls) : { diamond: null, ref: null };
-      const harmonicCoord = diamond ? harmonicSoundingCoord(diamond, ref) : null;
+      const harmonicCoord = diamond ? harmonicSoundingCoord(diamond, ref, model.getLayoutReq().mapping) : null;
       if (harmonicCoord) {
         /* String harmonic: the diamond sounds its computed harmonic pitch; the
            reference (next-lowest, the stopped note) is consumed (silent); every

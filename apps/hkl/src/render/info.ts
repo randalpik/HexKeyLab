@@ -6,6 +6,7 @@ import { selection } from '../state/selection.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { posInBand } from '../layout/coords.js';
 import { fmtNote, noteName, keyOctave, parseNote } from '@hkl/shared/notes.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 import { jiRatio, intervalTierFromExps, fmtFactors } from '../tuning/ratios.js';
 import {
   intervalNameFromCoords, shortenInterval, equalIntervalName, letterIdx,
@@ -61,7 +62,7 @@ export function updateInfo(): void {
     /* note card always picks the light variant (text-on-dark legibility),
        but uses the warm-shifted .sl for B-region cells to signal septimal. */
     const col = v.isB ? hueC[v.hue].sl! : hueC[v.hue].l;
-    keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r)), oct: keyOctave(q, r), col, inB: v.isB });
+    keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r, tuning.mapping)), oct: keyOctave(q, r, tuning.mapping), col, inB: v.isB });
   });
   keys.sort(function (a, b) { return a.freq - b.freq; });
 
@@ -71,7 +72,9 @@ export function updateInfo(): void {
   keys.forEach(function (k, i) {
     if (i > 0) html += ' ';
     const bTag = k.inB ? '<span style="color:#E44CBC;font-size:9px;font-weight:700;margin-left:2px">7</span>' : '';
-    const coordTag = showCoords ? '<span style="color:#666;font-size:10px;margin-left:4px">(q=' + k.q + ' r=' + k.r + ' p=' + posInBand(k.q) + ')</span>' : '';
+    /* position in the octave band: 0–2 Euler, 0–5 Wicki-Hayden */
+    const p = tuning.mapping === 'wickiHayden' ? (((k.q + 2) % 6) + 6) % 6 : posInBand(k.q);
+    const coordTag = showCoords ? '<span style="color:#666;font-size:10px;margin-left:4px">(q=' + k.q + ' r=' + k.r + ' p=' + p + ')</span>' : '';
     html += '<span class="note-tag"><span class="note-name" style="color:' + k.col + '">' + k.name + k.oct + '</span>' + bTag + coordTag + ' <span class="freq">' + k.freq.toFixed(2) + ' Hz</span></span>';
   });
 
@@ -91,14 +94,15 @@ export function updateInfo(): void {
     const ivls: IntervalCell[] = [];
     for (let i = 0; i < keys.length; i++) {
       for (let j = i + 1; j < keys.length; j++) {
-        const nn1 = noteName(keys[i].q, keys[i].r), nn2 = noteName(keys[j].q, keys[j].r);
+        const m = tuning.mapping;
+        const nn1 = noteName(keys[i].q, keys[i].r, m), nn2 = noteName(keys[j].q, keys[j].r, m);
         const li1 = letterIdx[parseNote(nn1).letter], li2 = letterIdx[parseNote(nn2).letter];
-        const o1 = keyOctave(keys[i].q, keys[i].r), o2 = keyOctave(keys[j].q, keys[j].r);
+        const o1 = keyOctave(keys[i].q, keys[i].r, m), o2 = keyOctave(keys[j].q, keys[j].r, m);
         let p1 = li1 + 7 * o1, p2 = li2 + 7 * o2;
         if (p2 < p1) { const tmp = p1; p1 = p2; p2 = tmp; }
         const intNum = p2 - p1 + 1;
         if (tuning.equalEnabled) {
-          const semis = Math.abs(4 * (keys[j].q - keys[i].q) + 7 * (keys[j].r - keys[i].r));
+          const semis = Math.abs(coordToMidi(keys[j].q, keys[j].r, m) - coordToMidi(keys[i].q, keys[i].r, m));
           ivls.push({ i, j, semis, intNum });
         } else {
           const rat = jiRatio(keys[i].q, keys[i].r, keys[j].q, keys[j].r);
@@ -116,7 +120,7 @@ export function updateInfo(): void {
       if (tuning.equalEnabled) {
         const eqIv = iv as IntervalCellEqual;
         const cStr = (eqIv.semis * 100).toFixed(1) + '¢';
-        const iname = shortenInterval(equalIntervalName(keys[iv.i].q, keys[iv.i].r, keys[iv.j].q, keys[iv.j].r), shortIvl);
+        const iname = shortenInterval(equalIntervalName(keys[iv.i].q, keys[iv.i].r, keys[iv.j].q, keys[iv.j].r, tuning.mapping), shortIvl);
         /* rational interval (= octave multiple, incl. enharmonics like d2, A7) → green */
         const pureOct = eqIv.semis % 12 === 0;
         html += '<span class="ratio-tag tier-' + (pureOct ? 'green' : 'red') + '">';

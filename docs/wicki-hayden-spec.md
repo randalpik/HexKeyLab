@@ -1,6 +1,11 @@
 # Wicki-Hayden mapping — spec
 
-Status: **proposed** (2026-10-25). No open decisions; nothing is implemented yet.
+Status: **implemented** (2026-10-26). Architecture: docs/architecture.md → Note-name mapping;
+decisions.md "Wicki-Hayden note-name mapping". Gates: `test/wh-layout/oracle.mjs`,
+`test/hkl-midi/mapping-switch.mjs`, `test/bounds-probe/octave-consistency.mjs`, the Composer `mapping`
+fixtures. Two deviations from the text below: the legacy MIDI-out `degreeMap` (§6) only takes pitch-class
+identity from the Euler-equivalent (its reverse map is never read), and every coordinate-bearing bridge
+message carries its `mapping` (not only the layout messages) so receivers convert regardless of order.
 
 ## 1. What it is
 
@@ -56,9 +61,15 @@ this mapping:
 | reference on | spine |
 |---|---|
 | qm0 | itself |
+| qm0′ | `(Q−1, R)` |
 | qm1 | `(Q−2, R)` |
+| qm1′ | `(Q−3, R)` |
 | qm2 | `(Q+2, R)` |
-| a copy column | first `(Q−7, R+2)` (same name and nominal octave, on the original column), then the rule above |
+| qm2′ | `(Q+1, R)` |
+
+That is, the qm0 original column of the ref's own band, in the ref's row (Euler's rule with
+6-wide bands). The first implementation moved a copy to its same-name original one board away,
+`(Q−7, R+2)`; that misaligned the ref horizontally and was replaced 2026-10-26.
 
 The keyboard anchor (`kbAnchorQ/R`) is that spine cell, in this mapping.
 

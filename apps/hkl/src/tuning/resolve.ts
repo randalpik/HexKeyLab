@@ -6,7 +6,9 @@
 // cell within the active footprint whose JI ratio to the current reference
 // note has the lowest octave-and-complement-reduced Tenney Height — and break
 // ties by smallest |proj − octaveTarget| where proj = 7(q−refQ) − 4(r−refR)
-// and octaveTarget = 21 · round((midi − refMidi) / 12). The octave-normalized
+// and octaveTarget = 21 · round((midi − refMidi) / 12). (Under the
+// Wicki-Hayden mapping the column step is a whole tone: proj = 7ΔQ − 2ΔR and
+// 42 per octave — see compute88PianoCoords in render/draw.ts.) The octave-normalized
 // projection is invariant under same-pitch-class octave shifts (both proj
 // and target shift by 21), so the chosen lineage stays consistent across
 // octaves. At the ref's MIDI (target = 0) the rule picks (refQ, refR);
@@ -18,6 +20,7 @@
 
 import { jiRatio, tenneyHeightFromExps } from './ratios.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import { tuning } from '../state/tuning.js';
 import type { KeyId } from '../types.js';
 
 export interface ResolvedCoord { q: number; r: number; }
@@ -32,10 +35,12 @@ export function resolve12TetToCoord(
   refR: number,
   footprint: Set<KeyId>,
 ): ResolvedCoord | null {
-  /* Octave step in (q, r) is (+3, 0): 4·3 + 7·0 = 12 semitones. proj shifts
-     by 7·3 − 4·0 = 21 per octave. */
-  const PROJ_PER_OCT = 7 * 3 - 4 * 0;
-  const refMidi = 57 + 4 * refQ + 7 * refR;
+  /* Octave step in (q, r) is (+12/c, 0) with c the column step in semitones
+     (4 Euler, 2 Wicki-Hayden); proj = 7Δq − cΔr shifts by 7·12/c per octave. */
+  const mapping = tuning.mapping;
+  const c = mapping === 'wickiHayden' ? 2 : 4;
+  const PROJ_PER_OCT = 7 * (12 / c);
+  const refMidi = coordToMidi(refQ, refR, mapping);
   const octaveDelta = Math.round((midiNote - refMidi) / 12);
   const projTarget = PROJ_PER_OCT * octaveDelta;
   let bestQ = 0, bestR = 0;
@@ -47,10 +52,10 @@ export function resolve12TetToCoord(
     if (ci < 0) continue;
     const q = +id.slice(0, ci);
     const r = +id.slice(ci + 1);
-    if (coordToMidi(q, r) !== midiNote) continue;
+    if (coordToMidi(q, r, mapping) !== midiNote) continue;
     const ratio = jiRatio(refQ, refR, q, r);
     const th = tenneyHeightFromExps(ratio.e);
-    const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
+    const absNProj = Math.abs(7 * (q - refQ) - c * (r - refR) - projTarget);
     if (th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
       bestTh = th;
       bestAbsNProj = absNProj;

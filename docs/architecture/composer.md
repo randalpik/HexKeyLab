@@ -76,7 +76,8 @@ unions (with doc comments). The channel is `'hkl-composer-bridge'`
 - **Composer → HKL**: `composer-hello`/`composer-bye`/`request-state`;
   `play-score` (`{events, pedalEvents?}`) / `stop-playback`;
   `start-performance`/`stop-performance`; `set-reference-note` /
-  `set-score-ref`; `layout-req-changed` / `apply-layout` (tuning mode only);
+  `set-score-ref`; `layout-req-changed` / `apply-layout` (tuning mode +
+  note-name mapping);
   `composer-active-instrument` / `composer-instruments`; `composer-score` /
   `composer-cursor` / `composer-playback` / `composer-zoom` (HKL's read-only
   Composer-view frame).
@@ -85,6 +86,12 @@ unions (with doc comments). The channel is `'hkl-composer-bridge'`
   Composer never needs the tuning to render. `accid` is count-form (`''`,
   `'s'`, `'ss'`, `'f'`, …, `'n'`), unclamped. `colorHex` is the ink variant
   (light theme), `lightColorHex` the light-source variant (dark theme).
+- **Coordinate frames**: every coordinate-bearing message also carries the
+  `mapping` its `(q, r)` are in (HKL's live mapping, or the score's). Composer
+  keeps HKL's held keys and footprint raw and converts them into the score's
+  frame on use (`heldKeysInScoreFrame`, `footprintInScoreFrame` in `main.ts`);
+  HKL converts `play-score` notes and both refs into its own frame on receipt
+  (`fromComposer`, `hkl-side.ts`). An absent `mapping` (older peer) is Euler.
 - **Handshake**: Composer answers `hkl-hello` with `composer-hello` only on a
   fresh connection (answering every hello loops). The `#connStatus` badge
   reads `no HKL`, `HKL connected`, or `standalone` after 1 s without a hello.
@@ -825,8 +832,17 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   switches playback to a pizzicato sample set. `Alt+H` marks a string
   harmonic (diamond head; sounds at the harmonic's pitch). *Ignore color*
   drops notehead colour on the render clone.
-- **Retune**: changing the score's tuning mode in Setup rewrites each note's
-  `(q, r)` to keep its frequency (`notation/retune.ts`).
+- **Retune**: changing the score's tuning mode or note-name mapping in Setup
+  rewrites each note's `(q, r)` to keep its frequency (`notation/retune.ts`).
+  A mapping change seeds each note's search at its closed-form frame
+  conversion (`convertCell`), so every note relocates exactly except a
+  Schismatic Wicki-Hayden copy going to Euler (≈1.95¢).
+- **Note-name mapping**: `<hkl:layoutReq mapping="wickiHayden">` (absent =
+  Euler, so Euler scores serialise exactly as before) is the frame of every
+  `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
+  SC shifts and the performance matcher all read it; MusicXML import makes
+  Euler scores. The clipboard records its source mapping and a paste into a
+  score of another mapping converts coordinates (`selection/clipboard.ts`).
 
 ## Playback and performance
 
@@ -914,7 +930,8 @@ sent).
 ## Setup and help
 
 **Setup** (`setupDialog.ts`) edits title, subtitle, composer, footer, tuning
-mode (retunes on change), HEJI, ignore colour, page size, the dynamic map,
+mode and note-name mapping (either retunes on change), HEJI, ignore colour,
+page size, the dynamic map,
 gradual-tempo percentages and instruments, applied as one undo entry. Buttons
 open the signature modal and the tempo modal at measure 1 and run *Fill
 incomplete measures*. The modals share `ui/textEntryModal.ts` (Enter submits

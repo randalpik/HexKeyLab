@@ -133,62 +133,71 @@ export function migrateHeld(source: HeldSource, resolve: (id: string) => KeyId |
   return pairs.length;
 }
 
-function moveVoices(pairs: { oldKey: KeyId; newKey: KeyId }[]): void {
+/** Re-express every record of `source` through `convert` without touching
+ *  voices or selection (a mapping switch moves those itself). */
+export function rekeyHeld(source: HeldSource, convert: (key: KeyId) => KeyId): void {
+  held[source].forEach((key, id) => { held[source].set(id, convert(key)); });
+}
+
+/** True iff `key` is the struck key of a held input of `source`. */
+export function isHeldKey(source: HeldSource, key: KeyId): boolean {
+  for (const k of held[source].values()) if (k === key) return true;
+  return false;
+}
+
+/** Move each voice, its velocity, selection and sustain entry from oldKey to
+ *  newKey: replay instruments re-attack, sustained ones ramp (oscillator) or
+ *  crossfade (sample) over the animation duration. The caller runs
+ *  onSelectionChanged.
+ *
+ *  Two phases — detach every old key, then attach every new one — so chained
+ *  moves (A→B while B→C: an octave-sized anchor shift with two keys held an
+ *  octave apart, or a mapping switch) never overwrite a voice that is itself
+ *  moving. Every newKey must be free of voices that are NOT moving. */
+export function moveVoices(pairs: { oldKey: KeyId; newKey: KeyId }[]): void {
+  const vel = pairs.map((p) => audio.keyVelocity[p.oldKey]);
+  pairs.forEach((p) => { delete audio.keyVelocity[p.oldKey]; });
+  pairs.forEach((p, i) => { if (vel[i] !== undefined) audio.keyVelocity[p.newKey] = vel[i]!; });
   if (audio.audioEnabled && audio.audioCtx) {
+    const moving = pairs.filter((p) => audio.activeOscs[p.oldKey]);
     if (instrReplaysOnTranspose()) {
       /* decaying instruments (piano, etc.) or replay-on-transpose
          (organs): stop the old voice at its old pitch and re-attack at
          the new one. Limited to the migrated pairs so other held /
          sustained voices are untouched. */
-      pairs.forEach((p) => {
-        if (!audio.activeOscs[p.oldKey]) return;
-        noteOff(p.oldKey);
-        if (audio.keyVelocity[p.oldKey] !== undefined) {
-          audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
-          delete audio.keyVelocity[p.oldKey];
-        }
-        noteOn(p.newKey, audio.keyVelocity[p.newKey]);
-      });
+      moving.forEach((p) => { noteOff(p.oldKey); });
+      moving.forEach((p) => { noteOn(p.newKey, audio.keyVelocity[p.newKey]); });
     } else {
       /* sustained: smooth ramp over animation duration */
       const now = audio.audioCtx.currentTime;
       const rampDur = animation.duration / 1000;
+      const entries = moving.map((p) => audio.activeOscs[p.oldKey]);
+      moving.forEach((p) => { delete audio.activeOscs[p.oldKey]; });
       const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vol?: number }[] = [];
-      pairs.forEach((p) => {
-        const e = audio.activeOscs[p.oldKey];
-        if (!e) return;
+      moving.forEach((p, i) => {
+        const e = entries[i];
         const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
         if (e.type === 'osc') {
           e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
           e.osc.frequency.exponentialRampToValueAtTime(keyFreq(nq, nr), now + rampDur);
           e.q = nq; e.r = nr;
           audio.activeOscs[p.newKey] = e;
-          delete audio.activeOscs[p.oldKey];
         } else if (e.type === 'sample') {
           sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr });
-        }
-        if (audio.keyVelocity[p.oldKey] !== undefined) {
-          audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
-          delete audio.keyVelocity[p.oldKey];
         }
       });
       sampleMoves.forEach((m) => { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
       sampleMoves.forEach((m) => {
         SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur, m.instr);
         audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr };
-        delete audio.activeOscs[m.oldKey];
       });
     }
   }
-  /* migrate selection + sustain entries so the highlight follows the physical key */
-  pairs.forEach((p) => {
-    if (selection.selectedKeys.has(p.oldKey)) {
-      selection.selectedKeys.delete(p.oldKey);
-      selection.selectedKeys.add(p.newKey);
-    }
-    if (audio.sustainedKeys.has(p.oldKey)) {
-      audio.sustainedKeys.delete(p.oldKey);
-      audio.sustainedKeys.add(p.newKey);
-    }
+  /* migrate selection + sustain entries so the highlight follows the key */
+  const wasSelected = pairs.map((p) => selection.selectedKeys.delete(p.oldKey));
+  const wasSustained = pairs.map((p) => audio.sustainedKeys.delete(p.oldKey));
+  pairs.forEach((p, i) => {
+    if (wasSelected[i]) selection.selectedKeys.add(p.newKey);
+    if (wasSustained[i]) audio.sustainedKeys.add(p.newKey);
   });
 }

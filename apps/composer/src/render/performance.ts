@@ -78,6 +78,7 @@ import { buildPlayback } from './playback.js';
 import { extractResolvedFromElement } from '../model/note-elements.js';
 import { noteName, keyOctave } from '@hkl/shared/notes.js';
 import { freqAt, type TuningMode } from '@hkl/shared/freq.js';
+import { eulerOf, type Mapping } from '@hkl/shared/mapping.js';
 import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 
 /** Relative frequency tolerance for the duplicate-key (P/D) freq fallback.
@@ -159,16 +160,19 @@ export interface PerfAdvance {
  *  @hkl/shared so the form is identical. Color is matched separately (from
  *  @color for expected notes, from ResolvedNote.colorHex for played notes —
  *  both are darkColorHex(q,r), so equal for the same note). */
-function pitchKeyFor(q: number, r: number): string {
-  return noteName(q, r) + '|' + keyOctave(q, r);
+function pitchKeyFor(q: number, r: number, mapping: Mapping): string {
+  return noteName(q, r, mapping) + '|' + keyOctave(q, r, mapping);
 }
 
-/** Octave-invariant lattice class. An octave is q ± 3 at the same r, and key
- *  color is octave-invariant, so (q mod 3, r) identifies a color — which lets
- *  a SOUNDING coord (post-8va) find its written note's @color. Two chord
- *  members an exact octave apart collide here, harmlessly: same color. */
-function octClass(q: number, r: number): string {
-  return (((q % 3) + 3) % 3) + '|' + r;
+/** Octave-invariant lattice class. An Euler octave is q ± 3 at the same r, and
+ *  key color is octave-invariant, so (q mod 3, r) of the Euler-equivalent
+ *  identifies a color — which lets a SOUNDING coord (post-8va) find its written
+ *  note's @color. Two chord members an exact octave apart collide here,
+ *  harmlessly: same color (as do a Wicki-Hayden copy and its pitch-equal
+ *  original). */
+function octClass(q: number, r: number, mapping: Mapping): string {
+  const e = eulerOf(q, r, mapping);
+  return (((e.q % 3) + 3) % 3) + '|' + e.r;
 }
 
 /** Ids whose playback is an ornament EXPANSION (buildPlayback's
@@ -219,9 +223,10 @@ function elementInfo(
   if (!el) return miss;
   const info = model.getFlatStopInfo(loc.voice, loc.index);
   const byClass = new Map<string, string>();
-  for (const n of extractResolvedFromElement(el)) byClass.set(octClass(n.q, n.r), n.colorHex);
+  const mapping = model.getLayoutReq().mapping;
+  for (const n of extractResolvedFromElement(el, mapping)) byClass.set(octClass(n.q, n.r, mapping), n.colorHex);
   return {
-    colorOf: (q, r) => byClass.get(octClass(q, r)) ?? null,
+    colorOf: (q, r) => byClass.get(octClass(q, r, mapping)) ?? null,
     mi: info ? info.measureIdx : -1,
   };
 }
@@ -235,10 +240,12 @@ export class PerformanceMatcher {
   /** Voices currently showing a bar, so a hide is emitted once, not per strike. */
   private shown = new Set<Voice>();
   private mode: TuningMode;
+  private mapping: Mapping;
   private dupMode: boolean;
 
   constructor(model: ComposerModel) {
     this.mode = model.getLayoutReq().tuningMode as TuningMode;
+    this.mapping = model.getLayoutReq().mapping;
     this.dupMode = this.mode === 'P' || this.mode === 'D';
 
     const ornaments = ornamentIds(model);
@@ -271,9 +278,9 @@ export class PerformanceMatcher {
         prevMi = mi;
       }
       const notes: ExpectedNote[] = e.notes.map((c) => ({
-        pitchKey: pitchKeyFor(c.q, c.r),
+        pitchKey: pitchKeyFor(c.q, c.r, this.mapping),
         color: colorOf(c.q, c.r),
-        hz: freqAt(c.q, c.r, this.mode),
+        hz: freqAt(c.q, c.r, this.mode, this.mapping),
         satisfied: false,
         fromP: false,
       }));
@@ -376,8 +383,8 @@ export class PerformanceMatcher {
    *  content; at the end of the score every bar stays put. A strike that
    *  matches no expected voice returns []. */
   onStrike(note: ResolvedNote): PerfAdvance[] {
-    const pid = pitchKeyFor(note.q, note.r);
-    const phz = freqAt(note.q, note.r, this.mode);
+    const pid = pitchKeyFor(note.q, note.r, this.mapping);
+    const phz = freqAt(note.q, note.r, this.mode, this.mapping);
     const cur = this.currentOcc();
     const advanced: PerfAdvance[] = [];
     const hits = (en: ExpectedNote): boolean => this.matches(en, pid, phz, note.colorHex);

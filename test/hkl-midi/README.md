@@ -56,6 +56,19 @@ harness as `departure.mjs` (live modules resolved through their importers).
 **Run it before declaring any change to `input/held.ts`, the Lumatone / QWERTY /
 piano note paths, or `effects/onRefChanged.ts` done.**
 
+## Mapping switch with keys held
+
+```sh
+node test/hkl-midi/mapping-switch.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for `setMapping()` (docs/wicki-hayden-spec.md §5). With the
+reference at A4 — its spine has q ≠ 0, so the anchor moves on a switch — a held
+Lumatone key keeps its `(q,r)` and retunes in place, a held mouse note converts
+with its pitch kept, release leaves nothing behind, both directions, and with a
+reference change between switch and release. **Run it before declaring any
+change to `setMapping`, the held-input registry, or ref anchoring done.**
+
 ## Why it is shaped this way
 
 The modules are imported live from the dev server (`/src/midi/handler.ts`), so

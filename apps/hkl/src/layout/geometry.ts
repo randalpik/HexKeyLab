@@ -1,7 +1,8 @@
 // Hex lattice → screen geometry. The tilt angle is selectable at runtime via
 // setRotation():
 //   verticalFreq — average log-frequency gradient is screen-vertical
-//                  (q-axis: log(2)/3 per step; r-axis: midpoint of 5-limit
+//                  (q-axis: log(2)/3 per step under the Euler mapping,
+//                  log(2)/6 under Wicki-Hayden; r-axis: midpoint of 5-limit
 //                  log(3/2) and 7-limit log(3/2)-log(81/80)/6)
 //   lumatone     — (+7q, -2r) direction is screen-horizontal (Lumatone case row)
 //   piano        — q-axis is screen-horizontal (octaves tile left-to-right)
@@ -9,7 +10,7 @@
 // tiltAngle/cosT/sinT are `let` exports; ES module live bindings propagate
 // updates to every importer without re-importing.
 
-import type { HexSize, RotationMode } from '../state/persistence.js';
+import type { HexSize, Mapping, RotationMode } from '../state/persistence.js';
 
 /* Hex inradius (px) and derived axis pitches. `let` exports: setHexSize()
    reassigns them and ES module live bindings propagate to every importer.
@@ -35,12 +36,16 @@ export function setHexSize(size: HexSize): void {
   hexScale = hexR / 16;
 }
 
-const TILT_VERTICAL_FREQ = (function (): number {
+/* `qStep` = average log-frequency per q step. The r-axis gradient subtracts
+   half of it because each row is offset half a column. */
+function verticalFreqTilt(qStep: number): number {
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
-  const gx = Math.log(2) / (3 * dxH);
-  const gy = (avgR - Math.log(2) / 6) / dyH;
+  const gx = qStep / dxH;
+  const gy = (avgR - qStep / 2) / dyH;
   return Math.PI / 2 - Math.atan2(gy, gx);
-})();
+}
+const TILT_VERTICAL_FREQ = verticalFreqTilt(Math.log(2) / 3);
+const TILT_VERTICAL_FREQ_WH = verticalFreqTilt(Math.log(2) / 6);
 const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
 const TILT_PIANO = 0;
 
@@ -52,12 +57,12 @@ export let sinT = Math.sin(tiltAngle);
  *  share a tilt value) read the canonical name. */
 export let currentRotationMode: RotationMode = 'verticalFreq';
 
-export function setRotation(mode: RotationMode): void {
+export function setRotation(mode: RotationMode, mapping: Mapping): void {
   currentRotationMode = mode;
   switch (mode) {
     case 'lumatone': tiltAngle = TILT_LUMATONE; break;
     case 'piano': tiltAngle = TILT_PIANO; break;
-    default: tiltAngle = TILT_VERTICAL_FREQ;
+    default: tiltAngle = mapping === 'wickiHayden' ? TILT_VERTICAL_FREQ_WH : TILT_VERTICAL_FREQ;
   }
   cosT = Math.cos(tiltAngle);
   sinT = Math.sin(tiltAngle);

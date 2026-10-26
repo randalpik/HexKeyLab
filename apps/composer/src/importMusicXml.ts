@@ -677,7 +677,7 @@ function impNoteFromXml(note: Element, centerQ: number, centerR: number, octDelt
       pname: step.toLowerCase() as NoteSpec['pname'],
       accid: alterToCount(alter),
       oct: octave,
-      midi: coordToMidi(q, r),
+      midi: coordToMidi(q, r, 'euler'), /* imports are Euler scores */
       colorHex: '#000000',
     },
     tieStart, tieStop, harmonic, voidHead, parenCaut,
@@ -1187,7 +1187,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
   /* Key center for the comma-variant tiebreak: the MAJOR-key root of the key
      signature (per design). Updated as we encounter key changes. */
   const centerFor = (f: number): { q: number; r: number } =>
-    findTonicCoord(keySigToTonic(fifthsToKeySig(f), 'major'));
+    findTonicCoord(keySigToTonic(fifthsToKeySig(f), 'major'), 'euler');
   let center = centerFor(fifths);
 
   /* ── build scoreDef staffGrp ──────────────────────────────────────────────
@@ -1628,7 +1628,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
   applyBeamMarkers(doc);
 
   /* Forced import settings. */
-  setLayoutReq(doc, { tuningMode: 'E' });
+  setLayoutReq(doc, { tuningMode: 'E', mapping: 'euler' });
   setHejiEnabled(doc, false);
   setIgnoreColor(doc, true);
 

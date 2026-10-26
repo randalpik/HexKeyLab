@@ -36,6 +36,17 @@ The **Tuning** dropdown switches between six systems, shown as **Equal · Ptolem
 
 Switching tunings ramps audio frequencies smoothly over 150ms; sustained notes glide from one tuning to the next.
 
+### Mapping: Euler or Wicki-Hayden
+
+The **Mapping** dropdown (under Tuning) chooses where the note names sit, independently of the tuning — it works with every tuning above.
+
+- **Euler** *(default)*: the lattice described so far. Neighbouring keys are a major third along the rows, a fifth up-right, and a minor third up-left, so major and minor triads are three touching keys.
+- **Wicki-Hayden**: after every column of fifths, HKL inserts a copy of it shifted down two keys and exactly one octave. Rows now step in **whole tones**, fifths still run up-right, and fourths run up-left; octave bands become 6 keys wide. A scale is two compact rows, the same shape in every key. Each column and its copy are an exact octave apart (down-right from the column). In the JI tunings the whole tones alternate between 9:8 and 10:9 (or as the tuning dictates), so some shapes land on comma-variants — just as reaching across a seam does in Euler.
+
+The reference note stays on a spine column with its copy immediately to the right, so the major scale from the reference sits in the middle four columns of the band. On the Lumatone, Wicki-Hayden covers about 4½ octaves (each board repeats much of its neighbour's range).
+
+Switching mapping keeps everything you're holding: notes held with the mouse or a MIDI piano keep sounding at the same pitch (they move to the same note in the new arrangement), and keys held on the Lumatone or computer keyboard stay on their key and glide to that key's new pitch.
+
 ---
 
 ## Reference note and layout positioning
@@ -124,7 +135,7 @@ The toolbar is organized into tabs (**Layout · Playback · Analysis · Recordin
 
 ## Layout tab
 
-The first control is the **Tuning** dropdown (covered above under [Tunings](#tunings)). The rest of the tab, left to right:
+The first controls are the **Tuning** and **Mapping** dropdowns (covered above under [Tunings](#tunings)). The rest of the tab, left to right:
 
 - **Hex size**: Small / Medium *(default)* / Large. Scales the on-screen hexes; handy on small screens or for projection.
 - **Note names** *(on by default)*: letter names + accidentals on each hex. Accidentals scale and stack continuously; a triple-flat looks visibly distinct from a double-flat. Turn on **HEJI accidentals** (Analysis tab) to switch these to microtonal HEJI notation: comma arrows and septimal hooks that show the exact just-intonation spelling.
@@ -258,7 +269,7 @@ Tick **Capture audio** to also record a real audio file: HKL brackets the actual
 
 ## Persistence
 
-Most toolbar settings (tuning, hex size, rotation, outline, audio toggle, instrument, and the analysis/visual checkboxes) are remembered across page reloads via local storage.
+Most toolbar settings (tuning, mapping, hex size, rotation, outline, audio toggle, instrument, and the analysis/visual checkboxes) are remembered across page reloads via local storage.
 
 The **Reset** button (in the tab row, top-right) clears all stored toolbar settings and reloads the page with defaults. Useful if your browser remembers an old state you don't want.
 

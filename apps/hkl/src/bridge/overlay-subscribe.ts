@@ -12,7 +12,8 @@
 
 import { OverlayChannel } from '@hkl/bridge/overlay-ws.js';
 import type { OverlayMsg, OverlaySnapshot } from '@hkl/bridge/overlay-protocol.js';
-import type { RotationMode, HexSize, OutlineMode, TuningMode } from '../state/persistence.js';
+import type { RotationMode, HexSize, OutlineMode, TuningMode, Mapping } from '../state/persistence.js';
+import { isMapping } from '@hkl/shared/mapping.js';
 import { view } from '../state/view.js';
 import { selection } from '../state/selection.js';
 import { tuning } from '../state/tuning.js';
@@ -40,6 +41,8 @@ function applySnapshot(s: OverlaySnapshot): void {
   $<HTMLInputElement>('cbExtend').checked = s.extendPattern;
   $<HTMLInputElement>('cbHeji').checked = s.heji;
   $<HTMLSelectElement>('selTuning').value = s.tuning;
+  const mapping: Mapping = isMapping(s.mapping) ? s.mapping : 'euler';
+  $<HTMLSelectElement>('selMapping').value = mapping;
   $<HTMLSelectElement>('selOutline').value = s.outline;
   $<HTMLSelectElement>('selRotation').value = s.rotation;
   $<HTMLSelectElement>('selHexSize').value = s.hexSize;
@@ -52,6 +55,9 @@ function applySnapshot(s: OverlaySnapshot): void {
      applyTuningRender (re-colors/respells) and before applyRotation/applyHexSize
      (recomputeCanvasBounds varies CH by mode). */
   tuning.mode = s.tuning as TuningMode;
+  /* the frame of every coordinate below — set directly, no conversion: the
+     publisher already sent them in it */
+  tuning.mapping = mapping;
   tuning.equalEnabled = s.tuning === 'E';
   tuning.septimalEnabled = s.tuning === '7';
   tuning.hejiEnabled = s.heji;

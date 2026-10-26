@@ -24,8 +24,16 @@
 //                        The +5 cadence preserves the old V mode's hues for
 //                        qm=0 and qm=2 cells across bands; only qm=1 cells
 //                        change (they now align with Semiditonal's qm=1).
+//
+// Wicki-Hayden: hue is computed on an Euler cell. Equal colours by sounding
+// octave (the cell's Euler-equivalent shares its MIDI); the JI modes give a
+// copy its column's colour (columnSourceOf) — the JI hue is octave-invariant,
+// and in Schismatic it carries the band's schisma count, which the copy shares.
+// White/black always follows the cell's own pitch class.
 
 import { bandOf } from '../layout/coords.js';
+import { eulerOf, columnSourceOf } from '@hkl/shared/mapping.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 import { tuning } from '../state/tuning.js';
 import { regionInfo } from '../tuning/regions.js';
 import {
@@ -37,7 +45,7 @@ export type { Hue, HueColors };
 export { hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle };
 
 /* Hue from `floor(midi/12) - bandOf(q)` modulo 7. Equal mode collapses to a
-   3-hue octave cycle; everything else uses the 7-hue lineage. */
+   3-hue octave cycle; everything else uses the 7-hue lineage. EULER (q, r). */
 export function computeHue(q: number, r: number): Hue {
   const midi = 57 + 4 * q + 7 * r;
   if (tuning.equalEnabled) return equalHueCycle[((Math.floor(midi / 12) % 3) + 3) % 3];
@@ -59,9 +67,13 @@ export function computeHue(q: number, r: number): Hue {
  *  Returns the picked Hue + variant key so callers can also choose between
  *  fill (.l/.sl) and outline (.d/.sd) consistently. */
 export function keyColorVariant(q: number, r: number): { hue: Hue; isW: boolean; isB: boolean; isShifted: boolean } {
-  const midi = 57 + 4 * q + 7 * r;
+  const midi = coordToMidi(q, r, tuning.mapping);
   const pc = ((midi % 12) + 12) % 12;
   const isW = whiteSet.has(pc);
+  /* region lookup on the cell's own frame coords; hue on an Euler cell */
+  const ri = regionInfo(q, r);
+  if (tuning.mode === 'E') ({ q, r } = eulerOf(q, r, tuning.mapping));
+  else [q, r] = columnSourceOf(q, r, tuning.mapping);
   /* V mode: Semiditonal coloring in band 0 (the band containing the lattice
      origin / default-ref A3), rotated by +5 hue indices per band offset
      from band 0. Band 0 thus matches Semiditonal exactly — the in-band M3
@@ -86,7 +98,6 @@ export function keyColorVariant(q: number, r: number): { hue: Hue; isW: boolean;
     const idx = (((hueIdx[semHue] + 5 * db) % 7) + 7) % 7;
     return { hue: hueCycleOrder[idx], isW, isB: false, isShifted };
   }
-  const ri = regionInfo(q, r);
   if (ri.type === 'B') {
     return { hue: computeHue(q, r), isW, isB: true, isShifted: false };
   }

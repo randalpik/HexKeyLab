@@ -2,7 +2,9 @@
 
 Standalone Node scripts that characterize HKL's canvas-sizing and Tenney-Height invariants. Used to derive the per-`(rotation × outline)` bounds the renderer needs, and as a regression test for the octave-consistency property of the TH-based enharmonic resolver.
 
-These scripts re-derive their answers from the source — when the lattice geometry, tuning math, or cell sets change, re-run them and update any hardcoded bounds in `src/render/canvas.ts` to match.
+These scripts re-derive their answers from the source — when the lattice geometry, tuning math, or cell sets change, re-run them and update any hardcoded bounds in `apps/hkl/src/render/canvas.ts` to match.
+
+Every probe covers both **note-name mappings** (`euler`, `wickiHayden` — docs/wicki-hayden-spec.md): each re-implements the Wicki-Hayden Euler-equivalent (`eulerOf`), the picker's mapping-dependent candidate family / projection, and (compute-bounds) the mapping's `verticalFreq` tilt. `compute-refbounds.mjs` writes `apps/hkl/src/render/refbounds-table.ts` directly (`VALID_REF_TABLE[mapping][mode]`); `compute-bounds.mjs` prints the `PIANO_BOUNDS_TABLE[mapping][rotation][mode]` block to paste.
 
 **The piano-outline bounds in `src/render/canvas.ts` are HARDCODED from this probe's output.** The picker iteration is too expensive to run at every rotation/tuning change (multiple seconds in production), so the canvas reads from a precomputed `PIANO_BOUNDS_TABLE` keyed by `(rotation, tuning bucket)`. Re-run `compute-bounds.mjs` and paste the new `kbMinW × CH` values into that table whenever the picker math or geometry changes.
 

@@ -6,7 +6,8 @@
 //     events that Composer sends.
 //
 // Exposed in-page as window.__bridgeMock with methods:
-//   sendHeldKeys(notes), sendPlaybackPosition(meiId, timeMs),
+//   sendHeldKeys(notes, mapping?), sendTuningChanged(mode, mapping?),
+//   sendPlaybackPosition(meiId, timeMs),
 //   sendPlaybackFinished(), captured(), drain(), reset().
 //
 // The runner injects MOCK_BRIDGE_LIB once after page load (after the
@@ -39,8 +40,16 @@ export const MOCK_BRIDGE_LIB = `
   });
 
   window.__bridgeMock = {
-    sendHeldKeys(notes) {
-      ch.postMessage({ type: 'held-keys', keys: notes });
+    /* mapping: the frame of the notes' (q, r); omitted → the message carries
+       none, which Composer reads as 'euler' (an older HKL). */
+    sendHeldKeys(notes, mapping) {
+      const msg = { type: 'held-keys', keys: notes };
+      if (mapping) msg.mapping = mapping;
+      ch.postMessage(msg);
+    },
+    /* HKL's layout announcement (tuning mode + note-name mapping). */
+    sendTuningChanged(mode, mapping = 'euler') {
+      ch.postMessage({ type: 'tuning-changed', mode, mapping, description: '' });
     },
     sendPlaybackPosition(meiId, timeMs, voice) {
       const msg = { type: 'playback-position', meiId, timeMs };

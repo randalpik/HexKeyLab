@@ -19,6 +19,7 @@
 
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
+import { isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { instrumentStaffSets } from './notation/parts.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -975,12 +976,15 @@ function seedDefaults(cfg: Element, doc: Document): void {
   }
 }
 
-/** What the score pins about HKL's layout. Tuning mode only: the reference
+/** What the score pins about HKL's layout: tuning mode and note-name
+ *  mapping (the coordinate frame of every note's data-q/data-r). The reference
  *  note is DERIVED from the key signature at the current position (see
  *  cursor/refNote.ts), never stored. Legacy files carry `refQ`/`refR` here;
- *  those attributes are simply never read, so no migration is needed. */
+ *  those attributes are simply never read, so no migration is needed. Files
+ *  without a `mapping` attribute are Euler. */
 export interface LayoutReq {
   tuningMode: TuningMode;
+  mapping: Mapping;
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -996,10 +1000,11 @@ export function getLayoutReq(doc: Document): LayoutReq {
     const lr = childInHklNs(cfg, 'layoutReq');
     if (lr) {
       const m = lr.getAttribute('tuningMode') ?? '5';
-      return { tuningMode: isTuningMode(m) ? m : '5' };
+      const map = lr.getAttribute('mapping');
+      return { tuningMode: isTuningMode(m) ? m : '5', mapping: isMapping(map) ? map : 'euler' };
     }
   }
-  return { tuningMode: '5' };
+  return { tuningMode: '5', mapping: 'euler' };
 }
 
 /** Write the score's required layout. Creates the block via ensureExtMetaConfig
@@ -1012,6 +1017,10 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
     cfg.appendChild(lr);
   }
   lr.setAttribute('tuningMode', req.tuningMode);
+  /* Euler is the default and stays implicit, so Euler scores serialise exactly
+     as they did before mappings existed. */
+  if (isMapping(req.mapping) && req.mapping !== 'euler') lr.setAttribute('mapping', req.mapping);
+  else lr.removeAttribute('mapping'); /* also guards untyped callers that omit it */
   /* Legacy ref attributes are dead weight — drop them as documents are saved. */
   lr.removeAttribute('refQ');
   lr.removeAttribute('refR');

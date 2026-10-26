@@ -7,6 +7,8 @@
 // Schema is versioned via the storage key (hkl.prefs.v1). Bump the suffix at
 // breaking schema changes and stale prefs are simply ignored.
 
+import { isMapping, type Mapping } from '@hkl/shared/mapping.js';
+
 const STORAGE_KEY = 'hkl.prefs.v1';
 
 export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
@@ -19,6 +21,9 @@ export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
          layout-level schisma stacking, NOT the historical schismatic
          temperament of fifths) */
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V';
+/* Note-name mapping ('euler' | 'wickiHayden'), orthogonal to the tuning mode.
+   Single definition in @hkl/shared/mapping.js (no dual-definition here). */
+export type { Mapping };
 export type PedalMode = 'sustain' | 'sostenuto';
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
 /* Hex-size preset. Scales hex geometry, text, and stroke widths uniformly;
@@ -90,6 +95,8 @@ export interface PrefsV1 {
   outline: OutlineMode;
   rotation: RotationMode;
   tuning: TuningMode;
+  /** Note-name mapping (toolbar "Mapping:"). Default 'euler'. */
+  mapping: Mapping;
   /** Hex-size preset (display-only). Default 'medium' (the historical fixed
    *  size). 'small'/'large' rescale the whole lattice + text + strokes. */
   hexSize: HexSize;
@@ -163,6 +170,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   outline: "lumatone",
   rotation: "verticalFreq",
   tuning: "5",
+  mapping: "euler",
   hexSize: "medium",
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
@@ -284,6 +292,7 @@ export function loadPrefs(): PrefsV1 {
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
     rotation: isRotationMode(o.rotation) ? o.rotation : DEFAULT_PREFS.rotation,
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
+    mapping: isMapping(o.mapping) ? o.mapping : DEFAULT_PREFS.mapping,
     hexSize: isHexSize(o.hexSize) ? o.hexSize : DEFAULT_PREFS.hexSize,
     audioEnabled:
       typeof o.audioEnabled === "boolean"

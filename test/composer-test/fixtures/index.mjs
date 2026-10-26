@@ -26,6 +26,7 @@ import * as files from './files.mjs';
 import * as instruments from './instruments.mjs';
 import * as keyboard from './keyboard.mjs';
 import * as layerCursor from './layer-cursor.mjs';
+import * as mapping from './mapping.mjs';
 import * as musicxml from './musicxml.mjs';
 import * as notationCommands from './notation-commands.mjs';
 import * as pageLayout from './page-layout.mjs';
@@ -54,6 +55,7 @@ export const CATEGORIES = {
   instruments: instruments,
   keyboard: keyboard,
   'layer-cursor': layerCursor,
+  mapping: mapping,
   musicxml: musicxml,
   'notation-commands': notationCommands,
   'page-layout': pageLayout,

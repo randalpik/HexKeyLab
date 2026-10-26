@@ -3,7 +3,7 @@
 // plus a flat list of timestamped events. Coordinates `(q, r)` are the source
 // of identity; MIDI export is derived from this via midi-io/export.ts.
 
-import type { TuningMode, PedalMode } from '../state/persistence.js';
+import type { TuningMode, PedalMode, Mapping } from '../state/persistence.js';
 
 /* Frozen layout state needed to interpret events. Captured at record-start;
    playback re-applies these fields before scheduling. The recording is
@@ -11,6 +11,9 @@ import type { TuningMode, PedalMode } from '../state/persistence.js';
    (Lilypond) and the MIDI round-trip have an explicit pitch reference. */
 export interface LayoutSnapshot {
   tuning: TuningMode;
+  /** Coordinate frame of every event's (q, r). Absent in files recorded
+   *  before mappings existed → 'euler'. */
+  mapping: Mapping;
   septimalEnabled: boolean;
   equalEnabled: boolean;
   septimalW: number;

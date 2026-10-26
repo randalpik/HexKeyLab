@@ -18,7 +18,7 @@ export interface Onset {
   /** origin lattice coords (preserved end-to-end for color and v2 round-trip) */
   q: number;
   r: number;
-  /** nominal 12-TET MIDI note number = 57 + 4q + 7r */
+  /** nominal 12-TET MIDI note number = coordToMidi(q, r, snapshot.mapping) */
   midi: number;
   /** MIDI velocity 0..127 */
   v: number;

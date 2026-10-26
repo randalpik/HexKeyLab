@@ -4,6 +4,8 @@
  * `elementHasTie*` read from existing elements. */
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
+import type { Mapping } from '@hkl/shared/mapping.js';
 import { getNoteAlter } from '@hkl/notation/accidentals.js';
 import {
   buildNoteElement as meiBuildNote,
@@ -107,7 +109,7 @@ export function extractNoteElements(elem: Element): Element[] {
   return [];
 }
 
-export function extractResolvedFromElement(elem: Element): ResolvedNote[] {
+export function extractResolvedFromElement(elem: Element, mapping: Mapping): ResolvedNote[] {
   const noteEls = extractNoteElements(elem);
   return noteEls.map((n) => {
     const q = parseInt(n.getAttribute('data-q') ?? '0', 10);
@@ -124,8 +126,8 @@ export function extractResolvedFromElement(elem: Element): ResolvedNote[] {
        without inventing a brighter variant we can't derive here. */
     const lightColorHex = n.getAttribute('data-light-color') ?? colorHex;
     /* MIDI is not used by buildChordElement except for sort order; reconstruct
-       from coords: midi = 57 + 4q + 7r. */
-    const midi = 57 + 4 * q + 7 * r;
+       from coords in the score's mapping. */
+    const midi = coordToMidi(q, r, mapping);
     return { q, r, pname, accid, oct, midi, colorHex, lightColorHex, velocity: 80 };
   });
 }

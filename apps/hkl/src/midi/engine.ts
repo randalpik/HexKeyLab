@@ -17,6 +17,7 @@ import { lumatone } from '../state/lumatone.js';
 import { baseKeys } from '../layout/baseKeys.js';
 import { view } from '../state/view.js';
 import { posInBand } from '../layout/coords.js';
+import { eulerOf } from '@hkl/shared/mapping.js';
 import { keyFreq } from '../tuning/frequency.js';
 import { syncAudio } from '../audio/engine.js';
 import { syncPianoOut } from './piano-out.js';
@@ -55,8 +56,11 @@ const degreeMap: Record<string, number> = {};
 })();
 
 export function keyToMidi(q: number, r: number): MidiTarget | null {
-  const p = posInBand(q) - 1;
-  const deg = degreeMap[r + ',' + p];
+  /* pitch-class identity from the Euler-equivalent (a Wicki-Hayden copy shares
+     its equal-pitch Euler cell's degree); octave from the cell's own pitch */
+  const e = eulerOf(q, r, tuning.mapping);
+  const p = posInBand(e.q) - 1;
+  const deg = degreeMap[e.r + ',' + p];
   if (deg === undefined) return null;
   const ratio = keyFreq(q, r) / 220;
   const oct = Math.floor(Math.log2(ratio) + 0.0001);

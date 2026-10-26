@@ -1,6 +1,8 @@
 // Keyboard input handler. Keybindings: see ./keybindings.ts (also displayed by the Help modal).
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
+import type { Mapping } from '@hkl/shared/mapping.js';
 import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
 } from './model/index.js';
@@ -55,9 +57,26 @@ const TUNING_LABELS: Record<string, string> = {
   P: 'Pythagorean',
   D: 'Semiditonal',
   '7': 'Septimal',
+  V: 'Schismatic',
 };
 function tuningLabel(mode: string): string {
   return TUNING_LABELS[mode] ?? mode;
+}
+
+/** Tuning label plus the mapping when it is not the default Euler. */
+function layoutLabel(mode: string, mapping: Mapping): string {
+  return tuningLabel(mode) + (mapping === 'wickiHayden' ? ' · Wicki-Hayden' : '');
+}
+
+/** HKL's layout when it differs from the score's (tuning mode or note-name
+ *  mapping), else null. Null too before HKL has announced its layout. */
+function hklLayoutMismatch(model: ComposerModel, hooks: InputHooks): { hkl: string; score: string } | null {
+  const hklMode = hooks.getHklTuningMode?.() ?? null;
+  if (hklMode === null) return null;
+  const hklMapping = hooks.getHklMapping?.() ?? 'euler';
+  const req = model.getLayoutReq();
+  if (hklMode === req.tuningMode && hklMapping === req.mapping) return null;
+  return { hkl: layoutLabel(hklMode, hklMapping), score: layoutLabel(req.tuningMode, req.mapping) };
 }
 
 export type EntryMode = 'insert' | 'overwrite';
@@ -184,6 +203,8 @@ export interface InputHooks {
   /** HKL's most-recently-broadcast tuning mode, or null when HKL hasn't
    *  identified yet. Used by the entry-mismatch gate. */
   getHklTuningMode?: () => string | null;
+  /** HKL's note-name mapping (null before it is announced). */
+  getHklMapping?: () => Mapping | null;
   /** Send an `apply-layout` bridge message asking HKL to switch to the
    *  score's pinned layout. Wired in main.ts. */
   requestApplyLayout?: () => void;
@@ -1211,12 +1232,11 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
         return;
       }
       /* Layout-mismatch gate still applies: appended notes must match the
-         score's pinned tuning so (q, r) maps correctly. */
-      const hklMode = hooks.getHklTuningMode?.() ?? null;
-      const required = model.getLayoutReq().tuningMode;
-      if (hklMode !== null && hklMode !== required) {
+         score's pinned layout (tuning + mapping) so (q, r) maps correctly. */
+      const mismatch = hklLayoutMismatch(model, hooks);
+      if (mismatch) {
         const apply = window.confirm(
-          'HKL is in "' + tuningLabel(hklMode) + '" but this score requires "' + tuningLabel(required) + '".\n\n' +
+          'HKL is in "' + mismatch.hkl + '" but this score requires "' + mismatch.score + '".\n\n' +
           'Notes added now would sound at HKL\'s current pitches, not the score\'s.\n\n' +
           'Apply the score\'s layout to HKL? (then re-press your keys)'
         );
@@ -1224,7 +1244,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           hooks.requestApplyLayout?.();
           hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'info');
         } else {
-          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to add notes.', 'error');
+          hooks.setStatus?.('Switch HKL to "' + mismatch.score + '" to add notes.', 'error');
         }
         return;
       }
@@ -1253,7 +1273,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           if (!note) continue;
           const q = parseInt(note.getAttribute('data-q') ?? '0', 10);
           const r = parseInt(note.getAttribute('data-r') ?? '0', 10);
-          const midi = 57 + 4 * q + 7 * r;
+          const midi = coordToMidi(q, r, model.getLayoutReq().mapping);
           if (midi < lowestMidi) {
             lowestMidi = midi;
             lowest = id;
@@ -1282,11 +1302,10 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        the commit; offer to push the score's layout to HKL (Cancel-only when
        held is empty — a rest insert is mode-independent). */
     if (held.length > 0) {
-      const hklMode = hooks.getHklTuningMode?.() ?? null;
-      const required = model.getLayoutReq().tuningMode;
-      if (hklMode !== null && hklMode !== required) {
+      const mismatch = hklLayoutMismatch(model, hooks);
+      if (mismatch) {
         const apply = window.confirm(
-          'HKL is in "' + tuningLabel(hklMode) + '" but this score requires "' + tuningLabel(required) + '".\n\n' +
+          'HKL is in "' + mismatch.hkl + '" but this score requires "' + mismatch.score + '".\n\n' +
           'Notes entered now would sound at HKL\'s current pitches, not the score\'s.\n\n' +
           'Apply the score\'s layout to HKL? (then re-press your keys)'
         );
@@ -1294,7 +1313,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
           hooks.requestApplyLayout?.();
           hooks.setStatus?.('Applied score\'s tuning to HKL. Re-press your keys.', 'info');
         } else {
-          hooks.setStatus?.('Switch HKL to "' + tuningLabel(required) + '" to enter notes.', 'error');
+          hooks.setStatus?.('Switch HKL to "' + mismatch.score + '" to enter notes.', 'error');
         }
         return;
       }
@@ -3373,7 +3392,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (state.cursorMode === 'expr' || state.cursorMode === 'pedal' || state.cursorMode === 'tempo') return;
     if (hooks.isPlaybackActive()) return;
     const text = e.clipboardData?.getData('text/plain') ?? '';
-    const contents = parseClipboard(text);
+    const contents = parseClipboard(text, model.getLayoutReq().mapping);
     if (!contents) {
       hooks.setStatus?.('Clipboard is empty or not HKL content.', 'error');
       return;

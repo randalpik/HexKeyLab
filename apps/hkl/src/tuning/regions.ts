@@ -24,14 +24,17 @@
 //   Equal ('E')       — not consulted; frequency.ts has its own early return.
 
 import { tuning } from '../state/tuning.js';
+import { eulerOf } from '@hkl/shared/mapping.js';
 import type { RegionInfo } from '../types.js';
-import type { TuningMode } from '../state/persistence.js';
+import type { TuningMode, Mapping } from '../state/persistence.js';
 
 /** Tuning fields needed for frequency + region math. Subset of `tuning` so
  *  consumers (recording snapshot, MIDI import) can pass a stored state without
- *  mutating the live `tuning` module. */
+ *  mutating the live `tuning` module. `mapping` is the coordinate frame the
+ *  (q, r) arguments are in. */
 export interface TuningStateLike {
   mode: TuningMode;
+  mapping: Mapping;
   equalEnabled: boolean;
   septimalEnabled: boolean;
   septimalW: number;
@@ -42,7 +45,8 @@ const A_D1_UPPER: RegionInfo = { type: 'A', aDepth: 1, aUpper: true };   /* −S
 const A_D1_LOWER: RegionInfo = { type: 'A', aDepth: 1, aUpper: false };  /* +SC */
 const B_D1_UPPER: RegionInfo = { type: 'B', aDepth: 1, aUpper: true };   /* Septimal qm=2 */
 
-export function regionInfoWithState(q: number, _r: number, s: TuningStateLike): RegionInfo {
+export function regionInfoWithState(q: number, r: number, s: TuningStateLike): RegionInfo {
+  q = eulerOf(q, r, s.mapping).q; /* a copy shares its column's lineage */
   const qm = ((q % 3) + 3) % 3;
   switch (s.mode) {
     case 'E':

@@ -22,6 +22,7 @@ import type { ComposerModel } from '../model/index.js';
 import { keySigToTonic } from '../notation/accidentals.js';
 import { fifthName } from '@hkl/shared/notes.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import { fromEuler, type Mapping } from '@hkl/shared/mapping.js';
 
 export interface RefCoord { q: number; r: number; }
 
@@ -35,7 +36,7 @@ const TONIC_R: Map<string, number> = (() => {
   return m;
 })();
 
-const tonicCache: Map<string, RefCoord> = new Map();
+const tonicCache: Map<string, RefCoord> = new Map(); /* key: tonic + '|' + mapping */
 
 /** Place the song-key tonic on the qm=0 Pythagorean spine at the octave
  *  CLOSEST TO C4 (MIDI 60). The spine *is* the fifth-chain, so r is fixed by
@@ -49,16 +50,21 @@ const tonicCache: Map<string, RefCoord> = new Map();
  *
  *  Every one of the 18 reachable tonic coords passes HKL's
  *  validateRefNoteCandidate in all six tuning modes, so a key-derived ref is
- *  never silently rejected on arrival. */
-export function findTonicCoord(tonic: string): RefCoord {
-  const cached = tonicCache.get(tonic);
+ *  never silently rejected on arrival.
+ *
+ *  Placed in Euler coordinates, then expressed in the score's `mapping` (under
+ *  Wicki-Hayden: the spine's original column, with its copy to the right). */
+export function findTonicCoord(tonic: string, mapping: Mapping): RefCoord {
+  const key = tonic + '|' + mapping;
+  const cached = tonicCache.get(key);
   if (cached) return cached;
   const r = TONIC_R.get(tonic) ?? -3; /* fall back to C-spine coord if somehow off-table */
   let q = 0;
-  while (coordToMidi(q, r) < 54) q += 3;
-  while (coordToMidi(q, r) >= 66) q -= 3;
-  const found: RefCoord = { q, r };
-  tonicCache.set(tonic, found);
+  while (coordToMidi(q, r, 'euler') < 54) q += 3;
+  while (coordToMidi(q, r, 'euler') >= 66) q -= 3;
+  const [fq, fr] = fromEuler(q, r, mapping);
+  const found: RefCoord = { q: fq, r: fr };
+  tonicCache.set(key, found);
   return found;
 }
 
@@ -128,7 +134,7 @@ export function computePrevNoteRef(model: ComposerModel): RefCoord | null {
 export function computeSongKeyRefAt(model: ComposerModel, measureIdx: number): RefCoord {
   const mi = Math.max(0, measureIdx);
   const tonic = keySigToTonic(model.keySigAt(mi), model.keyModeAt(mi));
-  return findTonicCoord(tonic);
+  return findTonicCoord(tonic, model.getLayoutReq().mapping);
 }
 
 /* ── diff filters: skip redundant broadcasts of unchanged values ─────────── */

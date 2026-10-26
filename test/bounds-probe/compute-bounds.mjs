@@ -10,7 +10,11 @@
 //   • the uniform-septimal region rule in src/tuning/regions.ts changes.
 //
 // Run:
-//   node tools/bounds-probe/compute-bounds.mjs
+//   node test/bounds-probe/compute-bounds.mjs
+//
+// Every piano bound is computed per note-name mapping ('euler' and
+// 'wickiHayden', docs/wicki-hayden-spec.md): the mapping changes the picker's
+// candidate cells and the verticalFreq tilt.
 //
 // The script inlines the lattice math from src/layout/geometry.ts, the
 // jiRatio/regionInfo logic from src/tuning/{ratios,regions}.ts, and the
@@ -32,19 +36,19 @@ const hexR = 16;
 const dxH = hexR * 1.78;
 const dyH = hexR * 1.54;
 
-const TILT_VERTICAL_FREQ = (function () {
+/* qStep = average log-frequency per q step: log(2)/3 Euler, log(2)/6 Wicki-Hayden */
+function verticalFreqTilt(qStep) {
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
-  const gx = Math.log(2) / (3 * dxH);
-  const gy = (avgR - Math.log(2) / 6) / dyH;
+  const gx = qStep / dxH;
+  const gy = (avgR - qStep / 2) / dyH;
   return Math.PI / 2 - Math.atan2(gy, gx);
-})();
+}
 const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
 const TILT_PIANO = 0;
 
 const ROTATIONS = {
-  verticalFreq: TILT_VERTICAL_FREQ,
-  lumatone: TILT_LUMATONE,
-  piano: TILT_PIANO,
+  euler: { verticalFreq: verticalFreqTilt(Math.log(2) / 3), lumatone: TILT_LUMATONE, piano: TILT_PIANO },
+  wickiHayden: { verticalFreq: verticalFreqTilt(Math.log(2) / 6), lumatone: TILT_LUMATONE, piano: TILT_PIANO },
 };
 
 /* Mirrors the actual rendering transform (src/render/draw.ts main draw
@@ -57,7 +61,7 @@ function hexToScreen(q, r, tilt) {
 }
 
 // ── cell sets ──────────────────────────────────────────────────────────────
-const baseKeysRaw = readFileSync(join(REPO, 'src/layout/baseKeys.ts'), 'utf8');
+const baseKeysRaw = readFileSync(join(REPO, 'apps/hkl/src/layout/baseKeys.ts'), 'utf8');
 const baseKeysMatch = baseKeysRaw.match(/export const baseKeys[^=]+=\s*(\[\[.*?\]\]);/s);
 if (!baseKeysMatch) throw new Error('Could not parse baseKeys from src/layout/baseKeys.ts — file format changed?');
 const baseKeys = JSON.parse(baseKeysMatch[1]);
@@ -76,6 +80,17 @@ for (const row of qwertyRows) {
 
 // ── tuning math (mirrors src/tuning/{ratios,regions}.ts) ───────────────────
 const TUNING_MODES = ['E', '5', 'P', 'D', '7', 'V'];
+const MAPPINGS = ['euler', 'wickiHayden'];
+
+// ── mapping (mirrors packages/shared/src/mapping.ts) ───────────────────────
+/* Wicki-Hayden cell → Euler-equivalent: even column Q → (Q/2, R); odd column
+   (a copy) → ((Q−1)/2 − 3, R+2), one schisma above it in Schismatic. */
+function eulerOf(q, r, mapping) {
+  if (mapping === 'euler') return { q, r, copy: false };
+  const k = Math.floor(q / 2);
+  return q === 2 * k ? { q: k, r, copy: false } : { q: k - 3, r: r + 2, copy: true };
+}
+const colStep = (mapping) => (mapping === 'wickiHayden' ? 2 : 4);
 
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
@@ -107,7 +122,17 @@ function modeHasShifts(mode) {
   return mode === 'P' || mode === 'D' || mode === '7' || mode === 'V';
 }
 
-function jiExps(q1, r1, q2, r2, mode) {
+function jiExps(q1, r1, q2, r2, mode, mapping) {
+  const c1 = eulerOf(q1, r1, mapping), c2 = eulerOf(q2, r2, mapping);
+  const e = eulerJiExps(c1.q, c1.r, c2.q, c2.r, mode);
+  if (mode === 'V') {
+    const ds = (c2.copy ? 1 : 0) - (c1.copy ? 1 : 0);
+    e[0] += ds * -15; e[1] += ds * 8; e[2] += ds;
+  }
+  return e;
+}
+
+function eulerJiExps(q1, r1, q2, r2, mode) {
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
   if (modeHasShifts(mode)) {
@@ -144,22 +169,23 @@ function tenney(e) {
  *  V-mode picker substitution: runs JI math under Semiditonal ('D') rules
  *  so the schisma exponent doesn't inflate (3k, 0) lineage TH. See the
  *  docstring on compute88PianoCoords for the full rationale. */
-function pianoCells(refQ, refR, mode = '5') {
+function pianoCells(refQ, refR, mode = '5', mapping = 'euler') {
   const pickerMode = mode === 'V' ? 'D' : mode;
-  const PROJ_PER_OCT = 7 * 3 - 4 * 0;
-  const refMidi = 57 + 4 * refQ + 7 * refR;
+  const c = colStep(mapping), inv = c === 4 ? 2 : 4, K = mapping === 'wickiHayden' ? 40 : 20;
+  const PROJ_PER_OCT = 7 * (12 / c);
+  const refMidi = 57 + c * refQ + 7 * refR;
   const cells = [];
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
-    const q0 = (((2 * N) % 7) + 7) % 7;
-    let bestQ = q0, bestR = (N - 4 * q0) / 7;
+    const q0 = (((inv * N) % 7) + 7) % 7;
+    let bestQ = q0, bestR = (N - c * q0) / 7;
     let bestTh = Infinity, bestAbsNProj = Infinity, found = false;
     const projTarget = PROJ_PER_OCT * Math.round((midi - refMidi) / 12);
-    for (let k = -20; k <= 20; k++) {
+    for (let k = -K; k <= K; k++) {
       const q = q0 + 7 * k;
-      const r = (N - 4 * q) / 7;
-      const th = tenney(jiExps(refQ, refR, q, r, pickerMode));
-      const absNProj = Math.abs(7 * (q - refQ) - 4 * (r - refR) - projTarget);
+      const r = (N - c * q) / 7;
+      const th = tenney(jiExps(refQ, refR, q, r, pickerMode, mapping));
+      const absNProj = Math.abs(7 * (q - refQ) - c * (r - refR) - projTarget);
       if (!found || th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
         bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
       }
@@ -203,7 +229,7 @@ function pianoViewCenter(refQ, refR, m64Q, m64R, tilt) {
   ];
 }
 
-function pianoPoints(tilt, mode) {
+function pianoPoints(tilt, mode, mapping) {
   const pts = [];
   const REFR_MIN = -3, REFR_MAX = 3;
   function accum(cells, refQ, refR) {
@@ -211,23 +237,25 @@ function pianoPoints(tilt, mode) {
     const [vQ, vR] = pianoViewCenter(refQ, refR, m[0], m[1], tilt);
     for (const [q, r] of cells) pts.push(hexToScreen(q - vQ, r - vR, tilt));
   }
-  for (let refQ = 0; refQ <= 2; refQ++) {
+  /* every column position of an octave band: 3 Euler, 6 Wicki-Hayden */
+  const bandWidth = mapping === 'wickiHayden' ? 6 : 3;
+  for (let refQ = 0; refQ < bandWidth; refQ++) {
     for (let refR = REFR_MIN; refR <= REFR_MAX; refR++) {
-      accum(pianoCells(refQ, refR, mode), refQ, refR);
+      accum(pianoCells(refQ, refR, mode, mapping), refQ, refR);
     }
   }
   return pts;
 }
 
-function nonePoints(tilt, mode) {
-  return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, mode)];
+function nonePoints(tilt, mode, mapping) {
+  return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, mode, mapping)];
 }
 
 const OUTLINE_GENERATORS = {
   lumatone: (tilt) => lumatonePoints(tilt),
   qwerty: (tilt) => qwertyPoints(tilt),
-  piano: (tilt, mode) => pianoPoints(tilt, mode),
-  none: (tilt, mode) => nonePoints(tilt, mode),
+  piano: (tilt, mode, mapping) => pianoPoints(tilt, mode, mapping),
+  none: (tilt, mode, mapping) => nonePoints(tilt, mode, mapping),
 };
 
 // ── canvas metrics (mirrors src/render/canvas.ts) ──────────────────────────
@@ -265,16 +293,16 @@ const MODE_LABEL = {
   'V': 'Schismatic',
 };
 
-function printMatrix(mode, label) {
+function printMatrix(mode, mapping, label) {
   console.log(`\n${label} — kbMinW × CH (kbOffY=0):\n`);
   const colW = 15;
   console.log('              ' + outlines.map((o) => o.padEnd(colW)).join(''));
   console.log('              ' + outlines.map(() => '─'.repeat(colW)).join(''));
   for (const rotName of rotationNames) {
-    const tilt = ROTATIONS[rotName];
+    const tilt = ROTATIONS[mapping][rotName];
     let row = rotName.padEnd(14);
     for (const outline of outlines) {
-      const m = canvasMetrics(bbox(OUTLINE_GENERATORS[outline](tilt, mode)));
+      const m = canvasMetrics(bbox(OUTLINE_GENERATORS[outline](tilt, mode, mapping)));
       row += `${m.kbMinW}×${m.CH}`.padEnd(colW);
     }
     console.log(row);
@@ -285,30 +313,39 @@ function printMatrix(mode, label) {
    to paste into src/render/canvas.ts. Lumatone/QWERTY are mode-independent
    for canvas extent (the only tuning-sensitive outline is piano). */
 const pianoMetrics = {};
-for (const mode of TUNING_MODES) {
-  pianoMetrics[mode] = {};
-  for (const rotName of rotationNames) {
-    const tilt = ROTATIONS[rotName];
-    pianoMetrics[mode][rotName] = canvasMetrics(bbox(OUTLINE_GENERATORS.piano(tilt, mode)));
+for (const mapping of MAPPINGS) {
+  pianoMetrics[mapping] = {};
+  for (const mode of TUNING_MODES) {
+    pianoMetrics[mapping][mode] = {};
+    for (const rotName of rotationNames) {
+      const tilt = ROTATIONS[mapping][rotName];
+      pianoMetrics[mapping][mode][rotName] = canvasMetrics(bbox(OUTLINE_GENERATORS.piano(tilt, mode, mapping)));
+    }
   }
 }
 
-for (const mode of TUNING_MODES) {
-  printMatrix(mode, `${mode} — ${MODE_LABEL[mode]}`);
+for (const mapping of MAPPINGS) {
+  for (const mode of TUNING_MODES) {
+    printMatrix(mode, mapping, `${mapping} ${mode} — ${MODE_LABEL[mode]}`);
+  }
 }
 
-console.log('\nPIANO_BOUNDS_TABLE block for src/render/canvas.ts:\n');
-console.log('const PIANO_BOUNDS_TABLE: Record<RotationMode, Record<TuningMode, CanvasMetrics>> = {');
-for (const rotName of rotationNames) {
-  const entries = TUNING_MODES.map((m) => {
-    const x = pianoMetrics[m][rotName];
-    return `    '${m}': { kbMinW: ${x.kbMinW}, CH: ${x.CH} }`;
-  }).join(',\n');
-  console.log(`  ${rotName}: {\n${entries},\n  },`);
+console.log('\nPIANO_BOUNDS_TABLE block for apps/hkl/src/render/canvas.ts:\n');
+console.log('const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode, CanvasMetrics>>> = {');
+for (const mapping of MAPPINGS) {
+  console.log(`  ${mapping}: {`);
+  for (const rotName of rotationNames) {
+    const entries = TUNING_MODES.map((m) => {
+      const x = pianoMetrics[mapping][m][rotName];
+      return `      '${m}': { kbMinW: ${x.kbMinW}, CH: ${x.CH} }`;
+    }).join(',\n');
+    console.log(`    ${rotName}: {\n${entries},\n    },`);
+  }
+  console.log('  },');
 }
 console.log('};');
 
-console.log('\nPiano cell span relative to refNote (sanity check, refR=0):');
+console.log('\nPiano cell span relative to refNote (sanity check, refR=0, Euler):');
 for (const mode of TUNING_MODES) {
   console.log(`  ${MODE_LABEL[mode]} (per refQ ∈ {0,1,2}):`);
   for (let refQ = 0; refQ <= 2; refQ++) {

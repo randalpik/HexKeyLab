@@ -13,7 +13,7 @@ import { pedal } from '../state/pedal.js';
 import { audio } from '../state/audio.js';
 import { SampleEngine } from '../audio/samples.js';
 import { savePrefs } from '../state/persistence.js';
-import { setTuning } from '../ui/controls.js';
+import { setTuning, setMapping } from '../ui/controls.js';
 import type { LayoutSnapshot } from './types.js';
 
 function isOscillator(name: string): boolean {
@@ -31,6 +31,12 @@ export async function applySnapshot(s: LayoutSnapshot): Promise<void> {
   if (selTuning && selTuning.value !== s.tuning) {
     selTuning.value = s.tuning;
     setTuning();
+  }
+  /* Mapping next: the events' (q, r) are in the snapshot's frame. */
+  const selMapping = document.getElementById('selMapping') as HTMLSelectElement | null;
+  if (selMapping && selMapping.value !== s.mapping) {
+    selMapping.value = s.mapping;
+    setMapping();
   }
 
   /* Pedal mode — no handler beyond the DOM listener, so we set state + DOM and

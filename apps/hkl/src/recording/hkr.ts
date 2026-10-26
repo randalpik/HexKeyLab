@@ -2,6 +2,7 @@
 // add explicit branching here.
 
 import type { HkrSession, HkrEvent, LayoutSnapshot } from './types.js';
+import { isMapping } from '@hkl/shared/mapping.js';
 
 export class HkrParseError extends Error {}
 
@@ -26,8 +27,11 @@ function parseSnapshot(o: unknown): LayoutSnapshot {
   if (typeof s.instrument !== 'string') throw new HkrParseError('snapshot.instrument invalid');
   if (!isPedalMode(s.pedalMode)) throw new HkrParseError('snapshot.pedalMode invalid');
   if (typeof s.refHz !== 'number') throw new HkrParseError('snapshot.refHz invalid');
+  /* absent in recordings made before mappings existed → Euler */
+  if (s.mapping !== undefined && !isMapping(s.mapping)) throw new HkrParseError('snapshot.mapping invalid');
   return {
     tuning: s.tuning,
+    mapping: s.mapping ?? 'euler',
     septimalEnabled: s.septimalEnabled,
     equalEnabled: s.equalEnabled,
     septimalW: s.septimalW,

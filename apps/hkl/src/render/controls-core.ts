@@ -9,6 +9,7 @@
 // onRefChanged / transpose audio re-keying) on top.
 
 import { view } from '../state/view.js';
+import { tuning } from '../state/tuning.js';
 import { referenceNote } from '../state/reference.js';
 import { setRotation, setHexSize } from '../layout/geometry.js';
 import { recomputeCanvasBounds, computePianoViewCenter } from './canvas.js';
@@ -68,7 +69,7 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
 }
 
 export function applyRotation(mode: RotationMode): void {
-  setRotation(mode);
+  setRotation(mode, tuning.mapping);
   recomputeCanvasBounds();
   cv.style.height = view.CH + 'px';
   /* Re-snap unconditionally — piano viewport solves a tilt-dependent system,

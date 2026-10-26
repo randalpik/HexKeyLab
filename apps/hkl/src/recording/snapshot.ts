@@ -15,6 +15,7 @@ export function captureSnapshot(): LayoutSnapshot {
   const t: TuningMode = tuning.mode;
   return {
     tuning: t,
+    mapping: tuning.mapping,
     septimalEnabled: tuning.septimalEnabled,
     equalEnabled: tuning.equalEnabled,
     septimalW: tuning.septimalW,
@@ -24,10 +25,11 @@ export function captureSnapshot(): LayoutSnapshot {
   };
 }
 
-/* True iff every tuning/instrument/pedal field of `s` matches live state. */
+/* True iff every tuning/mapping/instrument/pedal field of `s` matches live state. */
 export function snapshotMatchesLive(s: LayoutSnapshot): boolean {
   return (
     s.tuning === tuning.mode &&
+    s.mapping === tuning.mapping &&
     s.instrument === audio.activeWaveform &&
     s.pedalMode === pedal.mode
   );

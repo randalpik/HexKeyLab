@@ -49,7 +49,8 @@ import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffers
 import { refSpine } from '../tuning/refspine.js';
 import { view } from '../state/view.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
-import { setTuning } from '../ui/controls.js';
+import { setTuning, setMapping } from '../ui/controls.js';
+import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { loadPrefs, type TuningMode } from '../state/persistence.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
 import { voiceId, coordOf } from '../types.js';
@@ -174,10 +175,10 @@ export function broadcastHeldKeys(): void {
      broadcast, leaving Composer with stale coords and inserting notes off by
      the ref difference at the next input. Re-resolving when only color/tuning
      changed is handled separately via lastHeldSerialized = '' force-resend. */
-  const sig = keys.map((k) => k.q + ',' + k.r + ':' + k.velocity).join(',');
+  const sig = tuning.mapping + '|' + keys.map((k) => k.q + ',' + k.r + ':' + k.velocity).join(',');
   if (sig !== lastHeldSerialized) {
     lastHeldSerialized = sig;
-    bridge.send({ type: 'held-keys', keys });
+    bridge.send({ type: 'held-keys', keys, mapping: tuning.mapping });
   }
 }
 
@@ -187,7 +188,7 @@ export function broadcastHeldKeys(): void {
  *  (pname/accid/oct/colorHex) is byte-identical to what held-keys resolves. */
 export function broadcastPlayerNote(q: number, r: number): void {
   if (!performanceMode || playbackActive) return;
-  bridge.send({ type: 'player-note-struck', note: resolveKey(q, r) });
+  bridge.send({ type: 'player-note-struck', note: resolveKey(q, r), mapping: tuning.mapping });
 }
 
 /** Broadcast tuning mode if it changed since the last send. A tuning change
@@ -195,9 +196,9 @@ export function broadcastPlayerNote(q: number, r: number): void {
  *  follow-up held-keys re-broadcast by invalidating its signature. */
 export function broadcastTuning(): void {
   const mode = tuningMode();
-  if (mode !== lastTuningMode) {
-    lastTuningMode = mode;
-    bridge.send({ type: 'tuning-changed', mode, description: tuningDescription() });
+  if (mode + '|' + tuning.mapping !== lastTuningMode) {
+    lastTuningMode = mode + '|' + tuning.mapping;
+    bridge.send({ type: 'tuning-changed', mode, mapping: tuning.mapping, description: tuningDescription() });
     lastHeldSerialized = '';
     broadcastHeldKeys();
   }
@@ -213,10 +214,10 @@ export function broadcastLayoutState(): void {
   const mode = tuning.mode;
   const q = referenceNote.q;
   const r = referenceNote.r;
-  const sig = mode + ':' + q + ':' + r;
+  const sig = mode + ':' + tuning.mapping + ':' + q + ':' + r;
   if (sig !== lastLayoutStateSig) {
     lastLayoutStateSig = sig;
-    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, refQ: q, refR: r });
+    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, mapping: tuning.mapping, refQ: q, refR: r });
   }
 }
 
@@ -245,10 +246,10 @@ export function broadcastFootprint(): void {
      tuning-changed which forces a full re-broadcast; for layout-only swaps
      the cell list shape changes (different (q, r) members), which we catch
      by mixing the joined string. */
-  const sig = cells.length + ':' + cells.map((c) => c[0] + ',' + c[1] + ',' + c[2]).join('|');
+  const sig = tuning.mapping + ':' + cells.length + ':' + cells.map((c) => c[0] + ',' + c[1] + ',' + c[2]).join('|');
   if (sig !== lastFootprintSig) {
     lastFootprintSig = sig;
-    bridge.send({ type: 'footprint-changed', cells });
+    bridge.send({ type: 'footprint-changed', cells, mapping: tuning.mapping });
   }
 }
 
@@ -1157,6 +1158,21 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
 
 interface ComposerLayoutReq {
   tuningMode: TuningMode;
+  mapping: Mapping;
+}
+
+/** Coordinates from Composer arrive in the score's mapping (the message says
+ *  which); re-express them in HKL's live frame. */
+function fromComposer(q: number, r: number, mapping: string): [number, number] {
+  return convertCell(q, r, isMapping(mapping) ? mapping : 'euler', tuning.mapping);
+}
+
+function layoutMatches(req: ComposerLayoutReq): boolean {
+  return req.tuningMode === tuning.mode && req.mapping === tuning.mapping;
+}
+
+function layoutLabelFor(req: ComposerLayoutReq): string {
+  return tuningLabelFor(req.tuningMode) + (req.mapping === 'wickiHayden' ? ' · Wicki-Hayden' : '');
 }
 
 /** Most-recently-broadcast layout requirement from Composer's `<hkl:layoutReq>`.
@@ -1219,7 +1235,7 @@ function updateComposerToolbar(): void {
   const layoutEl = document.getElementById('composerScoreLayout');
   if (layoutEl) {
     if (composerRequiredLayout) {
-      layoutEl.textContent = 'Score: ' + tuningLabelFor(composerRequiredLayout.tuningMode);
+      layoutEl.textContent = 'Score: ' + layoutLabelFor(composerRequiredLayout);
     } else {
       layoutEl.textContent = '';
     }
@@ -1228,7 +1244,7 @@ function updateComposerToolbar(): void {
   if (matchEl) {
     if (!composerRequiredLayout) {
       matchEl.textContent = '';
-    } else if (composerRequiredLayout.tuningMode === tuning.mode) {
+    } else if (layoutMatches(composerRequiredLayout)) {
       matchEl.textContent = '✓ match';
       matchEl.style.color = '#4ec466';
     } else {
@@ -1260,7 +1276,7 @@ export function reconcileSelectionOnSyncEnable(): void {
   if (!composerConnected || !selectionDiffersFromScoreRef()) return;
   const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
   if (clearSelection()) {
-    const sp = refSpine(referenceNote.q, referenceNote.r);
+    const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
     view.kbAnchorQ = sp.q;
     view.kbAnchorR = sp.r;
     invalidatePianoOutline();
@@ -1299,6 +1315,13 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     selTuning.value = req.tuningMode;
     setTuning();
   }
+  /* Mapping likewise through its toolbar select (setMapping converts the ref,
+     anchor and held notes into the score's frame). */
+  const selMapping = document.getElementById('selMapping') as HTMLSelectElement | null;
+  if (selMapping && selMapping.value !== req.mapping) {
+    selMapping.value = req.mapping;
+    setMapping();
+  }
   /* No ref here — the score carries none. The ref reaches HKL via its own
      `set-score-ref` message → the score-ref tier (reference.ts), derived from
      the key signature at Composer's current position, independent of this
@@ -1311,7 +1334,7 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
 
 function announce(): void {
   bridge.send({ type: 'hkl-hello', version: PROTOCOL_VERSION });
-  bridge.send({ type: 'tuning-changed', mode: tuningMode(), description: tuningDescription() });
+  bridge.send({ type: 'tuning-changed', mode: tuningMode(), mapping: tuning.mapping, description: tuningDescription() });
   /* Force a held-keys + footprint + layout-state broadcast even if empty.
      Composer's blank-score auto-adopt path keys off hkl-layout-state, so
      forcing a resend here ensures fresh-open Composer tabs receive it. */
@@ -1357,15 +1380,16 @@ bridge.on((msg: ComposerEvent) => {
          Sync-to-Composer applies silently; otherwise we prompt. On cancel,
          emit playback-finished so Composer's UI doesn't stall. */
       const required = composerRequiredLayout;
-      if (required && tuning.mode !== required.tuningMode) {
+      if (required && !layoutMatches(required)) {
         const prefs = loadPrefs();
         if (prefs.syncToComposer) {
           applyLayoutFromComposer(required);
         } else {
+          const live: ComposerLayoutReq = { tuningMode: tuning.mode, mapping: tuning.mapping };
           const apply = window.confirm(
-            'This score requires "' + tuningLabelFor(required.tuningMode) + '" but HKL is in "'
-            + tuningLabelFor(tuning.mode) + '".\n\n'
-            + 'Apply the score\'s tuning to HKL?'
+            'This score requires "' + layoutLabelFor(required) + '" but HKL is in "'
+            + layoutLabelFor(live) + '".\n\n'
+            + 'Apply the score\'s layout to HKL?'
           );
           if (apply) {
             applyLayoutFromComposer(required);
@@ -1375,7 +1399,11 @@ bridge.on((msg: ComposerEvent) => {
           }
         }
       }
-      playScore(msg.events, msg.pedalEvents);
+      /* Notes are in the score's mapping; play them in HKL's frame. */
+      playScore(msg.events.map((e) => ({
+        ...e,
+        notes: e.notes.map((c) => { const [q, r] = fromComposer(c.q, c.r, msg.mapping); return { q, r }; }),
+      })), msg.pedalEvents);
       break;
     }
     case 'stop-playback':
@@ -1393,7 +1421,7 @@ bridge.on((msg: ComposerEvent) => {
       break;
     case 'layout-req-changed': {
       const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
-      composerRequiredLayout = { tuningMode: mode };
+      composerRequiredLayout = { tuningMode: mode, mapping: isMapping(msg.mapping) ? msg.mapping : 'euler' };
       updateComposerToolbar();
       if (loadPrefs().syncToComposer) {
         applyLayoutFromComposer(composerRequiredLayout);
@@ -1402,7 +1430,7 @@ bridge.on((msg: ComposerEvent) => {
     }
     case 'apply-layout': {
       const mode = isTuningMode(msg.tuningMode) ? msg.tuningMode : '5';
-      applyLayoutFromComposer({ tuningMode: mode });
+      applyLayoutFromComposer({ tuningMode: mode, mapping: isMapping(msg.mapping) ? msg.mapping : 'euler' });
       break;
     }
     case 'composer-active-instrument':
@@ -1454,7 +1482,7 @@ bridge.on((msg: ComposerEvent) => {
       setComposerPlaybackBars(msg.on, msg.bars);
       publishComposerPlayback(msg.on, msg.bars);
       break;
-    case 'set-reference-note':
+    case 'set-reference-note': {
       /* Sets the selection tier from Composer. Last-writer-wins between
          this and any user Ctrl+click. Composer broadcasts are validated
          against the same MIDI-range + accidental constraints as
@@ -1462,8 +1490,9 @@ bridge.on((msg: ComposerEvent) => {
          entering notes, but rejecting at the ref-note-set stage is
          smoother (the dashed marker never moves to an unspellable cell
          and the piano outline never reshapes to a >±3 layout). */
-      if (validateRefNoteCandidate(msg.q, msg.r) === null
-          && setSelectionFromComposer(msg.q, msg.r)) {
+      const [rnQ, rnR] = fromComposer(msg.q, msg.r, msg.mapping);
+      if (validateRefNoteCandidate(rnQ, rnR) === null
+          && setSelectionFromComposer(rnQ, rnR)) {
         invalidatePianoOutline();
         /* Snap — see applyLayoutFromComposer comment. Cursor-follow used to
            animate, but the multi-message reset race made even single
@@ -1474,6 +1503,7 @@ bridge.on((msg: ComposerEvent) => {
         broadcastAllToComposer();
       }
       break;
+    }
     case 'set-score-ref': {
       /* Sets the score-ref tier (the score's cursor-independent fallback ref,
          from the Setup-dialog coordinates). Validate against the same MIDI +
@@ -1483,7 +1513,8 @@ bridge.on((msg: ComposerEvent) => {
          Lumatone/QWERTY outline centers on it, and fire onRefChanged so any
          held physical voices migrate. Cursor-derived refs (set-reference-note)
          deliberately do NOT recenter — they're piano-outline-only. */
-      if (validateRefNoteCandidate(msg.q, msg.r) !== null) break;
+      const [srQ, srR] = fromComposer(msg.q, msg.r, msg.mapping);
+      if (validateRefNoteCandidate(srQ, srR) !== null) break;
       /* Sync on → the lattice must match the score exactly, so a score-ref
          update clears any selection (manual or cursor) that would otherwise
          mask it. Sync off → leave the user's explicit selection alone (they're
@@ -1491,9 +1522,9 @@ bridge.on((msg: ComposerEvent) => {
       const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
       let changed = false;
       if (loadPrefs().syncToComposer) changed = clearSelection() || changed;
-      changed = setScoreRef(msg.q, msg.r) || changed;
+      changed = setScoreRef(srQ, srR) || changed;
       if (changed) {
-        const sp = refSpine(referenceNote.q, referenceNote.r);
+        const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
         view.kbAnchorQ = sp.q;
         view.kbAnchorR = sp.r;
         invalidatePianoOutline();

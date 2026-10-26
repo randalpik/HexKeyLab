@@ -2,7 +2,9 @@
 //
 // For each MIDI N, the piano resolver picks the lattice cell (q, r) with
 // lowest Tenney height to refNote. That choice MUST be octave-consistent:
-// if MIDI N picks (q, r), then MIDI N+12 must pick (q+3, r). Otherwise the
+// if MIDI N picks (q, r), then MIDI N+12 must pick (q+3, r) — (q+6, r) under
+// the Wicki-Hayden mapping, whose columns step by whole tones and whose
+// copy columns are candidates like any cell. Otherwise the
 // "canonical" spelling for a given pitch class drifts as the octave changes
 // — which is musically wrong and visually disruptive in the piano outline.
 //
@@ -10,7 +12,7 @@
 // produces octave-consistent picks across the full 88-key MIDI range.
 //
 // Run:
-//   node tools/bounds-probe/octave-consistency.mjs
+//   node test/bounds-probe/octave-consistency.mjs
 //
 // History: an earlier version of tenneyHeightFromExps did NOT apply octave +
 // complement reduction, so |e₂| asymmetry across octaves caused 5/76 pairs
@@ -18,6 +20,15 @@
 //   ratio → ratio / 2^floor(log₂ ratio)       (octave-reduce to [1, 2))
 //   if log₂(reduced) > 0.5: ratio → 2/ratio   (complement-reduce to [1, √2])
 // before measuring TH. This script is the regression test for that fix.
+
+/* Wicki-Hayden cell → Euler-equivalent (mirrors packages/shared/src/mapping.ts):
+   even column Q → (Q/2, R); odd (copy) column → ((Q−1)/2 − 3, R+2). */
+function eulerOf(q, r, mapping) {
+  if (mapping === 'euler') return { q, r };
+  const k = Math.floor(q / 2);
+  return q === 2 * k ? { q: k, r } : { q: k - 3, r: r + 2 };
+}
+const colStep = (mapping) => (mapping === 'wickiHayden' ? 2 : 4);
 
 const bandOf = (q) => Math.floor((q + 1) / 3);
 const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
@@ -30,7 +41,9 @@ function regionInfo(q, _r, septimalEnabled) {
   return { type: 'A', aDepth: 0, aUpper: false };
 }
 
-function jiExps(q1, r1, q2, r2, septimalEnabled) {
+function jiExps(q1, r1, q2, r2, septimalEnabled, mapping) {
+  ({ q: q1, r: r1 } = eulerOf(q1, r1, mapping));
+  ({ q: q2, r: r2 } = eulerOf(q2, r2, mapping));
   const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
   let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
   if (septimalEnabled) {
@@ -83,19 +96,19 @@ const TIEBREAK = process.argv.includes('--taxicab') ? 'taxicab'
   : process.argv.includes('--max-proj') ? 'maxProj'
   : process.argv.includes('--min-abs-proj') ? 'minAbsProj'
   : 'octNormProj';
-const PROJ_PER_OCT = 7 * 3 - 4 * 0;
-
-function pickCell(midi, refQ, refR, septimalEnabled, thFn) {
+function pickCell(midi, refQ, refR, septimalEnabled, thFn, mapping = 'euler') {
+  const c = colStep(mapping), inv = c === 4 ? 2 : 4, K = mapping === 'wickiHayden' ? 40 : 20;
+  const PROJ_PER_OCT = 7 * (12 / c);
   const N = midi - 57;
-  const q0 = (((2 * N) % 7) + 7) % 7;
-  const refMidi = 57 + 4 * refQ + 7 * refR;
+  const q0 = (((inv * N) % 7) + 7) % 7;
+  const refMidi = 57 + c * refQ + 7 * refR;
   const projTarget = PROJ_PER_OCT * Math.round((midi - refMidi) / 12);
   let bestQ = 0, bestR = 0, bestTh = Infinity, bestTie = Infinity, found = false;
-  for (let k = -20; k <= 20; k++) {
+  for (let k = -K; k <= K; k++) {
     const q = q0 + 7 * k;
-    const r = (N - 4 * q) / 7;
-    const th = thFn(jiExps(refQ, refR, q, r, septimalEnabled));
-    const proj = 7 * (q - refQ) - 4 * (r - refR);
+    const r = (N - c * q) / 7;
+    const th = thFn(jiExps(refQ, refR, q, r, septimalEnabled, mapping));
+    const proj = 7 * (q - refQ) - c * (r - refR);
     const tie = TIEBREAK === 'octNormProj'
       ? Math.abs(proj - projTarget)                          // octave-normalized |proj|
       : TIEBREAK === 'minAbsProj'
@@ -112,15 +125,16 @@ function pickCell(midi, refQ, refR, septimalEnabled, thFn) {
 
 const pcNames = ['A','Bb','B','C','C#','D','Eb','E','F','F#','G','Ab'];
 
-function check(label, thFn, septimalEnabled) {
+function check(label, thFn, septimalEnabled, mapping = 'euler') {
   let bad = 0, total = 0;
   const breaks = [];
-  for (let refQ of [0, 1, 2]) {
+  const octQ = 12 / colStep(mapping);
+  for (let refQ = 0; refQ < octQ; refQ++) {
     for (let midi = 21; midi <= 96; midi++) {
-      const a = pickCell(midi, refQ, 0, septimalEnabled, thFn);
-      const b = pickCell(midi + 12, refQ, 0, septimalEnabled, thFn);
+      const a = pickCell(midi, refQ, 0, septimalEnabled, thFn, mapping);
+      const b = pickCell(midi + 12, refQ, 0, septimalEnabled, thFn, mapping);
       total++;
-      if (b[0] !== a[0] + 3 || b[1] !== a[1]) {
+      if (b[0] !== a[0] + octQ || b[1] !== a[1]) {
         bad++;
         if (breaks.length < 6) {
           const pc = ((midi - 57) % 12 + 12) % 12;
@@ -142,12 +156,16 @@ const bad5new = check('REDUCED TH       ', tenneyReduced, false);
 console.log('\n--- 7-limit (uniform septimal) ---');
 const bad7old = check('OLD (unreduced TH)', tenneyUnreduced, true);
 const bad7new = check('REDUCED TH       ', tenneyReduced, true);
+console.log('\n--- Wicki-Hayden mapping (MIDI N+12 must pick (q+6, r)) ---');
+const badWh5 = check('5-limit REDUCED TH', tenneyReduced, false, 'wickiHayden');
+const badWh7 = check('7-limit REDUCED TH', tenneyReduced, true, 'wickiHayden');
 
 console.log('\n--- result ---');
-if (bad5new === 0 && bad7new === 0) {
+const badTotal = bad5new + bad7new + badWh5 + badWh7;
+if (badTotal === 0) {
   console.log('✓ Reduced TH is octave-consistent (regression test PASSES).');
   process.exit(0);
 } else {
-  console.log(`✗ Reduced TH has ${bad5new + bad7new} inconsistencies — regression!`);
+  console.log(`✗ Reduced TH has ${badTotal} inconsistencies — regression!`);
   process.exit(1);
 }

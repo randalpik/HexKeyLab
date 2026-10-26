@@ -48,7 +48,7 @@ import {
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, getIgnoreColor, setIgnoreColor, getPageScale, setPageScale, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
-import type { TuningMode } from '@hkl/shared/freq.js';
+import { coordToMidi, type TuningMode } from '@hkl/shared/freq.js';
 import { realTicks, writtenTicks, decomposeTicks } from './ticks.js';
 export { decomposeTicks };
 import {
@@ -894,11 +894,11 @@ export class ComposerModel {
        placeholder transform (reads the visible @accid the prior pass set),
        then beams (wraps them). */
     const clone = this.doc.cloneNode(true) as Document;
-    const mode = this.getLayoutReq().tuningMode;
-    computeAccidentalDisplay(clone, this.getKeySig(),
+    const { tuningMode: mode, mapping } = this.getLayoutReq();
+    computeAccidentalDisplay(clone, this.getKeySig(), mapping,
       forRender ? { mode, enabled: forRender.hejiEnabled } : undefined);
     if (forRender) {
-      transformDocForHeji(clone, mode, forRender.hejiEnabled);
+      transformDocForHeji(clone, mode, mapping, forRender.hejiEnabled);
       /* Ignore-color (render-only): drop the lattice @color so noteheads draw
          plain black. Stays on the render clone — the saved doc keeps (q, r) +
          color truth. Export (save.ts) blacks output via forceNonNoteheadBlack. */
@@ -954,9 +954,9 @@ export class ComposerModel {
     const headSd = clone.querySelector('scoreDef');
     if (headSd) stampRunningCtx(headSd, ctx);
     /* identical passes to serialize(), now over only the kept measures */
-    const mode = this.getLayoutReq().tuningMode;
-    computeAccidentalDisplay(clone, ctx.keySig ?? this.getKeySig(), { mode, enabled: forRender.hejiEnabled });
-    transformDocForHeji(clone, mode, forRender.hejiEnabled);
+    const { tuningMode: mode, mapping } = this.getLayoutReq();
+    computeAccidentalDisplay(clone, ctx.keySig ?? this.getKeySig(), mapping, { mode, enabled: forRender.hejiEnabled });
+    transformDocForHeji(clone, mode, mapping, forRender.hejiEnabled);
     if (getIgnoreColor(clone)) {
       for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
     }
@@ -4454,10 +4454,11 @@ export class ComposerModel {
       const nonNotes = Array.from(chord.children).filter(
         (c) => c.localName !== "note",
       );
+      const mapping = this.getLayoutReq().mapping;
       const sortKey = (n: Element): number => {
         const q = parseInt(n.getAttribute("data-q") ?? "0", 10);
         const r = parseInt(n.getAttribute("data-r") ?? "0", 10);
-        return 57 + 4 * q + 7 * r;
+        return coordToMidi(q, r, mapping);
       };
       const sorted = noteChildren.slice().sort((a, b) => sortKey(a) - sortKey(b));
       for (const n of noteChildren) chord.removeChild(n);
@@ -5060,7 +5061,7 @@ export class ComposerModel {
   private insertClonedAtCursor(src: Element): boolean {
     const ln = src.localName;
     if (ln === 'note' || ln === 'chord') {
-      const notes = extractResolvedFromElement(src);
+      const notes = extractResolvedFromElement(src, this.getLayoutReq().mapping);
       const dur = (src.getAttribute('dur') ?? '4') as Duration;
       const dots = (parseInt(src.getAttribute('dots') ?? '0', 10) || 0) as Dots;
       if (notes.length === 0) return false;
@@ -5315,7 +5316,7 @@ export class ComposerModel {
     if (isRest) {
       restInput = { duration: dur, dots: nextDots };
     } else {
-      const notes = extractResolvedFromElement(elem);
+      const notes = extractResolvedFromElement(elem, this.getLayoutReq().mapping);
       chordInput = { notes, duration: dur, dots: nextDots };
     }
 

@@ -28,6 +28,7 @@ import {
 } from '@hkl/notation/mei-build.js';
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import type { Mapping } from '@hkl/shared/mapping.js';
 import { lightSourceHex } from '../render/colors.js';
 
 export interface EmitMeiOpts {
@@ -38,8 +39,8 @@ export interface EmitMeiOpts {
 /** Spell a lattice cell into a NoteSpec, mirroring Composer's buildNoteElement
  *  input (count-form accidental of any magnitude — Composer collapses to the
  *  right glyph stack). */
-function noteSpecFromCoord(q: number, r: number, colorHex: string): NoteSpec {
-  const parsed = parseNote(noteName(q, r));
+function noteSpecFromCoord(q: number, r: number, colorHex: string, mapping: Mapping): NoteSpec {
+  const parsed = parseNote(noteName(q, r, mapping));
   const alter = accToVal(parsed.acc);
   const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
   return {
@@ -47,8 +48,8 @@ function noteSpecFromCoord(q: number, r: number, colorHex: string): NoteSpec {
     r,
     pname: parsed.letter.toLowerCase() as NoteSpec['pname'],
     accid,
-    oct: keyOctave(q, r),
-    midi: coordToMidi(q, r),
+    oct: keyOctave(q, r, mapping),
+    midi: coordToMidi(q, r, mapping),
     colorHex,
     /* Bake the bright "light source" variant too, so the transcribed .hkc
        renders correctly in dark theme (Composer's dark mode / HKL's Composer
@@ -84,6 +85,7 @@ function emitVoiceBar(
   layer: Element,
   notes: QNote[],
   carryTie: { v: boolean },
+  mapping: Mapping,
 ): void {
   for (const q of notes) {
     if (q.isRest || q.pitches.length === 0) {
@@ -97,7 +99,7 @@ function emitVoiceBar(
       continue;
     }
 
-    const specs = q.coords.map((c, i) => noteSpecFromCoord(c.q, c.r, q.colors[i]));
+    const specs = q.coords.map((c, i) => noteSpecFromCoord(c.q, c.r, q.colors[i], mapping));
     for (const a of q.atoms) {
       const incoming = carryTie.v;
       const outgoing = a.notation.tied;
@@ -134,7 +136,7 @@ export function emitMei(
     meterCount: num,
     meterUnit: 4,
     tempoBpm: bpm,
-    layoutReq: { tuningMode: snapshot.tuning },
+    layoutReq: { tuningMode: snapshot.tuning, mapping: snapshot.mapping },
   });
   const doc = new DOMParser().parseFromString(skeleton, 'application/xml');
   const section = doc.querySelector('section');
@@ -164,13 +166,13 @@ export function emitMei(
 
     const s1 = el(doc, 'staff', { n: 1, 'xml:id': newId('s') });
     const s1l1 = el(doc, 'layer', { n: 1, 'xml:id': newId('l') });
-    emitVoiceBar(doc, s1l1, voiced.treble.filter((q) => barOf(q) === bar), trebleCarry);
+    emitVoiceBar(doc, s1l1, voiced.treble.filter((q) => barOf(q) === bar), trebleCarry, snapshot.mapping);
     s1.appendChild(s1l1);
     s1.appendChild(el(doc, 'layer', { n: 2, 'xml:id': newId('l') }));
 
     const s2 = el(doc, 'staff', { n: 2, 'xml:id': newId('s') });
     const s2l1 = el(doc, 'layer', { n: 1, 'xml:id': newId('l') });
-    emitVoiceBar(doc, s2l1, voiced.bass.filter((q) => barOf(q) === bar), bassCarry);
+    emitVoiceBar(doc, s2l1, voiced.bass.filter((q) => barOf(q) === bar), bassCarry, snapshot.mapping);
     s2.appendChild(s2l1);
     s2.appendChild(el(doc, 'layer', { n: 2, 'xml:id': newId('l') }));
 

@@ -7,6 +7,13 @@
 //
 // Messages are POJOs (structured-cloneable). No methods, no Dates, no class
 // instances — they cross the BroadcastChannel and must survive structuredClone.
+//
+// Coordinate frames: a lattice (q, r) means nothing without its note-name
+// mapping ('euler' | 'wickiHayden', @hkl/shared/mapping.js). Every message
+// carrying coordinates also carries the `mapping` they are in (HKL's live
+// mapping, or the score's), and the receiver converts with convertCell() into
+// its own frame when it uses them. Receivers treat an absent mapping (an older
+// peer) as 'euler'.
 
 import type { VoiceCursorAnchor, PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 export type { VoiceCursorAnchor };
@@ -35,7 +42,7 @@ export interface ResolvedNote {
   accid: string;
   /** Scientific octave (middle C = 4). */
   oct: number;
-  /** 12-TET nominal MIDI note = 57 + 4q + 7r. */
+  /** 12-TET nominal MIDI note = coordToMidi(q, r, mapping). */
   midi: number;
   /** Notehead color, hex '#rrggbb'. Pre-darkened for paper readability —
    *  the ink-on-white variant, used as the notehead color in light theme. */
@@ -125,7 +132,7 @@ export type HklEvent =
   /** Sent on HKL unload (best-effort). */
   | { type: 'hkl-bye' }
   /** Currently-held keys, fully resolved. Fires on every change. */
-  | { type: 'held-keys'; keys: ReadonlyArray<ResolvedNote> }
+  | { type: 'held-keys'; keys: ReadonlyArray<ResolvedNote>; mapping: string }
   /** A single live note strike (note-on), fully resolved. Emitted ONLY while
    *  Performance mode is active (gated by start-performance / stop-performance)
    *  — one per physical note-on, including re-articulations of an already-held
@@ -134,7 +141,7 @@ export type HklEvent =
    *  expected chord and advances voices that are satisfied. Distinct from
    *  held-keys (which is the set of currently-down keys, signature-diffed and
    *  blind to re-strikes). */
-  | { type: 'player-note-struck'; note: ResolvedNote }
+  | { type: 'player-note-struck'; note: ResolvedNote; mapping: string }
   /** Playback advance ack. meiId is the MEI element id of the chord now
    *  sounding; null when finished (clears all bars). When meiId is null AND
    *  `voice` is set, it clears ONLY that voice's bar — emitted at a voice's
@@ -144,20 +151,20 @@ export type HklEvent =
   /** Playback queue exhausted. */
   | { type: 'playback-finished' }
   /** Tuning state changed (informational; Composer can update status text). */
-  | { type: 'tuning-changed'; mode: string; description: string }
+  | { type: 'tuning-changed'; mode: string; mapping: string; description: string }
   /** Full HKL layout state: tuning mode + ref-note (q, r). Sent on handshake
    *  and whenever either field changes. Distinct from `tuning-changed` (which
    *  carries only the mode + human description for status text) — this message
    *  exists so Composer can mirror HKL's full layout when opening a blank
    *  score, and so the match indicator can re-check on ref changes (which
    *  don't fire `tuning-changed`). */
-  | { type: 'hkl-layout-state'; tuningMode: string; refQ: number; refR: number }
+  | { type: 'hkl-layout-state'; tuningMode: string; mapping: string; refQ: number; refR: number }
   /** Active layout outline + per-cell color, broadcast whenever the footprint
    *  composition or colors change (layout switch, outline mode change, QWERTY
    *  transpose, tuning toggle). Composer uses this to validate SC shifts
    *  against the outline AND to compute fresh colors when a note's (q, r)
    *  is rewritten. Empty `cells` means outline='none' — no constraint. */
-  | { type: 'footprint-changed'; cells: ReadonlyArray<FootprintCell> }
+  | { type: 'footprint-changed'; cells: ReadonlyArray<FootprintCell>; mapping: string }
   /** Import a whole score into Composer — the result of transcribing an HKL
    *  recording. `mei` is a complete `.hkc` (MEI 5) document string. Composer
    *  confirms-if-dirty, then replaceDocument(mei) + re-render + adopts the
@@ -178,7 +185,7 @@ export type ComposerEvent =
    *  playback-position events as it advances. `pedalEvents`, when present,
    *  is the parallel sustain-pedal timeline (down/up transitions on the same
    *  atMs clock); HKL drives its damper engine + external CC 64 from it. */
-  | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent>; pedalEvents?: ReadonlyArray<PedalEvent> }
+  | { type: 'play-score'; events: ReadonlyArray<PlaybackEvent>; pedalEvents?: ReadonlyArray<PedalEvent>; mapping: string }
   /** Stop any in-progress playback. */
   | { type: 'stop-playback' }
   /** Enter Performance mode: tell HKL to forward each live note-on to Composer
@@ -195,7 +202,7 @@ export type ComposerEvent =
    *  otherwise a key-sig-change broadcast cycle would blow away a manual
    *  Ctrl+click selection the user just made). Tier clearing happens only on
    *  HKL via Ctrl+click of the current ref or via composer-bye. */
-  | { type: 'set-reference-note'; q: number; r: number }
+  | { type: 'set-reference-note'; q: number; r: number; mapping: string }
   /** Set the SCORE-REF tier of HKL's reference-note state to (q, r) — the
    *  TONIC OF THE KEY SIGNATURE at Composer's current position, placed on the
    *  Pythagorean spine nearest C4. It is derived on every send, never stored,
@@ -208,22 +215,22 @@ export type ComposerEvent =
    *  HKL gates whether this also clears the selection tier on its
    *  "Sync to Composer" toggle (sync on → clear, so the lattice matches the
    *  score exactly; sync off → leave the user's explicit selection alone). */
-  | { type: 'set-score-ref'; q: number; r: number }
+  | { type: 'set-score-ref'; q: number; r: number; mapping: string }
   /** Inform HKL of the score's pinned layout requirement. Sent on
    *  composer-hello / request-state and whenever the user saves Setup. HKL
    *  caches this and uses it to gate playback (prompt on mismatch). When
    *  HKL's "Sync to Composer" toggle is on, HKL aggressively applies this
    *  layout on receipt; otherwise it's informational until the user takes
-   *  an action that requires the layouts to match. tuningMode is the whole
-   *  message: it determines (q,r)→Hz. The ref is NOT part of the pinned
-   *  layout — it arrives separately via set-score-ref. */
-  | { type: 'layout-req-changed'; tuningMode: string }
+   *  an action that requires the layouts to match. tuningMode + mapping are
+   *  the whole message: they determine (q,r)→Hz. The ref is NOT part of the
+   *  pinned layout — it arrives separately via set-score-ref. */
+  | { type: 'layout-req-changed'; tuningMode: string; mapping: string }
   /** Tell HKL to apply this layout immediately. Sent by Composer after the
    *  user confirms an entry-side mismatch prompt with "Apply". Distinct from
    *  layout-req-changed: that one is informational (apply only if Sync is on);
    *  this one is an explicit user-driven command. HKL switches tuning and
    *  emits tuning-changed so Composer can re-check and unblock entry. */
-  | { type: 'apply-layout'; tuningMode: string }
+  | { type: 'apply-layout'; tuningMode: string; mapping: string }
   /** The user-facing name of the instrument the Composer editing cursor currently
    *  sits in (verbatim from `<label>`). Sent on cursor moves between instruments
    *  in voice mode (multi-instrument scores). When HKL's "Sync to Composer" toggle
