@@ -13,13 +13,12 @@
 //     audio.aftertouchSnapshot for debug polling.
 //   • Every inbound message is reported to the liveness heartbeat
 //     (midi/heartbeat.ts) as proof of life; ping replies (CMD 33h) stop there.
-//   • Note-on/off → mutate selection.selectedKeys + audio.sustainedKeys +
-//     audio.keyVelocity, fire re-articulation flash if striking a sustaining
-//     voice, then onSelectionChanged() to drive audio + MIDI + redraw.
+//   • Note-on/off → Lumatone velocity calibration + Composer strike broadcast,
+//     then the shared held-input strike/release bodies in input/held.ts
+//     (selection, sustain, velocity, re-articulation flash, onSelectionChanged).
 
 import { audio } from '../state/audio.js';
 import { pedal, pushPedalEvent } from '../state/pedal.js';
-import { selection } from '../state/selection.js';
 import {
   SYSEX_MANU, SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA, isPingReply,
 } from '../lumatone/protocol.js';
@@ -27,28 +26,27 @@ import { heartbeatInbound, setHeartbeatHoldingProbe, stopHeartbeat } from './hea
 import { sysex } from '../lumatone/sysex.js';
 import { handleCalibrationPacket } from '../lumatone/calibration.js';
 import {
-  noteOff, handleAftertouch,
+  handleAftertouch,
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
-import { fixedMidiToKey, fixedMidiToKeyAt, setLumatoneLostHandler } from './engine.js';
-import { restrikePianoOut } from './piano-out.js';
+import { fixedMidiToKey, setLumatoneLostHandler } from './engine.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { broadcastPlayerNote } from '../bridge/hkl-side.js';
-import { view } from '../state/view.js';
-import { keyFreq } from '../tuning/frequency.js';
-import { SampleEngine } from '../audio/samples.js';
-import { animation } from '../render/animation.js';
-import { instrReplaysOnTranspose, noteOn } from '../audio/engine.js';
-import type { KeyId, Voice } from '../types.js';
-import { flashKey } from '../render/key-flash.js';
+import {
+  heldKey, heldCount, clearHeld, pressHeld, releaseHeld, dropHeld, migrateHeld,
+} from '../input/held.js';
+import type { KeyId } from '../types.js';
 
-/* Set of Lumatone physical inputs currently held. Used by
-   migrateHeldLumatoneVoices to find which voices to re-target when the
-   kbAnchor shifts under the static Lumatone outline. Format: "ch,note". */
-const heldLumatonePhys = new Set<string>();
-export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
+/* Lumatone physical inputs are tracked in input/held.ts under source
+   'lumatone', id "ch,note", each recording the KeyId it struck. */
+export function clearHeldLumatoneTracking(): void { clearHeld('lumatone'); }
+
+function physToKey(id: string): KeyId | null {
+  const ci = id.indexOf(',');
+  return fixedMidiToKey(+id.slice(0, ci), +id.slice(ci + 1));
+}
 
 /* Release everything the Lumatone was holding, because the device is gone.
    Registered with midi/engine.ts, which calls this from both departure paths
@@ -63,20 +61,7 @@ export function clearHeldLumatoneTracking(): void { heldLumatonePhys.clear(); }
    is correct: the pedal is a Lumatone peripheral. */
 export function releaseLumatoneInput(): void {
   stopHeartbeat();
-  const keys: KeyId[] = [];
-  heldLumatonePhys.forEach((id) => {
-    const ci = id.indexOf(',');
-    const key = fixedMidiToKey(+id.slice(0, ci), +id.slice(ci + 1));
-    if (key) keys.push(key);
-  });
-  heldLumatonePhys.clear();
-  keys.forEach((key) => {
-    selection.selectedKeys.delete(key);
-    audio.sustainedKeys.delete(key);
-    delete audio.keyVelocity[key];
-    delete audio.aftertouchSnapshot[key];
-    delete audio.paFilter[key];
-  });
+  const keys = dropHeld('lumatone');
   pedal.cc4Depth = 0;
   pedal.cc64Depth = 0;
   setDamperDepth();  /* walks sustainedKeys and releases them */
@@ -88,76 +73,13 @@ setLumatoneLostHandler(releaseLumatoneInput);
 /* The heartbeat only runs while the Lumatone holds something that a dead port
    would leave stuck: keys down, or a damper / sostenuto from its pedal jacks. */
 setHeartbeatHoldingProbe(() =>
-  heldLumatonePhys.size > 0 || audio.sustainPedalDown || audio.sostenutoActive);
+  heldCount('lumatone') > 0 || audio.sustainPedalDown || audio.sostenutoActive);
 
-export function migrateHeldLumatoneVoices(dq: number, dr: number): void {
-  if (heldLumatonePhys.size === 0) return;
-  if (dq === 0 && dr === 0) return;
-  /* kbAnchor has already been advanced to its new value by the caller; back-
-     derive the old anchor from the delta. */
-  const newAQ = view.kbAnchorQ, newAR = view.kbAnchorR;
-  const oldAQ = newAQ - dq, oldAR = newAR - dr;
-  const pairs: { oldKey: KeyId; newKey: KeyId }[] = [];
-  heldLumatonePhys.forEach((id) => {
-    const [chStr, noteStr] = id.split(',');
-    const ch = +chStr, note = +noteStr;
-    const oldKey = fixedMidiToKeyAt(ch, note, oldAQ, oldAR);
-    const newKey = fixedMidiToKeyAt(ch, note, newAQ, newAR);
-    if (oldKey && newKey && oldKey !== newKey) pairs.push({ oldKey, newKey });
-  });
-  if (pairs.length === 0) return;
-  if (audio.audioEnabled && audio.audioCtx) {
-    if (instrReplaysOnTranspose()) {
-      pairs.forEach((p) => {
-        if (!audio.activeOscs[p.oldKey]) return;
-        noteOff(p.oldKey);
-        if (audio.keyVelocity[p.oldKey] !== undefined) {
-          audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
-          delete audio.keyVelocity[p.oldKey];
-        }
-        noteOn(p.newKey, audio.keyVelocity[p.newKey]);
-      });
-    } else {
-      const now = audio.audioCtx.currentTime;
-      const rampDur = animation.duration / 1000;
-      const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vol?: number }[] = [];
-      pairs.forEach((p) => {
-        const e = audio.activeOscs[p.oldKey];
-        if (!e) return;
-        const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
-        if (e.type === 'osc') {
-          e.osc.frequency.setValueAtTime(e.osc.frequency.value, now);
-          e.osc.frequency.exponentialRampToValueAtTime(keyFreq(nq, nr), now + rampDur);
-          e.q = nq; e.r = nr;
-          audio.activeOscs[p.newKey] = e;
-          delete audio.activeOscs[p.oldKey];
-        } else if (e.type === 'sample') {
-          sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr });
-        }
-        if (audio.keyVelocity[p.oldKey] !== undefined) {
-          audio.keyVelocity[p.newKey] = audio.keyVelocity[p.oldKey];
-          delete audio.keyVelocity[p.oldKey];
-        }
-      });
-      sampleMoves.forEach((m) => { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
-      sampleMoves.forEach((m) => {
-        SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur, m.instr);
-        audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr };
-        delete audio.activeOscs[m.oldKey];
-      });
-    }
-  }
-  /* migrate selection entries so the highlight follows the physical key */
-  pairs.forEach((p) => {
-    if (selection.selectedKeys.has(p.oldKey)) {
-      selection.selectedKeys.delete(p.oldKey);
-      selection.selectedKeys.add(p.newKey);
-    }
-    if (audio.sustainedKeys.has(p.oldKey)) {
-      audio.sustainedKeys.delete(p.oldKey);
-      audio.sustainedKeys.add(p.newKey);
-    }
-  });
+/** Ref-change migration for Lumatone-held voices: each held key re-resolves
+ *  under the new kbAnchor (caller has already advanced it). Returns the number
+ *  of voices moved; onRefChanged runs the selection sync. */
+export function migrateHeldLumatoneVoices(): number {
+  return migrateHeld('lumatone', physToKey);
 }
 
 /* Passive inbound-message observer. Registered by diagnostics (lumatone/probe.ts)
@@ -249,7 +171,7 @@ function routeChannelMessage(data: Uint8Array): void {
      to handleAftertouch is filterPA's gated + smoothed output (rejects the
      0/1 onset flicker and the 7-bit stair-stepping). */
   if (status === 0xA0) {
-    const atKey = fixedMidiToKey(ch, d1);
+    const atKey = heldKey('lumatone', ch + ',' + d1);
     if (atKey) {
       audio.aftertouchSnapshot[atKey] = d2;
       const ctxTime = audio.audioCtx ? audio.audioCtx.currentTime : 0;
@@ -258,21 +180,12 @@ function routeChannelMessage(data: Uint8Array): void {
     }
     return;
   }
-  /* Note messages */
-  const key = fixedMidiToKey(ch, d1);
-  if (!key) return;
+  /* Note messages. Release resolves through the key recorded at strike time
+     (input/held.ts), never through the current anchor. */
   const physId = ch + ',' + d1;
   if (status === 0x90 && d2 > 0) {
-    heldLumatonePhys.add(physId);
-    if (audio.activeOscs[key]) {
-      /* Voice is already playing — typically because sustain pedal is holding it.
-         Stop the old voice so syncAudio creates a fresh one with the new velocity,
-         and flash the selection briefly to confirm the re-trigger. */
-      noteOff(key);
-      flashKey(key);
-    }
-    audio.sustainedKeys.delete(key); /* re-struck while sustained → back to normal */
-    selection.selectedKeys.add(key);
+    const key = heldKey('lumatone', physId) ?? fixedMidiToKey(ch, d1);
+    if (!key) return;
     /* Per-key velocity statistics: always-on rolling sample collection when
        statsEnabled (toggled in lumadiag). RAW velocity here — the (p5, p95)
        scatter must reflect the firmware's natural output, not whatever the
@@ -290,7 +203,7 @@ function routeChannelMessage(data: Uint8Array): void {
        correction) then the decompression input curve, both at input time.
        keyVelocity now holds musical velocity (the house curve maps it to gain at
        audio time). */
-    audio.keyVelocity[key] = velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(key, d2));
+    const velocity = velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(key, d2));
     /* Per-key gain auto-capture samples RAW d2 — per-key gain corrects the raw
        firmware velocity before the curve. Out of capture mode, a boolean check. */
     velocityCal.recordSample(key, d2);
@@ -301,18 +214,12 @@ function routeChannelMessage(data: Uint8Array): void {
       const ci = key.indexOf(',');
       broadcastPlayerNote(+key.slice(0, ci), +key.slice(ci + 1));
     }
-    restrikePianoOut(key); /* re-attack on the external synth if already sounding */
+    /* Shared strike body: re-articulates a voice already sounding (typically
+       held by the sustain pedal), selects, records, re-attacks the external
+       synth, then onSelectionChanged. */
+    pressHeld('lumatone', physId, key, velocity);
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
-    heldLumatonePhys.delete(physId);
-    if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {
-      /* damper or sostenuto holds the note — keep sounding, mark as sustained */
-      audio.sustainedKeys.add(key);
-    } else {
-      selection.selectedKeys.delete(key);
-      delete audio.keyVelocity[key];
-      delete audio.aftertouchSnapshot[key];
-      delete audio.paFilter[key];
-    }
-  } else return;
-  onSelectionChanged();
+    /* damper or sostenuto keeps the note sounding (→ sustainedKeys) */
+    releaseHeld('lumatone', physId);
+  }
 }

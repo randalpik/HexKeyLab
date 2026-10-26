@@ -28,6 +28,7 @@ import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onRefChanged } from '../effects/onRefChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
 import { coordOf } from '../types.js';
+import { clearAllHeld } from '../input/held.js';
 import type { KeyId, Voice } from '../types.js';
 
 /* Render-only primitives now live in render/controls-core.ts (engine-free, so
@@ -243,5 +244,6 @@ export function clearSelection(): void {
     }
   }
   stopAllMidi();
+  clearAllHeld();
   draw();
 }

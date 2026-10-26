@@ -112,17 +112,13 @@ export function syncOutput(): void { syncAudio(); syncMidi(); syncPianoOut(); }
 
 /* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r),
    shifted by kbAnchor so the lattice slides under the static Lumatone outline
-   on user-driven ref change. The `sp` parameter lets callers compute the
-   mapping under a past/future anchor (used by migrateHeldLumatoneVoices to
-   look up OLD lattice keys when the anchor has just changed). */
-export function fixedMidiToKeyAt(ch: number, note: number, spQ: number, spR: number): KeyId | null {
+   on user-driven ref change. Resolves a STRIKE only: held keys release
+   through the KeyId recorded at strike time (input/held.ts). */
+export function fixedMidiToKey(ch: number, note: number): KeyId | null {
   const idx = (ch - 1) * 56 + note;
   if (idx < 0 || idx >= 280) return null;
   const base = baseKeys[idx];
-  return (base[0] + spQ) + ',' + (base[1] + spR);
-}
-export function fixedMidiToKey(ch: number, note: number): KeyId | null {
-  return fixedMidiToKeyAt(ch, note, view.kbAnchorQ, view.kbAnchorR);
+  return (base[0] + view.kbAnchorQ) + ',' + (base[1] + view.kbAnchorR);
 }
 
 type MidiMessageHandler = (e: MIDIMessageEvent) => void;

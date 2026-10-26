@@ -238,7 +238,7 @@ a snapshot that never reports the port vanishing. History of what was tried: dec
 2026-10-02.
 
 **The heartbeat** (`midi/heartbeat.ts`, always on, no pref) pings the Lumatone (CMD 0x33 `LUMA_PING`) only
-while the Lumatone is **holding something** — keys down (`heldLumatonePhys`), or `sustainPedalDown` /
+while the Lumatone is **holding something** — keys down (`heldCount('lumatone')`, `input/held.ts`), or `sustainPedalDown` /
 `sostenutoActive` from its pedal jacks — **and** has sent nothing for `HEARTBEAT_QUIET_MS` (200).
 
 - **Any inbound message on the port is proof of life** (`heartbeatInbound()` at the top of
@@ -265,8 +265,9 @@ while the Lumatone is **holding something** — keys down (`heldLumatonePhys`), 
    `fixedLayoutSent`, sets `pendingReconnect`, and updates the status indicator. This happens **before**
    step 3, so a failure there cannot leave the badge claiming the device is still connected.
 3. calls `releaseLumatoneInput()` (registered via `setLumatoneLostHandler` to avoid an import cycle), wrapped
-   so a throw is logged rather than swallowed. It stops the heartbeat, drops every `heldLumatonePhys` key
-   from `selectedKeys` / `sustainedKeys` / `keyVelocity` / `aftertouchSnapshot` / `paFilter`, **and forces
+   so a throw is logged rather than swallowed. It stops the heartbeat, drops every held Lumatone key
+   (`dropHeld('lumatone')`, `input/held.ts`) from `selectedKeys` / `sustainedKeys` / `keyVelocity` /
+   `aftertouchSnapshot` / `paFilter`, **and forces
    the pedal released** (`cc4Depth = cc64Depth = 0`, `setDamperDepth()`, `sostenutoOff()`) — CC 4 / CC 64
    come from the Lumatone's own jacks, so a damper that was down would otherwise hold notes forever.
    Mouse/computer-keyboard voices are untouched.

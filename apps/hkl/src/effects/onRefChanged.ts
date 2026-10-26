@@ -13,11 +13,14 @@ import { migrateHeldLumatoneVoices } from '../midi/handler.js';
 import { buildMidiReverse } from '../midi/engine.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { broadcastAllToComposer } from '../bridge/hkl-side.js';
+import { onSelectionChanged } from './onSelectionChanged.js';
 
 export function onRefChanged(dq: number, dr: number): void {
   if (dq === 0 && dr === 0) return;
-  migrateHeldQwertyVoices(dq, dr);
-  migrateHeldLumatoneVoices(dq, dr);
+  /* kbAnchor is already advanced; each held physical input re-resolves under
+     it (input/held.ts migrateHeld). One selection sync for both sources. */
+  const moved = migrateHeldQwertyVoices() + migrateHeldLumatoneVoices();
+  if (moved) onSelectionChanged();
   /* Rebuild Lumatone MIDI output reverse-lookup so future note-ons land
      on the right (channel, note) for the new lattice shift. */
   buildMidiReverse();

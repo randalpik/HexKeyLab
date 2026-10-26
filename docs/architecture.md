@@ -146,10 +146,13 @@ Applies in all outline modes (`lumatone`/`qwerty`/`none`) and all tuning modes; 
 via `apps/hkl/src/render/animation.ts`. Piano outline is the exception — it uses
 `computePianoViewCenter(...)` to solve a tilt-dependent placement instead.
 
-**Held-voice migration**: on ref change, voices from *physical* inputs migrate with the lattice
-(Lumatone `"ch,note"` in `apps/hkl/src/midi/handler.ts:heldLumatonePhys`; QWERTY `e.code` in
-`apps/hkl/src/input/keyboard-notes.ts:heldCodes`) so a held key keeps its relative pitch;
-*mouse-click* voices stay anchored to their lattice cell. Fan-out: `apps/hkl/src/effects/onRefChanged.ts`.
+**Held physical inputs** (`apps/hkl/src/input/held.ts`): every note struck by a physical key —
+Lumatone `"ch,note"`, QWERTY `e.code`, piano MIDI note — records the `KeyId` it struck. Release,
+aftertouch and forced release (device departure, piano disable) resolve through that record, never by
+recomputing the key from the current anchor, so an anchor change can never orphan a voice; the Clear
+button forgets all records. **Held-voice migration**: on ref change, Lumatone and QWERTY voices migrate
+with the lattice (`migrateHeld`) so a held key keeps its relative pitch; piano and *mouse-click* voices
+stay on their cell. Fan-out: `apps/hkl/src/effects/onRefChanged.ts`.
 
 **Ref validation** (`validateRefNoteCandidate` in `apps/hkl/src/render/draw.ts`): two constraints —
 (1) `coordToMidi(q,r) = 57 + 4q + 7r ∈ [21,108]`; (2) the 88-cell footprint spells with ≤ ±3

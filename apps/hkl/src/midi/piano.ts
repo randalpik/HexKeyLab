@@ -9,31 +9,26 @@
 //     in the same way
 //   - downstream onSelectionChanged() drives audio + MIDI sync + redraw
 //
-// Per-midiNote → KeyId mapping is tracked so the matching note-off releases
-// the same cell that was struck, even if the reference note has changed in
-// between (Composer feedback loop changes the reference after each note).
+// Held notes are tracked in input/held.ts (source 'piano', id = MIDI note
+// number), each recording the KeyId it struck, so the matching note-off
+// releases the same cell even if the reference note has changed in between
+// (Composer feedback loop changes the reference after each note). Piano voices
+// are not migrated on a reference change.
 
-import { audio } from '../state/audio.js';
 import { midi } from '../state/midi.js';
-import { selection } from '../state/selection.js';
 import { pedal } from '../state/pedal.js';
 import { referenceNote } from '../state/reference.js';
 import { loadPrefs, savePrefs } from '../state/persistence.js';
 import { activeFootprintSet } from '../render/draw.js';
 import { resolve12TetToCoord } from '../tuning/resolve.js';
-import { noteOff, setDamperDepth } from '../audio/engine.js';
+import { setDamperDepth } from '../audio/engine.js';
 import { whenMidiAccessReady } from './engine.js';
-import { rebindPianoOut, setOutputProgram, restrikePianoOut } from './piano-out.js';
+import { rebindPianoOut, setOutputProgram } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { heldKey, pressHeld, releaseHeld, dropHeld } from '../input/held.js';
 import type { KeyId } from '../types.js';
-import { flashKey } from '../render/key-flash.js';
 
 /* ── module state ──────────────────────────────────────────────────────────── */
-
-/** Map of midi-note (0..127) → KeyId currently struck on the lattice. Cleared
- *  on disable and on the matching note-off. Persists across reference-note
- *  changes (Composer feedback loop) so the right cell is released. */
-const activeMidiToKey: Map<number, KeyId> = new Map();
 
 let enabled = false;
 let selectedDeviceId: string | null = null;
@@ -99,18 +94,13 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
      resolved. Drop the message before potentially flashing a new one. */
   clearTransientStatus();
   /* If this midi note is already mapped, treat the new event as a re-strike
-     of the same physical cell — match Lumatone's re-articulation behavior. */
-  const prev = activeMidiToKey.get(midiNote);
+     of the same physical cell — match Lumatone's re-articulation behavior.
+     Velocity is musical velocity: a weighted MIDI keyboard already sends it
+     natural (identity, no pre-curve). */
+  const id = String(midiNote);
+  const prev = heldKey('piano', id);
   if (prev) {
-    if (audio.activeOscs[prev]) {
-      noteOff(prev);
-      flashKey(prev);
-    }
-    audio.sustainedKeys.delete(prev);
-    selection.selectedKeys.add(prev);
-    audio.keyVelocity[prev] = vRaw; /* musical velocity: a weighted MIDI keyboard already sends it natural */
-    restrikePianoOut(prev); /* re-attack on the external synth (membership unchanged) */
-    onSelectionChanged();
+    pressHeld('piano', id, prev, vRaw);
     return;
   }
   const footprint = activeFootprintSet();
@@ -128,34 +118,14 @@ function handleNoteOn(midiNote: number, vRaw: number): void {
     return;
   }
   const key: KeyId = cell.q + ',' + cell.r;
-  if (audio.activeOscs[key]) {
-    /* The chosen cell is already sounding (e.g., from QWERTY/Lumatone). Match
-       Lumatone behavior: noteOff + rearticulate flash. */
-    noteOff(key);
-    flashKey(key);
-  }
-  audio.sustainedKeys.delete(key);
-  selection.selectedKeys.add(key);
-  audio.keyVelocity[key] = vRaw; /* musical velocity: identity (no pre-curve) */
-  activeMidiToKey.set(midiNote, key);
-  restrikePianoOut(key); /* re-attack on the external synth if already sounding */
-  onSelectionChanged();
+  /* A cell already sounding (e.g., from QWERTY/Lumatone) is re-articulated by
+     the shared strike body: noteOff + flash, as on the Lumatone. */
+  pressHeld('piano', id, key, vRaw);
 }
 
 function handleNoteOff(midiNote: number): void {
   clearTransientStatus();
-  const key = activeMidiToKey.get(midiNote);
-  if (!key) return;
-  activeMidiToKey.delete(midiNote);
-  if (audio.sustainPedalDown || audio.sostenutoLockedKeys.has(key)) {
-    audio.sustainedKeys.add(key);
-  } else {
-    selection.selectedKeys.delete(key);
-    delete audio.keyVelocity[key];
-    delete audio.aftertouchSnapshot[key];
-    delete audio.paFilter[key];
-  }
-  onSelectionChanged();
+  releaseHeld('piano', String(midiNote));
 }
 
 /* Sustain pedal (CC 64) plugged into the piano device. Always acts as SUSTAIN
@@ -204,13 +174,9 @@ function bindPort(port: MIDIInput | null): void {
   if (midi.pianoIn) {
     midi.pianoIn.onmidimessage = null;
   }
-  /* Release any in-flight notes on the previous port. */
-  for (const [, key] of activeMidiToKey) {
-    if (audio.activeOscs[key]) noteOff(key);
-    selection.selectedKeys.delete(key);
-    delete audio.keyVelocity[key];
-  }
-  activeMidiToKey.clear();
+  /* Release any in-flight notes on the previous port (voices stop at the
+     onSelectionChanged below). */
+  dropHeld('piano');
   midi.pianoIn = port;
   if (port) {
     port.onmidimessage = pianoMessage;
@@ -293,12 +259,7 @@ export function setEnabled(on: boolean): void {
   /* When disabling, release any in-flight notes so we don't leave hanging
      selection state or stuck audio voices. */
   if (!on) {
-    for (const [, key] of activeMidiToKey) {
-      if (audio.activeOscs[key]) noteOff(key);
-      selection.selectedKeys.delete(key);
-      delete audio.keyVelocity[key];
-    }
-    activeMidiToKey.clear();
+    dropHeld('piano');
     onSelectionChanged();
   }
 }

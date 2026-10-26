@@ -41,6 +41,21 @@ Unlike `test/hkl-inspect/` (console *inspection*, always exits 0), this is a
 pass/fail gate. **Run it before declaring any change to `midi/handler.ts`,
 `midi/heartbeat.ts` or `midi/engine.ts` done.**
 
+## Held physical inputs release the key they struck
+
+```sh
+node test/hkl-midi/held-inputs.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Invariant gate for the held-input registry (`input/held.ts`): a note struck by
+a physical key (Lumatone `"ch,note"`, QWERTY `e.code`) releases — and routes
+aftertouch to — the `KeyId` it struck, even after an anchor change that did
+**not** migrate it. Also covers ref-change migration for both sources, the Clear
+button forgetting held records, QWERTY blur, and the damper handoff. Same
+harness as `departure.mjs` (live modules resolved through their importers).
+**Run it before declaring any change to `input/held.ts`, the Lumatone / QWERTY /
+piano note paths, or `effects/onRefChanged.ts` done.**
+
 ## Why it is shaped this way
 
 The modules are imported live from the dev server (`/src/midi/handler.ts`), so

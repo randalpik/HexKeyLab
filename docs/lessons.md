@@ -496,7 +496,7 @@ The distinction is input identity: a Lumatone key has a persistent `(ch, note)` 
 
 If you migrate clicks too, you have to invent a synthetic identity for them ("phantom click on cell X moves to cell Y"), which doesn't match anything the user actually did. If you don't migrate physical inputs, held chords on the Lumatone jump pitches mid-press when the ref shifts.
 
-The fan-out in `src/effects/onRefChanged.ts` calls `migrateHeldQwertyVoices(dq, dr)` + `migrateHeldLumatoneVoices(dq, dr)` + `buildMidiReverse()` AFTER the ref mutation, with the spine delta. Each input source maintains its own held-voice tracker (`heldCodes` for QWERTY, `heldLumatonePhys` for Lumatone) because the identity shape differs per source.
+The fan-out in `src/effects/onRefChanged.ts` calls `migrateHeldQwertyVoices()` + `migrateHeldLumatoneVoices()` + `buildMidiReverse()` AFTER the ref mutation. All physical sources share one registry (`apps/hkl/src/input/held.ts`) keyed by source + input identity (`"ch,note"`, `e.code`, MIDI note), and each entry records the KeyId it struck: release resolves through that record, never through the current anchor, so an anchor change that skips migration cannot orphan a voice (2026-10-25).
 
 ### Outline polygon stays static; the lattice slides
 
@@ -4886,10 +4886,10 @@ failure shape as the stuck-sustain entries above, reached by a different route. 
 voices are deliberately left alone (they have their own release paths), but forcing the damper released does drop
 whatever *it* was sustaining, which is correct — the pedal is a Lumatone peripheral.
 
-Related pre-existing gap, still open: `clearSelection()` (`ui/controls.ts`) does not call
-`clearHeldLumatoneTracking()`, so `heldLumatonePhys` goes stale after the Clear button and
-`migrateHeldLumatoneVoices` can chase voices that are no longer held. The export exists for exactly this and has
-never had a caller.
+Related gap, closed 2026-10-25: `clearSelection()` (`ui/controls.ts`) did not clear held-input tracking, so the
+Lumatone's held set went stale after the Clear button and migration could chase voices that were no longer held.
+Held inputs now live in one registry (`input/held.ts`) and Clear calls `clearAllHeld()` — see decisions.md
+"Physical inputs record the key they struck".
 
 ## A Web MIDI round trip cannot measure device health — it measures your own main thread (2026-09-21)
 
