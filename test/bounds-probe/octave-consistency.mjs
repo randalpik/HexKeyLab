@@ -1,171 +1,72 @@
-// Octave-consistency check for Tenney-Height-based enharmonic spelling.
+// Octave-consistency check for the piano-footprint picker.
 //
-// For each MIDI N, the piano resolver picks the lattice cell (q, r) with
-// lowest Tenney height to refNote. That choice MUST be octave-consistent:
-// if MIDI N picks (q, r), then MIDI N+12 must pick (q+3, r) — (q+6, r) under
-// the Wicki-Hayden mapping, whose columns step by whole tones and whose
-// copy columns are candidates like any cell. Otherwise the
-// "canonical" spelling for a given pitch class drifts as the octave changes
-// — which is musically wrong and visually disruptive in the piano outline.
+// For each MIDI N the picker (apps/hkl/src/tuning/picker.ts) chooses the cell
+// piano input resolves to. Its SPELLING must be octave-consistent: if MIDI N is
+// spelled X in octave o, MIDI N+12 must be spelled X in octave o+1 — otherwise
+// the canonical spelling of a pitch class drifts as the octave changes, which
+// is musically wrong and visually disruptive. WHERE the octave sits is the
+// picker's business (identical pitches go to the cell nearest the ref), so this
+// checks names and spelled octaves, not positions.
 //
-// This script verifies that the TH calculation in src/tuning/ratios.ts
-// produces octave-consistent picks across the full 88-key MIDI range.
+// Spelling consistency comes from the ranking itself: TH is octave- and
+// complement-reduced, so an octave-equivalent candidate ranks the same in every
+// octave; the tritone (the one place two spellings tie) falls back to the ref's
+// octave line.
 //
-// Run:
-//   node test/bounds-probe/octave-consistency.mjs
+// Run (every mode × mapping, refs across one band, refR ∈ [−3, 3]):
+//   node --import ./test/orchestrator-smoke/register-ts.mjs test/bounds-probe/octave-consistency.mjs
 //
-// History: an earlier version of tenneyHeightFromExps did NOT apply octave +
-// complement reduction, so |e₂| asymmetry across octaves caused 5/76 pairs
-// to flip in 5-limit (more in 7-limit). The fix was to apply
-//   ratio → ratio / 2^floor(log₂ ratio)       (octave-reduce to [1, 2))
-//   if log₂(reduced) > 0.5: ratio → 2/ratio   (complement-reduce to [1, √2])
-// before measuring TH. This script is the regression test for that fix.
+// Syntonic / Polysyntonic are REPORTED, not gated (Max, 2026-10-26: some
+// inconsistency there is expected — the layout offers a spelling's 5-limit
+// pitch in one octave's band and not the next). Their breaks are split into
+// tritone ties (the octave line follows the (6,0)/(3,0) cross-band octave,
+// which in S/Y is not a pure octave) and availability.
+//
+// History: an earlier tenneyHeightFromExps did NOT octave- and complement-
+// reduce, so |e₂| asymmetry across octaves flipped 5/76 pairs in 5-limit (more
+// in 7-limit). Exits non-zero on any inconsistency outside S/Y.
 
-/* Wicki-Hayden cell → Euler-equivalent (mirrors packages/shared/src/mapping.ts):
-   even column Q → (Q/2, R); odd (copy) column → ((Q−1)/2 − 3, R+2). */
-function eulerOf(q, r, mapping) {
-  if (mapping === 'euler') return { q, r };
-  const k = Math.floor(q / 2);
-  return q === 2 * k ? { q: k, r } : { q: k - 3, r: r + 2 };
-}
-const colStep = (mapping) => (mapping === 'wickiHayden' ? 2 : 4);
+import { TUNING_MODES, anchorOf, coordToMidi } from '../../packages/shared/src/freq.ts';
+import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
+import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
 
-const bandOf = (q) => Math.floor((q + 1) / 3);
-const posInBand = (q) => (((q + 1) % 3) + 3) % 3;
+const MAPPINGS = ['euler', 'wickiHayden'];
 
-/* Uniform septimal: qm=2 cells are B-d1-upper, others A-d0. */
-function regionInfo(q, _r, septimalEnabled) {
-  if (!septimalEnabled) return { aDepth: 0, aUpper: false, type: 'A' };
-  const qm = ((q % 3) + 3) % 3;
-  if (qm === 2) return { type: 'B', aDepth: 1, aUpper: true };
-  return { type: 'A', aDepth: 0, aUpper: false };
-}
-
-function jiExps(q1, r1, q2, r2, septimalEnabled, mapping) {
-  ({ q: q1, r: r1 } = eulerOf(q1, r1, mapping));
-  ({ q: q2, r: r2 } = eulerOf(q2, r2, mapping));
-  const db = bandOf(q2) - bandOf(q1), dp = posInBand(q2) - posInBand(q1), dr = r2 - r1;
-  let e2 = db - 2 * dp - dr, e3 = dr, e5 = dp, e7 = 0;
-  if (septimalEnabled) {
-    const ri1 = regionInfo(q1, r1, true);
-    const ri2 = regionInfo(q2, r2, true);
-    const applyAdj = (ri, sign) => {
-      if (ri.aDepth > 0) {
-        const d = ri.aDepth;
-        if (ri.aUpper) { e2 += sign * 4 * d; e5 += sign * d; e3 += sign * (-4) * d; }
-        else { e3 += sign * 4 * d; e2 += sign * (-4) * d; e5 += sign * (-d); }
-      }
-      if (ri.type === 'B') { e7 += sign; e3 += sign * 2; e2 += sign * (-6); }
-    };
-    applyAdj(ri2, +1);
-    applyAdj(ri1, -1);
-  }
-  return [e2, e3, e5, e7];
-}
-
-/** TH without reduction — the BUG variant. Kept for comparison. */
-function tenneyUnreduced(e) {
-  return Math.abs(e[0]) + Math.abs(e[1]) * Math.log2(3) + Math.abs(e[2]) * Math.log2(5) + Math.abs(e[3]) * Math.log2(7);
-}
-
-/** TH with octave + complement reduction — matches tenneyHeightFromExps in
- *  src/tuning/ratios.ts. */
-function tenneyReduced(e) {
-  const log2r = e[0] + e[1] * Math.log2(3) + e[2] * Math.log2(5) + e[3] * Math.log2(7);
-  const oct = Math.floor(log2r);
-  let r0 = e[0] - oct, r1 = e[1], r2 = e[2], r3 = e[3];
-  if (log2r - oct > 0.5) { r0 = 1 - r0; r1 = -r1; r2 = -r2; r3 = -r3; }
-  return Math.abs(r0) + Math.abs(r1) * Math.log2(3) + Math.abs(r2) * Math.log2(5) + Math.abs(r3) * Math.log2(7);
-}
-
-/** Tiebreak strategies for equal-TH candidates.
- *  'octNormProj' (default, matches production) — pick candidate with smallest
- *    |proj − octaveTarget| where octaveTarget = 21·round((midi−refMidi)/12).
- *    Octave-normalized projection: ref-pitch-class collapses to nProj=0
- *    across all octaves, other pitch classes to their respective lineages.
- *    Octave-invariant by construction (both proj and target shift by 21
- *    per octave) AND keeps (refQ, refR) inside its own footprint.
- *  'maxProj' (--max-proj) — earlier rule: largest proj. Octave-invariant
- *    but asymmetric — in 7-limit it can exile the ref note to its
- *    (refQ+7, refR−4) sibling at TH=0.
- *  'minAbsProj' (--min-abs-proj) — smallest |proj| (0-anchored). Puts ref
- *    inside outline but breaks octave invariance for non-ref pitch classes.
- *  'taxicab' (--taxicab) — historical rule. NOT octave-invariant. Kept for
- *    regression diagnosis. */
-const TIEBREAK = process.argv.includes('--taxicab') ? 'taxicab'
-  : process.argv.includes('--max-proj') ? 'maxProj'
-  : process.argv.includes('--min-abs-proj') ? 'minAbsProj'
-  : 'octNormProj';
-function pickCell(midi, refQ, refR, septimalEnabled, thFn, mapping = 'euler') {
-  const c = colStep(mapping), inv = c === 4 ? 2 : 4, K = mapping === 'wickiHayden' ? 40 : 20;
-  const PROJ_PER_OCT = 7 * (12 / c);
-  const N = midi - 57;
-  const q0 = (((inv * N) % 7) + 7) % 7;
-  const refMidi = 57 + c * refQ + 7 * refR;
-  const projTarget = PROJ_PER_OCT * Math.round((midi - refMidi) / 12);
-  let bestQ = 0, bestR = 0, bestTh = Infinity, bestTie = Infinity, found = false;
-  for (let k = -K; k <= K; k++) {
-    const q = q0 + 7 * k;
-    const r = (N - c * q) / 7;
-    const th = thFn(jiExps(refQ, refR, q, r, septimalEnabled, mapping));
-    const proj = 7 * (q - refQ) - c * (r - refR);
-    const tie = TIEBREAK === 'octNormProj'
-      ? Math.abs(proj - projTarget)                          // octave-normalized |proj|
-      : TIEBREAK === 'minAbsProj'
-      ? Math.abs(proj)                                       // 0-anchored |proj|
-      : TIEBREAK === 'maxProj'
-      ? -proj                                                // largest proj → negate so smaller comparator wins
-      : Math.abs(q - refQ) + Math.abs(r - refR);             // taxicab
-    if (!found || th < bestTh || (th === bestTh && tie < bestTie)) {
-      bestTh = th; bestTie = tie; bestQ = q; bestR = r; found = true;
-    }
-  }
-  return [bestQ, bestR];
-}
-
-const pcNames = ['A','Bb','B','C','C#','D','Eb','E','F','F#','G','Ab'];
-
-function check(label, thFn, septimalEnabled, mapping = 'euler') {
-  let bad = 0, total = 0;
-  const breaks = [];
-  const octQ = 12 / colStep(mapping);
-  for (let refQ = 0; refQ < octQ; refQ++) {
-    for (let midi = 21; midi <= 96; midi++) {
-      const a = pickCell(midi, refQ, 0, septimalEnabled, thFn, mapping);
-      const b = pickCell(midi + 12, refQ, 0, septimalEnabled, thFn, mapping);
-      total++;
-      if (b[0] !== a[0] + octQ || b[1] !== a[1]) {
-        bad++;
-        if (breaks.length < 6) {
-          const pc = ((midi - 57) % 12 + 12) % 12;
-          breaks.push(`MIDI ${midi}→${midi+12} (${pcNames[pc]}) refQ=${refQ}: (${a[0]},${a[1]}) vs (${b[0]},${b[1]})`);
+let total = 0, bad = 0;
+for (const mapping of MAPPINGS) {
+  const bandWidth = mapping === 'wickiHayden' ? 6 : 3;
+  for (const mode of TUNING_MODES) {
+    let modeBad = 0, modeTotal = 0, tritone = 0;
+    const examples = [];
+    for (let refQ = 0; refQ < bandWidth; refQ++) {
+      for (let refR = -3; refR <= 3; refR++) {
+        const cells = pianoFootprint(refQ, refR, {
+          mode, mapping, anchor: anchorOf(refQ, mapping),
+          equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
+        });
+        for (let i = 0; i + 12 < cells.length; i++) {
+          const [q1, r1] = cells[i], [q2, r2] = cells[i + 12];
+          const n1 = noteName(q1, r1, mapping), n2 = noteName(q2, r2, mapping);
+          const o1 = keyOctave(q1, r1, mapping), o2 = keyOctave(q2, r2, mapping);
+          modeTotal++;
+          if (n1 !== n2 || o2 !== o1 + 1) {
+            modeBad++;
+            if ((((21 + i - coordToMidi(refQ, refR, mapping)) % 12) + 12) % 12 === 6) tritone++;
+            if (examples.length < 4) {
+              examples.push(`ref (${refQ},${refR}) MIDI ${21 + i}→${33 + i}: ${n1}${o1} (${q1},${r1}) vs ${n2}${o2} (${q2},${r2})`);
+            }
+          }
         }
       }
     }
+    const reportOnly = mode === 'S' || mode === 'Y';
+    if (!reportOnly) { total += modeTotal; bad += modeBad; }
+    console.log(`${mapping.padEnd(11)} ${mode}: ${modeBad}/${modeTotal} octave pairs inconsistent`
+      + (reportOnly ? `  (report only: ${tritone} at the tritone, ${modeBad - tritone} availability)` : ''));
+    for (const e of examples) console.log('    ' + e);
   }
-  console.log(`${label}: ${bad}/${total} octave-pairs inconsistent`);
-  for (const b of breaks) console.log(`  ${b}`);
-  if (breaks.length < bad) console.log(`  ... ${bad - breaks.length} more`);
-  return bad;
 }
-
-console.log('Octave-consistency: does MIDI N+12 pick (q+3, r) when MIDI N picks (q, r)?\n');
-console.log('--- 5-limit (septimalEnabled=false) ---');
-const bad5old = check('OLD (unreduced TH)', tenneyUnreduced, false);
-const bad5new = check('REDUCED TH       ', tenneyReduced, false);
-console.log('\n--- 7-limit (uniform septimal) ---');
-const bad7old = check('OLD (unreduced TH)', tenneyUnreduced, true);
-const bad7new = check('REDUCED TH       ', tenneyReduced, true);
-console.log('\n--- Wicki-Hayden mapping (MIDI N+12 must pick (q+6, r)) ---');
-const badWh5 = check('5-limit REDUCED TH', tenneyReduced, false, 'wickiHayden');
-const badWh7 = check('7-limit REDUCED TH', tenneyReduced, true, 'wickiHayden');
-
-console.log('\n--- result ---');
-const badTotal = bad5new + bad7new + badWh5 + badWh7;
-if (badTotal === 0) {
-  console.log('✓ Reduced TH is octave-consistent (regression test PASSES).');
-  process.exit(0);
-} else {
-  console.log(`✗ Reduced TH has ${badTotal} inconsistencies — regression!`);
-  process.exit(1);
-}
+console.log(bad === 0
+  ? `\n✓ spelling is octave-consistent outside S/Y (${total} pairs)`
+  : `\n✗ ${bad}/${total} octave pairs inconsistent outside S/Y`);
+process.exit(bad === 0 ? 0 : 1);

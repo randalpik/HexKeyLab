@@ -127,8 +127,8 @@ only on `anchor mod 4`. In every other mode the band offset is constant, so the 
 (`tuning.anchor` still exists; nothing reads it). `state/reference.ts` recomputes `tuning.anchor`
 with the ref tiers; a change in S/Y runs `onAnchorChanged` (= `onTuningChanged`: held voices ramp,
 re-render, Lumatone colour diff, Composer rebroadcast). Recording playback and the overlay mirror pin
-it (`setAnchorOverride`). Piano input prefers `k = 0` bands (the picker's primary key), so it stays
-unaltered — 5-limit pitches are played on the lattice. Spec: `docs/syntonic-spec.md`.
+it (`setAnchorOverride`). Piano input follows the one 88-cell picker rule (below) under S/Y's own
+ratios, so it plays 5-limit wherever the bands offer it. Spec: `docs/syntonic-spec.md`.
 
 Persistence has no back-compat shims: any unrecognized `tuning` value reverts to `'5'`.
 
@@ -181,11 +181,17 @@ stay on their cell. Fan-out: `apps/hkl/src/effects/onRefChanged.ts`.
 accidentals. The dotted "valid ref bounds" overlay is a cached visual aid from the same check, not a
 separate gate.
 
-**Octave-consistent 88-cell picker** (`compute88PianoCoords`): for each MIDI 21..108, picks the
-`(q,r)` with `4q+7r = midi−57` minimizing reduced Tenney Height to the ref, tiebroken by an
-octave-normalized projection so each pitch class stays on its ref-aligned lineage (Eb3/Eb4 share
-spelling; the ref maps to itself). `'V'` routes the picker through `'D'` state so schisma exponents
-don't distort the spelling. → see decisions.md "V-mode picker routes through D state".
+**88-cell picker** (`apps/hkl/src/tuning/picker.ts`, wrapped by `compute88PianoCoords`; the bounds
+probes run the same module): for each MIDI 21..108, among the cells with that nominal MIDI, ONE
+ranking rule in every mode and mapping — (1) lowest reduced Tenney Height of the ratio from the ref
+under the mode's own ratios; (2) if the lowest-TH cells differ in pitch, the ref's octave line picks
+the pitch (only at the tritone, whose two spellings are complements: 45/32 vs 64/45); (3) among
+cells of that pitch (Wicki-Hayden twins, P/D comma siblings, in-band vs cross-band octaves), the one
+fewest key steps from the ref — so the footprint clusters on the ref's band. TH is octave-invariant,
+so spelling is octave-consistent by construction (`test/bounds-probe/octave-consistency.mjs`: 0 breaks
+outside S/Y; in S/Y a spelling's 5-limit pitch can exist in one octave's band and not the next, so
+some drift is expected and reported). The ref maps to itself. `'V'` ranks under `'D'` ratios so
+schisma exponents don't distort the spelling. → decisions.md 2026-10-26 "One picker rule".
 
 Coverage: ~55 unique MIDI/ref in 5-limit; 88-cell footprint per ref in 7-limit (~208–210 unique
 pitches reachable from a central key). One LTN file gives every physical key a stable

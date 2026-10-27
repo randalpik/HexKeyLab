@@ -16,8 +16,10 @@
 //   N4  the score-ref drives the anchor when there is no manual selection;
 //       a manual selection overrides it
 //   N5  setAnchorOverride pins it (playback / overlay) and null releases it
-//   N6  piano input: Syntonic's 88-cell footprint lies wholly in k = 0 bands;
-//       Polysyntonic's is mostly home, the rest one band away
+//   N6  piano input ranks by TH under the mode's own ratios, then key steps:
+//       C#4 resolves to the 5-limit 5/4 (one band left), A4 to the pure
+//       in-band octave (−1,2) rather than the cross-band (6,0) (81/40), A3 to
+//       the ref itself
 //   N7  a note-on recorded after a mid-take re-anchor carries `a`
 //   N8  outside S/Y the anchor still tracks the ref but no pitch depends on it
 
@@ -128,15 +130,14 @@ const SCRIPT = `(async () => {
   refState.clearScoreRef();
   await tick();
 
-  /* N6: piano footprint */
-  const kOf = (q) => Math.abs(sharedFreq.bandOffset(tuning.mode, sharedMap.bandOfCell(q, tuning.mapping) - tuning.anchor));
-  const offHome = (cells) => cells.filter(([q]) => kOf(q) !== 0).length;
-  check('N6a: Syntonic footprint wholly in k = 0 bands', offHome(drawMod.compute88PianoCoords(0, 0)), 0);
-  setMode('Y');
-  const yCells = drawMod.compute88PianoCoords(0, 0);
-  check('N6b: Polysyntonic: off-home cells are one band away', yCells.every(([q]) => kOf(q) <= 1), true);
-  check('N6c: Polysyntonic: off-home cells are the minority (' + offHome(yCells) + '/88)', offHome(yCells) < 20, true);
-  setMode('S');
+  /* N6: piano footprint (ref A3, home band 0) */
+  const fp = drawMod.compute88PianoCoords(0, 0);
+  const at = (midi) => fp[midi - 21];
+  const c4 = at(61);
+  check('N6a: C#4 → the 5-limit major third (5/4 = 275 Hz)', cents(keyFreq(c4[0], c4[1]), 275), 0);
+  check('N6b: C#4 cell sits one band left (lowered)', sharedMap.bandOfCell(c4[0], tuning.mapping), -1);
+  check('N6c: A4 → the in-band pure octave (−1,2)', at(69).join(','), '-1,2');
+  check('N6d: A3 → the ref itself', at(57).join(','), '0,0');
 
   /* N7: recording */
   captureMod.startRecording();

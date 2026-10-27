@@ -13,7 +13,7 @@
 
 import { baseKeys } from '../layout/baseKeys.js';
 import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
-import { coordToMidi, bandOffset, TUNING_MODES } from '@hkl/shared/freq.js';
+import { coordToMidi, anchorOf, TUNING_MODES } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { qwertyKeys } from '../input/qwerty.js';
 import { tuning } from '../state/tuning.js';
@@ -22,7 +22,6 @@ import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
 import type { TuningMode } from '../state/persistence.js';
-import { probedMode } from '../state/persistence.js';
 import { whiteSet, hueC, keyColorVariant } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
@@ -30,8 +29,7 @@ import { updateInfo } from './info.js';
 import {
   parseNote, accToVal, noteName,
 } from '@hkl/shared/notes.js';
-import { jiRatioWithState, tenneyHeightFromExps } from '../tuning/ratios.js';
-import type { TuningStateLike } from '../tuning/regions.js';
+import { pianoFootprint } from '../tuning/picker.js';
 import {
   hejiCommas,
   hejiLabel,
@@ -248,7 +246,7 @@ export function invalidatePianoOutline(): void {
      V5         — used in 5-limit + 12-TET (septimalEnabled=false).
      V7-uniform — used in 7-limit (septimalEnabled=true; qm=2 all B-d1-upper).
    Both are pure functions of the picker logic + accidental rule, so they're
-   precomputed offline by tools/bounds-probe/compute-refbounds.mjs and stored
+   precomputed offline by test/bounds-probe/compute-refbounds.mjs and stored
    in VALID_REF_TABLE, per mapping × tuning mode (each mapping's cells are in
    its own frame). The outline polygons are cheap to derive (edge tracing
    over the cell set); built once at module load. */
@@ -256,7 +254,7 @@ function byMappingAndMode<T>(f: (cells: ReadonlyArray<readonly [number, number]>
   const out = {} as Record<Mapping, Record<TuningMode, T>>;
   for (const m of MAPPINGS) {
     out[m] = {} as Record<TuningMode, T>;
-    for (const t of TUNING_MODES) out[m][t] = f(VALID_REF_TABLE[m][probedMode(t)]);
+    for (const t of TUNING_MODES) out[m][t] = f(VALID_REF_TABLE[m][t]);
   }
   return out;
 }
@@ -287,94 +285,17 @@ function activeValidRefPaths(): Point[][] {
   return validRefPathsByMode[tuning.mapping][tuning.mode];
 }
 
-/* For each MIDI 21..108, pick the (q, r) with `coordToMidi(q, r) = midi` that
-   minimizes reduced Tenney Height of the JI ratio to (refQ, refR), tiebroken
-   by largest isotone-axis projection (octave-invariant — see resolve.ts
-   header for derivation). With c the column step in semitones (4 Euler,
-   2 Wicki-Hayden), solutions live on a 1-parameter family (q0+7k, r0−c·k);
-   k ∈ [−20, 20] (Euler) is comfortably wider than any sensible enharmonic
-   excursion. Under Wicki-Hayden every other step is the pitch-equal copy of
-   an Euler candidate, so k runs twice as far; copies are candidates like any
-   cell, and a copy and its pitch-equal original differ by 7·7 + 2·2 = 53 in
-   projection, so the tiebreak never ties. Exported for callers that need to inspect the
-   resulting cell set under a hypothetical refNote (e.g. Ctrl+click
-   validation in src/ui/init.ts). Tuning state is read from the live `tuning`
-   module via jiRatio — for hypothetical-state probing under non-live tuning,
-   see tools/bounds-probe/compute-refbounds.mjs.
-
-   V-mode picker substitution: when live mode is Schismatic ('V'), the
-   picker runs JI-ratio math under Semiditonal ('D') rules — same qm shifts,
-   no schisma exponent. Reason: V's per-band schisma factor inflates the TH
-   of the (3k, 0) lineage cells (each octave above ref carries one schisma
-   in V's exponent vector, so TH grows linearly with |k|), and the picker
-   ends up preferring diaschisma-spelled cells over the natural lineage
-   (e.g. MIDI 69 picks (−4, 4) over (3, 0); MIDI 105 lands on (−2, 8)
-   "G##" via arithmetic coincidence). Under D rules every (3k, 0) cell has
-   TH 0, so the lineage wins by construction at every octave, and the
-   picker output matches D mode exactly. Playback still uses freqAt(…, 'V')
-   so the schisma stretch remains audible — the substitution only affects
-   which cells get drawn under each MIDI in the piano outline.
-
-   Syntonic / Polysyntonic: piano input stays unaltered wherever it can. The
-   primary key is the candidate band's comma count |bandOffset| (so k = 0
-   bands win — home, and in Syntonic the return bands ±2, ±4 …), then TH under
-   Pythagorean ('P') ratios, then the projection tiebreak. 5-limit pitches are
-   reached on the lattice, not through piano input. Every other mode has
-   k ≡ 0, so the primary key never decides there. */
+/* The 88-cell piano footprint for a ref under the live tuning: one ranking
+   rule for every mode and mapping (TH, then key steps among identical
+   pitches, then the octave line at the tritone) — see tuning/picker.ts, which
+   the offline bounds probes run too. `anchor`: the Syntonic / Polysyntonic
+   home band to rank under — validation passes the candidate's own (a
+   Ctrl+click makes it home). Exported for callers that need the cell set
+   under a hypothetical refNote (Ctrl+click validation). */
 export function compute88PianoCoords(
-  refQ: number, refR: number,
+  refQ: number, refR: number, anchor: number = tuning.anchor,
 ): Array<[number, number]> {
-  const cells: Array<[number, number]> = [];
-  const mapping = tuning.mapping;
-  /* Octave step is (12/c, 0): (+3, 0) Euler, (+6, 0) Wicki-Hayden. The
-     isotone projection 7(q−refQ) − c(r−refR) shifts by 7·12/c per octave —
-     derive PROJ_PER_OCT from the octave step so it stays in sync if the
-     lattice geometry ever changes. */
-  const c = mapping === 'wickiHayden' ? 2 : 4;
-  const inv = c === 4 ? 2 : 4; /* c·inv ≡ 1 (mod 7) */
-  const K = mapping === 'wickiHayden' ? 40 : 20;
-  const Q_PER_OCT = 12 / c, R_PER_OCT = 0;
-  const PROJ_PER_OCT = 7 * Q_PER_OCT - c * R_PER_OCT;
-  const refMidi = coordToMidi(refQ, refR, mapping);
-  const pickerState: TuningStateLike = tuning.mode === 'V' ? { ...tuning, mode: 'D' }
-    : tuning.mode === 'S' || tuning.mode === 'Y' ? { ...tuning, mode: 'P' }
-    : tuning;
-  const commasOf = (q: number): number =>
-    Math.abs(bandOffset(tuning.mode, bandOfCell(q, mapping) - tuning.anchor));
-  for (let midi = 21; midi <= 108; midi++) {
-    const N = midi - 57;
-    /* q ≡ inv·N (mod 7); start there. */
-    const q0 = (((inv * N) % 7) + 7) % 7;
-    let bestQ = q0, bestR = (N - c * q0) / 7;
-    let bestK = Infinity, bestTh = Infinity, bestAbsNProj = Infinity, found = false;
-    /* Each MIDI lives in an "octave block" relative to ref; the natural
-       lineage of the ref-pitch-class at this MIDI has proj ≈ PROJ_PER_OCT ×
-       octaveDelta. Tiebreak by |proj − that target| so all pitch classes
-       collapse toward their own ref-aligned octave lineage. At the ref's
-       MIDI this picks (refQ, refR) (target = 0, proj = 0). At ref+12 it
-       picks (refQ+3, refR) (target = +21, proj = +21). At Eb3/Eb4 it picks
-       the same enharmonic at both octaves (octave-consistent, unlike a
-       0-centered |proj|). And in 7-limit, where a B-region cell can tie
-       TH=0 with the ref's natural lineage cell (the syntonic adjustment
-       cancels the (7,-4) shift's comma), the lineage cell wins — the ref
-       never falls outside its own footprint. */
-    const octaveDelta = Math.round((midi - refMidi) / 12);
-    const projTarget = PROJ_PER_OCT * octaveDelta;
-    for (let k = -K; k <= K; k++) {
-      const q = q0 + 7 * k;
-      const r = (N - c * q) / 7;
-      const ratio = jiRatioWithState(refQ, refR, q, r, pickerState);
-      const th = tenneyHeightFromExps(ratio.e);
-      const proj = 7 * (q - refQ) - c * (r - refR);
-      const absNProj = Math.abs(proj - projTarget);
-      const kk = commasOf(q);
-      if (!found || kk < bestK || (kk === bestK && (th < bestTh || (th === bestTh && absNProj < bestAbsNProj)))) {
-        bestK = kk; bestTh = th; bestAbsNProj = absNProj; bestQ = q; bestR = r; found = true;
-      }
-    }
-    cells.push([bestQ, bestR]);
-  }
-  return cells;
+  return pianoFootprint(refQ, refR, { ...tuning, anchor });
 }
 
 /* Cached MIDI 64 (E4) cell for the current refNote + tuning. Updated by
@@ -434,8 +355,9 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
   /* Live picker check: only constraints are (1) MIDI range above and
      (2) every 88-cell footprint cell having ≤±3 accidentals. The cached
      gate sets exist only to draw the dotted boundary; they're not the
-     authoritative validator. */
-  const cells = compute88PianoCoords(q, r);
+     authoritative validator. Ranked with the candidate as its own home band
+     (Syntonic / Polysyntonic), as a Ctrl+click would make it. */
+  const cells = compute88PianoCoords(q, r, anchorOf(q, tuning.mapping));
   for (const [cq, cr] of cells) {
     const name = noteName(cq, cr, tuning.mapping);
     const acc = Math.abs(accToVal(parseNote(name).acc));

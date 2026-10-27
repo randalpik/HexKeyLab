@@ -149,16 +149,14 @@ anchorRef = manual selection ?? score-ref ?? default A3
     unused `isShifted` field goes (nothing reads it), as does `draw.ts`'s unused `computeHue`
     import. The stale comments go too: `shared/colors.ts` ("computeHue … is the single source of
     base hue") and `retune.ts` (a footprint recolour pass that doesn't exist, §5).
-- **Ref picker / validation** (`compute88PianoCoords`, `validateRefNoteCandidate`). The ref is
-  unaltered by construction, so route through Pythagorean state (precedent: Schismatic routes
-  through Semiditonal). Built: the bounds tables are keyed by `ProbedMode` and S/Y read P's
-  buckets via `probedMode()` at the lookups (the generated files stay probe-owned); they only draw
-  the valid-ref boundary and size the canvas — re-probe on graduation.
-- **Piano-input footprint.** Prefer cells in bands with `k = 0`:
-  - Syntonic: complete. The return bands (d = ±2) hold every note the home band lacks, sharp
-    spellings on the left and flat on the right.
-  - Polysyntonic: only home has `k = 0`. The ~1/7 of notes absent from home take the nearest band
-    (±1 SC) (§9.4).
+- **Ref picker / validation and piano input** (`compute88PianoCoords`,
+  `validateRefNoteCandidate`). Superseded on review (Max, 2026-10-26): the draft routed S/Y through
+  Pythagorean ratios and ranked unaltered bands first, which made the S/Y outlines unlike every
+  other mode's. Built instead: **one picker rule for every mode** (`apps/hkl/src/tuning/picker.ts`)
+  — TH under the mode's own ratios (so S/Y play 5-limit wherever the bands offer it), the octave
+  line only between different pitches tied on TH (the tritone), then the cell nearest the ref among
+  identical pitches. Validation ranks a candidate ref as its own home band. The bounds probes run
+  the same module and bucket S/Y like every mode.
 - **Remaining checklist.** `isTuningMode` guards (`state/persistence.ts`, `recording/hkr.ts`,
   Composer `main.ts`, `bridge/hkl-side.ts`); the selector `<option>`s; `tuningDescription()`;
   `MODE_LABELS` / `TUNING_LABELS`; `validRefSetByMode` / `validRefPathsByMode`.
@@ -259,8 +257,9 @@ No change to any existing mode's pitches. Colours are unchanged too (§4 is a re
 2. **Ctrl+click on an altered key re-anchors to its band.** That key's pitch changes by its comma
    count; there is no comma drift.
 3. **A key-signature edit in an S/Y score retunes the notes in the affected measures.**
-4. **Polysyntonic piano input:** notes absent from the home band (~1/7) come from the nearest band
-   (±1 SC).
+4. **Piano input** (revised on review): the one picker rule — 5-limit wherever available, nearest
+   key among identical pitches; no unaltered-band preference. Some octave drift of spelling in S/Y
+   is expected (a spelling's 5-limit pitch can exist in one octave's band and not the next).
 5. **Persistence keys** `'S'` / `'Y'`; dropdown order after Schismatic.
 6. **Euler mapping** allowed, not hidden.
 

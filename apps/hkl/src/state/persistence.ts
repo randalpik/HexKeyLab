@@ -25,14 +25,6 @@ export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
          syntonic commas around the always-unaltered home band (the anchor):
          Syntonic 0,+1,0,−1 per band, Polysyntonic stacking without bound */
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
-/* The modes the offline bounds probes (test/bounds-probe/) bucket. Syntonic /
-   Polysyntonic read Pythagorean's buckets: their home band is Pythagorean and
-   the buckets only draw the valid-ref boundary and size the canvas — the live
-   picker (validateRefNoteCandidate) stays authoritative. */
-export type ProbedMode = Exclude<TuningMode, 'S' | 'Y'>;
-export function probedMode(m: TuningMode): ProbedMode {
-  return m === 'S' || m === 'Y' ? 'P' : m;
-}
 /* Note-name mapping ('euler' | 'wickiHayden'), orthogonal to the tuning mode.
    Single definition in @hkl/shared/mapping.js (no dual-definition here). */
 export type { Mapping };

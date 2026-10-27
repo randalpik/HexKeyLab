@@ -49,7 +49,7 @@ const tonicCache: Map<string, RefCoord> = new Map(); /* key: tonic + '|' + mappi
  *  DOWNWARD, to F#3.
  *
  *  Every one of the 18 reachable tonic coords passes HKL's
- *  validateRefNoteCandidate in all six tuning modes, so a key-derived ref is
+ *  validateRefNoteCandidate in every tuning mode under both mappings, so a key-derived ref is
  *  never silently rejected on arrival.
  *
  *  Placed in Euler coordinates, then expressed in the score's `mapping` (under
