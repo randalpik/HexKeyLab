@@ -5516,3 +5516,15 @@ fresh copy of the module with its own state: reads look plausible and are discon
 (`draw.ts` doesn't import `tuning/frequency.ts`; `engine.ts` does). Workspace packages are served as
 `/@fs/<abs path>?t=…`, which `depUrl`'s forward slice truncates. Before trusting a new harness, curl the
 importer (`curl -s localhost:5170/src/x.ts | grep dep`) for every edge it resolves.
+
+## Headless HKL pages publish into the live OBS overlay (2026-10-27)
+
+Every HKL page dials the overlay relay at `127.0.0.1:5190` unless `?obsrelay=<port>` says otherwise, so each headless gate run (`test/hkl-midi/*`, the console scans, the transcription round-trip) published its own ref, pan and lit keys into Max's live overlay — and the relay *retained* them, so the overlay kept showing test state after the run ended, until his HKL next sent a snapshot. Any harness that loads HKL itself goes through `isolatedHklUrl()` (`test/composer-test/lib/private-relay.mjs`): the real relay in-process on an ephemeral port. A dead port is no substitute — the refused WebSocket logs a console error the gates count.
+
+## Replaying retained state: the full snapshot first, and it supersedes older deltas (2026-10-27)
+
+A relay that retains last-value-per-type and replays a snapshot *after* the deltas newer than it rewinds the subscriber to the snapshot's moment — invisible in a live session (messages arrive in order) and only on a reconnect. HKL's snapshot of a Ctrl+click slide carries the slide's first frame, so the overlay landed on the old pan with keys still correct (the keys delta re-corrects within a frame; the pan waits for the next ref change). Order is not enough on its own: a delta retained from *before* a later snapshot would then win, so retaining a snapshot must also drop the deltas it carries.
+
+## `apps/hkl/src/types.ts` holds a literal NUL — grep and Edit skip it (2026-10-27)
+
+`VOICE_SEP = '\0'` is a raw NUL byte, so ugrep (this machine's `grep`) treats the file as binary and prints nothing for a match, and the Edit tool refuses it. A codebase-wide `grep` silently misses every declaration in it (`AnimationModule`, `VoiceId`, …). Search it with `grep -a` or Python, and edit it with a byte-preserving script.

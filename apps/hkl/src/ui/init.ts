@@ -15,24 +15,23 @@
 // 7. First paint + info-panel size.
 // 8. Window resize handler + Reset-prefs button.
 
-import { onRefChanged } from '../effects/onRefChanged.js';
+import { onRefChanged, withRefSlide } from '../effects/onRefChanged.js';
 import { getComposerRequiredLayout, applyComposerLayout, reconcileSelectionOnSyncEnable, preloadComposerInstruments } from '../bridge/hkl-side.js';
 import { tuning } from '../state/tuning.js';
-import { refSpine } from '../tuning/refspine.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
 import { pedal } from '../state/pedal.js';
 import { audio } from '../state/audio.js';
 import { lumatone } from '../state/lumatone.js';
 import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persistence.js';
-import type { PrefsV1, OutlineMode } from '../state/persistence.js';
+import type { PrefsV1 } from '../state/persistence.js';
 import {
   referenceNote, setSelectionFromManual,
-  clearSelection as clearRefSelection, setAnchorListener,
+  clearSelection as clearRefSelection, setAnchorListener, setRefListener,
 } from '../state/reference.js';
 import { onAnchorChanged } from '../effects/onAnchorChanged.js';
 import { sizeCanvas } from '../render/canvas.js';
-import { cv, draw, hexAtPoint, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
+import { cv, draw, hexAtPoint, activeFootprintSet, validateRefNoteCandidate } from '../render/draw.js';
 import { updateInfo } from '../render/info.js';
 import { renderStaffInset } from '../render/staff-inset.js';
 import { renderComposerFrame } from '../render/composer-frame.js';
@@ -46,7 +45,7 @@ import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
 import {
   setTuning, setMapping, setOutline, clearSelection,
-  applyRotation, setRotationFromDom, syncViewToOutline,
+  applyRotation, setRotationFromDom,
   applyHexSize, setHexSizeFromDom,
 } from './controls.js';
 import './keyboard.js';
@@ -240,23 +239,11 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
       const reason = validateRefNoteCandidate(q, r);
       if (reason) { flashInfoLine(reason); return; }
     }
-    /* Capture old kbAnchor BEFORE mutation; the delta drives onRefChanged's
-       held-physical-voice migrators. Ctrl+click is the only path that moves
-       the lattice anchor — Composer-driven ref changes leave kbAnchor alone. */
-    const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-    const changed = isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r);
-    if (changed) {
-      const newSp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-      view.kbAnchorQ = newSp.q;
-      view.kbAnchorR = newSp.r;
-      onRefChanged(newSp.q - oldAQ, newSp.r - oldAR);
-      /* Persist or drop the manual ref. Composer-set selections do not persist. */
-      if (isCurrentRef) savePrefs({ manualRef: undefined });
-      else savePrefs({ manualRef: { q, r } });
-      invalidatePianoOutline();
-      syncViewToOutline(getOutlineSelValue(), false);
-      draw();
-    }
+    /* reference.ts re-derives kbAnchor and runs onRefChanged (voice
+       migration, re-centre, redraw, broadcasts) — sliding, for a click. */
+    const changed = withRefSlide(() => isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r));
+    /* Persist or drop the manual ref. Composer-set selections do not persist. */
+    if (changed) savePrefs({ manualRef: isCurrentRef ? undefined : { q, r } });
     return;
   }
   if (e.shiftKey) { selection.selectedKeys.clear(); selection.selectedKeys.add(key); }
@@ -266,13 +253,6 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
   }
   onSelectionChanged();
 });
-
-function getOutlineSelValue(): OutlineMode {
-  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
-  const v = sel?.value;
-  if (v === 'qwerty' || v === 'piano' || v === 'none') return v;
-  return 'lumatone';
-}
 
 let infoLineFlashTimer: number | null = null;
 /** Briefly replace #infoLine with a transient message, then restore via
@@ -500,6 +480,9 @@ initRecorderUI();
    layout (color sync diffs against tuning state) before manualRef restore
    + outline (setOutline's view-sync snaps to refNote in piano mode, which
    needs the persisted manualRef already in place). ── */
+/* Every ref-tier change fans out through onRefChanged from here on (the
+   restore below re-anchors and re-centres through it). */
+setRefListener(onRefChanged);
 setTuning();
 if (prefs.manualRef) {
   /* Silently drop a persisted manualRef that no longer validates under
@@ -509,13 +492,9 @@ if (prefs.manualRef) {
   if (invalid) {
     savePrefs({ manualRef: undefined });
   } else {
+    /* kbAnchor follows (reference.ts): the Lumatone/QWERTY layout comes back
+       anchored to the persisted ref, not at the default (0, 0). */
     setSelectionFromManual(prefs.manualRef.q, prefs.manualRef.r);
-    /* Restore kbAnchor to match — the persisted manualRef was a user-driven
-       ref change in a prior session, so the Lumatone/QWERTY layout should
-       come back anchored to it, not at the default (0, 0). */
-    const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-    view.kbAnchorQ = sp.q;
-    view.kbAnchorR = sp.r;
   }
 }
 setOutline();

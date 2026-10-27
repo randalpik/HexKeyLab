@@ -76,7 +76,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 ### Keyboard shortcuts
 
-- **Ref note**: set via **Ctrl+click** on any hex — lattice tweens to put that ref's qm=0-normalized spine cell at the outline center. Ctrl+click on the current effective ref clears the manual override.
+- **Ref note**: set via **Ctrl+click** on any hex — lattice tweens to put that ref's qm=0-normalized spine cell at the outline center. Ctrl+click on the current effective ref clears the selection (Ctrl+click and Composer cursor note). Every ref change — click or Composer message — re-centres through one fan-out (`state/reference.ts` → `effects/onRefChanged`; docs/architecture.md → Ref-driven layout shift).
 - No global window-level shortcuts at present (legacy arrow-key layout cycle/seam shift removed). `apps/hkl/src/ui/keyboard.ts` is reserved as the entry point for future shortcuts.
 
 ### Selection & interaction

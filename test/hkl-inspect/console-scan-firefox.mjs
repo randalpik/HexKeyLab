@@ -27,8 +27,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HR, printConsole } from './report.mjs';
+import { isolatedHklUrl } from '../composer-test/lib/private-relay.mjs';
 
-const URL = process.env.HKL_URL ?? 'http://localhost:5170/';
+const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/');
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 const VEROVIO_MS = Number(process.env.VEROVIO_MS ?? 6000);
 const SHOW_ALL = process.env.ALL === '1';

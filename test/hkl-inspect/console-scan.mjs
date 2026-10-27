@@ -31,8 +31,9 @@ import { CDP } from '../composer-test/lib/cdp.mjs';
 import { attachConsoleCapture } from '../composer-test/lib/console-capture.mjs';
 import { HR, tally, printConsole } from './report.mjs';
 import { writeFileSync } from 'node:fs';
+import { isolatedHklUrl } from '../composer-test/lib/private-relay.mjs';
 
-const URL = process.env.HKL_URL ?? 'http://localhost:5170/';
+const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/');
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 const VEROVIO_MS = Number(process.env.VEROVIO_MS ?? 2500);
 

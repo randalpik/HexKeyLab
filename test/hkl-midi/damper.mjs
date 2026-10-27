@@ -29,8 +29,9 @@
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
+import { isolatedHklUrl } from '../composer-test/lib/private-relay.mjs';
 
-const URL = process.env.HKL_URL ?? 'http://localhost:5170/';
+const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SCRIPT = `(async () => {

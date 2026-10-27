@@ -320,19 +320,28 @@ export function currentMidi64Cell(): readonly [number, number] {
  *  rather than in controls.ts to keep onTuningChanged free of a circular
  *  import (controls → effects/onTuningChanged → controls). */
 export function snapViewForOutline(outline: OutlineMode): void {
+  let tQ: number, tR: number;
   if (outline === 'piano') {
     const [m64Q, m64R] = currentMidi64Cell();
-    const [vQ, vR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
-    view.viewQ = vQ;
-    view.viewR = vR;
+    [tQ, tR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
   } else {
     /* Lumatone/QWERTY/none modes: lattice slides under a static outline so
-       the kbAnchor cell lands at the outline's center. kbAnchor is updated
-       only by user-driven ref changes, so Composer-driven changes leave the
-       physical layout untouched. */
-    view.viewQ = view.kbAnchorQ;
-    view.viewR = view.kbAnchorR;
+       the kbAnchor cell lands at the outline's center. kbAnchor follows the
+       home ref (state/reference.ts) — the Composer cursor never moves it. */
+    tQ = view.kbAnchorQ;
+    tR = view.kbAnchorR;
   }
+  /* A slide in flight is redirected to the new target, not overridden — its
+     next step would otherwise drag the view back toward its old target (see
+     syncViewToOutline). */
+  if (animation.isAnimating) {
+    buildHexLayerForTween(view.viewQ, view.viewR, tQ, tR);
+    animation.tweenTo(tQ, tR);
+    startLayoutAnim();
+    return;
+  }
+  view.viewQ = tQ;
+  view.viewR = tR;
 }
 
 /** Decide whether (q, r) is a sensible reference-note. Used by:

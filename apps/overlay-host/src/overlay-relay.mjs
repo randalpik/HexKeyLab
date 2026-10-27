@@ -45,16 +45,23 @@ export function attachOverlayRelay(server, pathPrefix = '/overlay-ws', { origins
   /** Last value per retained message type. */
   const retained = new Map();
 
-  wss.on('connection', (ws) => {
-    /* Replay retained state to the newcomer (snapshot first if present, then
-       the rest — order within the map is insertion order, which is fine since
-       the subscriber tolerates deltas before/after the snapshot). */
+  /* Replay retained state to one client: the snapshot FIRST, then the rest. A
+     snapshot carries the view and lit keys as of its publish, and every view /
+     keys still retained is newer than it (retaining a snapshot drops them), so
+     applied in this order the client ends on the publisher's latest state. The
+     reverse order ends on the snapshot's view — e.g. the first frame of a
+     Ctrl+click slide — while the keys keep landing where they belong. */
+  function replay(ws) {
     const snap = retained.get('snapshot');
     if (snap) { try { ws.send(snap); } catch { /* */ } }
     for (const [t, raw] of retained) {
       if (t === 'snapshot') continue;
       try { ws.send(raw); } catch { /* */ }
     }
+  }
+
+  wss.on('connection', (ws) => {
+    replay(ws);
 
     ws.on('message', (data, isBinary) => {
       if (isBinary) return;
@@ -62,16 +69,12 @@ export function attachOverlayRelay(server, pathPrefix = '/overlay-ws', { origins
       let t;
       try { t = JSON.parse(raw).t; } catch { return; }
       if (t === 'request-snapshot') {
-        /* A subscriber explicitly asked for current state (e.g. after a
-           publisher reconnect). Replay retained to just this client. */
-        for (const [rt, rraw] of retained) {
-          if (rt === 'snapshot') continue;
-          try { ws.send(rraw); } catch { /* */ }
-        }
-        const s = retained.get('snapshot');
-        if (s) { try { ws.send(s); } catch { /* */ } }
+        /* A subscriber explicitly asked for current state (it sends this on
+           every open). Replay retained to just this client. */
+        replay(ws);
         return;
       }
+      if (t === 'snapshot') { retained.delete('view'); retained.delete('keys'); }
       if (RETAINED.has(t)) retained.set(t, raw);
       for (const client of wss.clients) {
         if (client !== ws && client.readyState === 1 /* OPEN */) {

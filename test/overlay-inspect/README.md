@@ -15,7 +15,10 @@ Stands up `apps/overlay-host/src/overlay-relay.mjs` on a throwaway port and
 drives two native WebSocket clients to assert: (1) fan-out (publisher →
 subscriber, no self-echo), and (2) retained-last-value replay to a late-joining
 subscriber (what lets an OBS source opened mid-performance reconstruct current
-state). Then raw upgrade requests check (3) the handshake gate (no `Origin` and
+state), including replay order: a subscriber that (re)connects and sends
+`request-snapshot`, as the overlay does on every open, must end on the
+publisher's latest view + keys — after a slide's view deltas, and when a
+snapshot supersedes older deltas (the old relay failed the first). Then raw upgrade requests check (3) the handshake gate (no `Origin` and
 an allowlisted one admitted; a foreign `Origin` or `Host` refused) and (4) the
 real `server.mjs`, spawned on its own throwaway port, admits the dev origin and
 its own origin and refuses a foreign one. Never touches `:5190` either. Never touches the

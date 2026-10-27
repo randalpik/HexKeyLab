@@ -42,6 +42,12 @@ export const animation: AnimationModule = {
     animStart = Date.now();
   },
 
+  /* drop an in-flight tween — a snap to a new position wins; the running raf
+     sees step() return false and stops */
+  cancel(): void {
+    animStart = 0;
+  },
+
   /* Advance the tween. Updates view.viewQ/viewR. Returns true while still
      animating, false after the final frame (caller stops scheduling raf). */
   step(): boolean {

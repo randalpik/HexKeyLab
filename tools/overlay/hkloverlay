@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# hkloverlay — rebuild the OBS overlay and restart the hkl-overlay-host service, then verify.
+#
+#   hkloverlay       rebuild (pnpm overlay:dist) + restart + verify
+#   hkloverlay -b    rebuild only: enough for overlay code (the host reads embedded/ per request)
+#   hkloverlay -r    restart only: enough for apps/overlay-host/src edits
+#
+# Flags: -b build only, -r restart only, -n print the commands only. Port: $HKL_OVERLAY_PORT
+# (default 5190; must match the unit's). OBS keeps the old JS until its Browser Source is refreshed.
+set -euo pipefail
+
+here=$(dirname "$(readlink -f "$0")")
+repo=$(readlink -f "$here/../..")
+unit=hkl-overlay-host
+port=${HKL_OVERLAY_PORT:-5190}
+url="http://127.0.0.1:$port/?overlay"
+embedded="$repo/apps/overlay-host/embedded/index.html"
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+build=1; restart=1; dry=0
+for a in "$@"; do
+  case $a in
+    -h|--help) usage 0 ;;
+    -b) restart=0 ;;
+    -r) build=0 ;;
+    -n) dry=1 ;;
+    *)  echo "hkloverlay: unknown argument: $a" >&2; usage 1 ;;
+  esac
+done
+[[ $build -eq 1 || $restart -eq 1 ]] || { echo "hkloverlay: -b and -r together do nothing" >&2; exit 1; }
+
+run() { if [[ $dry -eq 1 ]]; then printf '%q ' "$@"; echo; else "$@"; fi; }
+
+t0=""
+fail() {
+  echo "hkloverlay: $*" >&2
+  if [[ -n $t0 ]]; then journalctl --user -u "$unit" --since "@$t0" --no-pager >&2
+  else journalctl --user -u "$unit" -n 30 --no-pager >&2; fi
+  exit 1
+}
+
+cd "$repo"
+# A failed Vite build exits before the assemble step, so embedded/ is never half-written.
+[[ $build -eq 1 ]] && run pnpm overlay:dist
+if [[ $restart -eq 1 ]]; then
+  t0=$(date +%s)
+  run systemctl --user restart "$unit"
+fi
+[[ $dry -eq 1 ]] && exit 0
+
+# restart returns once node is spawned, not once it listens — poll.
+page=""
+for _ in $(seq 50); do
+  page=$(curl -fsS "$url" 2>/dev/null) && break
+  sleep 0.1
+done
+[[ -n $page ]] || fail "no response from $url"
+systemctl --user is-active --quiet "$unit" || fail "$unit is not active"
+
+# The listener must be the unit itself, not a hand-started host holding the port.
+main=$(systemctl --user show -p MainPID --value "$unit")
+listener=$(ss -Htlnp "sport = :$port" | grep -o 'pid=[0-9]*' | head -1 || true)
+[[ ${listener#pid=} == "$main" ]] || fail "port $port is held by ${listener:-nothing}, not $unit (MainPID $main)"
+
+# The served index.html must name the same hashed entry as the freshly embedded one.
+entry() { grep -o 'src="/assets/index-[^"]*\.js"' | head -1 | sed 's/^src="\/\(.*\)"$/\1/' || true; }
+want=$(entry < "$embedded")
+got=$(entry <<<"$page")
+[[ -n $want && $got == "$want" ]] || fail "served entry ${got:-?} != embedded ${want:-?}"
+
+echo "hkloverlay: $unit (pid $main) serving $want on :$port"
+[[ $build -eq 1 ]] && echo "  refresh the OBS Browser Source to load the new build"
+exit 0

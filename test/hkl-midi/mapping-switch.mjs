@@ -21,8 +21,9 @@
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
+import { isolatedHklUrl } from '../composer-test/lib/private-relay.mjs';
 
-const URL = process.env.HKL_URL ?? 'http://localhost:5170/';
+const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SCRIPT = `(async () => {
@@ -35,20 +36,19 @@ const SCRIPT = `(async () => {
     return src.slice(i, j);
   };
   const controlsUrl = await depUrl('/src/ui/init.ts', '/src/ui/controls.ts');
-  const refUrl = await depUrl(controlsUrl, '/src/effects/onRefChanged.ts');
+  const refUrl = await depUrl('/src/ui/init.ts', '/src/effects/onRefChanged.ts');
   const handlerUrl = await depUrl(refUrl, '/src/midi/handler.ts');
   const heldUrl = await depUrl(handlerUrl, '/src/input/held.ts');
   const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
-  const [controls, refMod, handler, held, eng, viewMod, selMod, audioMod, midiMod, tuningMod, refState, spineMod, freqMod, heartbeat, sx] =
+  const [controls, handler, held, eng, viewMod, selMod, audioMod, midiMod, tuningMod, refState, freqMod, heartbeat, sx] =
     await Promise.all([
-      import(controlsUrl), import(refUrl), import(handlerUrl), import(heldUrl), import(engineUrl),
+      import(controlsUrl), import(handlerUrl), import(heldUrl), import(engineUrl),
       depUrl(engineUrl, '/src/state/view.ts').then((u) => import(u)),
       depUrl(heldUrl, '/src/state/selection.ts').then((u) => import(u)),
       depUrl(heldUrl, '/src/state/audio.ts').then((u) => import(u)),
       depUrl(engineUrl, '/src/state/midi.ts').then((u) => import(u)),
       depUrl(engineUrl, '/src/state/tuning.ts').then((u) => import(u)),
       depUrl(controlsUrl, '/src/state/reference.ts').then((u) => import(u)),
-      depUrl(controlsUrl, '/src/tuning/refspine.ts').then((u) => import(u)),
       depUrl(heldUrl, '/src/tuning/frequency.ts').then((u) => import(u)),
       depUrl(handlerUrl, '/src/midi/heartbeat.ts').then((u) => import(u)),
       depUrl(handlerUrl, '/src/lumatone/sysex.ts').then((u) => import(u)),
@@ -75,14 +75,9 @@ const SCRIPT = `(async () => {
 
   const selMapping = document.getElementById('selMapping');
   const switchTo = (m) => { selMapping.value = m; controls.setMapping(); };
-  /* Ctrl+click-equivalent: set a manual ref and re-anchor (migrates held physical voices) */
-  const setRef = (q, r) => {
-    const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-    refState.setSelectionFromManual(q, r);
-    const sp = spineMod.refSpine(refState.referenceNote.q, refState.referenceNote.r, tuning.mapping);
-    view.kbAnchorQ = sp.q; view.kbAnchorR = sp.r;
-    refMod.onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-  };
+  /* Ctrl+click-equivalent: set a manual ref — reference.ts re-anchors and
+     onRefChanged migrates held physical voices */
+  const setRef = (q, r) => { refState.setSelectionFromManual(q, r); };
   const reset = () => {
     heartbeat.stopHeartbeat();
     selection.selectedKeys.clear(); audio.sustainedKeys.clear();

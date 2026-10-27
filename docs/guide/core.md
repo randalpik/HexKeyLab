@@ -62,7 +62,9 @@ The ref mechanism works in **all tuning modes** and in **all outline modes** (Lu
 
 Ref selection is constrained: the ref must land within the 88-key piano MIDI range, and the resulting 88-cell footprint must spell with at most ±3 accidentals (≤ triple-sharp / triple-flat). If you Ctrl+click a cell that would violate either constraint, a status message explains why and the ref is unchanged. Tick **"Valid ref bounds"** (on the [Piano tab](#playing-from-a-midi-keyboard-piano-tab)) to see a dotted outline marking exactly where the ref is allowed to land for the current tuning.
 
-To clear a manual ref override and return to the default A3, Ctrl+click the cell that's currently serving as the ref.
+To clear a manual ref override, Ctrl+click the cell that's currently serving as the ref: the reference returns to the score's key if Composer is open, otherwise to the default A3.
+
+With Composer open, the score's key is the reference whenever you haven't Ctrl+clicked one; with **Sync to Composer** on, each key the score reaches replaces your Ctrl+click. Moving Composer's cursor never moves the reference, except in the **Piano** outline, where the note before the cursor becomes the reference until you Ctrl+click again.
 
 ---
 

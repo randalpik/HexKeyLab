@@ -25,8 +25,9 @@
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
+import { isolatedHklUrl } from '../composer-test/lib/private-relay.mjs';
 
-const URL = process.env.HKL_URL ?? 'http://localhost:5170/';
+const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SCRIPT = `(async () => {
@@ -50,17 +51,15 @@ const SCRIPT = `(async () => {
   };
   const controlsUrl = await depUrl('/src/ui/init.ts', '/src/ui/controls.ts');
   const anchorFxUrl = await depUrl('/src/ui/init.ts', '/src/effects/onAnchorChanged.ts');
-  const refUrl = await depUrl(controlsUrl, '/src/effects/onRefChanged.ts');
   const drawUrl = await depUrl(controlsUrl, '/src/render/draw.ts');
   const engineUrl = await depUrl(controlsUrl, '/src/audio/engine.ts');
-  const [controls, anchorFx, refMod, drawMod, captureMod, viewMod, tuningMod, refState, spineMod, freqMod, colorsMod, sharedFreq, sharedMap] =
+  const [controls, anchorFx, drawMod, captureMod, viewMod, tuningMod, refState, freqMod, colorsMod, sharedFreq, sharedMap] =
     await Promise.all([
-      import(controlsUrl), import(anchorFxUrl), import(refUrl), import(drawUrl),
+      import(controlsUrl), import(anchorFxUrl), import(drawUrl),
       depUrl(engineUrl, '/src/recording/capture.ts').then((u) => import(u)),
       depUrl(controlsUrl, '/src/state/view.ts').then((u) => import(u)),
       depUrl(controlsUrl, '/src/state/tuning.ts').then((u) => import(u)),
       depUrl(controlsUrl, '/src/state/reference.ts').then((u) => import(u)),
-      depUrl(controlsUrl, '/src/tuning/refspine.ts').then((u) => import(u)),
       depUrl(engineUrl, '/src/tuning/frequency.ts').then((u) => import(u)),
       depUrl(drawUrl, '/src/render/colors.ts').then((u) => import(u)),
       pkgUrl(drawUrl, '/packages/shared/src/freq.ts').then((u) => import(u)),
@@ -79,13 +78,8 @@ const SCRIPT = `(async () => {
   const selMapping = document.getElementById('selMapping');
   const setMode = (m) => { if (selTuning.value !== m) { selTuning.value = m; controls.setTuning(); } };
   const setMapping = (m) => { if (selMapping.value !== m) { selMapping.value = m; controls.setMapping(); } };
-  const setRef = (q, r) => {
-    const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-    refState.setSelectionFromManual(q, r);
-    const sp = spineMod.refSpine(refState.referenceNote.q, refState.referenceNote.r, tuning.mapping);
-    view.kbAnchorQ = sp.q; view.kbAnchorR = sp.r;
-    refMod.onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-  };
+  /* a Ctrl+click: reference.ts re-derives kbAnchor and runs onRefChanged */
+  const setRef = (q, r) => { refState.setSelectionFromManual(q, r); };
   const savedMode = tuning.mode, savedMapping = tuning.mapping;
 
   /* ── setup: Syntonic, Wicki-Hayden, ref A3 ── */
@@ -107,9 +101,10 @@ const SCRIPT = `(async () => {
   await tick();
   check('N2e: one fan-out, after the caller finished', fanouts, 1);
 
-  /* N3: composer-source selection (piano outline) in band 2 */
+  /* N3: composer-source selection (piano outline) in band 2 — the Ctrl+click
+     under it (band 1, N2) stays the home ref */
   refState.setSelectionFromComposer(12, 0);
-  check('N3: composer-source selection leaves the anchor (falls back to score-ref/A3)', tuning.anchor, 0);
+  check('N3: composer-source selection leaves the anchor on the Ctrl+click', tuning.anchor, 1);
   refState.clearSelection();
 
   /* N4: score-ref in band 2, no manual selection → anchor 2; manual overrides */

@@ -143,11 +143,11 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
   comma count — no comma drift. Moving the anchor re-anchors: pitch, HEJI arrows and colour
   change; MIDI, spelling and band boundaries never do. Polysyntonic re-anchoring is a global
   −n·SC shift (every interval preserved); Syntonic depends only on `anchor mod 4`.
-- **Live**: `state/reference.ts` recomputes `tuning.anchor` with the ref tiers; a change in S/Y
-  runs `onAnchorChanged` (= `onTuningChanged`: held voices ramp in place, re-render, Lumatone colour
-  diff, Composer rebroadcast) in a microtask once the caller has re-anchored `kbAnchor` — not via
-  `onRefChanged`, which returns early when the spine doesn't move, while the anchor can move
-  without it (a score-ref change under a composer-source selection). The anchor is part of the
+- **Live**: `state/reference.ts` derives `tuning.anchor` and `kbAnchor` from the same home ref
+  (below, Ref-driven layout shift); an anchor change in S/Y runs `onAnchorChanged` (=
+  `onTuningChanged`: held voices ramp in place, re-render, Lumatone colour diff, Composer
+  rebroadcast) in a microtask, after the synchronous ref fan-out (`onRefChanged`) has run. The
+  anchor is part of the
   piano-outline cache key, the `hkl-layout-state` signature and the overlay structure signature.
   Recording playback and the overlay mirror pin it (`setAnchorOverride`). Piano input follows the
   one 88-cell picker rule (below) under S/Y's own ratios, so it plays 5-limit wherever the bands
@@ -190,7 +190,21 @@ re-spells, and colour carries it. No per-mode table: S/Y get `syn5 = −k` for f
 ### Ref-driven layout shift
 
 The reference note (Ctrl+click any hex, or set from Composer) slides the lattice under the static
-outline so the ref's spine cell lands at the outline center:
+outline so the ref's spine cell lands at the outline center.
+
+**One authority** (`state/reference.ts`). The tiers are a selection — two slots, the user's
+Ctrl+click and Composer's cursor note — then the score-ref, then A3. The *home ref* is Ctrl+click ??
+score-ref ?? A3; the *effective ref* is the home ref, except in the piano outline, where the cursor
+note is the ref when it is newer than the Ctrl+click (elsewhere the cursor note is ignored and never
+displaces a Ctrl+click). The keyboard anchor `kbAnchor` = `refSpine(home ref)` — where the
+Lumatone/QWERTY layout sits and where every non-piano view centres — and the S/Y `tuning.anchor` are
+derived there and nowhere else (the overlay mirror alone copies the publisher's). Every tier change
+recomputes both and, if the effective ref or `kbAnchor` moved, runs one listener synchronously,
+`effects/onRefChanged(dq, dr)`: held physical voices migrate by the `kbAnchor` delta, MIDI reverse
+map + Lumatone colours, piano-outline invalidation, view re-centre, redraw, Composer broadcast. A
+Ctrl+click slides (`withRefSlide`); everything else snaps, and a snap while a slide is in flight
+redirects the slide rather than letting it drag the view back to its old target. Handlers only
+mutate tiers — none can move a ref without re-centring (decisions.md 2026-10-27).
 
 ```ts
 // apps/hkl/src/tuning/refspine.ts

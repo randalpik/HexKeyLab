@@ -105,6 +105,44 @@ try {
   if (!seen.has('composer-zoom') || seen.get('composer-zoom').zoom !== 100) fail('late subscriber did not get retained composer-zoom');
   console.log('✓ retained replay: late subscriber reconstructed snapshot + keys + composer-zoom');
 
+  /* ── 2b. replay order: a (re)connecting subscriber ends on the publisher's
+     LATEST view + keys. A Ctrl+click slide publishes a snapshot carrying its
+     first frame, then view deltas to the final pan; the overlay sends
+     request-snapshot on every open, so BOTH replays must land the snapshot
+     first. A view retained from before a later snapshot is superseded by it.
+     Each scenario is applied in arrival order, as overlay-subscribe.ts does. ── */
+  async function reconnectEndsOn(label, sends, wantView, wantKeys) {
+    for (const m of sends) pub.send(JSON.stringify(m));
+    await wait(60);
+    const ws = new WebSocket(url);
+    const st = { view: null, keys: null };
+    ws.addEventListener('message', (e) => {
+      const m = JSON.parse(e.data);
+      if (m.t === 'snapshot') { st.view = m.data.viewQ; st.keys = m.data.litKeys.join('|'); }
+      if (m.t === 'view') st.view = m.viewQ;
+      if (m.t === 'keys') st.keys = m.keys.join('|');
+    });
+    await open(ws);
+    await wait(80);
+    if (st.view !== wantView || st.keys !== wantKeys) fail(`${label}: connect replay ended on view ${st.view} keys ${st.keys}, publisher is at view ${wantView} keys ${wantKeys}`);
+    ws.send(JSON.stringify({ t: 'request-snapshot' }));
+    await wait(80);
+    if (st.view !== wantView || st.keys !== wantKeys) fail(`${label}: request-snapshot replay ended on view ${st.view} keys ${st.keys}, publisher is at view ${wantView} keys ${wantKeys}`);
+    ws.close();
+    console.log(`✓ replay order: ${label}`);
+  }
+  await reconnectEndsOn('deltas after a snapshot win (slide)', [
+    { t: 'snapshot', data: { tuning: 'V', viewQ: 0, viewR: 0, litKeys: ['0,0'] } },
+    { t: 'view', viewQ: 1.5, viewR: 0, kbOffY: 0 },
+    { t: 'view', viewQ: 3, viewR: 0, kbOffY: 0 },
+    { t: 'keys', keys: ['2,2'] },
+  ], 3, '2,2');
+  await reconnectEndsOn('a snapshot supersedes older deltas', [
+    { t: 'view', viewQ: -9, viewR: 0, kbOffY: 0 },
+    { t: 'keys', keys: ['9,9'] },
+    { t: 'snapshot', data: { tuning: 'V', viewQ: 5, viewR: 0, litKeys: ['5,5'] } },
+  ], 5, '5,5');
+
   /* ── 3. handshake gate ── */
   await expectStatus(PORT, {}, 101, 'gate: no Origin (local non-browser process)');
   await expectStatus(PORT, { Origin: 'https://hexkeylab.com' }, 101, 'gate: allowlisted Origin');

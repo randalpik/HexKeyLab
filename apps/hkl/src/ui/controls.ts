@@ -11,12 +11,11 @@ import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import {
   referenceNote, clearSelection as clearRefSelection, recomputeReferenceForOutline,
-  convertReferenceFrame, isSelectionManual,
+  convertReferenceFrame, manualSelection,
 } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { eulerOf, fromEuler, vecFromEuler } from '@hkl/shared/mapping.js';
-import { refSpine } from '../tuning/refspine.js';
 import { dxH, dyH, cosT, sinT, currentRotationMode } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -29,7 +28,6 @@ import { stopAllMidi, syncMidi, buildMidiReverse } from '../midi/engine.js';
 import { draw, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
 import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender } from '../render/controls-core.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
-import { onRefChanged } from '../effects/onRefChanged.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
 import { coordOf } from '../types.js';
@@ -62,25 +60,13 @@ export function setTuning(): void {
   /* Mode change can orphan a ref note that was valid in the old bucket but
      not the new one (each mode has its own picker output and therefore its
      own valid-ref set). Conservative: on any mode change, re-check the ref
-     against the new bucket and clear if invalid. Tuning-mode change is
-     user-driven, so re-anchor kbAnchor to the new effective ref (now A3
-     after the clear) — otherwise the Lumatone/QWERTY layout would stay
-     pinned to a ref the user just abandoned. */
-  if (prevMode !== val) {
-    if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
-      /* Capture kbAnchor BEFORE the clear+reset so we can pass the delta to
-         onRefChanged. Without this, held physical voices stay at their old
-         (q,r) while the lattice slides under them — releasing the key resolves
-         noteOff through the NEW anchor, leaving orphan voices in audio. See
-         lessons: ref-tier reset that shifts kbAnchor without voice migration. */
-      const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-      clearRefSelection();
-      savePrefs({ manualRef: undefined });
-      const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-      view.kbAnchorQ = sp.q;
-      view.kbAnchorR = sp.r;
-      onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-    }
+     against the new bucket and clear the selection if invalid. reference.ts
+     re-anchors kbAnchor to the new effective ref and onRefChanged migrates
+     held physical voices with it (lessons: ref-tier reset that shifts kbAnchor
+     without voice migration). */
+  if (prevMode !== val && validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
+    clearRefSelection();
+    savePrefs({ manualRef: undefined });
   }
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
@@ -134,18 +120,12 @@ export function setMapping(): void {
   });
   moveVoices(pairs);
 
-  /* Reference + anchor in the new frame. Deliberately NOT onRefChanged: that
+  /* Reference tiers + both anchors in the new frame, a tier that fails
+     validation there dropped. Silent — deliberately NOT onRefChanged: that
      would migrate held physical voices, which stay on their (q, r). */
-  convertReferenceFrame(convert);
-  if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
-    clearRefSelection();
-    savePrefs({ manualRef: undefined });
-  } else if (isSelectionManual()) {
-    savePrefs({ manualRef: { q: referenceNote.q, r: referenceNote.r } });
-  }
-  const sp = refSpine(referenceNote.q, referenceNote.r, val);
-  view.kbAnchorQ = sp.q;
-  view.kbAnchorR = sp.r;
+  convertReferenceFrame(convert, (q, r) => validateRefNoteCandidate(q, r) === null);
+  const manualRef = manualSelection();
+  savePrefs({ manualRef: manualRef ? { q: manualRef.q, r: manualRef.r } : undefined });
   buildMidiReverse();
   invalidatePianoOutline();
   applyRotation(currentRotationMode); /* the verticalFreq tilt depends on the mapping */
@@ -182,19 +162,10 @@ export function setOutline(): void {
   const newOutline = sel.value as OutlineMode;
   const cbExtend = document.getElementById('cbExtend') as HTMLInputElement;
   cbExtend.disabled = newOutline === 'none';
-  /* Composer-source selection only applies in piano outline; toggling between
-     piano and non-piano can therefore flip the effective ref. Capture old
-     kbAnchor BEFORE recompute so onRefChanged sees the correct delta and
-     migrates physical voices to the new lattice cells. */
-  const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-  const refChanged = recomputeReferenceForOutline();
-  if (refChanged) {
-    const newSp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-    view.kbAnchorQ = newSp.q;
-    view.kbAnchorR = newSp.r;
-    invalidatePianoOutline();
-    onRefChanged(newSp.q - oldAQ, newSp.r - oldAR);
-  }
+  /* The Composer cursor slot only applies in the piano outline, so toggling
+     between piano and non-piano can flip the effective ref; reference.ts
+     re-derives it (onRefChanged fans out if it moved). */
+  recomputeReferenceForOutline();
   /* Render fan-out: resize to the new outline's bounds + snap (immediate) +
      redraw. Shared with the overlay subscriber via render/controls-core. */
   applyOutlineRender(newOutline);

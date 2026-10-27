@@ -40,15 +40,11 @@ import { noteOn, noteOff, stopAllNotes, instrReplaysOnTranspose, glideVoices, se
 import { SampleEngine } from '../audio/samples.js';
 import { syncPianoOut, restrikePianoOut, sendSustainPedal } from '../midi/piano-out.js';
 import { pedal } from '../state/pedal.js';
-import { draw, requestDraw, activeFootprintSet, invalidatePianoOutline, validateRefNoteCandidate } from '../render/draw.js';
+import { draw, requestDraw, activeFootprintSet, validateRefNoteCandidate } from '../render/draw.js';
 import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComposerFrame } from '../render/composer-frame.js';
 import { publishComposerScore, publishComposerPlayback, publishComposerZoom } from './overlay-publish.js';
-import { syncViewToOutline } from '../ui/controls.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote, isSelectionManual } from '../state/reference.js';
-import { refSpine } from '../tuning/refspine.js';
-import { view } from '../state/view.js';
-import { onRefChanged } from '../effects/onRefChanged.js';
 import { setTuning, setMapping } from '../ui/controls.js';
 import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
@@ -61,16 +57,6 @@ import { flashKey } from '../render/key-flash.js';
 const bridge = createHklBridge();
 const analyzerBridge = createAnalyzerHklBridge();
 const orchestratorBridge = createOrchestratorHklBridge();
-
-/* Lightweight DOM read for the outline mode — the bridge handler runs on
-   incoming composer messages, well after the toolbar is wired, so the
-   #selOutline select is the simplest source of truth. */
-function currentOutlineForBridge(): import('../state/persistence.js').OutlineMode {
-  const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
-  const v = sel?.value;
-  if (v === 'qwerty' || v === 'piano' || v === 'none') return v;
-  return 'lumatone';
-}
 
 /* ── resolution helpers ──────────────────────────────────────────────────── */
 
@@ -272,7 +258,7 @@ export function broadcastAllToComposer(): void {
  * SENSITIVELY against the live #waveform dropdown option TEXT — so user-imported
  * instruments participate automatically — falling back to the key of the option
  * labeled "Piano" (guaranteed present as the default base instrument) when
- * nothing matches. Same live-DOM idiom as currentOutlineForBridge(). */
+ * nothing matches. Same live-DOM idiom as controls-core's outlineFromDom(). */
 function resolveInstrumentLabel(name: string): string {
   const sel = document.getElementById('waveform') as HTMLSelectElement | null;
   let pianoValue: string | undefined;
@@ -1277,17 +1263,7 @@ export function applyComposerLayout(): void {
  *  ref). No-op if there's no selection or it already matches the score-ref. */
 export function reconcileSelectionOnSyncEnable(): void {
   if (!composerConnected || !selectionDiffersFromScoreRef()) return;
-  const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-  if (clearSelection()) {
-    const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-    view.kbAnchorQ = sp.q;
-    view.kbAnchorR = sp.r;
-    invalidatePianoOutline();
-    syncViewToOutline(currentOutlineForBridge(), true);
-    draw();
-    onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-    broadcastAllToComposer();
-  }
+  clearSelection(); /* reference.ts re-anchors; onRefChanged fans out */
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -1330,18 +1306,10 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
   /* Syntonic / Polysyntonic: the anchor must be the score's, which reaches HKL
      through the score-ref tier below. A manual Ctrl+click selection is the one
      tier that overrides it, so applying the score's layout drops it (the same
-     re-anchor sequence as a Sync-on score-ref arrival). */
+     re-anchor as a Sync-on score-ref arrival — reference.ts, onRefChanged). */
   if ((req.tuningMode === 'S' || req.tuningMode === 'Y') && isSelectionManual()) {
-    const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
     clearSelection();
     savePrefs({ manualRef: undefined });
-    const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-    view.kbAnchorQ = sp.q;
-    view.kbAnchorR = sp.r;
-    invalidatePianoOutline();
-    draw();
-    onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-    broadcastAllToComposer();
   }
   /* No ref here — the score carries none. The ref reaches HKL via its own
      `set-score-ref` message → the score-ref tier (reference.ts), derived from
@@ -1386,14 +1354,9 @@ bridge.on((msg: ComposerEvent) => {
       updateComposerToolbar();
       clearComposerFrame();
       abortActive();
-      if (onComposerBye()) {
-        invalidatePianoOutline();
-        /* Snap — see applyLayoutFromComposer comment. Composer dropping a
-           ref-tier is structural, not navigational. */
-        syncViewToOutline(currentOutlineForBridge(), true);
-        draw();
-        broadcastAllToComposer();
-      }
+      /* reference.ts re-anchors to the remaining tiers; onRefChanged snaps
+         the view (structural, not navigational) and fans out. */
+      onComposerBye();
       break;
     case 'play-score': {
       /* Layout gate: playback frequency must match what the score was entered
@@ -1504,62 +1467,34 @@ bridge.on((msg: ComposerEvent) => {
       publishComposerPlayback(msg.on, msg.bars);
       break;
     case 'set-reference-note': {
-      /* Sets the selection tier from Composer. Last-writer-wins between
-         this and any user Ctrl+click. Composer broadcasts are validated
-         against the same MIDI-range + accidental constraints as
-         Ctrl+click — Composer has its own accidental-clamp fallback for
-         entering notes, but rejecting at the ref-note-set stage is
-         smoother (the dashed marker never moves to an unspellable cell
-         and the piano outline never reshapes to a >±3 layout). */
+      /* Sets the cursor slot of the selection tier from Composer — the
+         selection in the piano outline when newer than the user's Ctrl+click,
+         ignored elsewhere (reference.ts). Validated against the same
+         MIDI-range + accidental constraints as Ctrl+click — Composer has its
+         own accidental-clamp fallback for entering notes, but rejecting at the
+         ref-note-set stage is smoother (the dashed marker never moves to an
+         unspellable cell and the piano outline never reshapes to a >±3
+         layout). The re-centre snaps (onRefChanged): cursor-follow used to
+         animate, but the multi-message reset race made even single updates
+         land mid-tween when the handshake was still in flight. */
       const [rnQ, rnR] = fromComposer(msg.q, msg.r, msg.mapping);
-      if (validateRefNoteCandidate(rnQ, rnR) === null
-          && setSelectionFromComposer(rnQ, rnR)) {
-        invalidatePianoOutline();
-        /* Snap — see applyLayoutFromComposer comment. Cursor-follow used to
-           animate, but the multi-message reset race made even single
-           set-reference-note updates land mid-tween when the handshake
-           was still in flight. */
-        syncViewToOutline(currentOutlineForBridge(), true);
-        draw();
-        broadcastAllToComposer();
-      }
+      if (validateRefNoteCandidate(rnQ, rnR) === null) setSelectionFromComposer(rnQ, rnR);
       break;
     }
     case 'set-score-ref': {
       /* Sets the score-ref tier (the score's cursor-independent fallback ref,
-         from the Setup-dialog coordinates). Validate against the same MIDI +
+         from the key at Composer's position). Validate against the same MIDI +
          accidental constraints as Ctrl+click / set-reference-note so the ref
-         never lands on an unspellable cell. When this becomes the effective
-         ref, mirror the Ctrl+click path: advance kbAnchor so the
-         Lumatone/QWERTY outline centers on it, and fire onRefChanged so any
-         held physical voices migrate. Cursor-derived refs (set-reference-note)
-         deliberately do NOT recenter — they're piano-outline-only. */
+         never lands on an unspellable cell. reference.ts re-anchors kbAnchor
+         when it becomes the home ref and onRefChanged snaps the view and
+         migrates held physical voices. */
       const [srQ, srR] = fromComposer(msg.q, msg.r, msg.mapping);
       if (validateRefNoteCandidate(srQ, srR) !== null) break;
       /* Sync on → the lattice must match the score exactly, so a score-ref
          update clears any selection (manual or cursor) that would otherwise
          mask it. Sync off → leave the user's explicit selection alone (they're
          deliberately using their own ref/layout against a mismatched score). */
-      const oldAQ = view.kbAnchorQ, oldAR = view.kbAnchorR;
-      let changed = false;
-      if (loadPrefs().syncToComposer) changed = clearSelection() || changed;
-      changed = setScoreRef(srQ, srR) || changed;
-      if (changed) {
-        const sp = refSpine(referenceNote.q, referenceNote.r, tuning.mapping);
-        view.kbAnchorQ = sp.q;
-        view.kbAnchorR = sp.r;
-        invalidatePianoOutline();
-        /* Snap — see applyLayoutFromComposer comment. */
-        syncViewToOutline(currentOutlineForBridge(), true);
-        draw();
-        onRefChanged(sp.q - oldAQ, sp.r - oldAR);
-        /* onRefChanged short-circuits when the spine delta is (0,0) — but
-           the footprint + layout-state still need to update because they
-           track referenceNote, not kbAnchor. Different refs can map to the
-           same refSpine. broadcastAllToComposer is sig-diff cached so this
-           is a no-op when onRefChanged did fire it. */
-        broadcastAllToComposer();
-      }
+      setScoreRef(srQ, srR, { clearSelection: loadPrefs().syncToComposer });
       break;
     }
   }

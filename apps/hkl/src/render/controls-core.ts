@@ -20,7 +20,7 @@ import {
 import { animation } from './animation.js';
 import type { HexSize, OutlineMode, RotationMode } from '../state/persistence.js';
 
-function outlineFromDom(): OutlineMode {
+export function outlineFromDom(): OutlineMode {
   const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
   return (sel?.value === 'qwerty' || sel?.value === 'piano' || sel?.value === 'none')
     ? sel.value : 'lumatone';
@@ -48,18 +48,20 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
     [targetQ, targetR] = computePianoViewCenter(referenceNote.q, referenceNote.r, m64Q, m64R);
   } else {
     /* Lumatone / QWERTY / none: lattice slides under the static outline so
-       kbAnchor lands at the outline's center. kbAnchor is only updated by
-       user-driven ref changes — Composer-driven changes leave it (and thus
-       the visible layout) untouched. */
+       kbAnchor lands at the outline's center. kbAnchor follows the home ref
+       (state/reference.ts) — the Composer cursor never moves it. */
     targetQ = view.kbAnchorQ;
     targetR = view.kbAnchorR;
   }
-  if (immediate) {
+  /* A snap while a slide is in flight redirects the slide to the new target
+     instead: the slide's next step would otherwise drag the view back toward
+     its old target. */
+  if (immediate && !animation.isAnimating) {
     view.viewQ = targetQ;
     view.viewR = targetR;
     return;
   }
-  if (view.viewQ === targetQ && view.viewR === targetR) return;
+  if (!animation.isAnimating && view.viewQ === targetQ && view.viewR === targetR) return;
   /* Build the hex layer to cover [view → target] before the tween fires so
      each animation frame blits from a layer that actually has the in-flight
      view position covered. */

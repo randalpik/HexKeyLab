@@ -18,6 +18,7 @@
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { openPage } from '../composer-test/lib/cdp.mjs';
 import { INJECT_LIB } from '../composer-test/lib/runner-core.mjs';
+import { isolatedHklUrl } from '../composer-test/lib/private-relay.mjs';
 
 const BASE = process.env.HKL_URL ?? 'http://localhost:5170';
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
@@ -88,7 +89,7 @@ async function main() {
   let exitCode = 0;
   try {
     /* 1 — emit a .hkc from a real recording on the HKL page. */
-    const hklCdp = await openPage(await newTabWsUrl(browser.port), BASE + '/?hklrec=1', { waitMs: WAIT_MS });
+    const hklCdp = await openPage(await newTabWsUrl(browser.port), await isolatedHklUrl(BASE + '/?hklrec=1'), { waitMs: WAIT_MS });
     const hkc = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE);
     hklCdp.close();
     if (typeof hkc !== 'string') {

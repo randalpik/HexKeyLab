@@ -84,6 +84,26 @@ writes `a` on the next note-on; outside S/Y nothing reads it. **Run it before
 declaring any change to `state/reference.ts`, the 88-cell picker, or recording
 capture done.**
 
+## Ref centring
+
+```sh
+node test/hkl-midi/ref-centring.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for the one-authority reference state (docs/architecture.md →
+Ref-driven layout shift): walks every path that moves a ref tier — a real
+Ctrl+click on the canvas and Composer's `set-reference-note` / `set-score-ref` /
+`composer-bye` / `apply-layout` on the live bridge channel, Sync on and off,
+outline and mapping switches — and checks after each that the effective ref is
+what the tiers call for and the view is centred on it (`view = kbAnchor =
+refSpine(ref)` outside the piano outline). Includes a snap landing mid-slide.
+**Run it before declaring any change to `state/reference.ts`,
+`effects/onRefChanged.ts`, a ref-moving handler, or the view tween done.**
+
+Every gate here loads HKL through `isolatedHklUrl()`
+(`test/composer-test/lib/private-relay.mjs`), so its page publishes to a private
+in-process overlay relay — never the live one on `:5190`.
+
 ## Why it is shaped this way
 
 The modules are imported live from the dev server (`/src/midi/handler.ts`), so

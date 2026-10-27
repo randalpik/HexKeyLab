@@ -55,6 +55,11 @@ relay**, for both dev and production.
   `.woff2`/`.wasm`, extensionless → `index.html`).
 - **`src/overlay-relay.mjs`** — the relay (`ws` `noServer`): pub/sub fan-out that **retains
   last-value per message type**, so an OBS source opened mid-performance reconstructs immediately.
+  A retained `snapshot` supersedes the retained `view` and `keys` (it carries both), and every
+  replay — on connect and on the subscriber's `request-snapshot` — sends the snapshot **first**:
+  the snapshot of a Ctrl+click slide carries its first frame, so replayed after the view deltas it
+  rewound a reconnecting overlay to the old pan while keys kept landing correctly (fixed
+  2026-10-27).
   **Handshake gate**: WebSockets skip CORS and Firefox lets any public page dial localhost, so an
   ungated relay let any site read the retained state (incl. the mirrored score's MEI) and inject
   frames the overlay draws. An upgrade is refused (403) unless `Host` is `127.0.0.1`/`localhost` at
@@ -283,6 +288,9 @@ wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (
 - **Edits to `apps/overlay-host/src/*.mjs` need `systemctl --user restart hkl-overlay-host`**, as do
   `HKL_OVERLAY_PORT` / `HKL_FS_*` / picker changes (all read once at startup). `pnpm overlay:dist`
   does not: `static.mjs` reads `embedded/` per request and `index.html` is `no-cache`.
+  `hkloverlay` (`tools/overlay/`, on `PATH` via `~/.local/bin`) does either or both — rebuild
+  (`-b`), restart (`-r`), default both — and verifies the unit is the port's listener serving the
+  freshly embedded entry.
 - **Don't also run `pnpm overlay:host` by hand** — the second instance exits on `EADDRINUSE`. The
   reverse crash-loops the service until the port frees (9 restarts at install, while the old terminal
   instance still held it). `test/overlay-inspect/` and `test/fs-bridge/` bind their own ports and are
@@ -294,7 +302,8 @@ wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (
 
 ## Verification — `test/overlay-inspect/`
 
-- **`relay-roundtrip.mjs`** — Node-only: fan-out + retained replay against the relay module.
+- **`relay-roundtrip.mjs`** — Node-only: fan-out + retained replay against the relay module,
+  including replay order (a reconnecting subscriber ends on the publisher's latest view + keys).
 - **`inspect.mjs`** — headless Chromium: loads `?overlay`, asserts transparent regions + a painted
   keyboard + chrome hidden (`HKL_URL` env to point at the distributable).
 - Gates: `pnpm typecheck` · `pnpm -r build` (the no-op host build keeps ordering) · `pnpm
@@ -316,5 +325,6 @@ wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (
 | Composer-frame mirror | `apps/hkl/src/bridge/hkl-side.ts`, `apps/hkl/src/render/composer-frame.ts` |
 | Protocol / client | `packages/bridge/src/overlay-protocol.ts`, `overlay-ws.ts` |
 | Publisher auto-start | `apps/hkl/src/ui/init.ts` (unconditional `setOverlayPublishing(true)` at boot) |
+| Rebuild overlay + restart host service | `tools/overlay/hkloverlay` (README alongside) |
 | OBS recording → loop-ready mp4 | `tools/obs-trim/trim.py` (onset-anchored cut, downbeat end, declick ramps; README alongside) |
 | Library video + score → per-note JSON | `tools/obs-trim/align.py` (README alongside) |
