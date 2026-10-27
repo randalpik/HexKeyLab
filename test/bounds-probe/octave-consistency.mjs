@@ -10,23 +10,22 @@
 //
 // Spelling consistency comes from the ranking itself: TH is octave- and
 // complement-reduced, so an octave-equivalent candidate ranks the same in every
-// octave; the tritone (the one place two spellings tie) falls back to the ref's
-// octave line.
+// octave; the tritone (the one place two spellings tie) always takes the
+// augmented 4th.
 //
 // Run (every mode × mapping, refs across one band, refR ∈ [−3, 3]):
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/bounds-probe/octave-consistency.mjs
 //
 // Syntonic / Polysyntonic are REPORTED, not gated (Max, 2026-10-26: some
 // inconsistency there is expected — the layout offers a spelling's 5-limit
-// pitch in one octave's band and not the next). Their breaks are split into
-// tritone ties (the octave line follows the (6,0)/(3,0) cross-band octave,
-// which in S/Y is not a pure octave) and availability.
+// pitch in one octave's band and not the next). Ties can't cause breaks (the
+// tritone always takes the A4), so every S/Y break is availability.
 //
 // History: an earlier tenneyHeightFromExps did NOT octave- and complement-
 // reduce, so |e₂| asymmetry across octaves flipped 5/76 pairs in 5-limit (more
 // in 7-limit). Exits non-zero on any inconsistency outside S/Y.
 
-import { TUNING_MODES, anchorOf, coordToMidi } from '../../packages/shared/src/freq.ts';
+import { TUNING_MODES, anchorOf } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
 
@@ -36,7 +35,7 @@ let total = 0, bad = 0;
 for (const mapping of MAPPINGS) {
   const bandWidth = mapping === 'wickiHayden' ? 6 : 3;
   for (const mode of TUNING_MODES) {
-    let modeBad = 0, modeTotal = 0, tritone = 0;
+    let modeBad = 0, modeTotal = 0;
     const examples = [];
     for (let refQ = 0; refQ < bandWidth; refQ++) {
       for (let refR = -3; refR <= 3; refR++) {
@@ -51,7 +50,6 @@ for (const mapping of MAPPINGS) {
           modeTotal++;
           if (n1 !== n2 || o2 !== o1 + 1) {
             modeBad++;
-            if ((((21 + i - coordToMidi(refQ, refR, mapping)) % 12) + 12) % 12 === 6) tritone++;
             if (examples.length < 4) {
               examples.push(`ref (${refQ},${refR}) MIDI ${21 + i}→${33 + i}: ${n1}${o1} (${q1},${r1}) vs ${n2}${o2} (${q2},${r2})`);
             }
@@ -62,7 +60,7 @@ for (const mapping of MAPPINGS) {
     const reportOnly = mode === 'S' || mode === 'Y';
     if (!reportOnly) { total += modeTotal; bad += modeBad; }
     console.log(`${mapping.padEnd(11)} ${mode}: ${modeBad}/${modeTotal} octave pairs inconsistent`
-      + (reportOnly ? `  (report only: ${tritone} at the tritone, ${modeBad - tritone} availability)` : ''));
+      + (reportOnly ? '  (report only: availability)' : ''));
     for (const e of examples) console.log('    ' + e);
   }
 }

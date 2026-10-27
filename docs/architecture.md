@@ -112,23 +112,52 @@ note, not tuning state). **Trade**: 5-limit minor (10:12:15) is unreachable — 
 Pythagorean (32:27) or septimal subminor (7:6); use `'5'` for 5-limit minor. The same trade applies
 to `'D'`/`'V'`.
 
-**Syntonic / Polysyntonic (`'S'`/`'Y'`)** — each band is internally Pythagorean (pure octaves and
-scales within a band, the Wicki-Hayden use case), and the bands around it are shifted by whole
-syntonic commas, lowered band LEFT / raised RIGHT — under Wicki-Hayden each band holds at most one
-key per MIDI note (the 12-TET unison vector `(7,−2)` outruns the 6-wide band), so comma
-alternatives (9/8 vs 10/9, 81/64 vs 5/4) live in neighbouring bands, and the left neighbour holds
-the sharp-side spellings a 5-limit third lowers. **The home band is always unaltered**: it is the
-**anchor**, `anchorOf(refQ, mapping)` = the band (in the cell's own frame) of the *anchor reference*
-— manual Ctrl+click selection ?? score-ref ?? A3; Composer's cursor prior-note selection never moves
-it (it can sit in another band, and one entered note must not retune everything). Moving the
-anchor re-anchors: pitch, HEJI arrows and colour change; MIDI, spelling and band boundaries never
-do. Polysyntonic re-anchoring is a global −n·SC shift (every interval preserved); Syntonic depends
-only on `anchor mod 4`. In every other mode the band offset is constant, so the anchor drops out
-(`tuning.anchor` still exists; nothing reads it). `state/reference.ts` recomputes `tuning.anchor`
-with the ref tiers; a change in S/Y runs `onAnchorChanged` (= `onTuningChanged`: held voices ramp,
-re-render, Lumatone colour diff, Composer rebroadcast). Recording playback and the overlay mirror pin
-it (`setAnchorOverride`). Piano input follows the one 88-cell picker rule (below) under S/Y's own
-ratios, so it plays 5-limit wherever the bands offer it. Spec: `docs/syntonic-spec.md`.
+**Syntonic / Polysyntonic (`'S'`/`'Y'`)** — 5-limit for the Wicki-Hayden mapping. Each band is
+internally Pythagorean (pure octaves and scales within a band) and whole bands are shifted by
+syntonic commas around the **home band**, which is always unaltered. Offset `k` (in SC, + = raised
+×81/80) of a band at distance `d = band − home` (`bandOffset(mode, d)`):
+
+| d | … −4 | −3 | −2 | −1 | 0 | +1 | +2 | +3 | +4 … |
+|---|---|---|---|---|---|---|---|---|---|
+| Syntonic (`[0, +1, 0, −1][d mod 4]`) | 0 | +1 | 0 | −1 | 0 | +1 | 0 | −1 | 0 |
+| Polysyntonic (`d`) | −4 | −3 | −2 | −1 | 0 | +1 | +2 | +3 | +4 |
+
+- **Pitch**: `coordExps(q, r, 'P', mapping) + k(bandOfCell(q, mapping) − anchor)·SC`, SC =
+  `[−4, 4, −1, 0]`. The band is the cell's **own** frame band (a Wicki-Hayden copy shares its
+  column's 6-band, as Schismatic copies do). The band step `(6, 0)` is 81/40 everywhere in
+  Polysyntonic; in Syntonic, by transition `0→1, 1→2, 2→3, 3→0`, it is 81/40, 160/81, 160/81, 81/40.
+  Both rules hold on the whole lattice, not just the Lumatone (which shows `d = −3…+3` under
+  Wicki-Hayden: 48 keys in each of −2…+2, fragments of 22 at −3 and 18 at +3).
+- **Why lowered is LEFT**: under Wicki-Hayden each band holds at most one key per MIDI note (the
+  12-TET unison vector `(7,−2)` outruns the 6-wide band), so comma alternatives (9/8 vs 10/9, 81/64
+  vs 5/4) can only coexist in different bands. A band's note window drifts ~12/7 fifths sharpward
+  per octave, so the left neighbour holds the sharp-side spellings a 5-limit third lowers (C#, F#,
+  G#, B, D# over A): a just third lies 4–4.5 key-widths from its root, versus 7.5–8 the other way
+  round. Hole census, ref A3, A1–A6: the left band lacks only D#2 of the lowered set; the right
+  band lacks nine notes between B1 and D#4. Under Euler the same rule runs on 3-wide bands, where
+  the `+3q` octaves become ±SC — allowed, unrecommended, not gated.
+- **The anchor** (home band) is `anchorOf(refQ, mapping)` = the band of the *anchor reference* —
+  manual Ctrl+click selection ?? score-ref ?? A3. Composer's cursor prior-note selection never
+  moves it (it can sit in another band, and one entered note must not retune the layout and the
+  score). Ctrl+clicking an altered key makes its band home, so that key's own pitch changes by its
+  comma count — no comma drift. Moving the anchor re-anchors: pitch, HEJI arrows and colour
+  change; MIDI, spelling and band boundaries never do. Polysyntonic re-anchoring is a global
+  −n·SC shift (every interval preserved); Syntonic depends only on `anchor mod 4`.
+- **Live**: `state/reference.ts` recomputes `tuning.anchor` with the ref tiers; a change in S/Y
+  runs `onAnchorChanged` (= `onTuningChanged`: held voices ramp in place, re-render, Lumatone colour
+  diff, Composer rebroadcast) in a microtask once the caller has re-anchored `kbAnchor` — not via
+  `onRefChanged`, which returns early when the spine doesn't move, while the anchor can move
+  without it (a score-ref change under a composer-source selection). The anchor is part of the
+  piano-outline cache key, the `hkl-layout-state` signature and the overlay structure signature.
+  Recording playback and the overlay mirror pin it (`setAnchorOverride`). Piano input follows the
+  one 88-cell picker rule (below) under S/Y's own ratios, so it plays 5-limit wherever the bands
+  offer it.
+- **Other modes**: the band offset is constant in E/5/P/D/7, so the anchor drops out
+  (`tuning.anchor` exists; nothing reads it). Schismatic is the one other band-indexed mode — one
+  schisma per band counted from A3's band, a fixed-anchor stacking.
+- Gates: `test/syntonic/oracle.mjs` (pitch, k, band steps, re-anchoring, colour, HEJI),
+  `test/hkl-midi/anchor.mjs` (live tiers, re-anchor fan-out, piano input, `.hkr`), the Composer
+  `syntonic` fixtures. Decisions: decisions.md 2026-10-26.
 
 Persistence has no back-compat shims: any unrecognized `tuning` value reverts to `'5'`.
 
@@ -151,6 +180,12 @@ two keys is just the difference of their `coordExps` vectors (base layout: `e5=�
 analysis can't diverge. Tenney Height derives from the exponent vector too — the only place exps are
 multiplied into integers/Hz for *display* is the analysis box. Implemented in `@hkl/shared/freq.js` +
 `apps/hkl/src/tuning/`.
+
+**HEJI accidentals** (`hejiCommasFor`, `@hkl/shared/heji.js`): every cell's lattice spelling is
+Pythagorean exactly under `'P'`, so a cell's arrows and hooks are the syntonic / septimal commas
+between its pitch and its `'P'` pitch (`solveCommas` on the exponent difference; `syn5 > 0` → down
+arrows, `sept7 > 0` → down hooks). A schisma (Schismatic's band stacking) is not notated — it
+re-spells, and colour carries it. No per-mode table: S/Y get `syn5 = −k` for free.
 
 ### Ref-driven layout shift
 
@@ -184,13 +219,15 @@ separate gate.
 **88-cell picker** (`apps/hkl/src/tuning/picker.ts`, wrapped by `compute88PianoCoords`; the bounds
 probes run the same module): for each MIDI 21..108, among the cells with that nominal MIDI, ONE
 ranking rule in every mode and mapping — (1) lowest reduced Tenney Height of the ratio from the ref
-under the mode's own ratios; (2) if the lowest-TH cells differ in pitch, the ref's octave line picks
-the pitch (only at the tritone, whose two spellings are complements: 45/32 vs 64/45); (3) among
+under the mode's own ratios; (2) if the lowest-TH cells differ in pitch — only at the tritone, whose
+two spellings are complements (45/32 vs 64/45) — the **augmented 4th** (the spelling a fourth above
+the ref by letter; any other tie would fall back to the ref's octave line); (3) among
 cells of that pitch (Wicki-Hayden twins, P/D comma siblings, in-band vs cross-band octaves), the one
 fewest key steps from the ref — so the footprint clusters on the ref's band. TH is octave-invariant,
 so spelling is octave-consistent by construction (`test/bounds-probe/octave-consistency.mjs`: 0 breaks
-outside S/Y; in S/Y a spelling's 5-limit pitch can exist in one octave's band and not the next, so
-some drift is expected and reported). The ref maps to itself. `'V'` ranks under `'D'` ratios so
+outside S/Y, and in Wicki-Hayden Syntonic; in Euler S/Y and Wicki-Hayden Polysyntonic a spelling's
+5-limit pitch can exist in one octave's band and not the next, so some drift is expected and
+reported). The ref maps to itself. `'V'` ranks under `'D'` ratios so
 schisma exponents don't distort the spelling. → decisions.md 2026-10-26 "One picker rule".
 
 Coverage: ~55 unique MIDI/ref in 5-limit; 88-cell footprint per ref in 7-limit (~208–210 unique
@@ -202,10 +239,15 @@ pitches reachable from a central key). One LTN file gives every physical key a s
 
 A second axis, orthogonal to the tuning mode: **where note names sit** on the hex grid
 (`Mapping = 'euler' | 'wickiHayden'`, single definition in `@hkl/shared/mapping.js`; toolbar
-`Mapping:` dropdown; spec `docs/wicki-hayden-spec.md`). **Euler** is everything above. **Wicki-Hayden**
-inserts, after every fifths column, a column holding the same notes shifted down 2 cells and exactly one
-octave — rows step in whole tones (9:8 / 10:9 / mode-dependent), bands are 6 wide, column order per
-band `[qm2, qm2′, qm0, qm0′, qm1, qm1′]` by `((Q+2) mod 6)`, A3 at `(0,0)`.
+`Mapping:` dropdown). It applies identically to every tuning mode — no per-mode gating. **Euler** is
+everything above. **Wicki-Hayden** inserts, after every fifths column, a column holding the same notes
+shifted down 2 cells and exactly one octave, unadjusted (no region / comma / schisma change): a copy
+cell is its left neighbour × 9/8 (`coordExps` of the column + `[−3, 2, 0, 0]`). Rows step in whole
+tones (9:8 / 10:9 / mode-dependent), so the neighbour set is ±M2 (row), ±P5 (`r`), ±P4 `(−1,+1)`, and
+each column and its copy are an exact octave apart along `(+1,−2)`. Bands are 6 wide
+(`bandOfCell`: `floor((Q+2)/6)`), column order per band `[qm2, qm2′, qm0, qm0′, qm1, qm1′]` by
+`((Q+2) mod 6)`, A3 at `(0,0)` (qm0) with qm0′ at `(1,0)`, so the major scale from a qm0 root
+occupies the middle four columns.
 
 - **Cells are their own cells.** The mapping is part of the coordinate frame, like the tuning mode:
   a `(q, r)` means nothing without it. Every Wicki-Hayden cell has an **Euler-equivalent**
@@ -215,13 +257,17 @@ band `[qm2, qm2′, qm0, qm0′, qm1, qm1′]` by `((Q+2) mod 6)`, A3 at `(0,0)`
   `keyOctave`, `hejiCommasFor`) take a required `mapping` and resolve through it; HKL's state-based
   helpers read `tuning.mapping` (carried on `TuningStateLike`).
 - **Frame conversion** (`convertCell`): Euler → Wicki-Hayden exact (original column `(2q, r)`);
-  Wicki-Hayden → Euler pitch-exact except Schismatic copies. Used by Composer retune, the bridge, and
+  Wicki-Hayden → Euler pitch-exact except Schismatic copies (brute force: 625/625 copies equal an
+  Euler cell in 5/P/D/7, 0/625 in Schismatic, which land one schisma, 1.95¢, away). Used by Composer
+  retune (as the seed of its search — a taxicab tiebreak means nothing across frames), the bridge
+  (every coordinate-bearing message carries its `mapping`; receivers convert on use), and
   cross-score paste. Lattice *vectors* (transpose buttons, SC shifts, harmonics) map via `vecFromEuler`
   (q doubles — parity-preserving, so the step means the same interval from originals and copies).
 - **Reference**: `refSpine` centres the qm0 *original* column of the ref's own 6-band, in the ref's
   row (at most 3 columns away), so the spine has its copy qm0′ to the right and the ref stays where
   it sits in its band — Euler's rule (`qm1 → q−1`, `qm2 → q+1`) with 6-wide bands; the anchor is
-  that cell. **Picker / resolver**: candidates satisfy
+  that cell. (A first rule moved a copy ref to its same-name original one board away, `(Q−7, R+2)`;
+  that misaligned the ref horizontally and was replaced.) **Picker / resolver**: candidates satisfy
   `c·q + 7r = N` (c = 4 Euler, 2 Wicki-Hayden), stepping along the isotone `(7, −c)`; projection
   `7Δq − c·Δr`; copies are candidates like any cell. `VALID_REF_TABLE` / `PIANO_BOUNDS_TABLE` carry an
   outer mapping dimension (regenerated by `test/bounds-probe/`).
@@ -230,7 +276,29 @@ band `[qm2, qm2′, qm0, qm0′, qm1, qm1′]` by `((Q+2) mod 6)`, A3 at `(0,0)`
   voices keep their `(q,r)` and retune in place (they release through the key they struck,
   `input/held.ts`); nothing is dropped. The `verticalFreq` tilt uses a `log(2)/6` column gradient — under
   Wicki-Hayden it coincides with the Lumatone case-row tilt, because the Lumatone's long axis `(7, −2)`
-  carries no net pitch (the accepted range cost: 55 semitones on the 280 keys).
+  carries no net pitch (the accepted range cost: the 280 keys span MIDI 30–85, 55 semitones, instead
+  of 4–113, 109; not mitigated).
+- **Interval structure** (every mode; `test/wh-layout/oracle.mjs` asserts these): `(+1, 0)` from an
+  original column is 9/8 and `(+1, −2)` is 1/2 exactly; `(+1, 0)` from a copy is the mode's q-step ÷
+  9/8; the band step `(6, 0)` is the mode's band octave (2/1; Schismatic octave + schisma; S/Y per
+  their band offset). "Row" is qm2 → qm2′ → qm0 → qm0′ → qm1 → qm1′ → next qm2; "shape" is the major
+  scale from the reference, offsets `(1,0) (2,0) (−1,1) (0,1) (1,1) (2,1) (−1,2)`:
+
+  | mode | row | shape from reference |
+  |---|---|---|
+  | E | 200¢ ×6 | 2 4 5 7 9 11 12 semitones |
+  | 5 | 9/8 10/9 9/8 10/9 9/8 256/225 | 9/8 5/4 27/20 3/2 27/16 15/8 81/40 |
+  | P | 9/8 9/8 9/8 9/8 9/8 65536/59049 | 9/8 81/64 4/3 3/2 27/16 243/128 2/1 |
+  | D | 9/8 9/8 9/8 10/9 9/8 4096/3645 | 9/8 5/4 4/3 3/2 27/16 15/8 2/1 |
+  | 7 | 9/8 8/7 9/8 10/9 9/8 448/405 | 9/8 5/4 21/16 3/2 27/16 15/8 63/32 |
+  | V | 9/8 9/8 9/8 10/9 9/8 9/8 | 9/8 5/4 4/3 3/2 27/16 15/8 2/1 |
+  | S / Y | within a band, as P | as P in the home band |
+
+  In Schismatic every row step is 9:8 or 10:9; the schisma stays on the band boundary, spread over 6
+  columns instead of 3.
+- Gates: `test/wh-layout/oracle.mjs` (structure, names, colours, frame round trips, 280 distinct
+  Lumatone cells), `test/hkl-midi/mapping-switch.mjs` (held keys across a switch), the Composer
+  `mapping` fixtures. Decisions: decisions.md 2026-10-26 "Wicki-Hayden note-name mapping".
 
 ---
 

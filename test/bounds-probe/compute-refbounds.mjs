@@ -3,7 +3,7 @@
 // Computes the static set of (q, r) reference-note candidates that pass the
 // ±3-accidental check across the full 88-cell picker footprint, one bucket
 // per note-name mapping × tuning mode (each mapping's cells in its own frame:
-// 'euler', and 'wickiHayden' — docs/wicki-hayden-spec.md). Tuning modes:
+// 'euler', and 'wickiHayden' — docs/architecture.md → Note-name mapping). Tuning modes:
 //   • 'E' — Equal (12-TET; jiRatio identical to Ptolemaic when there are
 //          no region shifts).
 //   • '5' — Ptolemaic (5-limit JI base).

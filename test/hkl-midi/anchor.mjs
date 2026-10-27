@@ -1,4 +1,4 @@
-// HKL Syntonic / Polysyntonic anchor gate (docs/syntonic-spec.md §3, §4, §6).
+// HKL Syntonic / Polysyntonic anchor gate (docs/architecture.md → Tuning modes, Syntonic / Polysyntonic).
 //
 // Same harness as mapping-switch.mjs (live modules resolved through their
 // importers). Drives the reference tiers and checks the anchor (home band) the

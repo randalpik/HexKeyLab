@@ -1,15 +1,15 @@
-// Wicki-Hayden mapping oracle (docs/wicki-hayden-spec.md §2–§3, §8).
+// Wicki-Hayden mapping oracle (docs/architecture.md → Note-name mapping, incl. its interval table).
 //
 // Pure Node gate — no dev server, no browser. Imports the REAL modules
 // (@hkl/shared primitives, HKL's render/colors.ts) through the repo's TS loader
 // and checks every rule the spec states against them:
-//   A  §3 invariants per JI mode, on every cell of a wide window:
+//   A  interval invariants per JI mode, on every cell of a wide window:
 //        original → copy (+1, 0) = 9/8 · original → copy (+1, −2) = 1/2 ·
 //        copy → next original (+1, 0) = the mode's q-step ÷ 9/8 ·
 //        band (+6, 0) = the mode's band octave (2/1; Schismatic 2/1·schisma)
-//   B  §3 tables: the row and the major-scale shape from the reference, per mode
-//   C  §2 spelling: a copy spells as its column cell, in its own octave
-//   D  §2 colour: JI modes give a copy its column's colour; Equal colours every
+//   B  interval table: the row and the major-scale shape from the reference, per mode
+//   C  spelling: a copy spells as its column cell, in its own octave
+//   D  colour: JI modes give a copy its column's colour; Equal colours every
 //      cell by its sounding octave; light/dark follows the cell's own pitch class
 //   E  frame conversion: Euler → Wicki-Hayden exact; Wicki-Hayden → Euler
 //      pitch-exact except Schismatic copies, which land exactly one schisma low
@@ -51,7 +51,7 @@ function ratio(e) {
 const iv = (A, B, m) => ratio(sub(coordExps(B[0], B[1], m, WH), coordExps(A[0], A[1], m, WH)));
 const NINE_EIGHTHS = [-3, 2, 0, 0], HALF = [-1, 0, 0, 0], OCT = [1, 0, 0, 0], SCHISMA = [-15, 8, 1, 0];
 
-/* ── A: §3 invariants ─────────────────────────────────────────────────────── */
+/* ── A: interval invariants ─────────────────────────────────────────────────────── */
 for (const m of JI) {
   for (let k = -20; k <= 20; k++) {
     for (let R = -12; R <= 12; R++) {
@@ -70,7 +70,7 @@ for (const m of JI) {
   }
 }
 
-/* ── B: §3 tables ─────────────────────────────────────────────────────────── */
+/* ── B: interval table ─────────────────────────────────────────────────────────── */
 const ROW = {
   '5': '9/8 10/9 9/8 10/9 9/8 256/225',
   P: '9/8 9/8 9/8 9/8 9/8 65536/59049',
@@ -95,7 +95,7 @@ for (const m of JI) {
 check('B E row (semitones)', [-2, -1, 0, 1, 2, 3].map((Q) => coordToMidi(Q + 1, 0, WH) - coordToMidi(Q, 0, WH)).join(' '), '2 2 2 2 2 2');
 check('B E shape (semitones)', SHAPE_OFFSETS.map(([a, b]) => coordToMidi(a, b, WH) - 57).join(' '), '2 4 5 7 9 11 12');
 
-/* ── C: §2 spelling ───────────────────────────────────────────────────────── */
+/* ── C: spelling ───────────────────────────────────────────────────────── */
 for (let Q = -41; Q <= 41; Q += 2) {          /* odd columns: copies */
   for (let R = -10; R <= 10; R++) {
     const k = fd(Q);
@@ -105,7 +105,7 @@ for (let Q = -41; Q <= 41; Q += 2) {          /* odd columns: copies */
   }
 }
 
-/* ── D: §2 colour ─────────────────────────────────────────────────────────── */
+/* ── D: colour ─────────────────────────────────────────────────────────── */
 function colorIn(mode, mapping, q, r) {
   tuning.mode = mode;
   tuning.equalEnabled = mode === 'E';

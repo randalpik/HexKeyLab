@@ -13,7 +13,7 @@
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/bounds-probe/compute-bounds.mjs
 //
 // Every piano bound is computed per note-name mapping ('euler' and
-// 'wickiHayden', docs/wicki-hayden-spec.md): the mapping changes the picker's
+// 'wickiHayden', docs/architecture.md → Note-name mapping): the mapping changes the picker's
 // candidate cells and the verticalFreq tilt.
 //
 // The picker is the real module (imported through the TS loader). The script

@@ -1,4 +1,4 @@
-// Syntonic ('S') / Polysyntonic ('Y') oracle (docs/syntonic-spec.md §2, §4, §7).
+// Syntonic ('S') / Polysyntonic ('Y') oracle (docs/architecture.md → Tuning modes, Syntonic / Polysyntonic; colour: → Color scheme).
 //
 // Pure Node gate — imports the REAL @hkl/shared modules through the repo's TS
 // loader and checks every rule the spec states, under both mappings, over a

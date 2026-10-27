@@ -1,4 +1,4 @@
-// HKL mapping-switch gate (docs/wicki-hayden-spec.md §5): switching the
+// HKL mapping-switch gate (docs/architecture.md → Note-name mapping): switching the
 // note-name mapping while keys are held.
 //
 // Same harness as held-inputs.mjs (live modules resolved through their

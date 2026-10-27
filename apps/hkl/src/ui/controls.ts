@@ -87,7 +87,7 @@ export function setTuning(): void {
   savePrefs({ tuning: val });
 }
 
-/** Switch the note-name mapping (docs/wicki-hayden-spec.md §5). Every
+/** Switch the note-name mapping (docs/architecture.md → Note-name mapping). Every
  *  coordinate is in the active mapping's frame, so the switch re-expresses the
  *  reference, the keyboard anchor, and held mouse / piano-input / pedal-
  *  sustained notes in the new frame — same pitch (a Schismatic copy moves by

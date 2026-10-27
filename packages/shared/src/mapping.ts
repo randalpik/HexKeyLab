@@ -4,7 +4,7 @@
 //                  3-wide octave bands (docs/architecture.md → Tuning system).
 //   'wickiHayden'  after every fifths column, a column holding the same notes
 //                  shifted down 2 cells and exactly one octave — rows step in
-//                  whole tones, bands are 6 wide (docs/wicki-hayden-spec.md).
+//                  whole tones, bands are 6 wide (docs/architecture.md → Note-name mapping).
 //
 // A cell's coordinates are its own in its mapping; the mapping is part of the
 // coordinate frame, like the tuning mode. Every Wicki-Hayden cell has an

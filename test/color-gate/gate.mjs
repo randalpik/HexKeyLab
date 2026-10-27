@@ -1,4 +1,4 @@
-// Lattice colour regression gate (docs/syntonic-spec.md §4, §7).
+// Lattice colour regression gate (docs/architecture.md → Color scheme).
 //
 // Colour is one function of the pitch. This gate pins what that function
 // produces: for every mode × mapping over a wide cell window it records each

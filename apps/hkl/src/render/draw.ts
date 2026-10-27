@@ -286,8 +286,8 @@ function activeValidRefPaths(): Point[][] {
 }
 
 /* The 88-cell piano footprint for a ref under the live tuning: one ranking
-   rule for every mode and mapping (TH, then key steps among identical
-   pitches, then the octave line at the tritone) — see tuning/picker.ts, which
+   rule for every mode and mapping (TH, then the augmented 4th at the
+   tritone tie, then key steps among identical pitches) — see tuning/picker.ts, which
    the offline bounds probes run too. `anchor`: the Syntonic / Polysyntonic
    home band to rank under — validation passes the candidate's own (a
    Ctrl+click makes it home). Exported for callers that need the cell set

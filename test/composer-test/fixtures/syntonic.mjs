@@ -1,5 +1,5 @@
 // Composer test fixtures — Syntonic / Polysyntonic anchor + pitch-derived colour.
-// docs/syntonic-spec.md §5. Fixture spec: { setup?: string, setupKeys?: string[], ...flags };
+// docs/architecture/composer.md (Syntonic / Polysyntonic anchor). Fixture spec: { setup?: string, setupKeys?: string[], ...flags };
 // ASSERTIONS maps fixture name → [{ name, expr }]. See ../README.md.
 //
 // A note's anchor (home band) is derived from the key signature at its measure:

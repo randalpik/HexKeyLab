@@ -16,7 +16,7 @@
 //                                    5-limit interpretation)
 //
 // Wicki-Hayden (6-wide bands [qm2, qm2′, qm0, qm0′, qm1, qm1′] by (Q+2) mod 6,
-// docs/wicki-hayden-spec.md §2): the band's qm0 ORIGINAL column — at most 3
+// docs/architecture.md → Note-name mapping): the band's qm0 ORIGINAL column — at most 3
 // columns away — so the spine always has its copy qm0′ immediately to the
 // right: qm2 → Q+2, qm2′ → Q+1, qm0′ → Q−1, qm1 → Q−2, qm1′ → Q−3.
 

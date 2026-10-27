@@ -878,8 +878,10 @@ sent).
 - A step is a voice's set of notes attacking at one onset (tied-in notes are
   absent). Identity is pitch name and octave plus colour, the expected colour
   looked up by octave-invariant lattice class; a sounding note with no written
-  colour matches on pitch alone. Pythagorean and Semiditonal modes also accept
-  any same-pitch variant.
+  colour matches on pitch alone. The duplicate-key modes — Pythagorean and
+  Semiditonal (comma siblings), Syntonic and Polysyntonic (equally-shifted
+  bands) — also accept any same-pitch variant, pitched under each measure
+  occurrence's anchor.
 - A voice advances only when its whole step is struck; voices advance
   independently; an unmatched strike changes nothing. When several voices
   would take a strike, only those at the earliest onset do.

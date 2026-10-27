@@ -1,5 +1,5 @@
 // Composer test fixtures — note-name mapping (Euler / Wicki-Hayden).
-// docs/wicki-hayden-spec.md. Fixture spec: { setup?: string, setupKeys?: string[], ...flags };
+// docs/architecture.md → Note-name mapping. Fixture spec: { setup?: string, setupKeys?: string[], ...flags };
 // ASSERTIONS maps fixture name → [{ name, expr }]. See ../README.md.
 //
 // A score's <hkl:layoutReq mapping> is the frame of every note's data-q/data-r.

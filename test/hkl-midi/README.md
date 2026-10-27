@@ -62,7 +62,7 @@ piano note paths, or `effects/onRefChanged.ts` done.**
 node test/hkl-midi/mapping-switch.mjs   # requires `pnpm dev`; exits non-zero on failure
 ```
 
-Behavioral gate for `setMapping()` (docs/wicki-hayden-spec.md §5). With the
+Behavioral gate for `setMapping()` (docs/architecture.md → Note-name mapping). With the
 reference at A4 — its spine has q ≠ 0, so the anchor moves on a switch — a held
 Lumatone key keeps its `(q,r)` and retunes in place, a held mouse note converts
 with its pitch kept, release leaves nothing behind, both directions, and with a
@@ -76,7 +76,7 @@ node test/hkl-midi/anchor.mjs   # requires `pnpm dev`; exits non-zero on failure
 ```
 
 Behavioral gate for the anchor (home band) the live app derives from the
-reference tiers (docs/syntonic-spec.md §3): a Ctrl+click re-anchors and re-pitches
+reference tiers (docs/architecture.md → Tuning modes, Syntonic / Polysyntonic): a Ctrl+click re-anchors and re-pitches
 in place with one deferred fan-out; a composer-source selection never moves it;
 the score-ref drives it unless a manual selection overrides; `setAnchorOverride`
 pins and releases it; piano input stays in `k = 0` bands; a mid-take re-anchor

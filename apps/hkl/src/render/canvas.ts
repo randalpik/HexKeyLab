@@ -71,7 +71,7 @@ const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode
     verticalFreq: {
       'E': { kbMinW: 1115, CH: 418 },
       '5': { kbMinW: 1115, CH: 418 },
-      'P': { kbMinW: 1265, CH: 418 },
+      'P': { kbMinW: 1270, CH: 418 },
       'D': { kbMinW: 1218, CH: 418 },
       '7': { kbMinW: 1115, CH: 418 },
       'V': { kbMinW: 1218, CH: 418 },

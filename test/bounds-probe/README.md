@@ -16,7 +16,7 @@ Run them **one at a time** (`compute-refbounds.mjs` scans ~27 000 candidate refs
 |---|---|
 | `compute-refbounds.mjs` | Writes `refbounds-table.ts`: every ref whose 88-cell footprint spells with ≤ ±3 accidentals, per mapping × mode. |
 | `compute-bounds.mjs` | Prints the `kbMinW × CH` matrix for every `(rotation × outline)` pair. The piano column unions across one band of `refQ` × `refR ∈ [-3,3]` — the states the user can reach without further canvas resize. |
-| `octave-consistency.mjs` | Gate: MIDI N and N+12 get the same spelling, one spelled octave apart (where the octave sits is the picker's choice — nearest the ref). Exits non-zero on any break outside Syntonic / Polysyntonic; those are reported, split into tritone ties and availability (a spelling's 5-limit pitch can exist in one octave's band and not the next). |
+| `octave-consistency.mjs` | Gate: MIDI N and N+12 get the same spelling, one spelled octave apart (where the octave sits is the picker's choice — nearest the ref). Exits non-zero on any break outside Syntonic / Polysyntonic; those are reported — all availability (a spelling's 5-limit pitch can exist in one octave's band and not the next); the tritone tie always takes the augmented 4th, so ties can't break consistency. |
 
 ## When to re-run
 
@@ -42,7 +42,8 @@ These are the values `recomputeCanvasBounds()` in `src/render/canvas.ts` should 
 
 ```
 wickiHayden P: 0/3192 octave pairs inconsistent
-wickiHayden S: 44/3192 octave pairs inconsistent  (report only: 44 at the tritone, 0 availability)
+wickiHayden S: 0/3192 octave pairs inconsistent  (report only: availability)
+wickiHayden Y: 436/3192 octave pairs inconsistent  (report only: availability)
 ✓ spelling is octave-consistent outside S/Y (28728 pairs)
 ```
 
