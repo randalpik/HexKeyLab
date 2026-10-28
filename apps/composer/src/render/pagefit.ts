@@ -94,7 +94,7 @@ export interface PageFitConstants {
 }
 
 /** `scale` and `evenWidth` come from the active CRISP_PRESET; omitted (0 grid)
- *  the placement is unquantized, which is the pre-2026-09-03 behaviour.
+ *  the placement is unquantized, which is the pre-2026-09-03 behavior.
  *
  *  `singleStaff`: the rendered score has ONE staff (a one-staff document, or
  *  the single-part view of a one-staff instrument). Its systems get twice the
@@ -414,7 +414,7 @@ function layoutSystems(items: Array<{ ext: SysExtents; reserve: number }>, k: Pa
     /* Accumulate on the UNSNAPPED position. Using `top` here fed each system's
        ≤½-pixel rounding into the next system's premise, so the page drifted
        cumulatively and sub-pixel noise in one system's extents split its
-       neighbours across pixel boundaries. */
+       neighbors across pixel boundaries. */
     y = rawTop + span + Math.max(ext.below, k.F);
   }
   return out;

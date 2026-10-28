@@ -134,7 +134,7 @@ function addSibling(measure: Element, localName: 'fermata' | 'breath' | 'trill',
   el.setAttributeNS(XML_NS, 'xml:id', newId(localName.charAt(0)));
   if (localName === 'fermata' || localName === 'trill') {
     /* Anchors to the note via @startid — Verovio renders the symbol above.
-       A trill is a diatonic ornament; Verovio draws the upper-neighbour
+       A trill is a diatonic ornament; Verovio draws the upper-neighbor
        alternation glyph natively from <trill @startid>. */
     el.setAttribute('startid', '#' + anchorId);
   } else {

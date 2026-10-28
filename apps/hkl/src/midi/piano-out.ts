@@ -1,7 +1,7 @@
 // Piano output — mirror HKL playback to an external MIDI synth (e.g. Korg
 // SP-250) at true just-intonation pitch.
 //
-// The target synths have no pitch bend and no MPE, but do honour RPN 0001
+// The target synths have no pitch bend and no MPE, but do honor RPN 0001
 // (channel fine tuning, ±100¢ over 14 bits). A note-on re-applies the channel's
 // current fine-tune to every voice on that channel, so distinct simultaneous
 // tunings require distinct channels. We therefore allocate one voice per MIDI
@@ -62,7 +62,7 @@ const shed: Set<KeyId> = new Set();
 /** Convert a JI frequency to the nearest 12-TET MIDI note plus the RPN 0001
  *  fine-tune 14-bit value that pitches that note to the exact frequency.
  *  MIDI convention matches the rest of HKL: 69 = A4 = 440 Hz (A3 = 220 = 57).
- *  RPN 0001 spans ±100¢ over 0..16383, centred at 8192 → 81.92 steps/cent.
+ *  RPN 0001 spans ±100¢ over 0..16383, centered at 8192 → 81.92 steps/cent.
  *  Snapping to the nearest note keeps the offset within ±50¢, well in range. */
 function freqToNoteFine(freq: number): { note: number; fine14: number } {
   const midiFloat = 69 + 12 * Math.log2(freq / 440);

@@ -164,7 +164,7 @@ export const FIXTURES = {
    * meanwhile splits into two same-onset playback events (F3 at a quarter, C4
    * coalesced to a half through the tie). Every note gets a DISTINCT color
    * on purpose: color is part of the match identity, and the pre-2026-09-20
-   * positional color zip handed a note its neighbour's @color as soon as a tie
+   * positional color zip handed a note its neighbor's @color as soon as a tie
    * or a duration split desynced event.notes from the element's <note>
    * children — no strike could then satisfy either chord and the voice wedged.
    * Asserted by FIXTURE_ASSERTIONS.perfPartialTieChord. */

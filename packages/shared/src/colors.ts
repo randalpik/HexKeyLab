@@ -1,7 +1,7 @@
 // Lattice color palette — pure data tables. Shared between HKL (lattice
 // rendering, MIDI feedback, screen readback) and HKC (notehead colors via
 // data-q/data-r → resolved color through the bridge). No runtime state, no
-// tuning dependency — the colour function (pitch → hue) is keycolor.ts.
+// tuning dependency — the color function (pitch → hue) is keycolor.ts.
 //
 // The septimal-variant fields (`sl`/`sd`) are populated by the load-time IIFE
 // at the bottom of this file by linear-interpolating each hue toward the next

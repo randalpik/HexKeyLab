@@ -177,11 +177,11 @@ export const FIXTURES = {
     `,
   },
   /* A width-CHANGING scroll edit on a mid-score measure must keep the
-   * edited measure joined to its LEFT neighbour and cascade the width delta
+   * edited measure joined to its LEFT neighbor and cascade the width delta
    * RIGHTWARD — i.e. the spliced layout must match a full re-engrave of the same
    * model. Regression guard for the anchor bug where the splice pinned the
    * edited run's RIGHT edge (to the right-context measure) and let its LEFT edge
-   * float, opening a gap / overlap with the left neighbour on delete / insert.
+   * float, opening a gap / overlap with the left neighbor on delete / insert.
    * Six quarter-filled bars → scroll; the assertion edits a mid bar and compares
    * splice vs full-render measure x. Asserted via
    * FIXTURE_ASSERTIONS.scrollWidthChangeCascadesRight. */
@@ -972,8 +972,8 @@ export const ASSERTIONS = {
         const lastId = measures[measures.length - 1].getAttribute('xml:id');
         const mr = R.rectForId(lastId);
         if (!mr) return { ok: false, detail: 'last measure not rendered' };
-        const bar = [...document.querySelectorAll('#cursorOverlay rect')]
-          .find(el => el.getAttribute('opacity') === '0.85');
+        const bar = [...document.querySelectorAll('#cursorOverlay rect[data-cursor-role="voice"]')]
+          .find(el => el.getAttribute('opacity') !== '0');
         if (!bar) return { ok: false, detail: 'no active cursor bar' };
         const x = parseFloat(bar.getAttribute('x'));
         /* pastEndRight x = rect(lastMeasure).right + 2*CURSOR_HPAD (=8). */
@@ -990,8 +990,8 @@ export const ASSERTIONS = {
         const lastId = measures[measures.length - 1].getAttribute('xml:id');
         const mr = R.rectForId(lastId);
         if (!mr) return { ok: false, detail: 'last measure not rendered' };
-        const bar = [...document.querySelectorAll('#cursorOverlay rect')]
-          .find(el => el.getAttribute('opacity') === '0.85');
+        const bar = [...document.querySelectorAll('#cursorOverlay rect[data-cursor-role="voice"]')]
+          .find(el => el.getAttribute('opacity') !== '0');
         const cursorRight = bar ? parseFloat(bar.getAttribute('x')) + parseFloat(bar.getAttribute('width')) : 0;
         const overlayW = document.getElementById('cursorOverlay').getBoundingClientRect().width;
         const sw = score.scrollWidth;

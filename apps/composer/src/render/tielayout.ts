@@ -113,7 +113,7 @@ function outline(path: SVGGeometryElement, frameInv: DOMMatrix, gap: number): Pt
   const m = frameInv.multiply(own);
   /* Sampled in JS from the path data (render/curves.ts): the DOM API cost
      70 000 `getPointAtLength` calls on a sonata load. Same arc-length
-     parametrisation; the DOM API only for a path the parser declines. */
+     parametrization; the DOM API only for a path the parser declines. */
   const sp = samplePath(path.getAttribute('d') ?? '');
   if (sp) {
     const L = sp.length;
@@ -174,7 +174,7 @@ export function layoutCollidingTies(root: Element, opts: TieLayoutOpts): void {
      tie's own frame can differ from it — render/instrgap.ts translates an
      instrument's elements, ties included, before this runs — so each tie's
      points are mapped into the system frame and back (measuring every tie in
-     the first tie's frame lifted a shifted tie into its neighbour, sonata
+     the first tie's frame lifted a shifted tie into its neighbor, sonata
      p. 18). */
   const cache = new Map<Element, { frameInv: DOMMatrix; obs: Obstacle[] }>();
   const apply = (m: DOMMatrix, p: Pt): Pt => ({ x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f });

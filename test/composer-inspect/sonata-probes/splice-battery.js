@@ -44,7 +44,7 @@ const mountAll = async () => {
 };
 
 /* Offscreen reference render of the current pinned doc; compare the pages
- * hosting `lineIdxs` (and their neighbours) against the live DOM. */
+ * hosting `lineIdxs` (and their neighbors) against the live DOM. */
 const tkRef = new V.toolkit();
 function referenceCompare() {
   const mei = model.serialize({ hejiEnabled: model.getHejiEnabled() }, null);
@@ -262,7 +262,7 @@ await runEdit('edit-near-volta', () => {
 // which was retired once the injector recorded `data-baseline` and the splicer
 // could re-place a title whose own system it re-engraves. It now SPLICES; the
 // expectation stays permissive because the zone is also where the context check
-// legitimately refuses on a divergent neighbour.
+// legitimately refuses on a divergent neighbor.
 await runEdit('edit-section-header-zone', () => {
   const hm = model.getDoc().querySelector('measure[data-hkl-section-title]');
   const mi = hm ? idIdx0.get(hm.getAttribute('xml:id')) : null;

@@ -5,7 +5,7 @@
  * — 105 000 calls on a sonata load (1.4 s in Chromium; Gecko re-flattens the
  * path on every call, so far more there). A Verovio curve is two or three
  * cubic Béziers in absolute coordinates; flattening them here, once per path,
- * gives the same arc-length parametrisation to well under a hundredth of a
+ * gives the same arc-length parametrization to well under a hundredth of a
  * unit, with no layout work at all.
  *
  * Supported: M L H V C S Q T Z, absolute and relative — everything Verovio
@@ -55,7 +55,7 @@ export function samplePath(d: string): PathSampler | null {
       push({ x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x, y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y });
     }
   };
-  /* Tokenise: a command letter followed by its numbers, repeated. */
+  /* Tokenize: a command letter followed by its numbers, repeated. */
   const re = /([MLHVCSQTZmlhvcsqtz])([^MLHVCSQTZmlhvcsqtz]*)/g;
   let cur: Pt = { x: 0, y: 0 };
   let start: Pt = { x: 0, y: 0 };
@@ -154,7 +154,7 @@ export function sampleOutline(d: string, n: number, m: DOMMatrix): Pt[] | null {
    on a sonata load (2026-10-08). An element's CTM is the product of the
    transforms on its ancestor chain up to its viewport, so two elements with
    the same chain of `transform` attributes under the same `<svg>` share a
-   CTM: memoise by (viewport, chain string). The chain is read live from the
+   CTM: memoize by (viewport, chain string). The chain is read live from the
    attributes on every call — a transform written by a pass changes the key,
    a root resized by `pinExactScale` changes the key (its size is part of it)
    — so nothing here can go stale, and the first element of each chain pays

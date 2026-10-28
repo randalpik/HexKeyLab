@@ -15,7 +15,7 @@
 //   merged into one <dynam>      gap 2120 → 1710, but Verovio's mixed-content
 //                                bbox is 1910 units TALL (the SMuFL glyph's em
 //                                box plus the text's), which would wreck every
-//                                downstream centring and ink-floor measurement
+//                                downstream centering and ink-floor measurement
 //   the <dir> deleted            gap 2120 → 1160     ← the ceiling
 //   @tstamp 1 → 1.25             gap 2120 → 1240, and textlayout's horizontal
 //                                move becomes a no-op: Verovio spaces the pair
@@ -47,7 +47,7 @@ const HKL_NS = 'https://hexkeylab.com/ns/mei';
    to stay inside an ordinary measure. textlayout corrects the resulting
    clearance either way, so this only has to break the overlap. */
 const NUDGE_BEATS = 0.25;
-/* Keep a nudged mark this many beats clear of the barline: Verovio centres a
+/* Keep a nudged mark this many beats clear of the barline: Verovio centers a
    mark on its tstamp, and one at `beats + 1` sits exactly ON the barline (the
    case textlayout's barline rule exists to undo — importMusicXml's <offset>
    note). */

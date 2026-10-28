@@ -158,7 +158,7 @@ const FIXTURES = [
   // spelling as Ptolemaic, but the qm=1 column's +SC shift cancels the
   // base e5 = +1, leaving e5 = 0 → no comma annotation.
   { q:  1, r:  0, mode: 'P', label: 'C#',        note: 'Pythagorean major third 81/64' },
-  // q=-1 in Pythagorean: qm=2 → A-d1-upper applies (-SC), cancelling base
+  // q=-1 in Pythagorean: qm=2 → A-d1-upper applies (-SC), canceling base
   // e5=-1 → e5=0. Spelling is F (the m3dn fall-through). The cell is now
   // a true Pythagorean F (minor 6th below A = 165 Hz). No comma annotation.
   { q: -1, r:  0, mode: 'P', label: 'F',         note: 'Pythagorean F (no commas)' },

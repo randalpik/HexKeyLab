@@ -78,7 +78,7 @@ class QueueTests(unittest.TestCase):
         q.feed(frame(), 1, .01)
         self.assertFalse(q.pending)
         q.feed(frame(140), 2, .02)
-        task = q.take(.02)  # White is now in flight, cannot be cancelled.
+        task = q.take(.02)  # White is now in flight, cannot be canceled.
         self.assertEqual(task[:2], (140, 1))
         q.feed(frame(), 3, .03)
         self.assertEqual(q.take(.04)[:2], (140, 0))  # Queue compensating black.
@@ -120,7 +120,7 @@ class QueueTests(unittest.TestCase):
         self.assertAlmostEqual(report['duration_s'], 5/30)
         self.assertLessEqual(report['peak_pending'], 280)
         self.assertLess(len(events), 10)
-        self.assertGreater(report['cancelled'], 0)
+        self.assertGreater(report['canceled'], 0)
 
 
 class LightingDevice(Device):

@@ -2,11 +2,11 @@
 //
 // Page view no longer paints Verovio pages: every system is rendered from a
 // ONE-LINE window — the system splicer's recipe (leader / trailer stubs so a
-// mid-document line engraves like its neighbours, the window closed over
+// mid-document line engraves like its neighbors, the window closed over
 // spanners and endings so every tie and slur finds its other end, the view's
 // staff subset minus the line's hidden staves) — and Composer assembles pages
 // from the results. This is what `substituteHiddenStaffSystems` did for a
-// hide-empty system on a painted page, generalised to every line: the window
+// hide-empty system on a painted page, generalized to every line: the window
 // is justified at page width with `breaks:'encoded'` and the line's own `<sb>`
 // pins, so the system is the one a pinned page render would have drawn
 // (the reference gate has asserted that equality since Phase 1).

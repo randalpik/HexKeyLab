@@ -225,7 +225,7 @@ export function cursorAtMoment(stops: ReadonlyArray<LayerStop>, at: Moment | nul
 /** Re-find `prev`'s current stop in a freshly built list: the same mark (id +
  *  edge) if it survived; else the stop at the same moment holding the same
  *  position among that moment's stops (so deleting one of three coincident
- *  marks lands on its neighbour, not back at the first); else the first stop
+ *  marks lands on its neighbor, not back at the first); else the first stop
  *  at or after the moment. */
 export function relocate(prev: ExpressionCursor, stops: ReadonlyArray<LayerStop>): ExpressionCursor {
   const cur = currentStop(prev);

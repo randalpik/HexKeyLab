@@ -218,10 +218,8 @@ function drawGeom(svg: SVGSVGElement, inv: DOMMatrix, geom: CursorGeom, label?: 
     bar.style.stroke = CURSOR_COLOR;
     bar.style.strokeOpacity = String(SELECTION_STROKE_OPACITY);
     bar.style.strokeWidth = String(Math.abs((new DOMPoint(geom.x + 1.5, geom.y).matrixTransform(inv)).x - tl.x));
-    bar.setAttribute('opacity', '1');
   } else {
     bar.style.stroke = 'none';
-    bar.setAttribute('opacity', '0.85');
   }
   svg.appendChild(bar);
   if (label) {
@@ -286,7 +284,7 @@ const PLAYBACK_ANCHOR = 2 / 3;
 /** `anchor` = playback follow: park the target at PLAYBACK_ANCHOR of the
  *  viewport rather than nudging it minimally into view. The clamp to
  *  [0, maxScroll] is what produces the "except near the beginning / end"
- *  behaviour: over the first screenful the moment sits left of the anchor and
+ *  behavior: over the first screenful the moment sits left of the anchor and
  *  over the last it drifts right of it, because there is nothing left to
  *  scroll. The clamp also keeps scrollFollow's own already-there check
  *  meaningful at the extremes, so a settled view stops re-aiming per onset. */

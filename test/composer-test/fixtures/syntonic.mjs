@@ -1,4 +1,4 @@
-// Composer test fixtures — Syntonic / Polysyntonic anchor + pitch-derived colour.
+// Composer test fixtures — Syntonic / Polysyntonic anchor + pitch-derived color.
 // docs/architecture/composer.md (Syntonic / Polysyntonic anchor). Fixture spec: { setup?: string, setupKeys?: string[], ...flags };
 // ASSERTIONS maps fixture name → [{ name, expr }]. See ../README.md.
 //
@@ -6,7 +6,7 @@
 // model.anchorAt = the band of the key-tonic cell set-score-ref carries. Under
 // Wicki-Hayden the C tonic (C4, (12,−3)) sits in band 2 and the G tonic (G3,
 // (6,−2)) in band 1, so in Syntonic the C4 cell is home in C and one comma up in
-// G. Colour is one function of the pitch (@hkl/shared/keycolor.js): the C4 ink is
+// G. Color is one function of the pitch (@hkl/shared/keycolor.js): the C4 ink is
 // blue in C and pink (+2 hue steps) in G. Expected hexes were computed from the
 // shared functions.
 
@@ -29,7 +29,7 @@ const HELPERS = `
 
 export const FIXTURES = {
   /* A key-signature edit re-anchors the measures it governs: the C4 note keeps
-     its cell and spelling but re-pitches, so its baked colours follow (C → G →
+     its cell and spelling but re-pitches, so its baked colors follow (C → G →
      C: home → one comma up → home). */
   syn_keysig_reanchors: {
     setup: `
@@ -59,7 +59,7 @@ export const FIXTURES = {
   },
   /* Chromatic: a key change re-anchors a borrowed column like any other — it
      keeps its cell and spelling, and its carried comma re-pitches (C → G:
-     lowered → Pythagorean), colours following. */
+     lowered → Pythagorean), colors following. */
   syn_chromatic_borrowed_reanchors: {
     setup: `
       ${HELPERS}
@@ -123,10 +123,10 @@ export const FIXTURES = {
     `,
     setupKeys: ['5'],
   },
-  /* Retune recolours (every mode, not only S/Y): Ptolemaic → Equal keeps A4 at
-     (3,0) exactly, but Equal colours by sounding octave, so the baked colour
-     must change (purple → pink). Before colour moved to a shared pitch function
-     the old colour stayed: no recolour pass existed. */
+  /* Retune recolors (every mode, not only S/Y): Ptolemaic → Equal keeps A4 at
+     (3,0) exactly, but Equal colors by sounding octave, so the baked color
+     must change (purple → pink). Before color moved to a shared pitch function
+     the old color stayed: no recolor pass existed. */
   syn_retune_recolors: {
     setup: `
       ${HELPERS}
@@ -152,11 +152,11 @@ const accidGlyphs = `[...document.querySelectorAll('g.note g.accid text')].map((
 
 export const ASSERTIONS = {
   syn_keysig_reanchors: [
-    { name: 'key C: anchor 2, C4 home colours',
+    { name: 'key C: anchor 2, C4 home colors',
       expr: `(${expect.toString()})(window.__synC, [2, '${C4_HOME.ink}', '${C4_HOME.light}'])` },
-    { name: 'key G: anchor 1, C4 recoloured one comma up',
+    { name: 'key G: anchor 1, C4 recolored one comma up',
       expr: `(${expect.toString()})(window.__synG, [1, '${C4_UP1.ink}', '${C4_UP1.light}'])` },
-    { name: 'back to C: home colours restored',
+    { name: 'back to C: home colors restored',
       expr: `(${expect.toString()})(window.__synBack, [2, '${C4_HOME.ink}', '${C4_HOME.light}'])` },
     { name: 'the cell and spelling never moved',
       expr: `(() => { const n = window.__hkl_composer.model.getDoc().querySelector('note');
@@ -208,7 +208,7 @@ export const ASSERTIONS = {
     { name: 'retune confirmed: one exact match',
       expr: `(() => { const a = window.__synAsked ?? [];
         return a.length === 1 && a[0].includes('1 exact match') ? { ok: true } : { ok: false, detail: JSON.stringify(a) }; })()` },
-    { name: 'A4 recoloured from Ptolemaic purple to Equal pink',
+    { name: 'A4 recolored from Ptolemaic purple to Equal pink',
       expr: `(${expect.toString()})([window.__synBefore, window.__synAfter], [['#9405d1', '#C94CFF'], ['#f90673', '#FF4C79']])` },
   ],
 };

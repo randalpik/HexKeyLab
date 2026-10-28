@@ -266,7 +266,7 @@ under one beam.
   measure. Choosing the inherited clef removes the change.
 - **Pickup** (`Ctrl+Shift+A`, length in eighths): a dedicated measure 0 with
   `hkl:pickup-ticks` and `@metcon="false"`, numbered 0. Every budget-aware
-  path honours it, including the clock for control events. An instant
+  path honors it, including the clock for control events. An instant
   downbeat tempo moves onto the pickup.
 
 ### Empty cells
@@ -405,7 +405,7 @@ instrument's top staff (ids `<src>-p<staffN>`); it runs before
 `<tempo>`.
 
 `svgAdditionalAttribute` surfaces the MEI attributes the DOM passes read —
-note colour and coordinates, `staff@n`, `layer@n`, control events' `@staff`,
+note color and coordinates, `staff@n`, `layer@n`, control events' `@staff`,
 `@place`, `@tstamp`, `@startid`/`@endid`, `slur@curvedir`, the `hkl-*`
 markers — as `data-*` attributes. Verovio prefixes `data-`, so
 `data-tuplet-placeholder` arrives as `data-data-tuplet-placeholder`.
@@ -481,7 +481,7 @@ it: after a full render, on every window, and again on a zoom (which rescales
 mounted pages through the same passes). Order:
 
 1. `pinExactScale`; scroll view's title-block cleanup; barline snaps;
-   noteheads moved last so the coloured head draws over its stem.
+   noteheads moved last so the colored head draws over its stem.
 2. `injectHejiGlyphs` — first, because every later pass must measure the
    glyph that will be drawn.
 3. `repairBarLines` — redraws the stretch of a grand-staff barline Verovio
@@ -555,7 +555,7 @@ shells** (`render/pageshell.ts`), which also draw the page header.
   is the clef + key a line starting at that measure draws (measured once per
   signature context, `sigWForLine`, from the staff line's start to the last
   signature glyph — never from the measure's bbox, which holds the
-  system-start bar number centred on the staff start); the document's first
+  system-start bar number centered on the staff start); the document's first
   line pays the
   instrument-name indent instead, since its clef and key sit inside measure
   0's natural width.
@@ -679,7 +679,7 @@ page is shown, and the fit re-run from its page.
 - A clef, key or meter change governs every measure to the next change of
   the same kind on the same staff.
 - A spanner with one end in the replaced set pulls its other end into the
-  window (one pass, no fixed point); a tie pulls one neighbour; an ending is
+  window (one pass, no fixed point); a tie pulls one neighbor; an ending is
   taken whole.
 
 **Vertical placement** (`render/pagefit.ts`), in units of 80 SVG user units
@@ -774,15 +774,15 @@ outside every measure). A failure throws.
   DOM.
 - **Theme** repaints in place (`applyThemeToRendered`): dark and transparent
   tag the container and every page wrapper so the shared notation CSS
-  recolours ink, and noteheads switch to their light-source colour.
+  recolors ink, and noteheads switch to their light-source color.
   Non-notehead ink uses `--notation-ink`; only the notehead carries lattice
-  colour. Strokes use `shape-rendering: geometricPrecision`.
+  color. Strokes use `shape-rendering: geometricPrecision`.
 - **Content frame**: `renderer.attach(#score)` puts one `div.score-content`
   inside `#score`; every page card / the scroll SVG and the cursor overlay live
   in it. It is the renderer's `container` (DOM root, and the frame `rectForId` /
   `findSigEndXForStaff` measure in — no scroll term), while `#score` is the
   `scroller` (scroll offsets, viewport rects, the mount observer's root, the
-  theme tags). Page view centres the frame, not the cards, so a change of
+  theme tags). Page view centers the frame, not the cards, so a change of
   `#score`'s width (window resize, scrollbar, a capture's viewport) moves cards
   and overlay together. Scroll math converts with `renderer.contentOrigin()`.
 - **Cursor overlay**: a fresh `svg#cursorOverlay` per render, filling the
@@ -792,7 +792,7 @@ outside every measure). A failure throws.
   played). The anchor resolution (`resolveVoiceCursorAnchor`) and geometry
   (`computeVoiceCursorRect`) are shared with HKL's Composer view. A bar past a
   grace (editing cursor and performance-mode bar alike) scales its offset (not
-  its width) by `GRACE_SCALE` (0.5, which centres the bar between the grace's
+  its width) by `GRACE_SCALE` (0.5, which centers the bar between the grace's
   ink and its main note — Verovio packs graces too tightly for the full
   offset); each side reads grace-ness from
   its own render (`data-grace`, via `svgAdditionalAttribute` `note@grace` /
@@ -829,7 +829,7 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   mark; Backspace/Delete remove the selected mark only. The layer bar sits
   beside the selected mark's rendered box.
 - **Placement**: a mark on the upper staff of a grand staff is
-  `@place="between"` and Verovio centres it; anywhere else `below`. Applied on
+  `@place="between"` and Verovio centers it; anywhere else `below`. Applied on
   entry, import and every load; `Ctrl+↑/↓` sets it explicitly. Everything
   else vertical is `textlayout.ts`.
 - **Playback**: a per-tick velocity timeline — the latest dynamic at or before
@@ -887,7 +887,7 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   partition and widths) and exported to PDF as that part. "pizz."/"arco" text
   switches playback to a pizzicato sample set. `Alt+H` marks a string
   harmonic (diamond head; sounds at the harmonic's pitch). *Ignore color*
-  drops notehead colour on the render clone.
+  drops notehead color on the render clone.
 - **Retune**: changing the score's tuning mode or note-name mapping in Setup
   rewrites each note's `(q, r)` to keep its frequency (`notation/retune.ts`).
   A mapping change seeds each note's search at its closed-form frame
@@ -895,10 +895,10 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   band-uniform modes; in Schismatic / Syntonic / Polysyntonic a Wicki-Hayden or
   chromatic copy going toward Euler can land a schisma (≈1.95¢) or a comma
   away, and the search reports it. Afterwards
-  `model.recolorNotes()` rewrites every baked colour from the note's pitch
-  under the new layout (colour is one function of the pitch,
+  `model.recolorNotes()` rewrites every baked color from the note's pitch
+  under the new layout (color is one function of the pitch,
   `@hkl/shared/keycolor.js`), so an inexact relocation no longer keeps a stale
-  colour. A note whose `@color` isn't a lattice ink (an import's black) keeps it.
+  color. A note whose `@color` isn't a lattice ink (an import's black) keeps it.
 - **Syntonic / Polysyntonic anchor**: each note sounds under the anchor of the
   key signature at its measure — `model.anchorAt(mi)` = the band of the same
   key-tonic cell `set-score-ref` carries (`findTonicCoord`, always an original
@@ -908,13 +908,13 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   never on the save path) for the HEJI transform and accidental pass
   (`noteAnchor`, `@hkl/notation/heji-render`); retune and the performance
   matcher take it per measure. A key-signature edit (`setKeySigAt`) re-anchors
-  the measures it governs, so their notes re-sound, re-arrow and recolour
+  the measures it governs, so their notes re-sound, re-arrow and recolor
   (`recolorNotes`). The ✓/⚠ indicator and the entry-mismatch gate also compare
   HKL's anchor (`hkl-layout-state.anchor`) with the score's at the
   position/cursor; `apply-layout` in S/Y drops HKL's manual Ctrl+click
   selection so the score-ref drives the anchor.
 - **Note-name mapping**: `<hkl:layoutReq mapping="wickiHayden|chromatic">` (absent =
-  Euler, so Euler scores serialise exactly as before) is the frame of every
+  Euler, so Euler scores serialize exactly as before) is the frame of every
   `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
   SC shifts and the performance matcher all read it; MusicXML import makes
   Euler scores. The clipboard records its source mapping and a paste into a
@@ -950,9 +950,9 @@ voice's bar advances as its notes are struck (one instrument only; no audio is
 sent).
 
 - A step is a voice's set of notes attacking at one onset (tied-in notes are
-  absent). Identity is pitch name and octave plus colour, the expected colour
+  absent). Identity is pitch name and octave plus color, the expected color
   looked up by octave-invariant lattice class; a sounding note with no written
-  colour matches on pitch alone. The duplicate-key modes — Pythagorean and
+  color matches on pitch alone. The duplicate-key modes — Pythagorean and
   Semiditonal (comma siblings), Syntonic and Polysyntonic (equally-shifted
   bands) — also accept any same-pitch variant, pitched under each measure
   occurrence's anchor.
@@ -1000,7 +1000,7 @@ sent).
   before anything reads it — Composer cannot write unpitched notes — and the
   status line names it; a score of nothing but such parts fails to import.
   Invisible playback notes (`<note print-object="no">`, e.g. Finale's
-  realisation of a timpani roll — Composer owns tremolo playback) are dropped
+  realization of a timpani roll — Composer owns tremolo playback) are dropped
   in `buildEvents`: an invisible onset becomes hidden time, merged and emitted
   like a voiced `<forward>`, so every later note keeps its beat; an invisible
   chord member vanishes; a visible member of a chord with an invisible head
@@ -1015,7 +1015,7 @@ sent).
   diff.
 - **MusicXML export** (`exportMusicXml`): one `<part>` per instrument, voices
   separated by `<backup>`, divisions 16 or its LCM with tuplet numbers,
-  colour on noteheads, every tempo written into every part (`<sound tempo>`
+  color on noteheads, every tempo written into every part (`<sound tempo>`
   always, `<metronome>` where shown), directions interleaved into the note
   stream, slur numbers assigned in document order, pickups `implicit`, ottava
   pitches written as sounding, breaks as `<print>`, graces as `<grace/>` /
@@ -1035,7 +1035,7 @@ sent).
 ## Setup and help
 
 **Setup** (`setupDialog.ts`) edits title, subtitle, composer, footer, tuning
-mode and note-name mapping (either retunes on change), HEJI, ignore colour,
+mode and note-name mapping (either retunes on change), HEJI, ignore color,
 page size, the dynamic map,
 gradual-tempo percentages and instruments, applied as one undo entry. Buttons
 open the signature modal and the tempo modal at measure 1 and run *Fill

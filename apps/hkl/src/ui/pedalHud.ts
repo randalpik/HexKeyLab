@@ -8,7 +8,7 @@
 // of the handler — see the plan file for the full brainstorm).
 //
 // What this module does NOT do:
-//   • It does not change any audio behaviour.
+//   • It does not change any audio behavior.
 //   • It does not auto-clear stuck state (we want the bug observable, not
 //     papered over). pedal.clear() is a manual workaround / hypothesis test.
 //
@@ -133,7 +133,7 @@ function dumpPedalRecent(n: number = 30): void {
 
 /* Force pedal state to "fully released" and run the engine release loop.
    Intended as both an in-the-moment workaround when the bug happens and a
-   diagnostic: if this restores normal behaviour, the bug is definitively
+   diagnostic: if this restores normal behavior, the bug is definitively
    software-state divergence (lost CC). If it doesn't, the cause is
    elsewhere (sostenuto lock, voice graph, etc.) and the user should
    capture audio.sustainedKeys / audio.sostenutoLockedKeys for inspection. */

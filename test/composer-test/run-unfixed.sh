@@ -8,7 +8,7 @@
 #   test/composer-test/run-unfixed.sh <fixtureName> [<fixtureName> ...]
 #
 # Requires pnpm dev. Do NOT run this (or run.mjs) with TMPDIR overridden to a
-# deep path: Chromium honours TMPDIR for its own sockets and its debug endpoint
+# deep path: Chromium honors TMPDIR for its own sockets and its debug endpoint
 # then never comes up ("Chromium debug endpoint never came up", exit 2 — an
 # INFRA failure, not a fixture result; measured 2026-09-04 under the session
 # scratchpad). Leave TMPDIR alone; the default OUT is already under /tmp.

@@ -49,7 +49,7 @@ const ownNotesOf = (sid, eid) => {
   return { staff: a.staff, layer: a.layer, measure: a.measure, endMeasure: b.measure, notes, twoVoice, mvt: mvtOf.get(a.el.closest('measure')) };
 };
 /* A slot's rendered stem direction: an up stem reaches above the slot's
-   highest notehead, a down stem below its lowest. (A chord's stem centre
+   highest notehead, a down stem below its lowest. (A chord's stem center
    against ONE of its heads is a coin flip for an octave chord.) */
 const stemDir = (slotEl) => { const st = slotEl.querySelector(':scope > g.stem'); const heads = [...slotEl.querySelectorAll('g.notehead')].map((h) => h.getBoundingClientRect()); if (!st || !heads.length) return null; const b = st.getBoundingClientRect(); if (b.height < 2) return null; const top = Math.min(...heads.map((h) => h.top)), bot = Math.max(...heads.map((h) => h.bottom)); return b.top < top - 1 ? 'up' : b.bottom > bot + 1 ? 'down' : null; };
 const groups = new Map(); for (const g of document.querySelectorAll('#score .score-page g.slur')) { if (!groups.has(g.id)) groups.set(g.id, []); groups.get(g.id).push(g); }

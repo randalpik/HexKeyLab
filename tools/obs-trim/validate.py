@@ -33,7 +33,7 @@ def pcm(path, start, dur):
 
 
 def best_lag(needle, hay):
-    """Normalised cross-correlation of needle over hay (FFT) -> (score, offset_samples)."""
+    """Normalized cross-correlation of needle over hay (FFT) -> (score, offset_samples)."""
     m, n = len(needle), len(hay)
     if n < m or not np.any(needle):
         return 0.0, 0
@@ -71,7 +71,7 @@ def analyze(name, obs, lib, workdir, debug=False):
     score, ti, on, off, start_src, cut, hs, ts = best
     crop = trim.LAYOUTS.get(trim.probe_size(mkv))
     wd = os.path.join(workdir, name); os.makedirs(wd, exist_ok=True)
-    # A >1 s digital-silence rest splits a piece into two "takes": analyse up to the cut regardless.
+    # A >1 s digital-silence rest splits a piece into two "takes": analyze up to the cut regardless.
     win_end = max(off, cut + 1.0)
     onsets, info = trim.video_onsets(mkv, 0, crop, on, win_end, wd, trim.CELL_THR, segs)
     lag, noise, last_vid = info["lag"], info["noise"], onsets[-1]

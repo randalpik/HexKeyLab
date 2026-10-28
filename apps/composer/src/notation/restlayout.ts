@@ -10,7 +10,7 @@
 //
 // Verovio DOES honor `@loc` on <rest> and <mRest>, and two rests forced to the
 // same @loc at the same moment render at the same x with no collision shift
-// (probed 2026-09-04: identical x, identical centre) — the pair draws as a
+// (probed 2026-09-04: identical x, identical center) — the pair draws as a
 // single glyph. So this pass keeps the DOM shape — every rest keeps its
 // element and xml:id, so the cursor, click hit-testing and the selection
 // overlay work unchanged — and only pins @loc:
@@ -32,7 +32,7 @@
 //     location; voice 2's at the lowered spot (loc 2) or lower until it clears
 //     the ink bottom. The ink is predicted from the notes — head locations
 //     from pitch + clef (notation/staffpos.ts) with the head's ink box 1.1
-//     locations either side of its centre (measured — a chord topping at the
+//     locations either side of its center (measured — a chord topping at the
 //     middle line reaches 5.1), the stem on the layer's side (Verovio's layer
 //     rule in a two-voice moment; an explicit @stem.dir wins) 3.5 spaces long
 //     and at least to the middle line, a beam at its group's farthest stem,
@@ -45,7 +45,7 @@
 //     anything the prediction cannot measure (tremolos, unpitched notes, the
 //     other layer's own rests).
 // Anything else — a different rest in the other layer, a tremolo — is left to
-// Verovio's collision logic: a rest pinned to the centre against a note at the
+// Verovio's collision logic: a rest pinned to the center against a note at the
 // same moment collides with it (probed).
 //
 // The first two rules touch only rests DIRECTLY under a <layer> (a rest inside
@@ -89,12 +89,12 @@ const REST_EXTENT: Record<string, readonly [number, number]> = {
 const MARGIN = 1;
 /** Verovio's default stem: 3.5 spaces. */
 const STEM_LOCS = 7;
-/** A notehead's ink box reaches this far above and below its centre —
+/** A notehead's ink box reaches this far above and below its center —
  *  measured on the bare toolkit: a head at location 4 tops out at 5.1, one at
  *  −1 at 0.1 (not the half location the glyph's nominal height suggests). */
 const HEAD_HALF = 1.1;
 /** An accidental or an articulation on the head side reaches this far past
- *  the head's CENTRE (a flat's stem, an accent). */
+ *  the head's CENTER (a flat's stem, an accent). */
 const ACCID_LOCS = 2.5;
 const ARTIC_LOCS = 2.5;
 /** A rest may poke this far past the outer staff lines and still be "on the staff". */
@@ -102,7 +102,7 @@ const STAFF_SLACK = 1;
 
 /** Single-layer resting place of a rest glyph, in Verovio's staff-line
  *  locations (0 = bottom line, 4 = middle line, 8 = top line). A whole rest
- *  hangs from the fourth line (loc 6); every other value centres on the
+ *  hangs from the fourth line (loc 6); every other value centers on the
  *  middle line (loc 4, the glyph's own offset does the rest). Probed against
  *  Verovio 6.3's single-layer output (quarter, half, whole, dotted eighth,
  *  mRest). */

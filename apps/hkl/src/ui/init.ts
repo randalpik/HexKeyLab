@@ -240,7 +240,7 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
       if (reason) { flashInfoLine(reason); return; }
     }
     /* reference.ts re-derives kbAnchor and runs onRefChanged (voice
-       migration, re-centre, redraw, broadcasts) — sliding, for a click. */
+       migration, re-center, redraw, broadcasts) — sliding, for a click. */
     const changed = withRefSlide(() => isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r));
     /* Persist or drop the manual ref. Composer-set selections do not persist. */
     if (changed) savePrefs({ manualRef: isCurrentRef ? undefined : { q, r } });
@@ -481,7 +481,7 @@ initRecorderUI();
    + outline (setOutline's view-sync snaps to refNote in piano mode, which
    needs the persisted manualRef already in place). ── */
 /* Every ref-tier change fans out through onRefChanged from here on (the
-   restore below re-anchors and re-centres through it). */
+   restore below re-anchors and re-centers through it). */
 setRefListener(onRefChanged);
 setTuning();
 if (prefs.manualRef) {

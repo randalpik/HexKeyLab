@@ -101,7 +101,7 @@ const SCRIPT = `(async () => {
   const refHz = keyFreq(refState.referenceNote.q, refState.referenceNote.r);
   switchTo('wickiHayden');
   check('M1a: mapping switched', tuning.mapping, 'wickiHayden');
-  check('M1b: anchor converted (A4 stays centred)', view.kbAnchorQ + ',' + view.kbAnchorR, '6,0');
+  check('M1b: anchor converted (A4 stays centered)', view.kbAnchorQ + ',' + view.kbAnchorR, '6,0');
   check('M1c: the key now sits on a different cell', eng.fixedMidiToKey(1, 21) === K0, false);
   check('M1d: held key keeps its (q,r)', held.heldKey('lumatone', '1,21'), K0);
   check('M1e: held key still selected (retunes in place)', selection.selectedKeys.has(K0), true);
@@ -147,7 +147,7 @@ const SCRIPT = `(async () => {
   const mouseHz6 = keyFreq(1, 0);
   switchTo('chromatic');
   check('M6a: mapping switched', tuning.mapping, 'chromatic');
-  check('M6b: anchor converted (A4 stays centred)', view.kbAnchorQ + ',' + view.kbAnchorR, '12,0');
+  check('M6b: anchor converted (A4 stays centered)', view.kbAnchorQ + ',' + view.kbAnchorR, '12,0');
   check('M6c: held key keeps its (q,r)', held.heldKey('lumatone', '1,21'), K3);
   check('M6d: mouse note converted to (4,0)', selection.selectedKeys.has('4,0'), true);
   check('M6e: mouse note keeps its pitch', near(keyFreq(4, 0), mouseHz6), true);

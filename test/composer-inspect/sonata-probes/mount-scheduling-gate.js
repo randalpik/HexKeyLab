@@ -10,10 +10,10 @@
 // the user landed on was drawn.
 //
 // Expect (sonata, Chromium): `staleAtStart` empty; a jump mounts the
-// VISIBLE page first (~150 ms) and its neighbour later from idle; a drag mounts
+// VISIBLE page first (~150 ms) and its neighbor later from idle; a drag mounts
 // the landing page ~120 ms after it stops, with at most one page mounted
 // mid-drag; no loadData during any run. `ok` summarizes. Before the pump a
-// jump drew the off-screen neighbour first (~300 ms to the visible page), a
+// jump drew the off-screen neighbor first (~300 ms to the visible page), a
 // drag mounted every page it swept through the band (15 mounts / 2.75 s for
 // 20→3), and the first mount past page 14 paid a 784 ms reload.
 //

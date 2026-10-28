@@ -2,7 +2,7 @@
 // whenever the effective reference note or the keyboard anchor moves. Every
 // path that changes a ref tier (Ctrl+click, Composer's score-ref / cursor note
 // / bye, Sync enable, a tuning change that invalidates the ref, an outline
-// switch) lands here, so none can leave the lattice centred on an old ref or a
+// switch) lands here, so none can leave the lattice centered on an old ref or a
 // held voice on the wrong cell.
 //
 // (dq, dr) = the keyboard-anchor delta: the lattice slid under the static
@@ -12,7 +12,7 @@
 // right relative pitch. Voices originating from MOUSE CLICKS stay anchored to
 // the lattice cell they were clicked on.
 //
-// The view snaps to the active outline's centre; a Ctrl+click slides there
+// The view snaps to the active outline's center; a Ctrl+click slides there
 // instead (withRefSlide).
 
 import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
@@ -26,7 +26,7 @@ import { onSelectionChanged } from './onSelectionChanged.js';
 
 let slide = false;
 
-/** Run a ref mutation whose re-centre should slide rather than snap (the
+/** Run a ref mutation whose re-center should slide rather than snap (the
  *  user's Ctrl+click). Returns the mutation's result. */
 export function withRefSlide<T>(mutate: () => T): T {
   slide = true;
@@ -47,7 +47,7 @@ export function onRefChanged(dq: number, dr: number): void {
        autoSyncEnabled + midiOut, so this is a no-op when irrelevant. */
     syncLumatoneColors();
   }
-  /* The piano footprint tracks the ref; the view centres on the ref (piano)
+  /* The piano footprint tracks the ref; the view centers on the ref (piano)
      or the keyboard anchor (every other outline). */
   invalidatePianoOutline();
   syncViewToOutline(outlineFromDom(), !slide);

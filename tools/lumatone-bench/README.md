@@ -126,7 +126,7 @@ only their SysEx routing at playback, exactly as HKL's setting does.
 
 1. One globally outstanding SysEx transaction; ACK/error handling stays serialized.
 2. At most one unsent target per key (280 total). Each video frame updates the
-   desired values. Unchanged keys cost nothing. Obsolete transitions are cancelled;
+   desired values. Unchanged keys cost nothing. Obsolete transitions are canceled;
    no historical frame backlog is replayed.
 3. A continuously outstanding key retains its first-needed frame timestamp.
    Returning to the predicted device value cancels it; becoming different again

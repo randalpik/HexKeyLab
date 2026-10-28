@@ -27,9 +27,9 @@ export const FIXTURES = {
       { key: 'y', ctrl: true },
     ],
   },
-  /* A10 — lazy AFTER snapshot: a keystroke edit's AFTER MEI is serialised on
+  /* A10 — lazy AFTER snapshot: a keystroke edit's AFTER MEI is serialized on
    * idle or when history next needs it. Two inserts, two undos, one redo: the
-   * second undo must materialise the first entry's AFTER (redo needs it) while
+   * second undo must materialize the first entry's AFTER (redo needs it) while
    * the document still IS that state; the redo must reproduce it exactly. */
   undo_lazy_snapshot: {
     setupKeys: [
@@ -184,7 +184,7 @@ export const ASSERTIONS = {
         return { ok: real === 1 && h.canUndo() && h.canRedo(),
                  detail: 'realRests=' + real + ' canUndo=' + h.canUndo() + ' canRedo=' + h.canRedo() };
       })()` },
-    { name: 'no lazy snapshot left unserialised after the history operations',
+    { name: 'no lazy snapshot left unserialized after the history operations',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const pending = typeof m.hasPendingSnapshot === 'function' ? m.hasPendingSnapshot() : 'n/a';

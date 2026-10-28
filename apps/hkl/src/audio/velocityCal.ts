@@ -396,7 +396,7 @@ export const velocityCal = {
 
   /** True iff the interval curve matches Terpstra factory defaults — used by
    *  the connection auto-push to skip the SysEx send when nothing's been
-   *  customised. */
+   *  customized. */
   isIntervalCurveFactory(): boolean {
     return intervalCurve.low === DEFAULT_INTERVAL_CURVE.low
         && intervalCurve.high === DEFAULT_INTERVAL_CURVE.high

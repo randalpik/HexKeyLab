@@ -1,17 +1,17 @@
-// Lattice colour regression gate (docs/architecture.md → Color scheme).
+// Lattice color regression gate (docs/architecture.md → Color scheme).
 //
-// Colour is one function of the pitch. This gate pins what that function
+// Color is one function of the pitch. This gate pins what that function
 // produces: for every mode × mapping over a wide cell window it records each
 // cell's (hue, white/black, septimal) as one code character, and once per
 // distinct code the exact hexes the three public outputs give — lattice
 // (keyColorHex), dark-surface notehead (lightSourceHex) and ink-on-paper
 // notehead (darkColorHex). A check run recomputes everything through HKL's
-// public colour API and requires an exact match.
+// public color API and requires an exact match.
 //
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/color-gate/gate.mjs           # check
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/color-gate/gate.mjs --write   # re-seed
 //
-// Re-seed only for an intended colour change. Exits non-zero on any mismatch.
+// Re-seed only for an intended color change. Exits non-zero on any mismatch.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -90,4 +90,4 @@ if (fail) {
   for (const m of msgs.slice(0, 30)) console.log('  ' + m);
   process.exit(1);
 }
-console.log(`color-gate: PASS — ${cells} cells, ${Object.keys(now.hexes).length} colour codes identical`);
+console.log(`color-gate: PASS — ${cells} cells, ${Object.keys(now.hexes).length} color codes identical`);

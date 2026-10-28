@@ -229,7 +229,7 @@ function stepComplete(step: Step): boolean {
  *  element's <note> children — a tie continuation emits no attack and so is
  *  absent from event.notes, and a partial-tie chord is split into several
  *  same-onset events that each start at index 0. A positional zip therefore
- *  handed a note its neighbour's color, whose idKey then matched no strike at
+ *  handed a note its neighbor's color, whose idKey then matched no strike at
  *  all, wedging the voice on any chord mixing tied and untied members.
  *  One findElement lookup serves both results, and the measure comes off the
  *  cached voice index (O(1)) rather than getMeasureIdxForId's per-call scan. */

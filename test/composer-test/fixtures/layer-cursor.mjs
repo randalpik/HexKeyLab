@@ -155,7 +155,7 @@ export const FIXTURES = {
     skipCursorTrace: true,
   },
   /* A placeholder (onset without a mark) draws the fixed-height bar at the
-     onset's notehead, vertically centred on the previous mark. */
+     onset's notehead, vertically centered on the previous mark. */
   lc_placeholderAlignsPrevMark: {
     setup: `${LC_PIANO}
       lcMark(0, 'dynam', { 'xml:id': 'lc-d', tstamp: 1, place: 'between', staff: 1 }, 'p');
@@ -174,7 +174,7 @@ export const FIXTURES = {
     setupKeys: ['ArrowDown', 'ArrowDown'],
     skipCursorTrace: true,
   },
-  /* No previous mark: centred between a grand staff's staves… */
+  /* No previous mark: centered between a grand staff's staves… */
   lc_placeholderNoPrevMarkGrand: {
     setup: `${LC_PIANO}
       lcNotes(3, 4, '4', 'a', 2);
@@ -301,7 +301,7 @@ export const ASSERTIONS = {
     const b = bar('tempo'), r = markRect('lc-t');
     return rightOf(b, r) ? { ok: true } : { ok: false, detail: 'bar ' + fmt(b) + ' vs tempo ' + fmt(r) };
   `) }],
-  lc_placeholderAlignsPrevMark: [{ name: 'placeholder: fixed height, at the onset notehead, centred on the previous mark', expr: lcAssert(`
+  lc_placeholderAlignsPrevMark: [{ name: 'placeholder: fixed height, at the onset notehead, centered on the previous mark', expr: lcAssert(`
     if (!(await goto('expr', 'lc-d'))) return { ok: false, detail: 'never selected lc-d' };
     await key('ArrowRight');
     if (selected('expr').length) return { ok: false, detail: 'placeholder selected ' + JSON.stringify(selected('expr')) };
@@ -329,14 +329,14 @@ export const ASSERTIONS = {
       ? { ok: true }
       : { ok: false, detail: 'break after m' + (k + 1) + ': mark offset ' + offD.toFixed(1) + ' vs bar offset ' + offB.toFixed(1) + ', h=' + barH('expr') };
   `) }],
-  lc_placeholderNoPrevMarkGrand: [{ name: 'no previous mark, grand staff: centred between the staves', expr: lcAssert(`
+  lc_placeholderNoPrevMarkGrand: [{ name: 'no previous mark, grand staff: centered between the staves', expr: lcAssert(`
     await key('Home');
     const b = bar('expr'), l1 = lines(staffG(0, 1)), l2 = lines(staffG(0, 2));
     if (!b || !l1 || !l2) return { ok: false, detail: 'missing geometry: bar ' + fmt(b) };
     const mid = (l1.bottom + l2.top) / 2;
     return near(cy(b), mid, 1.5) && near(barH('expr'), 28, 0.5)
       ? { ok: true }
-      : { ok: false, detail: 'bar centre ' + cy(b).toFixed(1) + ' vs gap centre ' + mid.toFixed(1) + ', h=' + barH('expr') };
+      : { ok: false, detail: 'bar center ' + cy(b).toFixed(1) + ' vs gap center ' + mid.toFixed(1) + ', h=' + barH('expr') };
   `) }],
   lc_placeholderNoPrevMarkSingle: [{ name: 'no previous mark, single staff: below the staff', expr: lcAssert(`
     await key('Home');

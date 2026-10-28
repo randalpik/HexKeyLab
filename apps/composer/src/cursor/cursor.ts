@@ -226,14 +226,14 @@ function staffLines(model: ComposerModel, measureIdx: number, staffN: number): {
   return isFinite(top) ? { top, bottom } : null;
 }
 
-/** x of a stop's onset notehead centre (container px). */
+/** x of a stop's onset notehead center (container px). */
 function onsetX(stop: LayerStop): number | null {
   const g = stop.onsetId ? renderer.queryRendered('#' + cssId(stop.onsetId))[0] : undefined;
   const r = g ? renderer.rectForElement(g.querySelector('.notehead') ?? g) : null;
   return r ? r.left + r.width / 2 : null;
 }
 
-/** Placeholder bar top with no previous mark to align to: centred between a
+/** Placeholder bar top with no previous mark to align to: centered between a
  *  grand staff's staves or below a single staff (expr), below the bottom staff
  *  (pedal), above the score's top drawn staff (tempo). */
 function defaultPlaceholderTop(model: ComposerModel, mode: LayerMode, measureIdx: number, instrIdx: number): number | null {
@@ -256,7 +256,7 @@ function defaultPlaceholderTop(model: ComposerModel, mode: LayerMode, measureIdx
   return l ? l.bottom + CURSOR_VPAD : null;
 }
 
-/** Placeholder bar top: centred on the previous mark in the layer — its offset
+/** Placeholder bar top: centered on the previous mark in the layer — its offset
  *  from its staff's lines reapplied to that staff where the placeholder is, so
  *  the alignment survives a system or page break — else the default band. */
 function placeholderTop(model: ComposerModel, mode: LayerMode, c: ExpressionCursor, instrIdx: number): number | null {
@@ -553,15 +553,14 @@ class CursorOverlay {
       bar.style.stroke = CURSOR_COLOR;
       bar.setAttribute('stroke-opacity', String(SELECTION_STROKE_OPACITY));
       bar.setAttribute('stroke-width', '1.5');
-      bar.setAttribute('opacity', '1');
     } else {
       bar.style.fill = CURSOR_COLOR;
       bar.setAttribute('fill-opacity', '1');
       bar.style.stroke = '';
       bar.removeAttribute('stroke-opacity');
       bar.removeAttribute('stroke-width');
-      bar.setAttribute('opacity', '0.85');
     }
+    bar.setAttribute('opacity', '1');
 
     const label = this.voiceLabel!;
     label.textContent = 'V' + voice;
@@ -592,7 +591,7 @@ class CursorOverlay {
     bar.setAttribute('y', String(g.y));
     bar.setAttribute('width', String(g.w));
     bar.setAttribute('height', String(g.h));
-    bar.setAttribute('opacity', '0.85');
+    bar.setAttribute('opacity', '1');
     label.textContent = name;
     label.setAttribute('x', String(g.x + 4));
     label.setAttribute('y', String(mode === 'pedal' ? g.y + g.h + 12 : g.y - 2));
@@ -688,7 +687,7 @@ class CursorOverlay {
       bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       bar.style.fill = CURSOR_COLOR;
       bar.setAttribute('data-cursor-role', 'playback');
-      bar.setAttribute('opacity', '0.85');
+      bar.setAttribute('opacity', '1');
       bar.setAttribute('width', String(PLAYBACK_WIDTH));
       this.svg.appendChild(bar);
       this.playbackBars.set(voice, bar);
@@ -706,7 +705,7 @@ class CursorOverlay {
     bar.setAttribute('y', String(geom.y));
     bar.setAttribute('width', String(geom.w));
     bar.setAttribute('height', String(geom.h));
-    bar.setAttribute('opacity', '0.85');
+    bar.setAttribute('opacity', '1');
   }
 
   hide(): void {

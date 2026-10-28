@@ -327,7 +327,7 @@ def parse_hkc(path):
 SCALE = 2            # analysis runs on the lattice crop at half resolution
 BLOB_THR = 12        # luma rise between frames that marks a lighting pixel
 DISK = 0.3           # sampling disk radius, in hex spacings
-EDGE = 0.45          # a hex is sampled only if its centre is this many spacings inside the crop
+EDGE = 0.45          # a hex is sampled only if its center is this many spacings inside the crop
 
 
 def video_info(path):
@@ -407,11 +407,11 @@ def _rot(a):
 
 
 def fit_geometry(blobs, score_counts):
-    """Pixel position of every lattice key: centre(q, r) = O + q*uq + r*ur.
+    """Pixel position of every lattice key: center(q, r) = O + q*uq + r*ur.
 
     The hex spacing and grid angle come from the offsets between single-hex
-    blobs (q and r steps are both hex neighbours, 60 degrees apart). Which of
-    the 12 neighbour assignments is (q, r), and the integer offset, are chosen
+    blobs (q and r steps are both hex neighbors, 60 degrees apart). Which of
+    the 12 neighbor assignments is (q, r), and the integer offset, are chosen
     by matching the blob positions against the score's key histogram."""
     area = np.median(blobs[:, 2])
     single = blobs[(blobs[:, 2] > 0.7 * area) & (blobs[:, 2] < 1.3 * area)][:, :2]
@@ -455,13 +455,13 @@ def fit_geometry(blobs, score_counts):
                 runner_up_hits=runner, phase_resid=resid)
 
 
-def centre(geo, q, r):
+def center(geo, q, r):
     return geo["O"] + q * geo["uq"] + r * geo["ur"]
 
 
 def sample_keys(path, crop, geo):
     """Whiteness of every lattice key inside the crop, per frame: min(R, G, B) of the mean
-    colour of a disk at the key's centre. A lit key is its colour blended toward white,
+    color of a disk at the key's center. A lit key is its color blended toward white,
     which raises the weakest channel strongly for every hue (a pale-yellow key gains
     ~12 luma levels when lit, but its blue channel far more).
     Returns (keys [(q, r)], series float32 [frames, keys])."""
@@ -476,7 +476,7 @@ def sample_keys(path, crop, geo):
     keys, idx, offs = [], [], [0]
     for q in range(lo[0], hi[0] + 1):
         for r in range(lo[1], hi[1] + 1):
-            x, y = centre(geo, q, r)
+            x, y = center(geo, q, r)
             if not (EDGE * a <= x <= cw - EDGE * a and EDGE * a <= y <= ch - EDGE * a):
                 continue
             x, y = (x - SCALE / 2) / SCALE, (y - SCALE / 2) / SCALE
@@ -639,14 +639,14 @@ def align(notes, events, duration, end_beats, barlines, visible):
 
     Key-downs are matched per key, in order, against a tempo map (beat -> s) that
     is seeded from keys whose press and key-down counts agree and refined from
-    the matches. Two loop structures are recognised:
+    the matches. Two loop structures are recognized:
     - rotation: a looped video may start at a barline other than the first and
       play the opening bars after the last (Bad Apple starts at m5 and plays
       m1-m4 at the end); chosen when it orders the seed clearly better;
     - wrap: the video stops at the loop downbeat, so a closing section that
       repeats the opening (a pickup, or a bar that restates bar 1) is sounded by
       the loop restart: such a note is timed duration + the opening note's onset.
-    Unmatched notes are labelled "after_end" (past the end and not sounded by
+    Unmatched notes are labeled "after_end" (past the end and not sounded by
     the loop), "offscreen" (key outside the sampled lattice) or "interp" (visible
     but not detected); all three take their time from the tempo map."""
     by_key_e = {}
@@ -786,7 +786,7 @@ AUDIO_ONLY_WIN = 0.06   # s either side of the predicted onset (well inside a fa
 LATTICE_OVERRIDES = {"moonlight": "1080:430:0:1050"}
 
 
-def analyse(name, lib, workdir, log=print):
+def analyze(name, lib, workdir, log=print):
     man, notes, checks = parse_hkc(os.path.join(lib, name + ".hkc"))
     mp4 = os.path.join(lib, name + ".mp4")
     info = video_info(mp4)
@@ -875,7 +875,7 @@ def main():
                 skipped.append(name)
                 continue
             try:
-                e = analyse(name, a.lib, wd)
+                e = analyze(name, a.lib, wd)
             except Exception as ex:      # one bad video must not lose the rest of the library
                 print(f"{name:14} FAILED: {type(ex).__name__}: {ex}", flush=True)
                 failed.append(dict(file=name + ".mp4", error=f"{type(ex).__name__}: {ex}"))

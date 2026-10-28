@@ -1,6 +1,6 @@
-// The tuning fields every pitch / ratio / HEJI / colour computation needs. The
+// The tuning fields every pitch / ratio / HEJI / color computation needs. The
 // per-mode tuning itself lives in exactly one place — @hkl/shared/freq.js's
-// coordExps — and everything else (frequency, ratios, HEJI commas, colour)
+// coordExps — and everything else (frequency, ratios, HEJI commas, color)
 // derives from it.
 
 import type { TuningMode, Mapping } from '../state/persistence.js';

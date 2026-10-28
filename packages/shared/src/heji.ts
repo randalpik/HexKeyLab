@@ -83,7 +83,7 @@ export interface HejiCommas {
  *  Every cell's lattice spelling is Pythagorean exactly under mode 'P', so the
  *  arrows and hooks are the syntonic / septimal commas between the cell's
  *  pitch and its 'P' pitch. A schisma (Schismatic's band stacking) isn't
- *  notated — it re-spells, and colour carries it. Equal returns {0, 0}. */
+ *  notated — it re-spells, and color carries it. Equal returns {0, 0}. */
 export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping, anchor: number): HejiCommas {
   if (mode === 'E') return { syn5: 0, sept7: 0 };
   const e = coordExps(q, r, mode, mapping, anchor);

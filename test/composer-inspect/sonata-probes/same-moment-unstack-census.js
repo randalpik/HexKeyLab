@@ -182,7 +182,7 @@ for (let pi = 0; pi < pages.length; pi++) {
         clearance: ab ? R(mb.left - ab.right) : null,
         spaces: ab ? +((mb.left - ab.right) / SPACE).toFixed(2) : null,
         anchorY: ab ? R((ab.top + ab.bottom) / 2) : null, moverY: R((mb.top + mb.bottom) / 2),
-        dyCentres: ab ? R((mb.top + mb.bottom) / 2 - (ab.top + ab.bottom) / 2) : null,
+        dyCenters: ab ? R((mb.top + mb.bottom) / 2 - (ab.top + ab.bottom) / 2) : null,
         hsh: R(parseFloat(mv.getAttribute('data-hkl-hshift') || '0') || 0),
       });
     }

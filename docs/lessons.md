@@ -372,7 +372,7 @@ Color sync should show progress in the status badge. Firmware queries and calibr
 
 ### In-flight messages finish naturally on queue swap
 
-When a new sync starts mid-push, the in-flight message is NOT cancelled. It finishes, ACKs, then the new queue takes over. The `predicted` snapshot folds the in-flight message's intended state into the diff so the new queue accounts for it. Don't try to abort the in-flight message — that creates ACK/timeout races.
+When a new sync starts mid-push, the in-flight message is NOT canceled. It finishes, ACKs, then the new queue takes over. The `predicted` snapshot folds the in-flight message's intended state into the diff so the new queue accounts for it. Don't try to abort the in-flight message — that creates ACK/timeout races.
 
 ### Interleave Lumatone boards before optimizing anything else (2026-09-22)
 
@@ -749,7 +749,7 @@ If you ever need to query "all expressions in document order", do it by walking 
 
 ### Verovio's `@place="between"` works on a single `@staff` — and a probe column must be clear of stems
 
-`between` is not a two-staff-only attribute in the loaded build (6.3.0): a dynam, hairpin or dir on `staff="1"` is centred between its staff and the next one down, regardless of instrument grouping (which is why it is wrong under a one-staff instrument — sonata m. 19, the viola's mp halfway to the piano). It centres the mark's REFERENCE POINT, so a glyph box sits ~0.3 space below true centre, and it reserves the gap (a crowded gap grew 6.03 → 8.0 spaces for a 1.72-space mark) but keeps only a quarter space from the mark's own staff when the lower staff's overflow is tall, where `below` holds `dynamDist` and widens the gap further. The first probe (2026-10-07) concluded `between == below` for every variant, and was wrong: the treble line's first note (b4, stem down) overflowed the staff under the mark's tstamp, so Verovio pushed the `below` mark down onto the `between` position and masked the difference. Put a probe's mark under a column with no stem or notehead outside either staff (f4/g4 stems up above; e3–g3 stems down below), and only then read the numbers. The DOM centring in `render/textlayout.ts` that this replaced had re-implemented the built-in because the May helpers defaulted to `between` while Finale imports said `below` — see decisions.md 2026-10-07.
+`between` is not a two-staff-only attribute in the loaded build (6.3.0): a dynam, hairpin or dir on `staff="1"` is centered between its staff and the next one down, regardless of instrument grouping (which is why it is wrong under a one-staff instrument — sonata m. 19, the viola's mp halfway to the piano). It centers the mark's REFERENCE POINT, so a glyph box sits ~0.3 space below true center, and it reserves the gap (a crowded gap grew 6.03 → 8.0 spaces for a 1.72-space mark) but keeps only a quarter space from the mark's own staff when the lower staff's overflow is tall, where `below` holds `dynamDist` and widens the gap further. The first probe (2026-10-07) concluded `between == below` for every variant, and was wrong: the treble line's first note (b4, stem down) overflowed the staff under the mark's tstamp, so Verovio pushed the `below` mark down onto the `between` position and masked the difference. Put a probe's mark under a column with no stem or notehead outside either staff (f4/g4 stems up above; e3–g3 stems down below), and only then read the numbers. The DOM centering in `render/textlayout.ts` that this replaced had re-implemented the built-in because the May helpers defaulted to `between` while Finale imports said `below` — see decisions.md 2026-10-07.
 
 ### Verovio grace notes: the slash comes from the note's own `@grace`, and never inside a beam
 
@@ -797,7 +797,7 @@ The wire format for CMD 0x20 splits each 12-bit value into two 6-bit nibbles, to
 
 Sources: `/home/max/TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` (sendVelocityIntervalConfig), `KeyboardDataStructure.cpp:49` (DefaultVelocityIntervalTable).
 
-### Lumatone velocity pipeline: PIC measures, BBB binarises + relabels
+### Lumatone velocity pipeline: PIC measures, BBB binarizes + relabels
 
 (Corrects an earlier-and-now-deleted lesson that claimed the BBB was a pure MIDI proxy.)
 
@@ -824,7 +824,7 @@ Implications:
 
 Empirically validated: with γ_int=1, low=3, high=50, integer keys 0..4095 produce exactly 49 distinct bin outputs from binary_search. Add the two boundary bins (0 for key < low, 127 for key ≥ high) and that's 48 distinct integer thresholds + 1 = 49 reachable. The user observes ~47–48 in practice (depending on whether they ever reach the open-ended bins at both extremes during play).
 
-This means **widening the integer range** is the only way to increase reachable velocity count. Tightening `low/high` to the user's actual press-time range maximises information density (every velocity bin corresponds to an achievable physical press-time), but tightening *below* the range hardware can produce wastes bins and clips the dynamic range.
+This means **widening the integer range** is the only way to increase reachable velocity count. Tightening `low/high` to the user's actual press-time range maximizes information density (every velocity bin corresponds to an achievable physical press-time), but tightening *below* the range hardware can produce wastes bins and clips the dynamic range.
 
 ### Binary_search on duplicate thresholds produces an irregular reachable-bin pattern
 
@@ -1047,7 +1047,7 @@ em 720 user units = 4 staff spaces (the SMuFL standard); read the placeholder
 ### Mixing music fonts per glyph in Verovio: a custom font + fallback (2026-10-18)
 
 **Leipzig's C clef is designed that way.** Its bowls end flat and two straight
-arms meet at the centre line, leaving 0.84 staff spaces between the bowls
+arms meet at the center line, leaving 0.84 staff spaces between the bowls
 (Bravura 0.42, Leland 0.33). The outline Verovio 6.3 emits is the upstream
 `rism-digital/leipzig` `uniE05C` coordinate for coordinate, at the same scale as
 every other font — nothing in Verovio or HKL distorts it.
@@ -1464,14 +1464,14 @@ moment→tick walk, or the audio drifts while the engraving looks correct.
 
 **`getBBox`/`getBoundingClientRect` on an SVG `<text>` returns the font em-box, not the glyph ink
 (2026-06-03).** While empirically centering injected accidentals (`heji-render.ts`), measuring a
-BravuraText `<text>` glyph's vertical centre with `getBBox()` gave a box whose height was exactly the
-font-size (the 1em ascent+descent envelope) — its centre is unrelated to where the sharp/flat/natural ink
+BravuraText `<text>` glyph's vertical center with `getBBox()` gave a box whose height was exactly the
+font-size (the 1em ascent+descent envelope) — its center is unrelated to where the sharp/flat/natural ink
 actually sits, so the numbers said "slightly low" while the glyph was visibly HIGH. For glyph-positioning
-work, measure from rendered PIXELS instead: screenshot via `test/composer-inspect`, find the coloured
+work, measure from rendered PIXELS instead: screenshot via `test/composer-inspect`, find the colored
 notehead centroid (= its staff line) and the accidental's BLACK ink centroid in the column beside it
 (excluding the full-width staff-line rows), and compare. Also: in Composer essentially every accidental
 goes through the BravuraText injection swap (even plain ±1 sharps with HEJI off), and Verovio's own native
-placement of accidentals reads slightly high — so "centred on the line" is a deliberate house offset, not a
+placement of accidentals reads slightly high — so "centered on the line" is a deliberate house offset, not a
 bug (see decisions.md). When a screenshot and a measured number disagree, trust the pixels.
 
 **Verovio prepends `data-` to `svgAdditionalAttribute` names (2026-06-03).** A MEI attribute exposed via
@@ -1650,7 +1650,7 @@ Attempt (Phase B3): the splice's `postProcess` runs snap passes on the offscreen
 
 The scroll splicer places the re-engraved run with one `translate(dx,dy)` keyed off an UNCHANGED context measure. Two bugs in the anchor math (`apps/composer/src/render/splice.ts spliceDom`):
 
-1. **Anchored on the RIGHT context** when a measure followed the run. The right-context measure was BOTH the anchor AND the cascade's shift reference, so `delta` computed to exactly 0 → the cascade never fired. The edited run's RIGHT edge was pinned to the (unmoved) right neighbour and its LEFT edge floated: a width-changing edit (delete/insert) opened a gap or overlap with the LEFT neighbour, and nothing after the edit moved. Fix: always anchor on the LEFT context (`anchorIdx = lo>0 ? lo-1 : 0`) so the run's left edge stays joined to its unchanged left neighbour, and the width delta cascades RIGHTWARD. This needs 2 left-context measures (`leftCtx = min(2, lo)`) so the anchor `lo-1` isn't the sub-render's system-first measure (which carries a spurious system-initial clef → wrong width/x). A run at measure 0 is genuinely system-first in both renders, so anchoring there is consistent.
+1. **Anchored on the RIGHT context** when a measure followed the run. The right-context measure was BOTH the anchor AND the cascade's shift reference, so `delta` computed to exactly 0 → the cascade never fired. The edited run's RIGHT edge was pinned to the (unmoved) right neighbor and its LEFT edge floated: a width-changing edit (delete/insert) opened a gap or overlap with the LEFT neighbor, and nothing after the edit moved. Fix: always anchor on the LEFT context (`anchorIdx = lo>0 ? lo-1 : 0`) so the run's left edge stays joined to its unchanged left neighbor, and the width delta cascades RIGHTWARD. This needs 2 left-context measures (`leftCtx = min(2, lo)`) so the anchor `lo-1` isn't the sub-render's system-first measure (which carries a spurious system-initial clef → wrong width/x). A run at measure 0 is genuinely system-first in both renders, so anchoring there is consistent.
 
 2. **`dy` omitted the anchor's `ty`** while `dx` correctly added its `tx`. `SVGGraphicsElement.getBBox()` returns the LOCAL box (EXCLUDING the element's own transform), so to align to a measure's on-screen position you must add its translate on BOTH axes. The cascade only ever sets `tx`, so a never-spliced measure has `ty=0` and the omission was invisible — until you edited next to a PREVIOUSLY-SPLICED measure (nonzero `ty`, which happens when the sub-render baseline differs from the full render, i.e. varied vertical content), giving vertical misalignment. Fix: `dy = bbx(perAnchor).y + ty(anchor) − bbx(subAnchor).y`.
 
@@ -1734,7 +1734,7 @@ HKLE is bring-your-own-`AudioContext`, and react-native-audio-api 0.13.2 diverge
 
 ## segGain carries BOTH the voice's attack and the seam events — never anchor a cancel/restore on it at `now`
 
-A voice's `segGain` timeline holds two unrelated event families: the birth attack (sNoteOn's 4ms `ATTACK_FADE_S` ramp / sNoteOnFaded's 100ms equal-power `setValueCurveAtTime` at `[startT, startT+dur]`) and the pre-scheduled seam events (`setValueAtTime(v.vol)` + ramp-to-0 at `[switchTime, switchTime+xfDur]`, always later). Every looping voice carries a `pendingSwitch` from birth, so "the voice is surely in sustain by now" is false for any voice released, retuned, or slurred within its attack window — and with lookahead scheduling, for *every* future-scheduled voice at the moment of a retune sweep, no matter how far ahead its onset is (the damage anchors at `now`, not at the voice's `startT`). `cancelPendingSwitch` did `cancelScheduledValues(now)` + restore-to-`v.vol` and thereby deleted or corrupted pending attacks from every teardown path (`sNoteOff`/`sHardStop`/`sRampFreq`/`sSlideAndFadeOut`/`scheduleSegmentSwitch`) — fixed in 2.4.2 by cancelling at `p.switchTime` (removes exactly the seam events) and skipping the restore when the crossfade never began. The rule: to undo *specific* future events on a shared param, cancel at *their* anchor time; `cancelScheduledValues(now)` is only safe on a param whose timeline you own exclusively (e.g. `voiceGain`, which carries only the release).
+A voice's `segGain` timeline holds two unrelated event families: the birth attack (sNoteOn's 4ms `ATTACK_FADE_S` ramp / sNoteOnFaded's 100ms equal-power `setValueCurveAtTime` at `[startT, startT+dur]`) and the pre-scheduled seam events (`setValueAtTime(v.vol)` + ramp-to-0 at `[switchTime, switchTime+xfDur]`, always later). Every looping voice carries a `pendingSwitch` from birth, so "the voice is surely in sustain by now" is false for any voice released, retuned, or slurred within its attack window — and with lookahead scheduling, for *every* future-scheduled voice at the moment of a retune sweep, no matter how far ahead its onset is (the damage anchors at `now`, not at the voice's `startT`). `cancelPendingSwitch` did `cancelScheduledValues(now)` + restore-to-`v.vol` and thereby deleted or corrupted pending attacks from every teardown path (`sNoteOff`/`sHardStop`/`sRampFreq`/`sSlideAndFadeOut`/`scheduleSegmentSwitch`) — fixed in 2.4.2 by canceling at `p.switchTime` (removes exactly the seam events) and skipping the restore when the crossfade never began. The rule: to undo *specific* future events on a shared param, cancel at *their* anchor time; `cancelScheduledValues(now)` is only safe on a param whose timeline you own exclusively (e.g. `voiceGain`, which carries only the release).
 
 ## Hosts diverge on `cancelScheduledValues` vs an in-flight `setValueCurveAtTime` — strict hosts throw, Chromium silently snaps
 
@@ -1824,7 +1824,7 @@ Three hard-won facts about CDP captures of content inside an inner scroll contai
 ## Test-runner state that silently couples fixtures (2026-08-30)
 
 Two more members of the "invariants that mutate state pollute later fixtures" family, both found chasing one visual flake:
-1. **predictNextRenderHeavy's duration memory (`lastFullMs`)**: one heavy fixture flips every SUBSEQUENT fixture's renders from synchronous to deferred (badge + double-rAF), changing screenshot timing against recorded baselines and breaking read-right-after-reRender assertions. The runner reset now clears it per fixture. **Update 2026-09-14 — the same trap fires WITHIN one fixture**, where the per-fixture reset cannot help: a fixture whose own setup derives (adding a section header, say) leaves `lastFullMs.page` near the 250 ms threshold, so whether its next `reRender()` is synchronous or deferred comes down to machine jitter on the preceding engrave — measured 221–298 ms on the same box, flipping `pageSystemSpliceCourtesyBehindSectionBreak` between pass and fail at 2-in-6. On the deferred path `reRender()` RETURNS BEFORE RENDERING, so the assertion samples the PREVIOUS render's `lastOutcome`/`lastDeriveReason` and reports a splice failure that never happened; worse, the still-queued render escapes the assertion and can be superseded by a full engrave, which then shows up as an `(unattributed)` full render in the splice ledger. Two defences, both shipped: the predictor no longer extrapolates the path (see decisions.md), and **`await window.__waitForRender()` after any `reRender()` whose outcome you then read** — it is free on the synchronous path, so there is no reason to omit it. Tell-tale: ledger length unchanged across the edit (no render happened at all), and failing runs costing ~one extra engrave more than passing ones.
+1. **predictNextRenderHeavy's duration memory (`lastFullMs`)**: one heavy fixture flips every SUBSEQUENT fixture's renders from synchronous to deferred (badge + double-rAF), changing screenshot timing against recorded baselines and breaking read-right-after-reRender assertions. The runner reset now clears it per fixture. **Update 2026-09-14 — the same trap fires WITHIN one fixture**, where the per-fixture reset cannot help: a fixture whose own setup derives (adding a section header, say) leaves `lastFullMs.page` near the 250 ms threshold, so whether its next `reRender()` is synchronous or deferred comes down to machine jitter on the preceding engrave — measured 221–298 ms on the same box, flipping `pageSystemSpliceCourtesyBehindSectionBreak` between pass and fail at 2-in-6. On the deferred path `reRender()` RETURNS BEFORE RENDERING, so the assertion samples the PREVIOUS render's `lastOutcome`/`lastDeriveReason` and reports a splice failure that never happened; worse, the still-queued render escapes the assertion and can be superseded by a full engrave, which then shows up as an `(unattributed)` full render in the splice ledger. Two defenses, both shipped: the predictor no longer extrapolates the path (see decisions.md), and **`await window.__waitForRender()` after any `reRender()` whose outcome you then read** — it is free on the synchronous path, so there is no reason to omit it. Tell-tale: ledger length unchanged across the edit (no render happened at all), and failing runs costing ~one extra engrave more than passing ones.
 2. **Lazy partition adoption is timing-dependent BY DESIGN** (idle-chunked; bail → derive → re-arm is legal and self-healing), so a fixture must ENGAGE ownership explicitly — render in a small settle loop until `ownershipActive()` — before asserting refill behavior. Asserting after a fixed number of renders means asserting on whichever intermediate the idle scheduler happened to produce; the pageLineBreaks fixtures flaked exactly this way (`lastDeriveReason` on the owner now names the bail cause in the failure detail).
 
 ## A windowed sub-render's last measure draws the END-OF-SCORE final barline — absorb it with a synthetic trailer line (2026-08-30)
@@ -1863,15 +1863,15 @@ Keep the verifications permanent, not one-shot: the model re-enumerates and comp
 
 The Phase C-B sonata battery recorded `editOk` per edit and never checked it, so two of its eight edits had not been applying **for months**: `reinsert-mid-line` deleted a 16th (freeing 4 ticks) then inserted a QUARTER, and `insert-rest-ripple` deleted one 8th (freeing 8) then inserted an 8th rest — which alone refilled the measure — followed by an 8th chord. Both inserts were correctly refused by the planner, so those entries were really only testing their delete. The battery still reported `allReferenceOk: true` and "7 of 8 spliced", which looked like a pass.
 
-Two rules follow. **(1) Any diagnostic a probe bothers to compute should be asserted or deleted** — an unasserted field is worse than no field, because it reads as coverage. The battery now aggregates `allEditsApplied` / `editsNotApplied`. **(2) When a probe's edit doesn't apply, check the documented rule before theorising.** The insertion contract is settled and written down (architecture/composer.md, planner invariants): *"Measures never exceed length. Content landing past the cursor's measure requires that target layer EMPTY, else reject."* Bounded overflow crosses ONE barline and only into an empty layer. Measuring the next measure (`cb-editok.js`) showed bar 101 and bar 151 both completely full, so refusal was exactly specified — no model bug, no ambiguity. Do not call settled, documented behaviour a "design question": look it up, then measure the case against it.
+Two rules follow. **(1) Any diagnostic a probe bothers to compute should be asserted or deleted** — an unasserted field is worse than no field, because it reads as coverage. The battery now aggregates `allEditsApplied` / `editsNotApplied`. **(2) When a probe's edit doesn't apply, check the documented rule before theorizing.** The insertion contract is settled and written down (architecture/composer.md, planner invariants): *"Measures never exceed length. Content landing past the cursor's measure requires that target layer EMPTY, else reject."* Bounded overflow crosses ONE barline and only into an empty layer. Measuring the next measure (`cb-editok.js`) showed bar 101 and bar 151 both completely full, so refusal was exactly specified — no model bug, no ambiguity. Do not call settled, documented behavior a "design question": look it up, then measure the case against it.
 
 ## Verovio's page-view zoom is NOT pure magnification — zoom 75 breaks differently from 50 and 100 (2026-08-31)
 
-While caching the page-view line partition per (zoom, pageScale), a round-trip probe showed zoom 50 and zoom 100 producing an IDENTICAL 118-line partition via two INDEPENDENT castoffs. The tempting inference — page rectangle and content scale by the same factor, so zoom is pure magnification and can leave the cache key, making even the first zoom change skip the castoff — is WRONG. Forcing a real castoff at every preset: **zoom 50 → 118 lines, zoom 75 → 134 lines, zoom 100 → 118 lines.** The crisp presets pick scale values that land staff lines on the device-pixel grid, so the content-to-page ratio is not uniform across levels and 50/100 agreeing is a coincidence of that quantisation. Any per-zoom cache must key on zoom. Generalises: two samples agreeing is not invariance — sweep the whole discrete domain before removing a key, especially when the "obvious" model of the mechanism predicts the agreement.
+While caching the page-view line partition per (zoom, pageScale), a round-trip probe showed zoom 50 and zoom 100 producing an IDENTICAL 118-line partition via two INDEPENDENT castoffs. The tempting inference — page rectangle and content scale by the same factor, so zoom is pure magnification and can leave the cache key, making even the first zoom change skip the castoff — is WRONG. Forcing a real castoff at every preset: **zoom 50 → 118 lines, zoom 75 → 134 lines, zoom 100 → 118 lines.** The crisp presets pick scale values that land staff lines on the device-pixel grid, so the content-to-page ratio is not uniform across levels and 50/100 agreeing is a coincidence of that quantization. Any per-zoom cache must key on zoom. Generalizes: two samples agreeing is not invariance — sweep the whole discrete domain before removing a key, especially when the "obvious" model of the mechanism predicts the agreement.
 
 ## `breaks:'line'` honors OUR `<pb>` pins but did not honor a lone user `<pb>` over sb-baked data (2026-08-31)
 
-`cb-linepb.js` established that `breaks:'line'` honors `<pb>` — pagination followed the pins exactly. That finding holds for a FULLY PINNED document (our `<sb>` at every line start, our `<pb>` at every page start). It does not generalise: casting off the sonata with 117 baked `<sb>` plus ONE user `<pb>` under `'line'` produced 37 height-derived pages with the break measure sitting **mid-page-4** (`breakIsAPageStart: false`), while the same data painted under `'encoded'` broke there correctly (38 pages). So `'line'` paginates by height and treats a sparse user `<pb>` as something less than a hard boundary in that configuration.
+`cb-linepb.js` established that `breaks:'line'` honors `<pb>` — pagination followed the pins exactly. That finding holds for a FULLY PINNED document (our `<sb>` at every line start, our `<pb>` at every page start). It does not generalize: casting off the sonata with 117 baked `<sb>` plus ONE user `<pb>` under `'line'` produced 37 height-derived pages with the break measure sitting **mid-page-4** (`breakIsAPageStart: false`), while the same data painted under `'encoded'` broke there correctly (38 pages). So `'line'` paginates by height and treats a sparse user `<pb>` as something less than a hard boundary in that configuration.
 
 Practical consequence for page-view ownership: a height-derived castoff cannot be trusted to report user page breaks as page starts — they must be UNIONED into our page-start list explicitly, which requires our own page-fit loop (walk lines accumulating height, start a page at a user break or at overflow). Until that exists, a document with a user `<pb>` renders correctly (because the painted `'encoded'` render honors the break from the data) but its pagination is not owned: our page list is one short, `paginationHeld` fails near the break, and edits there fall back to a full render. Verified stable — no warning loop, no clipping — but not owned.
 
@@ -1906,7 +1906,7 @@ Two smaller traps in the same change: `injectPins` deliberately emits no pin for
 The Phase C-B v1 vertical gate refused to splice whenever a system would move,
 and B1's job was to compute the movement instead. For systems stacked WITHIN a
 page the window already predicts it exactly (probe `cb-window.js`: delta 0.0).
-The one that resisted was a page's FIRST system, modelled as *"a page's first
+The one that resisted was a page's FIRST system, modeled as *"a page's first
 system anchors its content top at the margin, so its staff lands at
 margin + hanging extent"*. Measured against real full renders, that model was
 exact on some pages and **~85 units (≈8 px) wrong on others**.
@@ -1947,7 +1947,7 @@ constant passes every consecutive-spacing assertion. Both the inline
 units, so "applying" a 3-unit movement adds error rather than removing it, and
 re-snaps every system on the page for a sub-pixel edit — it showed up
 immediately as a visual-baseline diff on an edit that used to move nothing.
-A splice now either pins systems to their live positions exactly (v1 behaviour,
+A splice now either pins systems to their live positions exactly (v1 behavior,
 when nothing moves by more than EPS) or applies the whole plan.
 
 ## A mount-time DOM injection is invisible to every layout model that runs later — and exempting it from a gate is how it goes wrong silently (2026-08-31)
@@ -2036,7 +2036,7 @@ inside a frame says nothing about the frame. `cb-sweep.js` now records
 ## A test that pre-mounts everything cannot see a lazy-mount bug — and reports worst-case latency (2026-08-31)
 
 `cb-splice-battery.js` calls `mountAll()` before each of its 8 edits. That is
-one line, and it made two whole classes of behaviour unobservable: every
+one line, and it made two whole classes of behavior unobservable: every
 `changed line not mounted` / `context line below not mounted` refusal (B5), and
 any measurement of what an edit costs with a realistic 2–6 pages mounted rather
 than all 30. Driving the real `IntersectionObserver` instead (scroll the
@@ -2044,7 +2044,7 @@ container, wait for the placeholder to resolve — never call `mountPage`) moved
 the measured hit rate from "7 of 8" to **56.5% of 116 lines**, and splice
 latency from ~400 ms to a 245 ms median.
 
-Corollary worth generalising: **a hand-picked sample reports a pass/fail, never
+Corollary worth generalizing: **a hand-picked sample reports a pass/fail, never
 a rate.** "7/8 spliced" and "56.5% of lines splice" describe the same build.
 When coverage is the property under test, sweep the document and emit a
 histogram of the failure REASONS — that histogram is what turns "many systems
@@ -2168,23 +2168,23 @@ refused") was wrong too.
 
 The cause: the selector stopped at each voice's first in-line note. That note is
 the earliest in DOCUMENT order, which was the WORST rank in the mid-line-first
-ordering it was supposed to honour, and it falls in the line's first measure in
+ordering it was supposed to honor, and it falls in the line's first measure in
 the common case. So the mid-line preference was dead code and **all 115** lines
 were silently retargeted onto their first measure, not the 8 that needed it. Two
 opposing effects — 8 lines gaining real edits, ~107 lines moving to a harder
-target — cancelled in the total. Fixing it gave 109/115.
+target — canceled in the total. Fixing it gave 109/115.
 
 Three transferable points:
 
 - **A suspiciously stable aggregate is evidence, not reassurance.** Changing a
   sample and reproducing the statistic exactly means either nothing happened or
-  two effects cancelled; both need explaining before the number is quoted.
+  two effects canceled; both need explaining before the number is quoted.
 - **Report what changed per item, not just the summary.** A per-line diff of
   target measure between the two runs would have shown the retarget touching
   every row in one glance. The summary could not.
 - **`break` on "the first match" is only correct when document order IS the
   preference order.** Here the preference was explicitly the reverse, so the
-  early exit inverted it while looking like an optimisation — and the comment
+  early exit inverted it while looking like an optimization — and the comment
   next to it asserted the opposite of what it did.
 
 A fourth point, learned by getting it wrong twice in a row. I explained the
@@ -2324,7 +2324,7 @@ the OLD clef and the whole sub-render — context lines and the replaced line
 alike — drew staff 2 in the wrong clef. Eleven units of ledger-line drift on a
 context line is all that stopped one such window from being spliced in.
 
-- **Every render-time pass that reads a neighbour is a hidden edge in the
+- **Every render-time pass that reads a neighbor is a hidden edge in the
   dependency graph.** When a splice is scoped by "which measures changed",
   enumerate the passes that make measure i's picture depend on measure i±1
   (relocated clefs; end-of-line courtesies; ties to the next measure) and
@@ -2523,7 +2523,7 @@ helpers a verifier calls, not only the verifier.
 
 Measuring the naturals window (`cb-naturalsalt.js`, 100 measures): `loadData`
 64 ms, `renderToSVG` 335–453 ms. The design doc had framed the cost as
-"`loadData` on one giant system" and hypothesised superlinear layout; pinned
+"`loadData` on one giant system" and hypothesized superlinear layout; pinned
 lines cost the same. Two things follow for any Verovio timing here: (1) the
 first `renderToSVG` after a `loadData` is 30–40% slower than a repeat on the
 same data (460 vs 330 ms; 56 vs 43) — layout is lazy and lands in the first
@@ -2593,19 +2593,19 @@ offscreen host is therefore roughly "one layout" regardless of how much of it
 you touch — the only way to remove it is to read nothing that needs layout
 (path data, `use` x/y, transforms; A7 did exactly this for the naturals
 window). When timing DOM work on a host, look for the single expensive first
-read before optimising what follows it. Corollary for probes: wrap
+read before optimizing what follows it. Corollary for probes: wrap
 `getScreenCTM` as well as `getBBox` — it forces layout just the same and the
 first attribution pass missed it.
 
 ## A lazy snapshot is sound only while nothing can change what it snapshots — enumerate the change points, and assert (2026-09-01)
 
-Making the history AFTER serialisation lazy looked like a thunk. The hazard is
-that the thunk serialises whatever the document IS when forced, so it must be
+Making the history AFTER serialization lazy looked like a thunk. The hazard is
+that the thunk serializes whatever the document IS when forced, so it must be
 forced before ANY later document change: the next edit's BEFORE snapshot, an
 undo/redo swap, a load. In Composer those are exactly `snapshotState` /
 `snapshotStateReusing`, `restoreSnapshot*`, `replaceDocument` — every mutation
 path goes through one of them first — plus an idle prefetch. Two design points
-worth reusing: (1) put the materialisation hooks in the OWNER of the state (the
+worth reusing: (1) put the materialization hooks in the OWNER of the state (the
 model), not in the consumers, so a new mutation path inherits them; (2) assert
 the invariant with the exact version the model already has (throw under the
 test flag when the version moved), so the suite catches a path that bypasses
@@ -2658,7 +2658,7 @@ nothing; a highlighted diff and its row histogram told the whole story.
 
 A11 swapped `getBBox` geometry for staff-line path geometry in the page
 splicer. The reasoning ("a measure's bbox starts at its staff line") was
-wrong in two systematic ways — spanners overhanging into neighbours, and the
+wrong in two systematic ways — spanners overhanging into neighbors, and the
 brace on system-first measures — and it did not matter, because the context
 gate compares window against live and both carried the same pollution. That
 is exactly the kind of fact you only learn by measuring: the proof probe
@@ -2666,7 +2666,7 @@ computed BOTH readings on BOTH sides for 117 real splices across every sonata
 line and reported the gate verdicts, the staff tops and the placement dx/dy
 under each basis side by side. Identical everywhere (Δ 0; the only nonzero
 delta, ≤ 3 units, was the live right-edge snap, seen by both readings because
-the snap rewrites the path). The method generalises: when changing what a
+the snap rewrites the path). The method generalizes: when changing what a
 verification gate measures, run the old and new measurements together over
 the whole corpus and diff the VERDICTS, not just the values — and keep the
 probe, because the next change to what the snaps rewrite needs it again.
@@ -2766,7 +2766,7 @@ three movement-start lines. Mechanism, in order: `finishPageMount` runs
 injector's own root-height update targets the inner `svg.definition-scale`,
 which has no height attribute, so it has never run — a header page mounts with
 a 28840-unit viewBox in a 2794 px box, i.e. drawn ~3 % smaller than its
-neighbours (uniform `meet` scaling, slight horizontal inset), invisible to every
+neighbors (uniform `meet` scaling, slight horizontal inset), invisible to every
 gate because they all compare user units. Since A8 (2026-09-01) moved
 post-processing onto the LIVE page, the first splice on such a page re-ran
 `pinExactScale`, which now saw the grown viewBox and resized the page by the
@@ -2870,7 +2870,7 @@ page changing under a Verovio upgrade. A model of a library's layout must
 record which branch of the source it restates (decisions.md "Composer owns
 height" does), and any Verovio upgrade must re-run the calibration probe
 (`cb-placement.js` on both builds) before the rule is trusted again. More
-generally: when modelling behaviour from a library's source, note the
+generally: when modeling behavior from a library's source, note the
 commented-out alternatives next to the constants they would change — they are
 the most likely future diff.
 
@@ -3022,7 +3022,7 @@ fixtures, which is also what says the census is tight rather than noisy.
 
 ## A fallback that refuses for the WRONG reason hides real defects behind a green suite (2026-09-03)
 
-The page splice compared the edited line's neighbours against the mounted page
+The page splice compared the edited line's neighbors against the mounted page
 and refused when they diverged. Removing it (Phase 3) immediately surfaced two
 pre-existing defects the reference gate had never been able to see, because on
 those documents the splice always refused and fell back to a full render — so
@@ -3152,7 +3152,7 @@ itself. Rule: a snap must be a pure function of the thing being snapped, not of
 its current position; and "everything is on the grid" does not imply "everything
 is on the SAME grid point".
 
-## Optimising the diagnostic instead of the deliverable (2026-09-03)
+## Optimizing the diagnostic instead of the deliverable (2026-09-03)
 
 Several hours went into driving one census number — `placeFor(reference)` vs
 `placeFor(live)` — up and down by ±10 with changes whose only justification was
@@ -3296,7 +3296,7 @@ translation (zero residual after the shift, both 8-pixel bands free of ink),
 which is impossible for a vertical change to cause directly. It was the
 mis-placed page changing the content bounding box that `visualCheck` derives
 its capture clip from, in a later fixture, in the full tier only. Two symptoms,
-one cause. Before theorising about the harness, check whether a known defect
+one cause. Before theorizing about the harness, check whether a known defect
 upstream explains the framing — and note that the fixtures passed in `scenario`
 and `visual` tiers and failed only in `full`, which was the tell that state was
 carrying rather than rendering changing.
@@ -3352,7 +3352,7 @@ eventually; prefer calling the gate's own helper.
 
 **`TMPDIR` breaks the test runner's Chromium.** Both `run.mjs` and the phasec
 runner launch headless Chromium with `--user-data-dir` under `os.tmpdir()`;
-Chromium ALSO honours `TMPDIR` for its own sockets, and with it pointed at the
+Chromium ALSO honors `TMPDIR` for its own sockets, and with it pointed at the
 session scratchpad the debug endpoint never comes up. The runner reports exit 2
 for every fixture — an infra failure that reads exactly like "the fixture did
 not run", and cost two rounds of looking for orphaned browsers and stale ports.
@@ -3409,7 +3409,7 @@ the meter under restart).
 
 Extends "Verovio doesn't honor `@visible="false"` on rests": a hidden rest not
 only draws, it DISPLACES the other layer's rest exactly like a drawn one
-(visible quarter rest in layer 1 pushed to centre-y 245 above a staff at
+(visible quarter rest in layer 1 pushed to center-y 245 above a staff at
 560–1200 by a hidden layer-2 rest). `@loc` on `<rest>` and `<mRest>` is
 honored as a raw staff-line location (0 = bottom line, 4 = middle, 8 = top);
 the single-layer defaults are loc 4 for everything except whole rests and
@@ -3571,7 +3571,7 @@ included), not the beam polygon's — measure `g.beam > polygon`.
 (indenting the system like the first), and `ReplaceDrawingValues` never
 touches labels — so a restart scoreDef with `<staffGrp><label/></staffGrp>`
 children, bare `<staffDef n>`s, or an empty `<labelAbbr>` in the head all still
-labelled (probed in the morning). What the morning probe missed, found in the
+labeled (probed in the morning). What the morning probe missed, found in the
 6.3.0 source: `ScoreDefSetCurrentFunctor::VisitStaffGrp` calls
 `ScoreDef::ReplaceDrawingLabels(staffGrp)` under a restart, which swaps the
 drawing label of the head staffGrp with the SAME `@n` (`GetStaffGrp(n)` —
@@ -3625,13 +3625,13 @@ the upper staff and the piano's "p" sat on the barline further down. Cause:
 TEMPO}, unit/2)` for the between-staff stretch of a `bar.thru` barline and
 draws the barline as segments around any overlapping mark — skipped for the
 bbox device context, so it never touches layout, and none of the 221 options
-governs it. Then Composer's text-layout pass moved the mark (centring it in the
+governs it. Then Composer's text-layout pass moved the mark (centering it in the
 grand-staff gap), so the erasure marked where the mark USED to be. Two
 consequences: (1) any post-render pass that moves marks must also repair
 barlines, and it can — the erased segment leaves a (possibly zero-length)
 `M x y L x y` path inside the gap, so the gap is recoverable from the barline's
 own `d` attributes without a layout read (`render/barlines.ts`); (2) a dynamic
-at tstamp beats+1 is centred exactly ON the barline by Verovio (Finale exports
+at tstamp beats+1 is centered exactly ON the barline by Verovio (Finale exports
 end-of-measure dynamics like that), which is where the erasure came from in
 the first place — the mark now moves inside its own measure first
 (`render/textlayout.ts`). Probe technique worth keeping: a whole-document
@@ -3642,7 +3642,7 @@ cursor, and a per-measure `setCursor` walk ends with only the last page mounted.
 
 ## A minimum-variance line partition is globally unstable under one-bar edits (2026-09-05)
 
-The section balancer's first formulation — the DP that minimises Σ(fill−mean)²
+The section balancer's first formulation — the DP that minimizes Σ(fill−mean)²
 over a section at a fixed line count — gives beautifully even fills (sonata
 movement sd 0.13 → 0.05) and rewrites the whole section on the smallest edit:
 deleting one bar at the end of movement I changed 70 of 35 boundaries, because
@@ -3674,7 +3674,7 @@ option now sits `LAST_JUSTIFY_SLACK` (0.05) below MIN_FILL, so a line the
 balancer kept legal is always drawn justified and a stub it kept (far below by
 both yardsticks) is not. Related discreteness fact from the same session: with
 ~0.27-wide bars (sonata movement IV) only 5 of 215 adjacent pairs form a legal
-2-bar line at 0.65, so the DP's freedom is quantised at a third of a line and a
+2-bar line at 0.65, so the DP's freedom is quantized at a third of a line and a
 1-bar stub can be genuinely infeasible to absorb — rule 2 (keep the stub) is
 reachable in large documents too, not only small ones.
 
@@ -3793,7 +3793,7 @@ holds the lower voice's chord is drawn from UNDER that chord — 8 units below
 its own notehead in sonata m. 83 — even with a full staff space free between
 the voices. Probed on the extracted staff: it follows the chord's noteheads,
 not its stem; `slurEndpointFlexibility` 0 still shifts; `@bezier` and `@bulge`
-are ignored by 6.3; `@startvo`/`@endvo` are honoured (units, negative = down)
+are ignored by 6.3; `@startvo`/`@endvo` are honored (units, negative = down)
 but must be known before the render. When Verovio's routing cannot be steered
 by input, redraw the output: the rendered DOM has every box the decision needs
 (render/slurlayout.ts). Two probe lessons on the way: a measure number is not
@@ -3908,16 +3908,16 @@ through `getCTM()` as `svgBox` does.
 
 `m.setCursor(4, 1)` in a voice of whole notes resolved to the END of measure
 3 (the clef was appended there — a courtesy-position clef, which the render
-then drew identically to the old behaviour), and the flat index of measure 4's
+then drew identically to the old behavior), and the flat index of measure 4's
 note (5) resolved to AFTER that note. `setClefAtCursor` inserts before "the
 content child at the cursor's tick", and a cursor index is not a
 `flatChildren` index. For a layer-initial clef in a fixture, create the
 `<clef>` element and `insertBefore(layer.firstChild)` — the shape the importer
 and a correctly placed `setClefAt` both produce (`engr_sectionBreakNoCourtesyClef`).
 
-## A notehead's ink box is 1.1 staff locations above and below its centre; Verovio's two-voice rest anchor is location 8 (2026-09-06)
+## A notehead's ink box is 1.1 staff locations above and below its center; Verovio's two-voice rest anchor is location 8 (2026-09-06)
 
-Bare-toolkit measurements for the rest pass: a head centred on the middle
+Bare-toolkit measurements for the rest pass: a head centered on the middle
 line (location 4) has its bbox top at 5.1, one at −1 tops out at 0.1 — the
 glyph is 2.2 locations tall, not the 1.0 its nominal "one space" suggests, so
 a clearance rule built on ±0.5 leaves a rest TOUCHING the head (Max's
@@ -4002,8 +4002,8 @@ width-less boxes (the guard the entry above calls for), so stems were silently
 not obstacles anywhere. A single note's stem still counted through its `g.note`
 box, which unions notehead and stem; a **chord's** stem hangs off `g.chord`,
 which no obstacle selector names, so it counted nowhere. Symptom: the piano's
-"cresc." centred in the grand-staff gap by `textlayout.ts` ran straight through
-the left hand's up-stem (sonata p. 6, third system, m. 90: centred to the gap
+"cresc." centered in the grand-staff gap by `textlayout.ts` ran straight through
+the left hand's up-stem (sonata p. 6, third system, m. 90: centered to the gap
 midpoint, 430 user units down, onto a stem the clamp should have stopped at 149).
 Deleting and re-entering the mark changed nothing — the tell that it was layout,
 not import.
@@ -4050,7 +4050,7 @@ measurement of a whole-document layout is therefore fiction, and it fails in a
 way that looks like a real bug: mounts race a partition that is about to change
 under them, leaving a stale extra page div and an apparently dropped system.
 Four messages of this session went into "measures are vanishing" before Max
-recognised the output as a state he had seen before HIS render settled.
+recognized the output as a state he had seen before HIS render settled.
 
 Wait on the thing you care about instead — poll `pageStartIds` + `lineStarts`
 until the signature is unchanged for several seconds AND `renderBusy` is hidden
@@ -4087,14 +4087,14 @@ Every `dy` it derived across that mismatch already contained the shift, and the
 write then added it a second time.
 
 Result: every mark on a shifted instrument landed a whole shift low — on the
-sonata, **79 of 115** grand-staff marks off centre with a median error of 130
+sonata, **79 of 115** grand-staff marks off center with a median error of 130
 user units, and **27 collisions**, the worst putting a `pp` on the staff below
 it and a `dim.` inside a tuplet bracket, both with the room they had asked for
 sitting unused above them. The tell was exact: `cErr == ish` on every affected
 mark (331 vs 330, 349 vs 350, 387 vs 390). **When a deviation equals a known
 constant of the system to the unit, it is that constant being applied twice —
 look for the second application, not for a placement rule that is subtly
-wrong.** After the fix: 31 off centre (median 2), 9 collisions, and the shift
+wrong.** After the fix: 31 off center (median 2), 9 collisions, and the shift
 DECISIONS unchanged (identical `ishValues`), which is what proves the fix
 touched the composition and not the measurement policy.
 
@@ -4115,7 +4115,7 @@ Two corollaries, both cheap and both load-bearing:
 Fixture `engr_instrGapCenteredDynamic` holds it: a single-staff instrument above
 a grand staff (instrgap only shifts instruments BELOW a boundary, so the shape
 matters), asserting both that the shift HAPPENED — otherwise the fixture passes
-vacuously — and that the grand staff's own dynamic stays centred. The
+vacuously — and that the grand staff's own dynamic stays centered. The
 whole-document inventory that found it is
 `test/composer-inspect/phasec/cb-markplace.js`; `cb-instrgap.js` could not see
 this class of defect at all, because it only measures marks at an instrument
@@ -4156,7 +4156,7 @@ Two traps found on the way:
   changes nothing — plain text gives byte-identical output), but the group's
   bbox comes back **1910 units tall** where a plain dynamic is 275: the box
   spans the glyph font's em box and the text font's together. Every downstream
-  measurement — centring, ink floors, extents — reads that box.
+  measurement — centering, ink floors, extents — reads that box.
 
 Corollary for fixtures: a minimal document does NOT reproduce a spacing
 inflation. `engr_unstackReclaimsGrandStaffGap` measured 8.69 staff spaces with
@@ -4188,7 +4188,7 @@ to be done by re-rendering a system with the staves filtered out
 ## A single-system window cuts spanners: expand it like the splicer does
 
 Rendering one system alone (leader stub + its measures + trailer stub) drops
-any tie/slur whose other end is in a neighbouring system — Verovio warns
+any tie/slur whose other end is in a neighboring system — Verovio warns
 "Unable to match @tie of note …" and omits the segment. The composer-test
 CONSOLE invariant counts that warning as an error, which is how it surfaced.
 Any window render must run `expandForSpannersOnce` + `expandForEndings` over
@@ -4280,7 +4280,7 @@ When a fixture fails any non-visual check, `run.mjs` shoots the live page
 AND a full re-engrave of the same document for the diff heatmap. That
 re-engrave lands in the render ledger BEFORE the splice invariant reads it,
 so the report also says `1 full render(s) during the fixture's own edits:
-(unattributed)`. The full render is an artefact of the failure, not a
+(unattributed)`. The full render is an artifact of the failure, not a
 second defect: the manual-line-break visual fixture reported exactly this
 while its only real problem was an assertion reading `renderLedger()` after
 the runner's post-setup `clearRenderLedger()` (setupKeys renders happen
@@ -4434,7 +4434,7 @@ Retargeting 60 px every 120 ms in headless Chromium, the per-frame deltas are:
 
 An accelerate-from-rest/decelerate-to-rest burst of 5–7 frames, then dead frames. **31–50 % of all frames do not move**, and per-frame velocity has a coefficient of variation near 1.0. That is the whole "extremely jerky OBS scroll" — not a dropped animation, just a fast hop with a stall behind it.
 
-Two things made this hard to attribute. OBS *looks* like the culprit because a Browser Source drives rAF at the source FPS, so at 30 fps the 5-frame burst becomes 2–3 frames and reads as a pure jump — it amplifies without causing. And the natural first guess, "the animation is being cancelled between notes", is wrong in a way that survives casual inspection: the animation completes every time, it is just short and followed by dead air.
+Two things made this hard to attribute. OBS *looks* like the culprit because a Browser Source drives rAF at the source FPS, so at 30 fps the 5-frame burst becomes 2–3 frames and reads as a pure jump — it amplifies without causing. And the natural first guess, "the animation is being canceled between notes", is wrong in a way that survives casual inspection: the animation completes every time, it is just short and followed by dead air.
 
 **No browser exposes smooth-scroll duration or easing** — no CSS property, no API option. So matching Firefox means not using the native animation at all. The fix is a hand-rolled velocity-continuous animator (`@hkl/notation/scroll-follow.ts`).
 
@@ -4594,7 +4594,7 @@ with `lastCascade` all zeros and not one console warning. Measured: 161 appended
 import disagreed, which is the contract the whole splice architecture exists to keep. The fix is to stop
 overloading the predicate (`paginationRepairable()` = `ownershipActive() && pageStartIds.length >= 1`),
 not to loosen the old one, because `pageSet()` still needs the strict answer. Generalizes: when a
-predicate's NAME and its USE ask different questions, the gap is a silent behaviour hole, and the tell is
+predicate's NAME and its USE ask different questions, the gap is a silent behavior hole, and the tell is
 a boolean whose doc comment has to explain two things.
 
 ## A fixture that asserts its own precondition cannot see the state that breaks it (2026-09-18)
@@ -4684,7 +4684,7 @@ for vertical staff ROWS; the horizontal edge snap had never got the same treatme
 **Fixed** by building the horizontal twin: `originPhaseXOf` (same `g.page-margin`, `ctm.e` instead of
 `ctm.f`), threaded through `postProcessRendered` into an optional `snapSystemRightEdge(..., originPhaseX)`
 that re-bases the host's own margin phase onto the supplied one. Only `frac(deviceX)` feeds
-`Math.round(x) - x`, so that is sufficient; omitted, the behaviour is unchanged, which matters because a
+`Math.round(x) - x`, so that is sufficient; omitted, the behavior is unchanged, which matters because a
 real on-screen page MUST snap by its own position to be crisp. Exactly one call site needed it — the gate's
 reference host. The splice WINDOW does not: the splicer post-processes imported systems inside the live page
 (`ctx.postProcess(pageEl, imported)`), so they already carry the live phase, which is why a spliced page had
@@ -4806,7 +4806,7 @@ against `buildPlayback` event's `notes[i]` — on the assumption that both walk 
 the same order. They don't, in two independent ways: a tie continuation (`@tie="t"/"m"`) emits **no attack**,
 so it is absent from `event.notes` while still present among the children; and a partial-tie chord is split
 into several **same-onset** events by coalesced duration, each of which restarts at index 0. Either one
-shifts the zip, the note gets its neighbour's color, its identity key then matches no strike, and the voice
+shifts the zip, the note gets its neighbor's color, its identity key then matches no strike, and the voice
 wedges forever — Max's report was "no input can advance past a chord where not all notes have a leading tie",
 and the actual block was one step *earlier* than it looked.
 
@@ -4869,7 +4869,7 @@ have terminated it early and failed the length gate.
 two fixed magic bytes, a terminator landing at exactly offset 5, and key ≤ 55 — roughly 2⁻²⁴ per alignment, so
 line noise is not the source. A dozen stuck notes means a dozen well-formed frames: these are genuine key events
 from a browning-out scanner, byte-for-byte indistinguishable from real playing. Anything downstream trying to
-recognise them by content is guessing. See decisions.md "Pitch bend is the Lumatone's departure tell" for what
+recognize them by content is guessing. See decisions.md "Pitch bend is the Lumatone's departure tell" for what
 is used instead, and why the wheel's I2C read is structurally guaranteed to come out first.
 
 **Confirmed on hardware (2026-10-02): the burst goes through the CMD 0x08 velocity LUT like any real strike.**
@@ -4924,7 +4924,7 @@ Two corollaries found alongside it:
   the BBB — but there is a **~250ms engagement window** between key-down and the first aftertouch, so it
   cannot confirm anything inside a low-latency window.
 
-Consequence for the power-off guard: confirmation-by-probe was abandoned entirely in favour of a pure timing
+Consequence for the power-off guard: confirmation-by-probe was abandoned entirely in favor of a pure timing
 rule (decisions.md, "The power-off note guard is a 25ms hold on velocity 127"). The instrument that produced
 these numbers is kept at `apps/hkl/src/lumatone/probe.ts` (`lumaprobe.latency()`, `lumaprobe.watchGuard()`).
 
@@ -5089,7 +5089,7 @@ page is unchanged when its start AND its end (next start / document end) match �
 old and new tails, so a page is rebuilt only when its line set changed, and kept pages are renumbered
 when the window's count changed. Comparing starts alone at the same index (the first cut) stopped at
 a page whose start held while its content had overflowed (compose-past-end never split page 3), and
-could not recognise a kept page once a page had been inserted or removed before it. Fixture:
+could not recognize a kept page once a page had been inserted or removed before it. Fixture:
 `pag_spillThenPullBack` (grow the last line of page 1 at both extremes, shrink it back: page counts
 must return to what they were).
 
@@ -5134,13 +5134,13 @@ profile by DOM CALL said what to fix:
 - `getPointAtLength`: 105 000 calls, 1.4 s. The tie outline, the text-layout obstacle curves and
   the slur pass sampled every curve through the DOM API (Gecko re-flattens the path on each
   call). Verovio's curves are `M` + two cubics in absolute coordinates; `render/curves.ts` parses
-  the path data and samples by arc length in JS — same parametrisation, no layout.
+  the path data and samples by arc length in JS — same parametrization, no layout.
 - `getScreenCTM`: 769 calls, 913 ms — 115 of them 7 ms each: `originPhaseXOf` read the page
   margin's screen matrix once per LINE, right after a system import, which forced the browser to
   lay the new system out then and again for the snap passes. Cached per page card (keyed on the
   container width).
 - `getCTM`: 96 000 calls. `svgBox` asked every element for its matrix; an element's CTM is the
-  product of the transforms on its ancestor chain, so `ctmOf` memoises by (viewport, chain
+  product of the transforms on its ancestor chain, so `ctmOf` memoizes by (viewport, chain
   string), read live from the attributes — nothing can go stale, one real `getCTM` per chain.
 - One Verovio window per line: 115 `loadData` + `renderToSVG` where the castoff had done one.
   `renderLineSystems` renders `CHUNK_LINES` (6) lines per window, each on its own pin, never
@@ -5445,7 +5445,7 @@ With F (render/balance.ts), an inserted or deleted bar shifts every later line o
 
 ## Firefox: a spliced system's crisp right edge follows the page's fractional horizontal scroll (2026-10-20)
 
-Found running the undo gate in headless Firefox (`run-probe.mjs --firefox`): with a 1600 px window narrower than the 2161 px page card, the cursor's scroll-into-view scrolls `#score` horizontally, and Firefox scrolls by FRACTIONAL pixels (the page's left read 0, −17.25, −183.233, −125.633 across edits; Chromium scrolls whole pixels). `snapSystemRightEdge` lands a system's right edge on an ABSOLUTE device pixel at the page's current phase, so a system re-engraved by a splice is snapped at a different phase than its neighbours were at assembly: the last measure's width wandered 6750 → 6752.33 / 6747.5 / 6753.33 (≤ 0.35 device px) and an undo did not restore it exactly. In a window wide enough that the page never scrolls horizontally, the same gate is exact (0 changed on all sites). Pre-existing (the snap predates the partition work); real wherever the page is wider than the viewport in Firefox. Run Firefox gates with `--window 2600x1400` unless this is what is being measured.
+Found running the undo gate in headless Firefox (`run-probe.mjs --firefox`): with a 1600 px window narrower than the 2161 px page card, the cursor's scroll-into-view scrolls `#score` horizontally, and Firefox scrolls by FRACTIONAL pixels (the page's left read 0, −17.25, −183.233, −125.633 across edits; Chromium scrolls whole pixels). `snapSystemRightEdge` lands a system's right edge on an ABSOLUTE device pixel at the page's current phase, so a system re-engraved by a splice is snapped at a different phase than its neighbors were at assembly: the last measure's width wandered 6750 → 6752.33 / 6747.5 / 6753.33 (≤ 0.35 device px) and an undo did not restore it exactly. In a window wide enough that the page never scrolls horizontally, the same gate is exact (0 changed on all sites). Pre-existing (the snap predates the partition work); real wherever the page is wider than the viewport in Firefox. Run Firefox gates with `--window 2600x1400` unless this is what is being measured.
 
 **Ruled (Max, 2026-10-21)**: not relevant; Firefox tolerance-gate failures of this kind are accepted for now.
 
@@ -5461,7 +5461,7 @@ Reload ≡ live failed on the sonata (a reload re-broke two lines of movement II
 
 ## Verovio draws a measure-initial clef before the barline when the measure holds an `mRest` (2026-10-20)
 
-Probed on the live toolkit: a layer-initial `<clef>` in a measure with notes, or with a `<space>`, draws AFTER the opening barline; the same clef in a measure whose staff holds an `<mRest>` or `<multiRest>` (in any layer) draws BEFORE it, at the previous measure's end — where it collides with a clef actually stored there. An in-section `<scoreDef>` clef change before the measure draws after the barline with the rest centred, but full size (E062) rather than as a change clef (E07C). Composer renders every empty bar as an `mRest`, so any design that draws a head clef after the barline breaks on exactly the empty bar. (Also: a layer-initial clef at a pinned SYSTEM start draws as a second clef after the system clef, and a `<scoreDef>` clef change at a system break draws a FULL-size courtesy at the end of the previous system.)
+Probed on the live toolkit: a layer-initial `<clef>` in a measure with notes, or with a `<space>`, draws AFTER the opening barline; the same clef in a measure whose staff holds an `<mRest>` or `<multiRest>` (in any layer) draws BEFORE it, at the previous measure's end — where it collides with a clef actually stored there. An in-section `<scoreDef>` clef change before the measure draws after the barline with the rest centered, but full size (E062) rather than as a change clef (E07C). Composer renders every empty bar as an `mRest`, so any design that draws a head clef after the barline breaks on exactly the empty bar. (Also: a layer-initial clef at a pinned SYSTEM start draws as a second clef after the system clef, and a `<scoreDef>` clef change at a system break draws a FULL-size courtesy at the end of the previous system.)
 
 ## Appending past a layer's last note put content after a barline clef (2026-10-20)
 
@@ -5469,7 +5469,7 @@ Probed on the live toolkit: a layer-initial `<clef>` in a measure with notes, or
 
 ## A system's first `g.measure` bbox includes the bar number; the brace is not in it (2026-10-21)
 
-Verovio draws the system-start bar number (`g.mNum autogenerated`) INSIDE the first `g.measure`, centred on the staff start (−72…72 for one digit, −144…144 for two, −133…133 for "11"); it is the only thing in the measure left of the staff. So anything measured from the first measure's `getBBox().x` carries half the number's width: `measureLeadingSigW` did, and every signature context first measured under a numbered bar was +72/+144 wide (16 of the sonata's 19 contexts, +0.0077 fill per line) — and depended on the bar's number, so a renumber made a live session and a reload disagree (fixture `partF_sigWidthIgnoresBarNumber`: 616.75 under "9", 688.70 under "10"). Measure from the staff line's start (`staffLine`). The brace (`g.grpSym`) sits at −220…−60 under `g.system`, in the page margin on every system but the first; on the first, the instrument names and the brace push the staff to x = 1342, which line 0 pays as `labelIndentW`. Every later system's staff runs from 0 to exactly `pageBudgetW`; the ~222 "ink overhang" constant in that comment is the brace's −220.
+Verovio draws the system-start bar number (`g.mNum autogenerated`) INSIDE the first `g.measure`, centered on the staff start (−72…72 for one digit, −144…144 for two, −133…133 for "11"); it is the only thing in the measure left of the staff. So anything measured from the first measure's `getBBox().x` carries half the number's width: `measureLeadingSigW` did, and every signature context first measured under a numbered bar was +72/+144 wide (16 of the sonata's 19 contexts, +0.0077 fill per line) — and depended on the bar's number, so a renumber made a live session and a reload disagree (fixture `partF_sigWidthIgnoresBarNumber`: 616.75 under "9", 688.70 under "10"). Measure from the staff line's start (`staffLine`). The brace (`g.grpSym`) sits at −220…−60 under `g.system`, in the page margin on every system but the first; on the first, the instrument names and the brace push the staff to x = 1342, which line 0 pays as `labelIndentW`. Every later system's staff runs from 0 to exactly `pageBudgetW`; the ~222 "ink overhang" constant in that comment is the brace's −220.
 
 ## A re-fit judged against pins, not the DOM, keeps stale pages whenever the pins happen to be right (2026-10-21)
 
@@ -5499,11 +5499,11 @@ a coordinate means, grep for these patterns as well as following the type errors
 
 The Ctrl-held valid-ref darkening and the piano outline's out-of-bounds mask both fill a big rect plus the
 region's polygons with `evenodd`, in a context translated by the lattice scroll. The rect was
-`rect(−diag, −diag, 2·diag, 2·diag)` — centred on the lattice ORIGIN, sized by the canvas diagonal. Once the
+`rect(−diag, −diag, 2·diag, 2·diag)` — centered on the lattice ORIGIN, sized by the canvas diagonal. Once the
 view is more than one diagonal from `(0, 0)` the visible canvas falls outside the rect, every pixel loses
 one parity flip, and the mask inverts (valid cells dimmed, invalid ones clear). Euler never got that far;
 the Wicki-Hayden mapping (whole-tone columns, twice the q range) put valid refs ~1 900 px out (e.g.
-`(74, −14)`). Centre the cover rect on the view: `(viewQ·dxH + viewR·dxH/2, −viewR·dyH)`. Diagnosis path
+`(74, −14)`). Center the cover rect on the view: `(viewQ·dxH + viewR·dxH/2, −viewR·dyH)`. Diagnosis path
 that found it: the cell set was right (live validator = table, 11 713 cells), and a port of the outline
 tracer reproduced membership exactly under evenodd — so the fault had to be the cover rect.
 
@@ -5545,7 +5545,7 @@ Every column of the Euler / Wicki-Hayden / chromatic lattice holds all 12 pitch 
 
 The chromatic tritone-axis octave census was reported as "every non-pure octave is G#→Ab or D#→Eb". Those were only row 0's spellings of band positions 3 and 10; Max found non-pure octaves above every chromatic pitch. Likewise, "the As with Ab to their left" is a row-dependent subset of every pitch class.
 
-State such results by position (or by interval class: "an enharmonic augmented 7th"), give one row's spellings only as an example, and spot-check another row before generalising.
+State such results by position (or by interval class: "an enharmonic augmented 7th"), give one row's spellings only as an example, and spot-check another row before generalizing.
 
 ## Evidence for a construction rule must be a consequence, not its definition (2026-10-27)
 
@@ -5560,7 +5560,7 @@ Search a design's consequences, not its definition. Censuses over the real footp
 
 ## An overlay must live in the frame its marks measure; a capture that resizes the viewport shows the drift (2026-10-27)
 
-Page view centred the cards with `margin: auto` while `#cursorOverlay` kept the pixel coordinates it was drawn at, so every change of `#score`'s width slid the notes under a stationary cursor. It went unnoticed because every page-view baseline was captured after `visual.mjs` widened the viewport (1600 → ~2185 px): each one recorded the cursor ~12 px left of its note, consistently, so diffs never flagged it — a baseline seeded from a wrong render pins the wrong render. Two rules: (1) anything drawn in measured coordinates belongs in the same positioned element as what it measures (now `div.score-content`; decisions.md 2026-10-27); (2) when a screenshot disagrees with what Max sees live, list what the capture does that a browser doesn't — here a device-metrics override after the cursor was drawn — before measuring anything in it. `test/composer-inspect/inspect.mjs --screenshot` does the same override (and probes that call `renderer.setZoom` directly bypass the app's zoom path): its images showed the bar on a grace's notehead, a state no user can reach, and several rounds went into "fixing" that. Screenshots come from fixture `visualBaseline`s.
+Page view centered the cards with `margin: auto` while `#cursorOverlay` kept the pixel coordinates it was drawn at, so every change of `#score`'s width slid the notes under a stationary cursor. It went unnoticed because every page-view baseline was captured after `visual.mjs` widened the viewport (1600 → ~2185 px): each one recorded the cursor ~12 px left of its note, consistently, so diffs never flagged it — a baseline seeded from a wrong render pins the wrong render. Two rules: (1) anything drawn in measured coordinates belongs in the same positioned element as what it measures (now `div.score-content`; decisions.md 2026-10-27); (2) when a screenshot disagrees with what Max sees live, list what the capture does that a browser doesn't — here a device-metrics override after the cursor was drawn — before measuring anything in it. `test/composer-inspect/inspect.mjs --screenshot` does the same override (and probes that call `renderer.setZoom` directly bypass the app's zoom path): its images showed the bar on a grace's notehead, a state no user can reach, and several rounds went into "fixing" that. Screenshots come from fixture `visualBaseline`s.
 
 ## Firefox pads a stroked SVG path's box by stroke-width × miter-limit / 2 (2026-10-28)
 

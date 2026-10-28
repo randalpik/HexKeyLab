@@ -7,7 +7,7 @@
 // only (skipped for the bbox device context, so layout never sees it) and with
 // no option to turn it off. Max's rule: a barline never breaks (backlog,
 // Correctness, m. 90). And since Composer then moves those very marks (the
-// text-layout pass centres them in the gap), the hole would stay behind where
+// text-layout pass centers them in the gap), the hole would stay behind where
 // the mark used to be while the mark lands on the barline further down.
 //
 // The repair is draw-only too: for every grand-staff gap a measure's barline

@@ -186,7 +186,7 @@ Post-export pass for velocity-layered decay `.hki` files (HKLO output): rewrites
 
 ## Browser UI
 
-`index.html` is a Vite entry. Per the analyzer import constraints in CLAUDE.md, `apps/analyzer/src/*` may import `@hkl/shared`, `@hkl/engine`, `@hkl/bridge`, `@hkl/analysis`, and its app-local `apps/analyzer/analysis/analyzer-visualization.js` — never HKL-side audio/midi/state/lumatone/render/composer code. This keeps the analyzer independent of HKL state.
+`index.html` is a Vite entry. Per the package import boundaries (enforced by `pnpm check:boundaries`), `apps/analyzer/src/*` may import `@hkl/shared`, `@hkl/engine`, `@hkl/bridge`, `@hkl/analysis`, and its app-local `apps/analyzer/analysis/analyzer-visualization.js` — never HKL-side audio/midi/state/lumatone/render/composer code. This keeps the analyzer independent of HKL state.
 
 ### Module map (`apps/analyzer/src/`)
 

@@ -17,7 +17,7 @@ export type TextEntryField =
 
 /** Live-field manipulation surface handed to `onChange`, letting a modal behave
  *  as a builder (reflect a select choice into another field's placeholder,
- *  grey out fields that don't apply, etc.). */
+ *  gray out fields that don't apply, etc.). */
 export interface TextEntryFieldApi {
   setPlaceholder(name: string, text: string): void;
   setValue(name: string, value: string): void;

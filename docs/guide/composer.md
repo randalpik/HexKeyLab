@@ -77,7 +77,7 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 | 3 | bass (upper) |
 | 4 | bass (lower) |
 
-`↑`/`↓` cycle through the voices, plus the virtual **dynamics**, **pedal**, and **tempo** layers (shown as `E`, `P`, `T` in the voice indicator). Empty measures autofill with rests so the notation always reads correctly; delete the rests to extend a measure. A bar with nothing entered on a staff shows a whole-bar rest, centred in the bar whatever the meter (a pickup bar shows a single rest of its length instead — two only when no single value fits). It is display only: the cursor doesn't stop on it, and anything you enter replaces it.
+`↑`/`↓` cycle through the voices, plus the virtual **dynamics**, **pedal**, and **tempo** layers (shown as `E`, `P`, `T` in the voice indicator). Empty measures autofill with rests so the notation always reads correctly; delete the rests to extend a measure. A bar with nothing entered on a staff shows a whole-bar rest, centered in the bar whatever the meter (a pickup bar shows a single rest of its length instead — two only when no single value fits). It is display only: the cursor doesn't stop on it, and anything you enter replaces it.
 
 ---
 
@@ -332,12 +332,12 @@ above it, including the page header.
 
 **Page furniture and engraving conventions**: from page 2 on, the page number
 sits in the outer top corner (left on even pages, right on odd) and the title
-runs centred across the top; page 1 keeps its title block and no number. A
+runs centered across the top; page 1 keeps its title block and no number. A
 brace and continuous barlines mark a grand staff only — a one-staff instrument
 has no brace, and barlines never run from one instrument to the next. Where
 one instrument's notes or markings reach toward the next staff, they keep about
 a staff space clear of it. Dynamics, hairpins and expressive text between a
-piano's staves are centred in the gap where the notes allow; under any other
+piano's staves are centered in the gap where the notes allow; under any other
 staff they sit a good staff space below it. Under a slur, stems that would point
 both ways are made to agree (the majority wins, unless a note sits so far from
 the middle line that its stem would grow too long), so the slur lands on the

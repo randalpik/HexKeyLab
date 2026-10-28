@@ -158,7 +158,7 @@ export const DYNAM_DIST = 4.5;
  *  unit: the probed top of a dynamic glyph at `dynamDist` d is 80·d − 168
  *  user units below the bottom line at unit 8 (d=3 → 72, d=4 → 152), so 4.5
  *  puts it 192 down — 24 per unit. A staff space is 2 units (160 user units
- *  here), so that is 1.2 spaces: a "p" then sits with its centre about two
+ *  here), so that is 1.2 spaces: a "p" then sits with its center about two
  *  spaces below the line. 3.5 (0.7 space) read as "a few px" (Max, 2026-09-05). */
 export const DIR_GAP_PER_UNIT = 24;
 /** Verovio `defaultBottomMargin` (units); see BASE_OPTIONS. Shared with the
@@ -274,7 +274,7 @@ class Renderer {
   private spliceTk: VerovioToolkit | null = null;
   /** The content frame (`div.score-content`, made by attach() inside #score):
    *  every rendered page card / scroll SVG and the cursor overlay live in it,
-   *  and rectForId measures against it. Page view centres THIS element, so a
+   *  and rectForId measures against it. Page view centers THIS element, so a
    *  change of #score's width moves cards and overlay together. */
   private container: HTMLElement | null = null;
   /** #score: the scrolling viewport — scroll offsets, viewport rects, the
@@ -833,7 +833,7 @@ class Renderer {
    *  its system right edges exactly where the live page does. */
   originPhaseXOf(pageEl: HTMLElement): number | undefined {
     /* Cached per page card while the container keeps its width: the margin's
-       screen x moves only with the card's centring. Read per LINE during an
+       screen x moves only with the card's centering. Read per LINE during an
        assembly, the `getScreenCTM` right after a system import forced the
        browser to lay the new system out at that moment, then once more for the
        snap passes — 115 extra full layouts on the sonata (7 ms each in
@@ -923,7 +923,7 @@ class Renderer {
 
   /** Is the page view being scrolled fast right now (a scrollbar drag, a
    *  flick)? True when the newest scroll event is younger than PUMP_SETTLE_MS
-   *  and the view travelled more than PUMP_FAST_VH viewports over the last
+   *  and the view traveled more than PUMP_FAST_VH viewports over the last
    *  PUMP_VELOCITY_MS. Shared by the mount pump and the idle mount window so
    *  neither mounts a page the user is scrolling past. */
   private viewportMoving(vh: number): boolean {
@@ -955,7 +955,7 @@ class Renderer {
       return proxy > HEAVY_MS;   // switch: restore (~1 s on large docs) or fresh engrave
     }
     if (this.viewMode === 'page') {
-      /* Ask whether a local refill is ON THE TABLE — the structural analogue of
+      /* Ask whether a local refill is ON THE TABLE — the structural analog of
          the scroll branch's `canSplice()` below — instead of extrapolating this
          render's path from what the LAST one cost.
          `lastPageSpliced` was a one-sample path predictor, and it is false after
@@ -1249,12 +1249,12 @@ class Renderer {
 
   /** Hold the mounted set to a small window: mount what is within one viewport
    *  of the view (the same band the IntersectionObserver arms, so the two never
-   *  fight) plus the cursor's page and its neighbours, and evict anything
+   *  fight) plus the cursor's page and its neighbors, and evict anything
    *  beyond TWO viewports. The gap between the two bands is the hysteresis —
    *  without it, scrolling along a page boundary would churn, and a re-mount
    *  costs the same ~138 ms as the original.
    *
-   *  The cursor's neighbours are mounted eagerly because that is where the next
+   *  The cursor's neighbors are mounted eagerly because that is where the next
    *  edit will need context: a splice whose context line sits one page over
    *  used to mount it mid-edit (B5), which is the whole difference between a
    *  377 ms and a 239 ms splice. Doing it here moves that cost off the edit
@@ -1270,7 +1270,7 @@ class Renderer {
 
     /* The cursor's page may not exist yet (an assembly in idle slices): make
        it real first — the sync build to that page is the document-order cost
-       the design accepts — so the window pins the right neighbourhood instead
+       the design accepts — so the window pins the right neighborhood instead
        of whatever placeholders happen to be in band (2026-10-08). */
     if (as.pending() && cursorMeasure >= 0 && this.pageOfMeasure(cursorMeasure) < 1) as.ensureMeasureMounted(cursorMeasure);
     const cursorPage = this.pageOfMeasure(cursorMeasure);
@@ -1281,7 +1281,7 @@ class Renderer {
       }
     }
     /* Mount ONE page per idle slice (2026-09-11) — nearest the viewport first,
-       then the cursor's neighbourhood — and come back for the rest. Mounting
+       then the cursor's neighborhood — and come back for the rest. Mounting
        the whole band in one callback blocked ~150 ms a page (Chromium; more in
        Firefox) with nothing painted in between, and a page the user scrolled
        past while it waited was mounted anyway. `mountPageIfCheap` refuses a
@@ -1732,7 +1732,7 @@ class Renderer {
    *  — and removing ~650 ms from the first edit. Adoption reads the layout via
    *  page-based getMEI (~100 ms), which is what makes this affordable.
    *  Anything unreadable falls back to painting the castoff layout and arming
-   *  the old idle walk, i.e. exactly today's behaviour. */
+   *  the old idle walk, i.e. exactly today's behavior. */
   /** Cache key for a line partition: the actual LAYOUT INPUTS, not the zoom
    *  label.
    *
@@ -1956,7 +1956,7 @@ class Renderer {
     /* THE WHOLE DOCUMENT, not a band (2026-09-08, Max's ruling). Balancing
        used to cover the first INITIAL_BAND_PAGES here and leave the rest to an
        idle job armed after the paint — and that job is a multi-step sequence
-       that ANY re-render cancelled. Measured on
+       that ANY re-render canceled. Measured on
        the sonata: the sequence walks 115 -> 115 -> 114 -> 113 lines over ~4.5 s,
        and a zoom landing mid-sequence abandons it there, leaving the partition
        at an intermediate state that nothing ever resumes (`budgetW` is zeroed
@@ -2238,12 +2238,12 @@ class Renderer {
     st.heji = performance.now() - t;
     /* Below-staff marks: keep <dir> text a dynamic's distance below a staff
        and a lone hairpin on the dynamics' line (render/textlayout.ts; inside a
-       grand staff the marks are `between` and Verovio centres them — see
+       grand staff the marks are `between` and Verovio centers them — see
        expressions.ts `defaultMarkPlace`). Before placement measures
        the system — a nudged <dir> under a system's last staff is the one case
        that changes its extents — and idempotent, so a re-run on a mounted page
        is harmless. Needs the instrument table for which staff pairs are grand
-       staves; a render before any model is known centres nothing. */
+       staves; a render before any model is known centers nothing. */
     {
       const pairs: Array<readonly [number, number]> = [];
       for (const inst of this.lastModel?.instruments() ?? []) {
@@ -2597,7 +2597,7 @@ class Renderer {
   }
 
   /** Bounding rect of a rendered element in the content frame (the frame
-   *  rectForId reports). The frame scrolls and re-centres with the content,
+   *  rectForId reports). The frame scrolls and re-centers with the content,
    *  so no scroll offset enters. */
   rectForElement(el: Element): DOMRect | null {
     if (!this.container) return null;

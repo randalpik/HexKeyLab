@@ -2,7 +2,7 @@ import { samplePath } from './curves.js';
 // Flipped-slur re-draw — a DOM post-process on rendered systems (2026-09-05).
 //
 // `notation/slurSides.ts` puts a two-voice slur on the notehead side with
-// `@curvedir`. Verovio honours the side but routes the slur around whatever
+// `@curvedir`. Verovio honors the side but routes the slur around whatever
 // else is there, and its endpoint rule treats the OTHER layer's noteheads in
 // the slur's own start / end column as part of that column: a slur told to go
 // below a descending upper-voice line whose downbeat shares its x with the

@@ -13,7 +13,7 @@ import type { SysexMessage } from '../types.js';
 export const SYSEX_MANU = [0x00, 0x21, 0x50] as const;
 
 export const SYSEX_CMD_CHANGE_KEY_NOTE = 0x00;
-export const SYSEX_CMD_SET_COLOUR = 0x01;
+export const SYSEX_CMD_SET_COLOR = 0x01;
 export const SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES = 0x07;
 export const SYSEX_CMD_SET_AFTERTOUCH_FLAG = 0x0E;
 export const SYSEX_CMD_GET_FIRMWARE_REVISION = 0x31;
@@ -99,7 +99,7 @@ export function buildColorSysEx(board: number, keyIdx: number, hexCol: string, d
   const msg = new Uint8Array([
     0xF0,
     SYSEX_MANU[0], SYSEX_MANU[1], SYSEX_MANU[2],
-    board, SYSEX_CMD_SET_COLOUR, keyIdx,
+    board, SYSEX_CMD_SET_COLOR, keyIdx,
     (r >> 4) & 0xF, r & 0xF,
     (g >> 4) & 0xF, g & 0xF,
     (b >> 4) & 0xF, b & 0xF,

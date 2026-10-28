@@ -408,10 +408,10 @@ export class ScrollSplicer {
        most of the document is the better deal. */
 
     // Anchor on the LEFT context measure, so the edited run's left edge stays
-    // joined to its (unchanged) left neighbour and the width change propagates
+    // joined to its (unchanged) left neighbor and the width change propagates
     // RIGHTWARD via the cascade. (Anchoring on the RIGHT context — the old
-    // behaviour — pinned the right edge and let the left edge float: a deleted
-    // note widened/narrowed the measure away from its left neighbour, opening a
+    // behavior — pinned the right edge and let the left edge float: a deleted
+    // note widened/narrowed the measure away from its left neighbor, opening a
     // gap or overlap. That's the disconnect bug.)
     //
     // The sub-render's FIRST measure (cLo) carries a spurious system-initial
@@ -897,7 +897,7 @@ function buildSpannerExtents(meiMeasures: Element[]): SpannerExtents {
              model/ties.ts, writes a bare 'm' for every interior note of a
              3+-note chain). Testing only for 't'/'i' left every such measure
              with neither edge set, so a range seeded mid-chain pulled in
-             neither neighbour. Measured (probe B, since deleted): the
+             neither neighbor. Measured (probe B, since deleted): the
              medial measure rendered alone draws NO tie where the full render
              draws one — a dropped spanner the splice would transplant. Fixed
              2026-09-03 (Phase 3 precondition 1). */
@@ -980,7 +980,7 @@ export function expandForRenderedSpanners(
 }
 
 /** ONE containment pass: every spanner with an end inside [lo..hi] is covered
- *  whole, and a tie crossing either edge pulls in the neighbouring measure.
+ *  whole, and a tie crossing either edge pulls in the neighboring measure.
  *  Deliberately NOT a fixed point.
  *
  *  `expandForSpanners` iterates until nothing grows, which makes it a

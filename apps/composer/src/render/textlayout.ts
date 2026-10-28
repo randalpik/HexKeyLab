@@ -6,12 +6,12 @@ import { sampleOutline, ctmOf } from './curves.js';
 // Conventions on top of that (backlog, Opinionation):
 //   • Inside a GRAND STAFF a mark is @place="between" (expressions.ts
 //     `defaultMarkPlace` / `normalizeMarkPlaces`, 2026-10-07) and Verovio's own
-//     between pass centres it in the gap, clear of the lower staff's content.
-//     Until then such marks were `below` and THIS pass centred them — a
+//     between pass centers it in the gap, clear of the lower staff's content.
+//     Until then such marks were `below` and THIS pass centered them — a
 //     re-implementation of the built-in, deleted once the model said `between`
-//     (Verovio centres the mark's reference point, so a glyph sits ~0.3 space
-//     below true centre; the DOM version centred the box). A `between` mark is
-//     neither clustered nor centred here; the one rule it meets pushes it off
+//     (Verovio centers the mark's reference point, so a glyph sits ~0.3 space
+//     below true center; the DOM version centered the box). A `between` mark is
+//     neither clustered nor centered here; the one rule it meets pushes it off
 //     its own staff when Verovio's lift over the lower staff's stems put it
 //     there (see below).
 //   • Under any OTHER staff (a single-line instrument, the bottom of a grand
@@ -21,7 +21,7 @@ import { sampleOutline, ctmOf } from './curves.js';
 //     2026-09-05: sonata mm. 49–52, the crescendo sat 15 px below the `f`
 //     that follows it and the decrescendo 16 px above the `p`, because Verovio
 //     hugs a lone hairpin to the staff — probed: its top 0.3 space below the
-//     bottom line at any dynamDist — and aligns it to a neighbouring dynamic
+//     bottom line at any dynamDist — and aligns it to a neighboring dynamic
 //     only sometimes). A cluster that holds a DYNAMIC is left where Verovio put
 //     it: dynamDist is the dynamic's baseline, and Verovio already aligned any
 //     hairpin or text touching it to that dynamic. A push DOWN stops
@@ -39,7 +39,7 @@ import { sampleOutline, ctmOf } from './curves.js';
 //     with a `default-x`/`relative-x` nudge the importer deliberately drops
 //     (correct placement relative to each other, not Finale replication), so
 //     the separation is derived: the DYNAMIC keeps its place — it anchors the
-//     cluster — and the <dir>s follow to its right, centred on its line.
+//     cluster — and the <dir>s follow to its right, centered on its line.
 //     `data-tstamp` gates it, so only a genuinely identical anchor qualifies
 //     and two marks a beat apart whose boxes merely touch stay stacked. A run
 //     that would cross the measure's barline or reach the next cluster is
@@ -59,7 +59,7 @@ import { sampleOutline, ctmOf } from './curves.js';
 //   • A TEXT mark (dynamic, expressive text — not a hairpin) is also kept
 //     INSIDE its own measure: a box that overlaps one of the measure's barlines
 //     is moved off it to the near side, half a unit clear (Max, 2026-09-05:
-//     nothing sits on a measure boundary). Verovio centres a dynamic at
+//     nothing sits on a measure boundary). Verovio centers a dynamic at
 //     tstamp beats+1 exactly on the barline, and a wide dynamic under a
 //     measure's first note reaches back over the previous one; both read as
 //     "on the boundary", and inside a grand staff the barline runs through
@@ -91,7 +91,7 @@ import { sampleOutline, ctmOf } from './curves.js';
 // flush. Idempotent: a mark's previous shift is undone before it is
 // re-measured (the post-process is re-run on re-mounts).
 //
-// It never changes a system's EXTENTS except in two cases: a centred mark
+// It never changes a system's EXTENTS except in two cases: a centered mark
 // stays inside the gap between its two staves, but a nudged <dir> under the
 // last staff grows the system, and a mark lifted over a slur above the FIRST
 // staff grows it upward — which is why this runs before placement measures
@@ -189,7 +189,7 @@ export function svgBox(el: Element, frameInv: DOMMatrix): Box | null {
  *  filter drops a box without width (it must: Verovio's zero-size `g.accid`
  *  groups map to the frame origin — lessons.md). A single note's stem still
  *  counted through its `g.note` box; a CHORD's stem hangs off `g.chord`, which
- *  is no obstacle, so it counted nowhere, and a grand-staff <dir> centred in
+ *  is no obstacle, so it counted nowhere, and a grand-staff <dir> centered in
  *  the gap ran straight through it (sonata p. 6, 2026-09-29: 144 of the
  *  page's 164 stems measured zero wide). A box degenerate in ONE axis is
  *  widened in that axis by half the widest stroke among its paths, each side;
@@ -446,7 +446,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
       const bars = measure ? barsFor(measure) : null;
       let dx = Math.round((run + UNSTACK_GAP) - box.left);
       if (Math.abs(dx) < 3) dx = 0;
-      /* Honouring the gap must not put the mark on the measure's barline —
+      /* Honoring the gap must not put the mark on the measure's barline —
          the rule the loop below enforces. Verovio's x stands instead. */
       if (dx && bars?.right && box.right + dx > bars.right.left - PAD) dx = 0;
       if (dx) {
@@ -636,7 +636,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
     for (const m of cl) {
       const s = shifts.get(m.el);
       /* ADD, not assign: the same-moment un-stack above may already have put a
-         dy on a mover, and a centred cluster must carry it along. (Before that
+         dy on a mover, and a centered cluster must carry it along. (Before that
          rule existed every dy here was the first, so this is equivalent for
          every other cluster.) */
       if (s) s.dy += dy; else shifts.set(m.el, { dx: 0, dy });
@@ -644,7 +644,7 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
   }
 
   /* ── `between` marks lifted into their own staff ──
-     Verovio's between pass centres a mark between its staff and the next one
+     Verovio's between pass centers a mark between its staff and the next one
      and lifts it clear of the lower staff's overflow, but never looks at the
      upper staff: over tall left-hand stems (engr_dirCenteredClearsChordStem —
      the sonata's p. 6 m. 90 "cresc." over the A♭–C–E♭ chords) a 2.5-space word
@@ -767,17 +767,17 @@ function layoutSystem(sys: Element, opts: TextLayoutOpts): void {
      <dir> is pushed to the `dirGapUser` line, and those two lines do not
      coincide — the glyph and the text have different box metrics (fixture
      engr_sameMomentDynamAndDirSideBySide: 7.4 px apart, not even overlapping).
-     Aligning the centres is what the cluster rule did when it owned the
+     Aligning the centers is what the cluster rule did when it owned the
      separation, so it is kept here, last, over whatever the rules settled. */
-  const finalCentre = (el: SVGGraphicsElement): number | null => {
+  const finalCenter = (el: SVGGraphicsElement): number | null => {
     const b = markBox(el);
     return b ? (b.top + b.bottom) / 2 + (shifts.get(el)?.dy ?? 0) : null;
   };
   for (const [anchor, group] of followers) {
-    const ac = finalCentre(anchor);
+    const ac = finalCenter(anchor);
     if (ac === null) continue;
     for (const el of group) {
-      const mc = finalCentre(el);
+      const mc = finalCenter(el);
       if (mc === null) continue;
       const dy = Math.round(ac - mc);
       if (Math.abs(dy) < 3) continue;

@@ -11,7 +11,7 @@
 // Covers (Syntonic, Wicki-Hayden unless noted):
 //   N1  default ref A3 → anchor 0; a band-1 cell sounds one comma up
 //   N2  Ctrl+click in band 1 re-anchors: that cell becomes Pythagorean, its
-//       colour changes, and the fan-out (onAnchorChanged) runs once
+//       color changes, and the fan-out (onAnchorChanged) runs once
 //   N3  a composer-source selection in another band never moves the anchor
 //   N4  the score-ref drives the anchor when there is no manual selection;
 //       a manual selection overrides it
@@ -90,14 +90,14 @@ const SCRIPT = `(async () => {
   check('N1a: anchor 0 at A3', tuning.anchor, 0);
   /* (6,0) = A4 in band 1: one comma up in Syntonic */
   check('N1b: band-1 A4 sounds 440·81/80', cents(keyFreq(6, 0), 440 * 81 / 80), 0);
-  const colourBefore = keyColorHex(6, 0);
+  const colorBefore = keyColorHex(6, 0);
 
   /* N2: Ctrl+click A4 (band 1) */
   setRef(6, 0);
   check('N2a: anchor follows the manual ref', tuning.anchor, 1);
   check('N2b: A4 is now Pythagorean 440', cents(keyFreq(6, 0), 440), 0);
   check('N2c: A3 (now band −1) is one comma down', cents(keyFreq(0, 0), 220 * 80 / 81), 0);
-  check('N2d: A4 recoloured', keyColorHex(6, 0) !== colourBefore, true);
+  check('N2d: A4 recolored', keyColorHex(6, 0) !== colorBefore, true);
   await tick();
   check('N2e: one fan-out, after the caller finished', fanouts, 1);
 
@@ -153,7 +153,7 @@ const SCRIPT = `(async () => {
   const pBefore = [keyFreq(6, 0), keyFreq(0, 0), keyColorHex(6, 0)].join('|');
   refState.setSelectionFromManual(6, 0);
   check('N8a: Pythagorean still tracks the anchor', tuning.anchor, 1);
-  check('N8b: no pitch or colour depends on it', [keyFreq(6, 0), keyFreq(0, 0), keyColorHex(6, 0)].join('|'), pBefore);
+  check('N8b: no pitch or color depends on it', [keyFreq(6, 0), keyFreq(0, 0), keyColorHex(6, 0)].join('|'), pBefore);
   refState.clearSelection();
 
   /* leave the page as found */

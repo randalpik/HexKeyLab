@@ -466,7 +466,7 @@ export interface SectionPick {
   lines: number;
   /** Line starts moved off greedy. */
   changes: number;
-  /** Lowest fill / spread over the lines the pick changed (+ the neighbour). */
+  /** Lowest fill / spread over the lines the pick changed (+ the neighbor). */
   min: number;
   sd: number;
   /** Distinct layouts on the section's curve. */
@@ -736,7 +736,7 @@ export class PageLineBreaks {
 
   /** Page-start ids as a lookup set for injectPins (`<pb>` instead of `<sb>`).
    *  Empty until pagination is adopted, in which case pins are sb-only and
-   *  Verovio paginates by height — the pre-ownership behaviour. */
+   *  Verovio paginates by height — the pre-ownership behavior. */
   private pageSet(): Set<string> | null {
     return this.pageStartIds.length > 1 ? new Set(this.pageStartIds) : null;
   }
@@ -1647,7 +1647,7 @@ export class PageLineBreaks {
    *
    *  The partition (F, at load and on every edit) is only as complete as the
    *  naturals cache. It used to be filled opportunistically — the idle balance
-   *  job walked the document after the paint — so removing that job in favour
+   *  job walked the document after the paint — so removing that job in favor
    *  of a pre-paint balance left an edit's `balanceTouched` reporting
    *  'naturals incomplete' and declining to repair a section it should have
    *  (fixture pageBalanceDeleteAtSectionEnd). Filling it here means the
@@ -1669,7 +1669,7 @@ export class PageLineBreaks {
    *  context measures and is expanded to hold every spanner and <ending>
    *  whole, so member widths reproduce their full-context values (page
    *  spike 1, finding 5). Only [needLo..needHi] values are written — cached
-   *  neighbours are never disturbed (determinism). Returns the window's
+   *  neighbors are never disturbed (determinism). Returns the window's
    *  measured leading clef+key width (or the retained one), or null on failure.
    *
    *  LAYOUT-FREE (A7, 2026-09-01). A measure's natural width is the horizontal
@@ -1818,7 +1818,7 @@ export class PageLineBreaks {
       for (const c of Array.from(node.querySelectorAll('layer > clef'))) applyClef(c);
     }
     /* A document whose measures are not the section's direct children (or a
-       shape this walk does not recognise) gets no keys rather than wrong ones;
+       shape this walk does not recognize) gets no keys rather than wrong ones;
        sigWAt then reports misses instead of inventing a yardstick. */
     this.sigCtxKeys = out.length === meiMeasures.length && meiMeasures.every((m) => seen.has(m)) ? out : [];
     this.sigCtxVer = ver;
@@ -2017,7 +2017,7 @@ function staffLineSpan(measureEl: Element): number | null {
  *  it) of a naturals window: sig glyphs left of the first note/rest/chord,
  *  measured from the first measure's STAFF-LINE START, where a page-view
  *  system's music may begin. Not from the measure's bbox: Verovio draws the
- *  system-start measure number inside the first `g.measure`, centred on the
+ *  system-start measure number inside the first `g.measure`, centered on the
  *  staff start, so the bbox edge added half the number's width (+72 for one
  *  digit, +144 for two) and made the width depend on the bar it happened to be
  *  measured under — a reload, measuring a context's first bar afresh, could
@@ -2055,15 +2055,15 @@ function measureLeadingSigW(svg: string, firstId: string): number {
 /** How far the FIRST system's staff is pushed right by the instrument names,
  *  in SVG user units — the width the document's first line does not get.
  *
- *  Measured as the staff's left edge in a naturals render: on a labelled score
+ *  Measured as the staff's left edge in a naturals render: on a labeled score
  *  the first system's staff starts at 2009 while every later system's starts
  *  at 0, the page-margin origin (probed 2026-09-18, viola+piano: labels
- *  "Violoncello" w1678 and "Piano" w820). On an unlabelled score it is 0, so
+ *  "Violoncello" w1678 and "Piano" w820). On an unlabeled score it is 0, so
  *  this costs nothing there.
  *
  *  Do NOT measure this from the first measure's offset instead: later systems
  *  carry ink left of the staff — the brace at −220…−60 (the system bbox's left
- *  edge) and the measure number, centred on the staff start inside the first
+ *  edge) and the measure number, centered on the staff start inside the first
  *  measure (measured 2026-10-21) — so differencing the two offsets answers a
  *  different question and gave 1690 where the truth is 2009. The staff edge is
  *  the quantity that matters — it is where the music may start. */

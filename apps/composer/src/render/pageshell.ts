@@ -24,7 +24,7 @@
 // its em-box top, the subtitle on the next line at SUBTITLE_FONT_PX, the
 // composer credit right-aligned CREDIT_GAP below the block, the page number
 // at RUNNING_HEADER_FONT_PX in the outer top corner with the running title
-// centred. `data-hkl-head-bottom` records the header's ink bottom
+// centered. `data-hkl-head-bottom` records the header's ink bottom
 // ANALYTICALLY from the nominal em-boxes — the value Verovio's original
 // header measured to (256 on pages 2+) — so placement never measures a
 // header and every host agrees (Firefox gives no useful tspan bbox).

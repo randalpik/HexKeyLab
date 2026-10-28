@@ -55,6 +55,14 @@ origin is required because the HKL↔Composer/Analyzer/Orchestrator `BroadcastCh
 `IndexedDB` instrument registry are per-origin. See [CLAUDE.md](../CLAUDE.md) for the run/build/test
 commands.
 
+Imports use bare `@hkl/*` specifiers: each package's `exports` maps `./*.js` → `./src/*.ts`
+(`@hkl/analysis` mixes `.js` and `.ts`, so its map is `["./src/*.js","./src/*.ts"]`); imports inside a
+package stay relative. Verovio's WASM is CDN-loaded by `@hkl/notation`; the analyzer and orchestrator
+bundle their own workers. The root `pnpm build` is `pnpm -r --filter='!./test/**' build`: test
+packages are excluded because `test/react-consumer` links the git-ignored `packages/engine/dist`, which
+breaks fresh-clone/Netlify builds (its smoke gate builds itself via `run.mjs`). `allowBuilds` in
+`pnpm-workspace.yaml` gates dependency install scripts — esbuild must stay enabled.
+
 ---
 
 ## Tuning system
@@ -87,10 +95,10 @@ Origin: **A3 = 220 Hz** at `(0,0)` (`bandOf=0, posInBand=1`), middle of the boar
 
 `TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y'`, declared in **both**
 `apps/hkl/src/state/persistence.ts` (app state) and `@hkl/shared/freq.js` (shared, self-contained)
-— keep them in sync (see CLAUDE.md). The per-mode tuning lives in exactly one place,
+— keep them in sync (checklist under *Adding a tuning mode* below). The per-mode tuning lives in exactly one place,
 `coordExps` in `@hkl/shared/freq.js`: a per-`qmod3` column shift (SC = 81/80, septimal 63/64) on
 the 5-limit base, plus a per-band offset for Schismatic and Syntonic/Polysyntonic. Frequency,
-ratios, HEJI arrows and colour all derive from it. Selector order:
+ratios, HEJI arrows and color all derive from it. Selector order:
 **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic · Syntonic · Polysyntonic**.
 
 | Mode | qm0 | qm1 | qm2 | Produces |
@@ -144,7 +152,7 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
 - **Why lowered is LEFT**: under Wicki-Hayden each band holds at most one key per MIDI note (the
   12-TET unison vector `(7,−2)` outruns the 6-wide band), so comma alternatives (9/8 vs 10/9, 81/64
   vs 5/4) can only coexist in different bands. A band's note window drifts ~12/7 fifths sharpward
-  per octave, so the left neighbour holds the sharp-side spellings a 5-limit third lowers (C#, F#,
+  per octave, so the left neighbor holds the sharp-side spellings a 5-limit third lowers (C#, F#,
   G#, B, D# over A): a just third lies 4–4.5 key-widths from its root, versus 7.5–8 the other way
   round. Hole census, ref A3, A1–A6: the left band lacks only D#2 of the lowered set; the right
   band lacks nine notes between B1 and D#4. Under Euler the same rule runs on 3-wide bands, where
@@ -156,12 +164,12 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
   manual Ctrl+click selection ?? score-ref ?? A3. Composer's cursor prior-note selection never
   moves it (it can sit in another band, and one entered note must not retune the layout and the
   score). Ctrl+clicking an altered key makes its band home, so that key's own pitch changes by its
-  comma count — no comma drift. Moving the anchor re-anchors: pitch, HEJI arrows and colour
+  comma count — no comma drift. Moving the anchor re-anchors: pitch, HEJI arrows and color
   change; MIDI, spelling and band boundaries never do. Polysyntonic re-anchoring is a global
   −n·SC shift (every interval preserved); Syntonic depends only on `anchor mod 4`.
 - **Live**: `state/reference.ts` derives `tuning.anchor` and `kbAnchor` from the same home ref
   (below, Ref-driven layout shift); an anchor change in S/Y runs `onAnchorChanged` (=
-  `onTuningChanged`: held voices ramp in place, re-render, Lumatone colour diff, Composer
+  `onTuningChanged`: held voices ramp in place, re-render, Lumatone color diff, Composer
   rebroadcast) in a microtask, after the synchronous ref fan-out (`onRefChanged`) has run. The
   anchor is part of the
   piano-outline cache key, the `hkl-layout-state` signature and the overlay structure signature.
@@ -171,11 +179,28 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
 - **Other modes**: the band offset is constant in E/5/P/D/7, so the anchor drops out
   (`tuning.anchor` exists; nothing reads it). Schismatic is the one other band-indexed mode — one
   schisma per band counted from A3's band, a fixed-anchor stacking.
-- Gates: `test/syntonic/oracle.mjs` (pitch, k, band steps, re-anchoring, colour, HEJI),
+- Gates: `test/syntonic/oracle.mjs` (pitch, k, band steps, re-anchoring, color, HEJI),
   `test/hkl-midi/anchor.mjs` (live tiers, re-anchor fan-out, piano input, `.hkr`), the Composer
   `syntonic` fixtures. Decisions: decisions.md 2026-10-26.
 
-Persistence has no back-compat shims: any unrecognized `tuning` value reverts to `'5'`.
+Persistence has no back-compat shims: any unrecognized `tuning` value reverts to `'5'`. `tuning.mode`
+is canonical; `tuning.equalEnabled` / `tuning.septimalEnabled` are derived booleans kept in lockstep
+by `setTuning()` (`apps/hkl/src/ui/controls.ts`) and still carried in the `.hkr` snapshot.
+
+### Adding a tuning mode
+
+- `TuningMode` is declared twice — `apps/hkl/src/state/persistence.ts` and `@hkl/shared/freq.js` —
+  update both, plus `TUNING_MODES` in `@hkl/shared/freq.js` (every `isTuningMode` guard derives from it).
+- `Record<TuningMode, …>` tables the compiler flags: `MODE_LABELS`
+  (`apps/composer/src/notation/retune.ts`) and `TUNING_LABELS` (`apps/composer/src/setupDialog.ts`,
+  `apps/hkl/src/bridge/hkl-side.ts`). One it won't: the `Record<string, …>` `TUNING_LABELS` in
+  `apps/composer/src/input.ts`.
+- The selector `<option>` in `apps/hkl/index.html` and the `tuningDescription()` switch in
+  `apps/hkl/src/bridge/hkl-side.ts`.
+- Re-run both `test/bounds-probe/` probes (they run the real picker over `TUNING_MODES`) so
+  `PIANO_BOUNDS_TABLE` and `VALID_REF_TABLE` get the new mode's bucket under every mapping.
+- Nothing per mode for color (one pitch function, `@hkl/shared/keycolor.js`) or HEJI (derived from
+  `coordExps`).
 
 ### Frequency formulas
 
@@ -201,7 +226,7 @@ multiplied into integers/Hz for *display* is the analysis box. Implemented in `@
 Pythagorean exactly under `'P'`, so a cell's arrows and hooks are the syntonic / septimal commas
 between its pitch and its `'P'` pitch (`solveCommas` on the exponent difference; `syn5 > 0` → down
 arrows, `sept7 > 0` → down hooks). A schisma (Schismatic's band stacking) is not notated — it
-re-spells, and colour carries it. No per-mode table: S/Y get `syn5 = −k` for free.
+re-spells, and color carries it. No per-mode table: S/Y get `syn5 = −k` for free.
 
 ### Ref-driven layout shift
 
@@ -213,14 +238,14 @@ Ctrl+click and Composer's cursor note — then the score-ref, then A3. The *home
 score-ref ?? A3; the *effective ref* is the home ref, except in the piano outline, where the cursor
 note is the ref when it is newer than the Ctrl+click (elsewhere the cursor note is ignored and never
 displaces a Ctrl+click). The keyboard anchor `kbAnchor` = `refSpine(home ref)` — where the
-Lumatone/QWERTY layout sits and where every non-piano view centres — and the S/Y `tuning.anchor` are
+Lumatone/QWERTY layout sits and where every non-piano view centers — and the S/Y `tuning.anchor` are
 derived there and nowhere else (the overlay mirror alone copies the publisher's). Every tier change
 recomputes both and, if the effective ref or `kbAnchor` moved, runs one listener synchronously,
 `effects/onRefChanged(dq, dr)`: held physical voices migrate by the `kbAnchor` delta, MIDI reverse
-map + Lumatone colours, piano-outline invalidation, view re-centre, redraw, Composer broadcast. A
+map + Lumatone colors, piano-outline invalidation, view re-center, redraw, Composer broadcast. A
 Ctrl+click slides (`withRefSlide`); everything else snaps, and a snap while a slide is in flight
 redirects the slide rather than letting it drag the view back to its old target. Handlers only
-mutate tiers — none can move a ref without re-centring (decisions.md 2026-10-27).
+mutate tiers — none can move a ref without re-centering (decisions.md 2026-10-27).
 
 ```ts
 // apps/hkl/src/tuning/refspine.ts
@@ -289,8 +314,8 @@ reflection: `q`-step `a` and `(−1,+1)` = `7 − a` are mirror images. Each one
 
 **Euler** is everything above. **Wicki-Hayden** inserts, after every fifths column, a column holding the same notes
 shifted down 2 cells and exactly one octave, unadjusted (no region / comma / schisma change): a copy
-cell is its left neighbour × 9/8 (`coordExps` of the column + `[−3, 2, 0, 0]`). Rows step in whole
-tones (9:8 / 10:9 / mode-dependent), so the neighbour set is ±M2 (row), ±P5 (`r`), ±P4 `(−1,+1)`, and
+cell is its left neighbor × 9/8 (`coordExps` of the column + `[−3, 2, 0, 0]`). Rows step in whole
+tones (9:8 / 10:9 / mode-dependent), so the neighbor set is ±M2 (row), ±P5 (`r`), ±P4 `(−1,+1)`, and
 each column and its copy are an exact octave apart along `(+1,−2)`. Bands are 6 wide
 (`bandOfCell`: `floor((Q+2)/6)`), column order per band `[qm2, qm2′, qm0, qm0′, qm1, qm1′]` by
 `((Q+2) mod 6)`, A3 at `(0,0)` (qm0) with qm0′ at `(1,0)`, so the major scale from a qm0 root
@@ -313,7 +338,7 @@ occupies the middle four columns.
   (every coordinate-bearing message carries its `mapping`; receivers convert on use), and
   cross-score paste. Lattice *vectors* (transpose buttons, SC shifts, harmonics) map via `vecFromEuler`
   (q doubles — parity-preserving, so the step means the same interval from originals and copies).
-- **Reference**: `refSpine` centres the qm0 *original* column of the ref's own 6-band, in the ref's
+- **Reference**: `refSpine` centers the qm0 *original* column of the ref's own 6-band, in the ref's
   row (at most 3 columns away), so the spine has its copy qm0′ to the right and the ref stays where
   it sits in its band — Euler's rule (`qm1 → q−1`, `qm2 → q+1`) with 6-wide bands; the anchor is
   that cell. (A first rule moved a copy ref to its same-name original one board away, `(Q−7, R+2)`;
@@ -347,7 +372,7 @@ occupies the middle four columns.
 
   In Schismatic every row step is 9:8 or 10:9; the schisma stays on the band boundary, spread over 6
   columns instead of 3.
-- Gates: `test/wh-layout/oracle.mjs` (structure, names, colours, frame round trips, 280 distinct
+- Gates: `test/wh-layout/oracle.mjs` (structure, names, colors, frame round trips, 280 distinct
   Lumatone cells), `test/hkl-midi/mapping-switch.mjs` (held keys across a switch), the Composer
   `mapping` fixtures. Decisions: decisions.md 2026-10-26 "Wicki-Hayden note-name mapping".
 
@@ -359,7 +384,7 @@ are 12 wide.
 - Each new column is the cell one `(5,1)` octave-vector to its left, up an exact octave and
   unadjusted: `(Q, R) = (Q−5, R−1) × 2`. Equivalently, right of each column sits its M7 below,
   up an octave.
-- The neighbour set is ±m2 (row), ±P5 (`r`) and ±A4/d5 `(−1,+1)`. The isotone (12-TET unison)
+- The neighbor set is ±m2 (row), ±P5 (`r`) and ±A4/d5 `(−1,+1)`. The isotone (12-TET unison)
   is `(7, −1)`.
 
 **Euler-equivalent** (`eulerOf`), with `Q = 4k + j`:
@@ -398,8 +423,8 @@ F F# G G# A Bb B C C# D D# E.
   2/1 × schisma at those two positions.
 
 **Spine and conversion.**
-- `refSpine` centres the qm0 of the ref's own band, in its row, so the ref sits ≤4 columns left
-  or ≤7 right of centre.
+- `refSpine` centers the qm0 of the ref's own band, in its row, so the ref sits ≤4 columns left
+  or ≤7 right of center.
 - The frames nest, so `convertCell` maps a cell that exists in the target frame to that same cell,
   exact in every mode. Euler / Wicki-Hayden → chromatic therefore always is exact. Other cells
   go through their Euler-equivalent.
@@ -466,7 +491,7 @@ a consequence of carry, not its definition. `test/chromatic-layout/oracle.mjs` s
   168 / 57, Euler 280 / 55).
 
 **Lumatone.** The case axis `(7, −2)` carries −7 semitones, so each board sits a fifth below its
-left neighbour.
+left neighbor.
 - From left to right the boards span 40–102 … 12–74, and each one alone spans ~62 semitones
   vertically.
 - All 280 keys cover MIDI 12–102 with 88 distinct notes.
@@ -482,20 +507,20 @@ left neighbour.
 
 ## Color scheme
 
-**Colour belongs to the pitch, not the layout**: one function of a cell's prime exponents colours
-every JI mode under both mappings, so the same pitch gets the same colour wherever it appears; a
+**Color belongs to the pitch, not the layout**: one function of a cell's prime exponents colors
+every JI mode under both mappings, so the same pitch gets the same color wherever it appears; a
 mode only decides which pitch sits on a cell. Light/dark encodes the 12-TET black/white key.
 Implemented once, purely, in `@hkl/shared/keycolor.js` (`keyColor`, `keyColorHex`,
 `lightSourceHex`, `inkColorHex`); HKL's `render/colors.ts` only supplies its live layout, and
-Composer recolours notes with the same functions.
+Composer recolors notes with the same functions.
 
 - **JI modes — 7 hues × {light,dark}**, `hueCycleOrder = [PU,PK,OR,YE,GR,TE,BL]` indexed by
   `floor((57 + 7·e3 + 4·e5 + 10·e7) / 12) − 4 (mod 7)` on `coordExps`. Each prime is weighted by its
   12-TET step reduced into the octave (3/2 = 7, 5/4 = 4, 7/4 = 10), so the hue is the pitch's 12-TET
-  octave minus the octaves its factorisation contains; octave (`e2`) never enters. Steps per comma:
+  octave minus the octaves its factorization contains; octave (`e2`) never enters. Steps per comma:
   syntonic 2, schisma 5, Pythagorean 7 ≡ 0, 35/36 0. Hence Ptolemaic's `floor(midi/12) − band`,
-  P/D's "colour as the SC sibling", Schismatic's +5 per band, Septimal's "Ptolemaic hue", a
-  Wicki-Hayden copy's "its column's colour", a chromatic borrowed column's "its source band's
+  P/D's "color as the SC sibling", Schismatic's +5 per band, Septimal's "Ptolemaic hue", a
+  Wicki-Hayden copy's "its column's color", a chromatic borrowed column's "its source band's
   hue" under S/Y, and Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised,
   teal → yellow … lowered) are all this one function.
 - **Septimal variant**: a cell with `e7 ≠ 0` takes `.sl`/`.sd`, a 50% lerp toward the next hue.
@@ -504,7 +529,7 @@ Composer recolours notes with the same functions.
 - **Light vs dark**: by the cell's own MIDI pitch class — light if ∈ {0,2,4,5,7,9,11}, else dark.
 
 Regression gate: `test/color-gate/gate.mjs` pins hue/light/septimal and the three hex outputs for
-every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended colour change).
+every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended color change).
 
 Base palette (light/dark hex): PK `#FF4C79`/`#59002C`, PU `#C94CFF`/`#3E0059`, BL `#4C96FF`/`#002559`,
 TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF884C`/`#591D00`.

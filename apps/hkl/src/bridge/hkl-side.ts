@@ -306,7 +306,7 @@ type SchedEvent = PlaybackEvent & { instrumentKey?: string };
 type SchedPedal = PedalEvent & { instrumentKey?: string };
 
 interface ActivePlayback {
-  cancelled: boolean;
+  canceled: boolean;
   pending: Set<number>; /* visual setTimeout handles, so stop-playback can clear them */
   /* VoiceIds we noteOn'd, for force-off on stop. Keyed by VoiceId (not coord)
      so two instruments sounding the same (q, r) are tracked independently. */
@@ -340,7 +340,7 @@ let active: ActivePlayback | null = null;
 
 function newPlayback(): ActivePlayback {
   return {
-    cancelled: false, pending: new Set(), heldKeys: new Set(), voiceSeq: new Map(),
+    canceled: false, pending: new Set(), heldKeys: new Set(), voiceSeq: new Map(),
     nextSeq: 0, pedalSustained: new Map(), pedalEngaged: false, pedalEngagedInstr: new Set(),
   };
 }
@@ -434,7 +434,7 @@ function releaseInstrumentPedal(pb: ActivePlayback, instrumentKey: string | unde
  *  so ~driver-tick jitter on the transition is inaudible (matches the note-off
  *  jitter tolerance documented above). */
 function applyPedalTransition(pb: ActivePlayback, dir: PedalEvent['dir'], instrumentKey: string | undefined): void {
-  if (pb.cancelled) return;
+  if (pb.canceled) return;
   if (dir === 'down') {
     pb.pedalEngaged = true;
     pb.pedalEngagedInstr.add(instrumentKey);
@@ -454,7 +454,7 @@ function applyPedalTransition(pb: ActivePlayback, dir: PedalEvent['dir'], instru
 
 function abortActive(): void {
   if (!active) return;
-  active.cancelled = true;
+  active.canceled = true;
   if (active.driverHandle != null) {
     clearTimeout(active.driverHandle);
     active.driverHandle = undefined;
@@ -626,7 +626,7 @@ function scheduleOnVisualAt(
 ): void {
   const h = window.setTimeout(() => {
     pb.pending.delete(h);
-    if (pb.cancelled) return;
+    if (pb.canceled) return;
     try {
     const keys = ev.notes.map(coordToKeyId);
     if (canGlide) {
@@ -695,7 +695,7 @@ function scheduleOffVisualAt(
   }
   const h = window.setTimeout(() => {
     pb.pending.delete(h);
-    if (pb.cancelled) return;
+    if (pb.canceled) return;
     try {
     let mutated = false;
     for (const vid of offVids) {
@@ -743,7 +743,7 @@ function scheduleOffVisualAt(
 function scheduleVoiceClearAt(voice: number, timeMs: number, delayMs: number, pb: ActivePlayback): void {
   const h = window.setTimeout(() => {
     pb.pending.delete(h);
-    if (pb.cancelled) return;
+    if (pb.canceled) return;
     try {
       bridge.send({ type: 'playback-position', meiId: null, voice, timeMs });
     } catch (err) {
@@ -946,7 +946,7 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
     }
     if (loads.length) await Promise.all(loads);
     /* A newer play-score (or a stop) during the load supersedes this run. */
-    if (pb.cancelled || !audio.audioCtx) {
+    if (pb.canceled || !audio.audioCtx) {
       if (active === pb) bridge.send({ type: 'playback-finished' });
       return;
     }
@@ -1003,7 +1003,7 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
   let pedalIdx = 0;
 
   function tick(): void {
-    if (pb.cancelled) return;
+    if (pb.canceled) return;
     const elapsedMs = performance.now() - t0Wall;
     const horizonMs = elapsedMs + LOOKAHEAD_MS;
     /* Schedule every event whose onset falls in [now, now+lookahead]. The
@@ -1111,7 +1111,7 @@ async function playScore(wireEvents: ReadonlyArray<PlaybackEvent>, wirePedals: R
       const finDelay = (lastEndMs + 50) - elapsedMs;
       const finHandle = window.setTimeout(() => {
         pb.pending.delete(finHandle);
-        if (pb.cancelled) return;
+        if (pb.canceled) return;
         try {
           /* Release any voices still held by a pedal that never lifted, and
              reset the damper flags + external CC 64 this run engaged. */
@@ -1474,7 +1474,7 @@ bridge.on((msg: ComposerEvent) => {
          own accidental-clamp fallback for entering notes, but rejecting at the
          ref-note-set stage is smoother (the dashed marker never moves to an
          unspellable cell and the piano outline never reshapes to a >±3
-         layout). The re-centre snaps (onRefChanged): cursor-follow used to
+         layout). The re-center snaps (onRefChanged): cursor-follow used to
          animate, but the multi-message reset race made even single updates
          land mid-tween when the handshake was still in flight. */
       const [rnQ, rnR] = fromComposer(msg.q, msg.r, msg.mapping);

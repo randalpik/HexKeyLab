@@ -478,7 +478,7 @@ export const FIXTURES = {
   /* B2 (2026-09-02; was the B1 safety net): a dy-cascade that pushes its page
    * past the paper is REPAIRED — the spilled system moves onto the next page
    * as a splice whose window pins it page-first (its position is read, never
-   * modelled) — instead of handing pagination back to Verovio with a warn and
+   * modeled) — instead of handing pagination back to Verovio with a warn and
    * a full render. Asserted via FIXTURE_ASSERTIONS.pageSystemSpliceCascadeOverflow. */
   pageSystemSpliceCascadeOverflow: {
     setup: `
@@ -627,7 +627,7 @@ export const FIXTURES = {
   /* A section header is a component with a reserved height in its page's
    * vertical budget (Max, 2026-09-02): the paper is fixed, the scale is fixed
    * at the box, and a page whose systems no longer fit below the reserve
-   * overflows — the spilled tail moves onto the next page (title travelling
+   * overflows — the spilled tail moves onto the next page (title traveling
    * with its system). The injector used to grow the page's viewBox instead,
    * drawing header pages ~3 % small until the first splice re-pinned the box
    * 90 px taller. Asserted via FIXTURE_ASSERTIONS.pageSectionHeaderOverflow. */
@@ -710,7 +710,7 @@ export const FIXTURES = {
   },
   /* A system whose topmost content is a <text> (a tempo above the
    * first staff) is placed by the same rule — its above-extent is read from
-   * the post-processed bbox, never modelled. The first system on page 1 sits
+   * the post-processed bbox, never modeled. The first system on page 1 sits
    * below the page header, never higher than before the text arrived, and
    * stays self-consistent. Asserted via
    * FIXTURE_ASSERTIONS.pagePlacementTextTopped. */
@@ -3070,7 +3070,7 @@ export const ASSERTIONS = {
                unsnapped position it accumulated on, and the snapped one must be
                within half a device pixel of it on EVERY system independently: a
                snapped position that fed the next system's premise accumulated
-               down the page and split neighbours across pixel boundaries.
+               down the page and split neighbors across pixel boundaries.
                Absent rawTop, the accumulator is running on snapped values. */
             if (typeof exp[i].rawTop !== 'number') return 'page ' + pageEl.dataset.page + ' system ' + i + ': placement exposes no rawTop — snapping is not output-only';
             const grid = 1000 / H.renderer['currentScale']();

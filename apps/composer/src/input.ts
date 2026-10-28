@@ -539,7 +539,7 @@ function commitHairpinStep(model: ComposerModel, hooks: InputHooks, form: 'cres'
 function cancelPendingHairpin(hooks: InputHooks): boolean {
   if (!state.pendingHairpin) return false;
   state.pendingHairpin = null;
-  hooks.setStatus?.('Pending hairpin cancelled.', 'info');
+  hooks.setStatus?.('Pending hairpin canceled.', 'info');
   hooks.onStateChange();
   return true;
 }
@@ -547,7 +547,7 @@ function cancelPendingHairpin(hooks: InputHooks): boolean {
 function cancelPendingSlur(hooks: InputHooks): boolean {
   if (!state.pendingSlur) return false;
   state.pendingSlur = null;
-  hooks.setStatus?.('Pending slur cancelled.', 'info');
+  hooks.setStatus?.('Pending slur canceled.', 'info');
   hooks.onStateChange();
   return true;
 }
@@ -1190,7 +1190,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     const before = model.snapshotStateReusing(hooks.history.committedMei());
     const result = fn();
     if (result === false) return false;
-    /* AFTER is lazy (A10): serialised on idle or when history next needs it. */
+    /* AFTER is lazy (A10): serialized on idle or when history next needs it. */
     const after = model.snapshotStateLazy();
     hooks.history.push(before, after, label, opts);
     return true;
@@ -1783,7 +1783,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (e.key === 'Escape') {
       e.preventDefault();
       exitSelectionToMovable();
-      hooks.setStatus?.('Selection cancelled.', 'info');
+      hooks.setStatus?.('Selection canceled.', 'info');
       /* Exiting selection changes no content — cheap path, no reRender. */
       hooks.onCursorMove();
       return true;
@@ -2597,7 +2597,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       state.pendingSlur = null;
       const startLoc = model.findElement(pending.startId);
       if (!startLoc) {
-        hooks.setStatus?.('Slur start note is gone; cancelled.', 'error');
+        hooks.setStatus?.('Slur start note is gone; canceled.', 'error');
         hooks.onStateChange();
         return;
       }
@@ -2781,7 +2781,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
       }
       /* Cancel and fall through to normal handling for this key. */
       state.pendingTuplet = null;
-      hooks.setStatus?.('Tuplet cancelled.', 'info');
+      hooks.setStatus?.('Tuplet canceled.', 'info');
       hooks.onStateChange();
       /* no return — handler below processes e */
     }
@@ -3387,7 +3387,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
 
     /* Escape: cancel pending hairpin (works in either mode). Pending tuplet
-       is cancelled earlier in the handler by the stray-input branch. */
+       is canceled earlier in the handler by the stray-input branch. */
     if (e.key === 'Escape') {
       if (cancelPendingHairpin(hooks) || cancelPendingSlur(hooks)) {
         e.preventDefault();

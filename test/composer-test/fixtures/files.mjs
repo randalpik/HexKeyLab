@@ -433,7 +433,7 @@ export const ASSERTIONS = {
       click('btnSaveAs');
       await until(() => calls.filter((c) => c[0] === 'pickSave').length === 3);
       await new Promise((r) => setTimeout(r, 50));
-      if (writes().length !== 2 || H.fileState().path !== '/home/u/music/Other.hkc') return { ok: false, detail: 'cancelled Save As changed state' };
+      if (writes().length !== 2 || H.fileState().path !== '/home/u/music/Other.hkc') return { ok: false, detail: 'canceled Save As changed state' };
       let lastDir = null; try { lastDir = localStorage.getItem('hklComposerLastDir'); } catch (e) {}
       if (lastDir !== '/home/u/music') return { ok: false, detail: 'lastDir ' + lastDir };
       return { ok: true, detail: 'Save → New Piece.hkc, Save As → Other.hkc, cancel is a no-op' };

@@ -2,7 +2,7 @@
 // which is Bravura's.
 //
 // Leipzig's C clef ends each bowl flat and joins them with two straight arms
-// meeting at the centre line, leaving 0.84 staff spaces between the bowls
+// meeting at the center line, leaving 0.84 staff spaces between the bowls
 // (Bravura 0.42, Leland 0.33) — the glyph as designed upstream, not a Verovio
 // artifact. The fix is a custom Verovio font, "LeipzigHkl", that carries ONLY
 // Bravura's E05C cClef / E05D cClef8vb / E07B cClefChange

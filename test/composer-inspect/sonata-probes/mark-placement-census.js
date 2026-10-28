@@ -1,14 +1,14 @@
 // Mark-placement inventory (2026-09-09) — the gate for "dynamics are mis-placed
 // between the staves after the instrGap pass" (Max: sonata p. 9 m. 131's `pp`
-// collides with the staff below and is nowhere near centred; p. 17 m. 37's
+// collides with the staff below and is nowhere near centered; p. 17 m. 37's
 // `dim.` collides with a tuplet bracket, both with room unused above).
 //
 // instrument-gap-census.js only measures marks at an INSTRUMENT BOUNDARY, so a mark
 // mis-placed inside its own grand staff is invisible to it. This walks EVERY
 // mark in the document and reports, in the page-margin group's user space:
-//   • mode        — 'center' (inside a grand staff: the pass centres it in the
+//   • mode        — 'center' (inside a grand staff: the pass centers it in the
 //                   gap) or 'mingap' (under any other staff)
-//   • cErr        — center mode only: actual box centre − the gap's centre.
+//   • cErr        — center mode only: actual box center − the gap's center.
 //                   POSITIVE = the mark sits too LOW. This is the number the
 //                   double-counted instrument shift showed up in.
 //   • hits        — every obstacle the mark's INK overlaps (staff spaces deep):
@@ -227,7 +227,7 @@ for (let pi = 0; pi < pages.length; pi++) {
     const fctm = frame && frame.getCTM && frame.getCTM(); if (!fctm) continue;
     const inv = fctm.inverse();
     systemsSeen++; sysOnPage++;
-    /* Every obstacle polygon of the system, once, labelled class@staff. */
+    /* Every obstacle polygon of the system, once, labeled class@staff. */
     const obs = [];
     for (const st of sys.querySelectorAll('g.staff')) {
       const n = parseInt(st.getAttribute('data-n') || '', 10);
@@ -337,7 +337,7 @@ for (let pi = 0; pi < pages.length; pi++) {
   }
 }
 
-/* A deviation: badly off-centre in a grand staff, or overlapping ink/lines. */
+/* A deviation: badly off-center in a grand staff, or overlapping ink/lines. */
 const OFF = 20;                                   // a quarter unit
 const bad = (x) => (x.cErr !== null && Math.abs(x.cErr) >= OFF) || x.hits.length > 0;
 const devs = all.filter(bad);

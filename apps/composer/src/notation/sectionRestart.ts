@@ -23,7 +23,7 @@
 //     VisitStaffGrp` replaces the drawing labels from any <staffGrp> child of
 //     the restart scoreDef whose `@n` matches a head staffGrp
 //     (`ScoreDef::ReplaceDrawingLabels`), and `View::DrawLabels` draws nothing
-//     and reserves no width for an empty label. So each labelled head group
+//     and reserves no width for an empty label. So each labeled head group
 //     gets an `@n` (render clone only) and the restart scoreDef a matching
 //     <staffGrp n><label>ABBR</label> — the abbreviation the continuation
 //     systems show, or nothing — so the restart system is indistinguishable
@@ -65,7 +65,7 @@ const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
 const BREAKISH = new Set(['sb', 'pb', 'scoreDef']);
 
-interface LabelledGroup { n: string; abbr: string; staffN: string }
+interface LabeledGroup { n: string; abbr: string; staffN: string }
 
 const directChild = (el: Element, name: string): Element | undefined =>
   Array.from(el.children).find((c) => c.localName === name);
@@ -74,12 +74,12 @@ const directChild = (el: Element, name: string): Element | undefined =>
  *  (assigned on the clone when absent), with the abbreviation the continuation
  *  systems draw ('' when there is no <labelAbbr>) and the `@n` of the group's
  *  first real staff. */
-function labelledGroups(doc: Document): LabelledGroup[] {
+function labeledGroups(doc: Document): LabeledGroup[] {
   const head = doc.querySelector('score > scoreDef') ?? doc.querySelector('scoreDef');
   if (!head) return [];
   const grps = Array.from(head.querySelectorAll('staffGrp'));
   const used = new Set(grps.map((g) => g.getAttribute('n')).filter((n): n is string => !!n));
-  const out: LabelledGroup[] = [];
+  const out: LabeledGroup[] = [];
   let seq = 1;
   for (const g of grps) {
     const label = directChild(g, 'label');
@@ -128,7 +128,7 @@ function leadingClefs(meas: Element): LeadingClef[] {
  *  section carrying continuation labels, and blank + re-draw its meter (see
  *  module comment). Idempotent. */
 export function applySectionRestarts(doc: Document): void {
-  let groups: LabelledGroup[] | null = null;
+  let groups: LabeledGroup[] | null = null;
   for (const meas of Array.from(doc.querySelectorAll('measure[data-hkl-section-title]'))) {
     /* The section-level node carrying this measure (an <ending> may wrap it). */
     let top: Element = meas;
@@ -161,7 +161,7 @@ export function applySectionRestarts(doc: Document): void {
     parent.insertBefore(wrapper, runStart);
     wrapper.appendChild(sd);
     let tail: Element = wrapper;
-    if (!groups) groups = labelledGroups(doc);
+    if (!groups) groups = labeledGroups(doc);
     if (groups.length) {
       const labelSection = doc.createElementNS(MEI_NS, 'section');
       const labelDef = doc.createElementNS(MEI_NS, 'scoreDef');

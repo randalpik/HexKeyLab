@@ -1364,7 +1364,7 @@ export function draw(): void {
       );
       /* The evenodd cover rect must surround the VIEW, not the lattice origin:
          the context is lattice-translated, and past one canvas diagonal from
-         (0, 0) an origin-centred rect stops covering the canvas, so the fill
+         (0, 0) an origin-centered rect stops covering the canvas, so the fill
          parity flips (valid cells dimmed, invalid ones clear). Wicki-Hayden's
          doubled column range puts valid refs that far out. */
       const diag = Math.ceil(Math.sqrt(view.CW * view.CW + view.CH * view.CH));
@@ -1398,7 +1398,7 @@ export function draw(): void {
        lattice space (see compute88PianoCoords). We translate by the lattice
        scroll offset so the polygon tracks the cells it encompasses. */
     let activePaths: Point[][];
-    /* Centre of the visible canvas in the current transform — where the mask's
+    /* Center of the visible canvas in the current transform — where the mask's
        cover rect must sit (see the Ctrl-darkening note above). */
     let maskCX = 0, maskCY = 0;
     if (outlineMode === "piano") {

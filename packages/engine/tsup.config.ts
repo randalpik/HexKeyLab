@@ -35,7 +35,7 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // defects/10s → 0 (handoff/hkle-born-silent-gain-fix.md).
 // 2.4.2: fix — cancelPendingSwitch anchors its undo at the pending
 // crossfade's switchTime instead of ctx.currentTime. The now-anchored
-// cancel+restore destroyed the attack of any voice cancelled before its
+// cancel+restore destroyed the attack of any voice canceled before its
 // fade-in completed (fade deleted → full-gain onset click; or
 // setValueAtTime inside the live fade curve → NotSupportedError on strict
 // hosts). Reachable from every teardown/retune path (sNoteOff, sHardStop,

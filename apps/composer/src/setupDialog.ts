@@ -229,7 +229,7 @@ export function openSetupDialog(
     setGradualPercents(model.getDoc(), values.gradual);
     if (proceedWithLayout) {
       model.setLayoutReq(values.layoutReq);
-      /* Retuned notes' baked colours follow their (possibly relocated) pitch
+      /* Retuned notes' baked colors follow their (possibly relocated) pitch
          under the new layout. */
       if (layoutChanged) model.recolorNotes();
     }

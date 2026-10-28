@@ -238,11 +238,11 @@ function readEndMoment(el: Element, measures: Element[]): Moment | null {
 
 /* ── mark placement by instrument shape (2026-10-07) ─────────────────────
    A dynamic / hairpin / expressive text under the UPPER staff of a grand
-   staff is @place="between": Verovio's own between pass centres it in the gap
+   staff is @place="between": Verovio's own between pass centers it in the gap
    and reserves the gap for it (probed: a mark 1.72 spaces tall grows a
    crowded gap by its height). Under a one-staff instrument, or under the
    lower staff of a grand staff, it is @place="below" — dynamDist under its
-   own staff — which `between` gets wrong: Verovio centres a between mark
+   own staff — which `between` gets wrong: Verovio centers a between mark
    toward the NEXT staff regardless of instrument (sonata m. 19: the viola's
    mp sat 2.45 spaces under the viola, halfway to the piano, against 1.2 for
    below). The value is decided here, once, for every entry path — the live
@@ -251,7 +251,7 @@ function readEndMoment(el: Element, measures: Element[]): Moment | null {
    written before this rule. Until 2026-10-07 the helpers defaulted every mark
    to `between` (a single-piano-era choice: "between voices 2 and 3") while
    Finale imports carried `below`, so the same mark placed live and reloaded
-   engraved 1.25 spaces apart; the grand-staff centring of `below` marks was
+   engraved 1.25 spaces apart; the grand-staff centering of `below` marks was
    meanwhile re-implemented in render/textlayout.ts. Both are gone. */
 export type MarkPlace = 'above' | 'below' | 'between';
 
@@ -1017,7 +1017,7 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
     cfg.appendChild(lr);
   }
   lr.setAttribute('tuningMode', req.tuningMode);
-  /* Euler is the default and stays implicit, so Euler scores serialise exactly
+  /* Euler is the default and stays implicit, so Euler scores serialize exactly
      as they did before mappings existed. */
   if (isMapping(req.mapping) && req.mapping !== 'euler') lr.setAttribute('mapping', req.mapping);
   else lr.removeAttribute('mapping'); /* also guards untyped callers that omit it */
@@ -1028,7 +1028,7 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
 
 /** Document-level "show HEJI accidentals" flag, stored on <hkl:config>.
  *  Independent of HKL's own hejiEnabled. Defaults TRUE: a missing attribute
- *  reads as on (a JI-centred app — Max, 2026-10-05); only an explicit
+ *  reads as on (a JI-centered app — Max, 2026-10-05); only an explicit
  *  heji="false" (Setup checkbox unticked, or MusicXML import) turns it off.
  *  Older documents that never touched the checkbox therefore come up with
  *  HEJI on. */
@@ -1086,7 +1086,7 @@ function childInHklNs(parent: Element, localName: string): Element | null {
   return null;
 }
 
-/** Initialise <extMeta>/<hkl:config> defaults if they're missing. Idempotent.
+/** Initialize <extMeta>/<hkl:config> defaults if they're missing. Idempotent.
  *  Called on document creation and on load/migration. */
 export function ensureExpressionDefaults(doc: Document): void {
   ensureExtMetaConfig(doc);

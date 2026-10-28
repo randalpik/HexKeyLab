@@ -43,7 +43,7 @@ export const CURSOR_WIDTH = 2;
 export const PLAYBACK_WIDTH = 3;
 /** A bar past a grace scales its offset (not its width) by this: Verovio packs
  *  a grace tight against its main note, and the full offset put the bar on
- *  the next note. Half the offset centres the bar in the gap between the
+ *  the next note. Half the offset centers the bar in the gap between the
  *  grace's ink and the main notehead (measured on `grace_cursor_offset`:
  *  ink ends at 175, notehead starts at 182 → bar at 177–179). */
 export const GRACE_SCALE = 0.5;

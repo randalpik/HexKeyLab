@@ -29,7 +29,7 @@
 // The HOME ref is manual ?? scoreRef ?? A3 — the effective ref minus the
 // cursor slot. Two anchors are derived from it here and nowhere else:
 //   • the keyboard anchor `view.kbAnchorQ/R` = refSpine(home): where the
-//     Lumatone / QWERTY layout sits, and the centre of every non-piano
+//     Lumatone / QWERTY layout sits, and the center of every non-piano
 //     outline's view. The cursor's prior note never moves it — entering a
 //     note must not shift the physical layout.
 //   • `tuning.anchor`, the Syntonic / Polysyntonic home band = the band of
@@ -39,9 +39,9 @@
 // Every mutation recomputes the effective ref and the keyboard anchor; if
 // either moved, the ref listener (effects/onRefChanged) runs once,
 // synchronously, with the keyboard-anchor delta — voice migration, view
-// re-centring, redraw and broadcasts all hang off that one call, so no caller
+// re-centering, redraw and broadcasts all hang off that one call, so no caller
 // can move a ref without them (2026-10-26: two Composer handlers moved the ref
-// and left the lattice centred on the old one).
+// and left the lattice centered on the old one).
 
 import { tuning } from './tuning.js';
 import { view } from './view.js';

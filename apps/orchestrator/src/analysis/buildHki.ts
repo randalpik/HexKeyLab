@@ -202,7 +202,7 @@ export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, devic
     // into audibility). Skip is per-layer — playback falls back to the note's
     // nearest surviving layer via pickLayer — but never empties a note: if every
     // layer is over threshold, keep the single least-noisy one (a quiet-ish note
-    // beats a hole that pitch-shifts a neighbour).
+    // beats a hole that pitch-shifts a neighbor).
     interface Cand { layer: JobOutcome; clean: CaptureRecord; gain: number; trimStart: number; pgn: number; }
     const cands: Cand[] = [];
     for (const layer of layers) {

@@ -76,7 +76,7 @@ class ColorQueue:
         self.distance = [x*x + y*y for x, y in points]
         self.pending = {}  # key -> (latest level, first-outstanding time, latest frame)
         self.last_board = None
-        self.cancelled = 0
+        self.canceled = 0
         self.coalesced = 0
         self.peak = 0
 
@@ -87,7 +87,7 @@ class ColorQueue:
             if value == self.predicted[key]:
                 if old is not None:
                     del self.pending[key]
-                    self.cancelled += 1
+                    self.canceled += 1
             elif old is None:
                 self.pending[key] = (value, timestamp, index)
             else:
@@ -164,7 +164,7 @@ def simulate(movie, same_ms=8.2, other_ms=3.1, duration=None):
         now = min(next_frame, ack_time if flight is not None else math.inf, duration)
     report = analyze(movie, events, initial, duration)
     report.update(mode='simulation', same_board_ms=same_ms, different_board_ms=other_ms,
-                  board_policy='always-alternate-when-pending', cancelled=scheduler.cancelled,
+                  board_policy='always-alternate-when-pending', canceled=scheduler.canceled,
                   peak_pending=scheduler.peak)
     return report, events, initial
 
@@ -220,7 +220,7 @@ def play(client, movie, state, args, stopped, report, out):
     finally:
         elapsed = min(time.perf_counter() - start, duration)
         report['animation'] = analyze(movie, events, initial, elapsed)
-        report['animation'].update(mode='hardware', cancelled=scheduler.cancelled,
+        report['animation'].update(mode='hardware', canceled=scheduler.canceled,
                                    peak_pending=scheduler.peak, board_policy='always-alternate-when-pending',
                                    swap_boards_34=args.swap_boards_34,
                                    rgb_channel_palette=intensities,

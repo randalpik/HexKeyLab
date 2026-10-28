@@ -11,7 +11,9 @@ Architecture source of truth for the HKL viewer app (`apps/hkl/`). **For how to 
 - **Layout**: 5 boards × 56 keys = 280 keys, hexagonal isomorphic.
 - **Physical board swap** (some units, incl. Max's): boards 3 and 4 are physically transposed. Handled by a persisted, off-by-default toggle (*Calibrate Keys → "Swap boards 3 ↔ 4"*, pref `swapBoards34`). All SysEx board-byte routing goes through `sysexBoardFor(group)` (`lumatone/protocol.ts`): identity `[1,2,3,4,5]` when off, `[1,2,3,5,4]` when on. Only the board byte flips — `fixedMidiChannelMap` is group-keyed and unaffected. Flipping the toggle re-pushes the fixed layout + colors so the relocated boards re-light.
 - **Connectivity**: USB-MIDI (primary), 5-pin DIN in/thru/out, 1/4" Sustain jack, 1/4" Expression jack.
-- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. Manufacturer ID `[0x00, 0x21, 0x50]`. Per-key data: (keyIndex, noteNum, channel-byte 0-indexed, typeByte) where `typeByte = (faderUpIsNull << 4) | keyType`, keyType ∈ {0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch}.
+- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. Manufacturer ID `[0x00, 0x21, 0x50]`. Per-key data: (keyIndex, noteNum, channel-byte 0-indexed, typeByte) where `typeByte = (faderUpIsNull << 4) | keyType`, keyType ∈ {0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch}. `lumaTouch` is a continuous fader, NOT poly aftertouch.
+- **Commands HKL uses**: `0x00 CHANGE_KEY_NOTE` (note/channel/keyType per key), `0x01 SET_KEY_COLOUR` (8-bit RGB as 6 nibbles), `0x07 SET_LIGHT_ON_KEYSTROKES`, `0x0E SET_AFTERTOUCH_FLAG` (global poly aftertouch), `0x31 GET_FIRMWARE_REVISION`, `0x33 LUMA_PING` (liveness heartbeat), `0x38 CALIBRATE_EXPRESSION_PEDAL`, `0x39 RESET_EXPRESSION_PEDAL_BOUNDS`, `0x3E PERIPHERAL_CALIBRATION_DATA`. The authoritative command list is the Terpstra editor source, https://github.com/hsstraub/TerpstraSysEx.2014.
+- **LED throughput depends on board ordering**: a standalone USB-MIDI benchmark measured ~121 changed-key updates/s on one board vs ~318/s interleaved (alternating two boards gives the full gain), so color sync sweeps the boards interleaved, top to bottom. ~100/s is not a global LED ceiling. Details: [`tools/lumatone-bench/README.md`](../../tools/lumatone-bench/README.md); gate `test/hkl-midi/sync-order.mjs`.
 
 ### Pedal jacks
 
@@ -34,6 +36,8 @@ Needed only for per-key hardware calibration (units with broken macro buttons) o
   - **RAM** (volatile): `kbd_preset_params` struct in `.bss`, 638-byte stride/board; offsets `+0x118` MAX, `+0x150` MIN, `+0x1c0` validity, `+0x1fe` AT-MAX. Lost at restart/power cycle.
 - **Indexing**: both layers use **PIC number** (`sysex_board`), not spatial board position. Slot `i` ↔ `KeyData_(i+1)` ↔ PIC `i+1`. The `sysexBoardFor` physical-swap only enters when translating spatial board_group → PIC number, never when indexing firmware structures.
 - Tooling: `tools/lumatone-cal/` Python scripts read/write both layers (`/proc/<tc-pid>/mem` volatile, file edit persistent).
+- **Local firmware mirror**: `/home/max/lumatone/` copies the device's `debian` home (the `TerpstraController` binary, `LMTN-01_OctaveBoard.hex` for the PICs, `files/`), so analysis needs no device. Disassemble with `gdb -batch -ex "disassemble <fn>"`: Arch's binutils has no ARM target, so `objdump -d` fails.
+- **PIC→BBB frames** are terminator-framed with no checksum or length field, and carry key travel time rather than velocity (the BBB rebuilds velocity via `files/VelocityLookUp_N`) — full detail in lessons.md.
 
 ### Self-contained audio
 
@@ -66,7 +70,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 | Control | Behavior |
 |---|---|
 | Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic}. Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
-| Mapping selector | {Euler, Wicki-Hayden, Chromatic} (`#selMapping`, pref `mapping`). `setMapping()` re-expresses the reference, anchor and held mouse / piano-input / pedal-sustained notes in the new coordinate frame (same pitch); held Lumatone / QWERTY voices keep their `(q,r)` and retune in place; rebuilds layers, footprint, Lumatone colours, tilt; broadcasts to Composer. See architecture.md → Note-name mapping. |
+| Mapping selector | {Euler, Wicki-Hayden, Chromatic} (`#selMapping`, pref `mapping`). `setMapping()` re-expresses the reference, anchor and held mouse / piano-input / pedal-sustained notes in the new coordinate frame (same pitch); held Lumatone / QWERTY voices keep their `(q,r)` and retune in place; rebuilds layers, footprint, Lumatone colors, tilt; broadcasts to Composer. See architecture.md → Note-name mapping. |
 | Outline selector | {Lumatone, QWERTY, Piano, None}. Selects the footprint outline; lattice slides via refSpine (Lumatone/QWERTY/None) or piano-viewport math (Piano). Ctrl+click any hex sets the ref note → drives positioning. |
 | Transpose | 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC), always visible. Key-repeat 400ms initial / 80ms subsequent. Selection transpose only — positioning is via ref note. |
 | Audio | Toggle + instrument/waveform selector. Piano default. Samples lazy-load with a blue "loading…" state. |
@@ -76,7 +80,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 ### Keyboard shortcuts
 
-- **Ref note**: set via **Ctrl+click** on any hex — lattice tweens to put that ref's qm=0-normalized spine cell at the outline center. Ctrl+click on the current effective ref clears the selection (Ctrl+click and Composer cursor note). Every ref change — click or Composer message — re-centres through one fan-out (`state/reference.ts` → `effects/onRefChanged`; docs/architecture.md → Ref-driven layout shift).
+- **Ref note**: set via **Ctrl+click** on any hex — lattice tweens to put that ref's qm=0-normalized spine cell at the outline center. Ctrl+click on the current effective ref clears the selection (Ctrl+click and Composer cursor note). Every ref change — click or Composer message — re-centers through one fan-out (`state/reference.ts` → `effects/onRefChanged`; docs/architecture.md → Ref-driven layout shift).
 - No global window-level shortcuts at present (legacy arrow-key layout cycle/seam shift removed). `apps/hkl/src/ui/keyboard.ts` is reserved as the entry point for future shortcuts.
 
 ### Selection & interaction
@@ -202,7 +206,7 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 - On every color-affecting state change, `syncLumatoneColors()` computes the 280-entry target, diffs against tracked `deviceColors`, queues only changes.
 - **Interleaved top-to-bottom wipe**: `lumatone/sync-order.ts` ranks changed keys by physical Lumatone height (`2q + 7r`, descending), then left-to-right within a row. Always select a different SysEx board when another board has pending changes; sparse diffs may step ahead in the wipe to do so. Only repeat when all remaining changes belong to the same board. Routing honors the board-swap toggle; canvas rotation does not affect physical ordering. A replacement batch seeds this order from the in-flight board (or the last setup message when setup precedes colors).
 - **In-flight race**: an awaiting-ACK SysEx's color is folded into the predicted snapshot so the diff accounts for the device's near-future state.
-- **Queue swap, not restart**: a new sync replaces `sysexQueue` without cancelling the in-flight message (which finishes naturally). `sysexCancelAll()` tears everything down when Auto-sync is turned off.
+- **Queue swap, not restart**: a new sync replaces `sysexQueue` without canceling the in-flight message (which finishes naturally). `sysexCancelAll()` tears everything down when Auto-sync is turned off.
 
 **On-connect setup** (first auto-sync after `findLumatone()`):
 - 280 × `CHANGE_KEY_NOTE` (fixed MIDI layout)
@@ -304,7 +308,7 @@ attaches its MIDI monitor only while a run is active.
 
 `apps/hkl/src/midi/piano-out.ts`. The "Piano output" toggle (Piano tab) mirrors HKL playback to an external MIDI synth at true JI, even on synths with **no pitch bend / no MPE** (e.g. Korg SP-250).
 
-**Mechanism**: such synths honour **RPN 0001 (channel fine tuning)**, ±100¢ over 14 bits (center 8192, 81.92 steps/cent). A note-on re-applies the channel's current fine-tune to every voice on that channel → distinct tunings need distinct channels. So **one voice per MIDI channel** (`MpeAllocator`, constructor-configurable channel range/reuse/exclusions). Piano output uses channels **1..16 minus 10 and 16** in **FIFO** order:
+**Mechanism**: such synths honor **RPN 0001 (channel fine tuning)**, ±100¢ over 14 bits (center 8192, 81.92 steps/cent). A note-on re-applies the channel's current fine-tune to every voice on that channel → distinct tunings need distinct channels. So **one voice per MIDI channel** (`MpeAllocator`, constructor-configurable channel range/reuse/exclusions). Piano output uses channels **1..16 minus 10 and 16** in **FIFO** order:
 - ch 10 = GM percussion (note-on plays a drum map, not a pitch).
 - ch 16 (this SP-250) ignores note-off and won't accept the RPN tune.
 - FIFO lets a reused channel's release tail decay before reuse. → 14 melodic channels.

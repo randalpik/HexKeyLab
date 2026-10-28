@@ -4,7 +4,7 @@
 // and reports, per section: today's committed lines, the greedy count, and
 // every DISTINCT layout on the curve scored over the lines it changes plus
 // the untouched line before them (min fill of the changed lines, sd of
-// neighbour + changed), then the pick of max(min − sd − γ·changes) for each γ.
+// neighbor + changed), then the pick of max(min − sd − γ·changes) for each γ.
 // A FINAL section of fewer than 3 greedy lines stays greedy (Max, 2026-10-20).
 //
 //   node test/balance/curve-batch.mjs <dump.json>... [--gammas 0,0.01,0.02,0.03,0.05] [--json out.json]

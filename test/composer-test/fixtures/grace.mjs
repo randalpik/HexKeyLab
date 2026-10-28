@@ -3,7 +3,7 @@
 // Fixture spec: { setup?: string, setupKeys?: string[], ...flags }; ASSERTIONS maps
 // fixture name → [{ name, expr }]. See ../README.md.
 //
-// Every pitch carries its own colour so a mis-keyed identity cannot pass by
+// Every pitch carries its own color so a mis-keyed identity cannot pass by
 // coincidence (the performance fixtures' convention), on its real Euler cell
 // (accidental glyphs are spelled from the cell).
 
@@ -70,7 +70,7 @@ const G_LIB = `
   const evOf = (evs, id) => evs.find((e) => e.meiId === id);
   const fmtEv = (e) => e ? (e.meiId + '@' + (e.atMs / T).toFixed(2) + 'T+' + (e.durationMs / T).toFixed(2) + 'T') : 'none';
   const near = (a, b) => Math.abs(a - b) < 0.5;
-  /* Performance: strike an element's own cell + colour; bars as meiId@edge. */
+  /* Performance: strike an element's own cell + color; bars as meiId@edge. */
   const P = H.__performance;
   const strikeId = (id) => {
     const el = doc.querySelector('[*|id="' + id + '"]');

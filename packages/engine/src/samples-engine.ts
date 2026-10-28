@@ -139,7 +139,7 @@ function fetchShippedBundle(instr: any): Promise<Record<string, Uint8Array>> {
 
 const RELEASE_SCALE = 0.5;
 /* "The crossfade is imminent or in flight" horizon. A pending switch closer
-   than this must never be cancelled+rescheduled: scheduleSegmentSwitch's
+   than this must never be canceled+rescheduled: scheduleSegmentSwitch's
    now+5ms floor would defer the fade past the validated wrap point — the old
    source plays phase-unvalidated content beyond b before fading into an `a`
    validated for b (measured −3..−6 dB seam dips under 20–40ms retune cadence;
@@ -1162,7 +1162,7 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
      the attack instead). See handoff/hkle-cancel-pending-switch-attack.md.
 
      Crossfade not yet begun (now < switchTime): everything scheduleSegment-
-     Switch put on oldSegGain sits at or after switchTime, so cancelling there
+     Switch put on oldSegGain sits at or after switchTime, so canceling there
      removes exactly those events; there is nothing to restore, and the
      voice's own envelope is left alone.
      Crossfade in flight: restore to v.vol via a brief 5ms ramp so the

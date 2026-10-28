@@ -5,7 +5,7 @@
 // Notes split across treble (midi >= 60) and bass (< 60) staves at middle C.
 // Accidentals are set per note from the count-form alteration; when HEJI is on,
 // a comma-bearing note with no conventional accidental gets an explicit natural
-// so transformDocForHeji draws its arrow (the isolated-chord analogue of
+// so transformDocForHeji draws its arrow (the isolated-chord analog of
 // Composer's computeAccidentalDisplay comma-natural rule — no measure carry).
 
 import type { TuningMode } from '@hkl/shared/freq.js';

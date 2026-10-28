@@ -142,9 +142,9 @@ export const FIXTURES = {
   kbd_statusError_clearsOnNextKey: {
     setupKeys: [{ key: '=' }, { key: 'ArrowRight' }],
   },
-  /* Cancelling a pending gesture does NOT change the model, so it is an info
+  /* Canceling a pending gesture does NOT change the model, so it is an info
      cue (gray), not a purple action. Press '<' (start cres → state/blue), then
-     Escape (cancel → info "Pending hairpin cancelled."). */
+     Escape (cancel → info "Pending hairpin canceled."). */
   kbd_statusInfo_pendingHairpinCancel: {
     setupKeys: [{ key: '<', shift: true }, 'Escape'],
   },
@@ -587,7 +587,7 @@ export const ASSERTIONS = {
         if (hasKindClass) {
           return { ok: false, detail: 'should be info (no kind class), got ' + el.className + ' text=' + el.textContent };
         }
-        return el.textContent.includes('cancelled')
+        return el.textContent.includes('canceled')
           ? { ok: true }
           : { ok: false, detail: 'text=' + el.textContent };
       })()` },

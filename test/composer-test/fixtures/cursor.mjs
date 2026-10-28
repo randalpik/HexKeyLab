@@ -21,10 +21,10 @@ export const FIXTURES = {
     m.insertRestAtCursor({ duration: "4", dots: 0 });
   ` },
   /* The overlay shares the page cards' frame: widening #score past the page
-     re-centres the card with no re-render, and the bar must move with it
+     re-centers the card with no re-render, and the bar must move with it
      (it used to stay at the pixel it was drawn at — every page-view baseline
      showed the cursor ~12 px left of its note). */
-  cursorFollowsRecentre: { setup: `
+  cursorFollowsRecenter: { setup: `
     m.setCursor(0, 1);
     m.insertRestAtCursor({ duration: "4", dots: 0 });
   ` },
@@ -378,8 +378,8 @@ export const FIXTURES = {
 };
 
 export const ASSERTIONS = {
-  cursorFollowsRecentre: [
-    { name: 'bar keeps its offset from its note when the card re-centres',
+  cursorFollowsRecenter: [
+    { name: 'bar keeps its offset from its note when the card re-centers',
       expr: `(async () => {
         const doc = window.__hkl_composer.model.getDoc();
         const score = document.getElementById('score');
@@ -396,7 +396,7 @@ export const ASSERTIONS = {
         const after = rel(), cardAfter = card().left;
         if (saved === null) score.removeAttribute('style'); else score.setAttribute('style', saved);
         await frames();
-        if (Math.abs(cardAfter - cardBefore) < 50) return { ok: false, detail: 'card did not re-centre (' + cardBefore + ' → ' + cardAfter + ')' };
+        if (Math.abs(cardAfter - cardBefore) < 50) return { ok: false, detail: 'card did not re-center (' + cardBefore + ' → ' + cardAfter + ')' };
         return Math.abs(after - before) < 0.5 ? { ok: true }
           : { ok: false, detail: 'bar moved relative to its note: ' + before.toFixed(1) + ' → ' + after.toFixed(1)
               + ' (card ' + cardBefore.toFixed(1) + ' → ' + cardAfter.toFixed(1) + ')' };

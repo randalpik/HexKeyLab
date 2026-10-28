@@ -1,5 +1,5 @@
-// Key colour under HKL's live tuning state. The colour function itself is pure
-// and lives in @hkl/shared/keycolor.js — colour is one function of the pitch,
+// Key color under HKL's live tuning state. The color function itself is pure
+// and lives in @hkl/shared/keycolor.js — color is one function of the pitch,
 // identical across every JI mode and mapping (Equal keeps its own octave
 // cycle); see that module. These wrappers only supply the current layout.
 // Pure data tables (hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx,
@@ -29,7 +29,7 @@ export function keyColorHex(q: number, r: number): string {
   return sharedKeyColorHex(q, r, tuning.mode, tuning.mapping, tuning.anchor);
 }
 
-/* Bright "light source" hue for a key — the notehead colour on a DARK notation
+/* Bright "light source" hue for a key — the notehead color on a DARK notation
    surface (see @hkl/shared/keycolor.js). */
 export function lightSourceHex(q: number, r: number): string {
   return sharedLightSourceHex(q, r, tuning.mode, tuning.mapping, tuning.anchor);

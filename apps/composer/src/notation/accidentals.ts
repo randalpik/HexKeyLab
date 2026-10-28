@@ -23,7 +23,7 @@
 //   4. Two layers sounding one written pitch at one tick (a cross-voice
 //      unison) BOTH draw the accidental. Verovio superimposes identical
 //      accidentals at one Y, so it reads once; hiding one side instead
-//      desynchronises the pair (see the unison-partner branch below).
+//      desynchronizes the pair (see the unison-partner branch below).
 //   5. Two DIFFERENT pitches at one position and tick (B♭+B♮ in a chord or
 //      across layers) both draw, and leave the carry ambiguous: the next
 //      struck note at that position redraws whatever it is.

@@ -1,27 +1,27 @@
-// HKL ref-centring gate (state/reference.ts → effects/onRefChanged).
+// HKL ref-centering gate (state/reference.ts → effects/onRefChanged).
 //
 // The keyboard anchor (view.kbAnchorQ/R) is derived in ONE place from the home
 // ref (manual Ctrl+click ?? score-ref ?? A3) and every tier change fans out
 // through one listener. This walks every path that moves a ref tier — a real
 // Ctrl+click on the canvas, and Composer's messages posted on the live bridge
 // channel — and checks after each that the effective ref is the one the tiers
-// call for and the view is centred on it: in a non-piano outline view =
-// kbAnchor = refSpine(ref); in the piano outline view = the piano centre for
+// call for and the view is centered on it: in a non-piano outline view =
+// kbAnchor = refSpine(ref); in the piano outline view = the piano center for
 // the ref, with kbAnchor where the step says.
 //
 // Requires `pnpm dev` running (umbrella proxy at :5170). The page is pinned to
 // a private overlay relay (never the live :5190).
 //
-//   node test/hkl-midi/ref-centring.mjs        # exits non-zero on any failure
+//   node test/hkl-midi/ref-centering.mjs        # exits non-zero on any failure
 //
 // Covers (Euler, Ptolemaic, Lumatone outline unless noted):
-//   C1  Ctrl+click re-centres (slide)
+//   C1  Ctrl+click re-centers (slide)
 //   C2  a Composer cursor note never displaces a Ctrl+click outside the piano
 //       outline (it used to clobber it, leaving the view on the old anchor)
 //   C3  Sync off: a score-ref arrival leaves the Ctrl+click in place
 //   C4  composer-bye keeps the Ctrl+click
 //   C5  Ctrl+click on the current ref clears it → A3
-//   C6  score-ref drives the ref; C7 composer-bye re-centres on what remains
+//   C6  score-ref drives the ref; C7 composer-bye re-centers on what remains
 //       (it used to leave the view on the dropped score-ref)
 //   C8  Sync on: a score-ref arrival clears a Ctrl+click
 //   C9  a snap during a Ctrl+click slide redirects the slide (a stale slide
@@ -30,8 +30,8 @@
 //   C11 piano outline: the newer of Ctrl+click / cursor note is the ref; the
 //       cursor never moves kbAnchor
 //   C12 leaving the piano outline resurfaces the Ctrl+click under the cursor
-//   C13 a mapping round-trip keeps the view centred
-//   C14 applying a Syntonic layout drops the Ctrl+click and re-centres
+//   C13 a mapping round-trip keeps the view centered
+//   C14 applying a Syntonic layout drops the Ctrl+click and re-centers
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -72,7 +72,7 @@ const SCRIPT = `(async () => {
   const results = [];
   const fail = (name, why) => results.push({ name, ok: false, got: why, want: 'clickable cell' });
 
-  /* a real Ctrl+click on the canvas at the cell's centre */
+  /* a real Ctrl+click on the canvas at the cell's center */
   const clickCell = (q, r) => {
     const cv = document.querySelector('canvas');
     const want = q + ',' + r; let sx = 0, sy = 0, n = 0;
@@ -87,7 +87,7 @@ const SCRIPT = `(async () => {
   };
   const ctrlClick = async (name, q, r) => { if (!clickCell(q, r)) fail(name, 'cell ' + q + ',' + r + ' not on screen'); await wait(SLIDE); };
 
-  const centred = () => {
+  const centered = () => {
     if (outline() === 'piano') {
       const [m64Q, m64R] = drawMod.currentMidi64Cell();
       const [vQ, vR] = canvasMod.computePianoViewCenter(ref.q, ref.r, m64Q, m64R);
@@ -99,9 +99,9 @@ const SCRIPT = `(async () => {
   /* wantKb: the expected kbAnchor (piano outline); elsewhere it must be the ref's spine */
   const expect = (name, wantRef, wantKb) => {
     const got = { ref: ref.q + ',' + ref.r, kbAnchor: view.kbAnchorQ + ',' + view.kbAnchorR,
-      view: (+view.viewQ.toFixed(3)) + ',' + (+view.viewR.toFixed(3)), centred: centred() };
-    const ok = got.ref === wantRef && got.centred && (wantKb === undefined || got.kbAnchor === wantKb);
-    results.push({ name, ok, got, want: { ref: wantRef, kbAnchor: wantKb ?? 'spine(ref)', centred: true } });
+      view: (+view.viewQ.toFixed(3)) + ',' + (+view.viewR.toFixed(3)), centered: centered() };
+    const ok = got.ref === wantRef && got.centered && (wantKb === undefined || got.kbAnchor === wantKb);
+    results.push({ name, ok, got, want: { ref: wantRef, kbAnchor: wantKb ?? 'spine(ref)', centered: true } });
   };
   const EU = 'euler';
 
@@ -109,14 +109,14 @@ const SCRIPT = `(async () => {
   tick('cbSyncToComposer', false);
   await post({ type: 'composer-hello', version: 1 });
 
-  await ctrlClick('C1', -3, 3);                                     expect('C1  Ctrl+click (-3,3) re-centres', '-3,3');
+  await ctrlClick('C1', -3, 3);                                     expect('C1  Ctrl+click (-3,3) re-centers', '-3,3');
   await post({ type: 'set-reference-note', q: 1, r: -1, mapping: EU }); expect('C2  cursor note keeps the Ctrl+click (Lumatone outline)', '-3,3');
   await post({ type: 'set-score-ref', q: 6, r: -3, mapping: EU });  expect('C3  Sync off: score-ref keeps the Ctrl+click', '-3,3');
   await post({ type: 'composer-bye' });                             expect('C4  composer-bye keeps the Ctrl+click', '-3,3');
   await ctrlClick('C5', -3, 3);                                     expect('C5  Ctrl+click on the ref clears it', '0,0');
   await post({ type: 'composer-hello', version: 1 });
   await post({ type: 'set-score-ref', q: 6, r: -3, mapping: EU });  expect('C6  score-ref drives the ref', '6,-3');
-  await post({ type: 'composer-bye' });                             expect('C7  composer-bye re-centres on what remains', '0,0');
+  await post({ type: 'composer-bye' });                             expect('C7  composer-bye re-centers on what remains', '0,0');
 
   await post({ type: 'composer-hello', version: 1 });
   tick('cbSyncToComposer', true);
@@ -139,9 +139,9 @@ const SCRIPT = `(async () => {
   sel('selOutline', 'lumatone'); await wait(150);                   expect('C12 leaving piano resurfaces the Ctrl+click', '0,1');
 
   sel('selMapping', 'wickiHayden'); await wait(150);
-  const whOk = centred();
-  results.push({ name: 'C13a Wicki-Hayden: centred after the switch', ok: whOk, got: { ref: ref.q + ',' + ref.r, kbAnchor: view.kbAnchorQ + ',' + view.kbAnchorR, view: view.viewQ + ',' + view.viewR }, want: 'view = kbAnchor = spine(ref)' });
-  sel('selMapping', EU); await wait(150);                           expect('C13b back to Euler: same ref, centred', '0,1');
+  const whOk = centered();
+  results.push({ name: 'C13a Wicki-Hayden: centered after the switch', ok: whOk, got: { ref: ref.q + ',' + ref.r, kbAnchor: view.kbAnchorQ + ',' + view.kbAnchorR, view: view.viewQ + ',' + view.viewR }, want: 'view = kbAnchor = spine(ref)' });
+  sel('selMapping', EU); await wait(150);                           expect('C13b back to Euler: same ref, centered', '0,1');
 
   await post({ type: 'apply-layout', tuningMode: 'S', mapping: EU }); expect('C14 Syntonic layout drops the Ctrl+click', '6,-3');
 

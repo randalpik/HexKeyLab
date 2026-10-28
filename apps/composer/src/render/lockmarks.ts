@@ -24,7 +24,7 @@ interface StaffTop { x: number; y: number; space: number }
  *  coordinate space, plus the staff space. Read from the staff-line paths
  *  (`M x1 y L x2 y`, the same shape linebreaks.ts measures widths from) and
  *  mapped through the CTMs, so the composer's placement translate on the
- *  system and any snap on the staff row are both honoured. Null when the
+ *  system and any snap on the staff row are both honored. Null when the
  *  shape is not what we expect — the mark is then simply not drawn. */
 function staffTopRight(sys: Element, margin: SVGGraphicsElement): StaffTop | null {
   const measures = sys.querySelectorAll('g.measure');

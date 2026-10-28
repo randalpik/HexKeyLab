@@ -139,7 +139,7 @@ interface SysProfile {
   staffTop: number;
   /** System bbox extents + system ty (children transforms are included by
    *  getBBox already). */
-  /** Per-measure x/width, LAZY + memoised (A6). Only the context-line sanity
+  /** Per-measure x/width, LAZY + memoized (A6). Only the context-line sanity
    *  check and the HKL_INDEX_CHECK reference gate need these; the vertical gate
    *  and the surgery itself need only x0/staffTop/bbox, and they cover most of
    *  the ~14 systems a splice profiles. Each call is one getBBox per measure,
@@ -226,7 +226,7 @@ function consolidate(el: SVGGElement): { tx: number; ty: number } {
  *  staff top is that line's y. Everything else is a transform attribute. This
  *  replaced `getBBox` reads that needed the window host laid out (~20 ms per
  *  splice, the whole remaining DOM-side cost) and were POLLUTED by content: a
- *  measure's bbox includes spanners overhanging into its neighbours and, on a
+ *  measure's bbox includes spanners overhanging into its neighbors and, on a
  *  system's first measure, the brace (144 units left of the staff).
  *
  *  Proven equivalent where it matters (a since-deleted probe, every sonata line
@@ -506,11 +506,11 @@ export class PageSystemSplicer {
       return pageOfOld(k);
     };
 
-    /* B5 — ensure-mount the EDIT's own neighbourhood. Page view mounts pages
+    /* B5 — ensure-mount the EDIT's own neighborhood. Page view mounts pages
        lazily, so in real use only a handful are live (2-6 on the sonata) and
        the line the splice must touch is sometimes still a placeholder.
        Mounting from the already-loaded pre-edit layout costs ~50 ms against
-       the per-line engraving it avoids. The edit's neighbourhood ONLY, not the
+       the per-line engraving it avoids. The edit's neighborhood ONLY, not the
        whole hunk (2026-09-02) — see the clip below. */
     if (req.oldPageStartIds.length && !req.partitionOnly) {
       const want = new Set<number>();
@@ -816,7 +816,7 @@ export class PageSystemSplicer {
     tk.setOptions(ctx.liveOptions());
     if (!tk.loadData(mei)) throw new Error('[page-splice] reference loadData failed');
     /* ONE DEVICE PIXEL (10 user units at scale 100). Not a fudge — the exact
-       size of a Verovio behaviour we cannot control, measured 2026-09-03.
+       size of a Verovio behavior we cannot control, measured 2026-09-03.
 
        `renderToSVG` is NOT IDEMPOTENT for the running page header: rendering a
        page a SECOND time from the same loaded document moves its `pgHead` text

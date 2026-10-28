@@ -1,4 +1,4 @@
-// Syntonic ('S') / Polysyntonic ('Y') oracle (docs/architecture.md → Tuning modes, Syntonic / Polysyntonic; colour: → Color scheme).
+// Syntonic ('S') / Polysyntonic ('Y') oracle (docs/architecture.md → Tuning modes, Syntonic / Polysyntonic; color: → Color scheme).
 //
 // Pure Node gate — imports the REAL @hkl/shared modules through the repo's TS
 // loader and checks every rule the spec states, under every mapping, over a
@@ -11,7 +11,7 @@
 //      160/81, 160/81, 81/40 by transition (Wicki-Hayden 6-band, chromatic
 //      12-band; Euler 3-band step is P's 2/1 times the same comma)
 //   D  re-anchoring: Polysyntonic = global shift by −n·SC; Syntonic = period 4
-//   E  colour: hue = P's hue + 2k steps (mod 7); septimal never; white/black =
+//   E  color: hue = P's hue + 2k steps (mod 7); septimal never; white/black =
 //      MIDI pitch class
 //   F  HEJI: syn5 = −k (up-arrows raised), sept7 = 0; hejiChain renders |k| ≤ 4
 //

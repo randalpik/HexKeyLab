@@ -201,7 +201,7 @@ def lattice_events(src, crop, t0, dur, workdir, thr=CELL_THR):
 class TakeAudio:
     """Mono PCM of one take (from extract_wav) + a local onset-rise probe.
 
-    rise(t, lo, hi): over frames whose centre lies in [t+lo, t+hi], the largest
+    rise(t, lo, hi): over frames whose center lies in [t+lo, t+hi], the largest
     jump of the first-difference (high-pass) 10 ms RMS envelope above the floor of
     the previous 20 ms, in dB; the time of that jump; and the sustain = mean level
     over the 30 ms after the jump, above the same floor. A real attack rises by

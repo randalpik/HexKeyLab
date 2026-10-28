@@ -1,15 +1,15 @@
-// Key colour — one function of the pitch.
+// Key color — one function of the pitch.
 //
-// Colour belongs to the pitch, not to the layout: a tuning mode or note-name
+// Color belongs to the pitch, not to the layout: a tuning mode or note-name
 // mapping only decides which pitch sits on a cell, and the same pitch gets the
-// same colour wherever it appears. For the JI modes the hue is a function of the
+// same color wherever it appears. For the JI modes the hue is a function of the
 // cell's prime-exponent vector e = [e2, e3, e5, e7] (coordExps):
 //
 //   hue = hueCycleOrder[ floor((57 + 7·e3 + 4·e5 + 10·e7) / 12) − 4   mod 7 ]
 //
 // Each prime is weighted by its 12-TET step reduced into the octave (3/2 = 7,
 // 5/4 = 4, 7/4 = 10), so the hue is the pitch's 12-TET octave minus the octaves
-// its prime factorisation contains; e2 never enters. Steps per comma: syntonic 2,
+// its prime factorization contains; e2 never enters. Steps per comma: syntonic 2,
 // schisma 5, Pythagorean 7 ≡ 0, 35/36 0. A cell with e7 ≠ 0 takes the septimal
 // (.sl/.sd) variant; white/black follows the cell's MIDI pitch class.
 //
@@ -46,7 +46,7 @@ export function keyColor(q: number, r: number, mode: TuningMode, mapping: Mappin
   return { hue, isW, isB: e7 !== 0 };
 }
 
-/** Lattice key colour: .l / .d by white/black, .sl / .sd when septimal. */
+/** Lattice key color: .l / .d by white/black, .sl / .sd when septimal. */
 export function keyColorHex(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number): string {
   const v = keyColor(q, r, mode, mapping, anchor);
   if (v.isB) return v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!;
@@ -54,7 +54,7 @@ export function keyColorHex(q: number, r: number, mode: TuningMode, mapping: Map
 }
 
 /** Bright "light source" hue — always the light variant (.l / .sl), ignoring
- *  white/black. The notehead colour on a DARK notation surface, where the .d
+ *  white/black. The notehead color on a DARK notation surface, where the .d
  *  black-key variant is too dark to read (the accidental glyph already conveys
  *  sharp/flat, so the notehead only needs to carry the hue). */
 export function lightSourceHex(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number): string {
@@ -62,7 +62,7 @@ export function lightSourceHex(q: number, r: number, mode: TuningMode, mapping: 
   return v.isB ? hueC[v.hue].sl! : hueC[v.hue].l;
 }
 
-/** Ink-on-white-paper notehead colour: the lattice colour remapped to its
+/** Ink-on-white-paper notehead color: the lattice color remapped to its
  *  per-hue ink profile (HUE_PROFILES), so outputs are exactly the sanctioned
  *  ink set that sanctionedLightForInk reverse-maps. */
 export function inkColorHex(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number): string {

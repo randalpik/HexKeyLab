@@ -1,6 +1,6 @@
 # CLAUDE.md — HexKeyLab Project Context
 
-This document is the entry point for any Claude session working on HexKeyLab. Read it first.
+This document is the entry point for any Claude session working on HexKeyLab. Read it first. It holds what every session needs; detail lives in the doc it belongs to, with a pointer here.
 
 ## Who you're working with
 
@@ -8,57 +8,64 @@ Max Randal. Music theorist, software engineer, and Lumatone player. Builds HKL a
 
 ## What HexKeyLab is
 
-A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems (currently Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic, Syntonic, and Polysyntonic — see Tuning modes below). It does seven things:
+A browser-based visualizer, audio engine, and Lumatone controller for hexagonal isomorphic keyboards with arbitrary tuning systems. It:
 
-1. **Visualizes** the hex lattice with band/seam structure, color-coded by tuning system
-2. **Plays audio** through sample-based instruments (piano, organs, strings, etc.) and oscillators with proper JI tuning
-3. **Communicates with the Lumatone** via MIDI input (notes from physical play) and SysEx output (key colors, key remapping, calibration)
-4. **Analyzes intervals and chords** with comma-decomposition naming and JI ratio display
-5. **Records and plays back performances** with full coordinate fidelity, and exports/imports `.mid` files via MPE for editing in external DAWs
-6. **Transcribes recordings to sheet music** via a `.hkr` → `.hkc` pipeline (tempo estimation + Ellis-DP beat tracking + per-bar duration Viterbi DP), emitting a Composer-native `.hkc` (MEI) with colored noteheads keyed to the lattice — downloadable or bridged straight to Composer for editing
+1. **Visualizes** the hex lattice with band/seam structure, colored by pitch
+2. **Plays audio** through sample-based instruments and oscillators in just intonation
+3. **Drives the Lumatone**: MIDI in from physical play; SysEx out for key colors, key layout and calibration
+4. **Analyzes intervals and chords** with comma-decomposition naming and JI ratios
+5. **Records and plays back** performances as coordinates (`.hkr`), with a deterministic MPE `.mid` round-trip for DAWs
+6. **Transcribes recordings** into Composer-native `.hkc` scores
 7. **Documents tuning theory** through interactive exploration
 
-The **HKL Analyzer** (`apps/analyzer/`) is the dev-facing companion: a browser UI plus a Node CLI (`apps/analyzer/cli/`) that batch-generates loop-point + gain data for sample-based instruments from CDN soundfonts. Dev tooling, not shipped to end users, but part of the project.
+Sibling apps in the same repo: **HKL Composer** (`apps/composer/`), a keyboard-driven, Verovio-backed score editor that uses HKL as its input device over a same-origin `BroadcastChannel` bridge; the **Analyzer** (`apps/analyzer/`), dev tooling that generates loop points and gains for sample instruments; the **Orchestrator** (`apps/orchestrator/`), which samples a MIDI device into a velocity-layered `.hki`; and the **overlay host** (below).
 
-**HKL Composer** (`apps/composer/`) is a sibling app shipped from the same repo — a keyboard-driven, Verovio-backed score editor that uses HKL as its input device via a same-origin `BroadcastChannel` bridge. Composer holds the MEI/score state; HKL holds the audio/MIDI/tuning state. See [docs/architecture/composer.md](docs/architecture/composer.md).
+## Stack and repo
 
-## Project status (2026)
+Repo `/home/max/HexKeyLab`, version `1.0.0`: TypeScript + Vite + vanilla DOM. **No React, no Redux** — HKL is mostly engine code (audio, MIDI, render, SysEx state machines). React was considered and rejected; if the toolbar ever needs a framework, Lit or Solid are the candidates.
 
-Repo at `/home/max/HexKeyLab`, version `1.0.0`. Migration from the v0.9 single-file (`HexKeyLab.html`, ~4200 lines of inline CSS/JS) to a strict TypeScript + Vite project is complete; that codebase is now being restructured into a pnpm monorepo (`apps/*` + `packages/*` — see the layout note below). v1.0 feature work is landing on top: pedal revamp, polyphonic aftertouch, persistence, recording/playback, and Lumatone diagnostics are all in.
+A pnpm monorepo (layout, exports map and build details: [docs/architecture.md](docs/architecture.md) → Repo layout):
+- **`apps/{hkl,composer,analyzer,orchestrator}/`** — the four Vite apps, each with its own dev server.
+- **`apps/overlay-host/`** — a Node server, not a Vite app: the OBS-overlay WebSocket relay plus Composer's local file bridge (`/fs/*`). **On Max's machine it runs permanently as the systemd user service `hkl-overlay-host`**: never start a second host on :5190 (tests bind their own ports); edits to `apps/overlay-host/src/` take effect only after `systemctl --user restart hkl-overlay-host`, which is Max's to run.
+- **`packages/{shared,engine,notation,bridge,analysis}/`** — the libraries. DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, plus `@hkl/analysis` (zero deps) ← {analyzer, orchestrator}. `pnpm check:boundaries` enforces it: `@hkl/shared` is pure data (no DOM/state/runtime), `@hkl/engine` imports only `@hkl/shared`, Composer imports only `@hkl/{bridge,notation,shared}` (never HKL audio/MIDI/state/lumatone), and no app imports another app's `src/`.
 
-Stack: TypeScript + Vite + vanilla DOM, modular by domain. **No React, no Redux.** HKL is mostly engine code (audio, MIDI, render, SysEx state machines) — not a UI app. The toolbar UI is small enough to not need a framework. If a framework is later wanted *for the toolbar specifically*, Lit or Solid are the considered options. React was explicitly considered and rejected.
+### Running and verifying
 
-**Repo layout is a pnpm monorepo** (migration in progress — see decisions.md "Per-app split + same-origin dev proxy" and the two prior monorepo entries). There is no top-level `src/` anymore:
-- **`apps/{hkl,composer,analyzer,orchestrator}/`** — the four servable Vite apps, each its own package with `index.html` + `vite.config.ts` + `package.json` + `src/`. (Granular paths in this doc written as `src/foo/bar.ts` now live at `apps/hkl/src/foo/bar.ts` unless they're composer/analyzer/orchestrator code.) Each runs its own dev server with scoped HMR. (`orchestrator` = HKLO: samples a MIDI device into a velocity-layered `.hki` — see [docs/architecture/orchestrator.md](docs/architecture/orchestrator.md).) A fifth app, **`apps/overlay-host/`** (`@hkl/overlay-host`), is NOT a Vite app — it's a small Node server (`.mjs`) that hosts the OBS-overlay WebSocket relay and serves the lean read-only overlay build, plus Composer's **local file bridge** (`/fs/*` — native open/save dialogs + save-in-place, since Firefox has no File System Access API); run separately via `pnpm overlay:host` (NOT by the dev proxy). **On Max's machine it runs permanently as the systemd user service `hkl-overlay-host`**: never start a second host on :5190 (tests bind their own ports), and edits to `apps/overlay-host/src/` take effect only after `systemctl --user restart hkl-overlay-host` — Max's to run, same hands-off rule as the dev server. See [docs/architecture/overlay.md](docs/architecture/overlay.md) (→ Running it).
-- **`packages/{shared,engine,notation,bridge,analysis}/`** — the library packages (`@hkl/shared`, `@hkl/engine` = HKLE nucleus, `@hkl/notation`, `@hkl/bridge`, `@hkl/analysis` = DOM-free sample-analysis DSP shared by the Analyzer + Orchestrator). DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, and `@hkl/analysis` (zero deps) ← {analyzer, orchestrator}. Imports use bare `@hkl/*` specifiers (subpath exports map `./*.js` → `./src/*.ts`; `@hkl/analysis` mixes `.js`+`.ts` so its map is `["./src/*.js","./src/*.ts"]`); intra-package imports stay relative.
+- **`pnpm dev`** runs the four app servers behind `vite/dev-proxy.mjs` at **one origin, `http://localhost:5170`** (`/`, `/composer/`, `/analyzer/`, `/orchestrator/`). The single origin is mandatory: the `BroadcastChannel` bridges and the `IndexedDB` instrument registry are per-origin. The dev server is Max's — never start or kill it; if none is up, ask him to run it.
+- **pnpm, not npm.**
+- Before claiming a change works: `pnpm typecheck` (one root `tsc --noEmit` over `apps` + `packages`), `pnpm check:boundaries`, and a build of each touched app — `NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter @hkl/<app> build`, one at a time. **Never the root `pnpm build`** on Max's machine (it ran out of memory).
+- Then the module's own tooling under `test/` (and `tools/` for hardware), before AND after the change: model-only verification has repeatedly missed visual and behavioral regressions the tooling catches in one pass.
 
-**Running it: `pnpm dev`** spawns all four app servers + `vite/dev-proxy.mjs`, which reverse-proxies them under **one origin `http://localhost:5170`** (`/`→hkl, `/composer/`→composer, `/analyzer/`→analyzer, `/orchestrator/`→orchestrator). The single origin is mandatory — the HKL↔Composer/Analyzer/Orchestrator `BroadcastChannel` bridges and the `IndexedDB` instrument registry are per-origin. `pnpm build` = `pnpm -r --filter='!./test/**' build` (each app to its own `dist/`; test packages excluded — `test/react-consumer`'s `link:` dep on the git-ignored `packages/engine/dist` breaks fresh-clone/Netlify builds, and its smoke gate builds itself via `run.mjs`); `pnpm typecheck` is one root `tsc --noEmit` over `apps` + `packages`. Verovio WASM is CDN-loaded by `@hkl/notation`; the analyzer + orchestrator apps bundle their own workers and import the shared DSP from `@hkl/analysis`. Use **pnpm**, not npm (lockfile is `pnpm-lock.yaml`; `allowBuilds` in `pnpm-workspace.yaml` gates dependency install-scripts — esbuild must stay enabled).
+### Composer verification
+
+- **Test suite** (`test/composer-test/`, ~730 fixtures; needs `pnpm dev`): `pnpm test:composer:affected` for a scoped change (read its report — untested changed lines mean a missing fixture); `pnpm test:composer:fast` for breadth; `pnpm test:composer` (every fixture, ~7 min) once per broad change set. Flags, in-page hooks and debugging: `test/composer-test/README.md`.
+- **Every Composer bug fix or feature lands with a fixture** in `fixtures/<category>.mjs` — with an `ASSERTIONS[name]` entry when the universal invariants don't cover the change, and `visualBaseline` for visual coverage.
+- **Screenshots come from `visualBaseline` fixtures**, never `inspect.mjs --screenshot` (it resizes the viewport before capturing, so the overlay is stale). `test/composer-inspect/inspect.mjs '<expr>'` is fine for DOM/state queries.
+- **Visual diffs** go to Max as a heatmap (`test/composer-test/heatmap.py`), never a side-by-side; re-seed with `--update-baselines` only on his approval.
+- **Sonata probes** (`test/composer-inspect/sonata-probes/`, index in its README): whole-document gates against Max's sonata; run the edit-path gates after any change to the refill, splicer, partition or pagination.
+- When test pixels disagree with live behavior on the same code, diff the flows (every command the runner issues that a live session doesn't) before hypothesizing about caching or paint timing. Verify file writes by mtime/size, not exit code.
 
 ## How to work with Max
 
-### ⚠️ RULE ZERO — Speak before every tool call. No silent extended thinking. ⚠️
+### ⚠️ RULE ZERO — Keep Max in the loop: speak before you act, never go silent. ⚠️
 
-**This is the rule Max has had to remind me about most often, including by interrupting silent thinking blocks after 10+ minutes of zero output. If you remember nothing else from this file, remember this. Past violations have included multi-minute, 50k+-token internal deliberations on routine debugging — completely unacceptable.**
+Max would always rather redirect a wrong direction in seconds than wait through silence. The failures this rule exists for: multi-minute silent deliberations, bare tool-call messages, and turns that answer a question without looking anything up. Mandatory:
 
-Concrete rules — these are not aspirational, they are mandatory:
-
-1. **Before any tool call, write at least one sentence in the user-facing channel** stating what you're about to do, even if it feels obvious. "Looking at X to confirm Y" is fine. Silence is not.
-2. **If you genuinely need to think, do it in 1–2 sentence chunks between tool calls**, not in giant blocks. Think → speak → act → repeat. Each thinking block must be small enough that an interruption from Max would only waste seconds, not minutes.
-3. **For complex debugging, narrate your hypotheses as you form them**, even half-formed ones. The user would always rather redirect a wrong direction early than wait through silent deliberation. Wrong hypotheses spoken aloud are useful; wrong hypotheses thought silently waste both of our time.
-4. **For a directive like "do X," reply with one short acknowledgement and start the tool call in the same turn** — do not deliberate first.
-5. **Do not ruminate on which of two near-identical implementations is nicer** — pick one and do it.
-6. **If you have a clarifying question, ask it in one line and stop**; do not produce a four-option AskUserQuestion or weigh options silently.
-7. **Every message that contains a tool call must BEGIN with at least one sentence of visible text — no exceptions for "mechanical" calls** (TodoWrite, collecting a background result, re-running a check). A bare tool-call message reads as silence. Feeling like the sentence is redundant is what this failure feels like from the inside; write it anyway. (Added 2026-07-10 after two bare tool-call messages produced multi-minute silent stretches.)
-8. **Never wait synchronously on a background task** (no blocking TaskOutput). End the turn; the completion notification resumes work. If a synchronous wait is ever unavoidable, announce it with an expected duration BEFORE waiting — long operations generally (CDN downloads, full batch regens) get their cause and rough duration stated up front.
-9. **When Max asks a direct question, reply with text only and end the turn** — answer from what is already known; gather better data afterward, not before. And when the question is about what you did: verify against the actual transcript, never reconstruct from memory of intent — private reasoning and emitted output are indistinguishable in hindsight and WILL be confabulated.
-
-If you catch yourself in a long thinking block, **stop the thinking, write a sentence, and continue**. The cost of breaking up thought is far smaller than the cost of silent walls.
+1. **Every message that contains a tool call begins with at least one sentence of visible text** saying what you're about to do ("Reading X to confirm Y"). No exception for "mechanical" calls (todo updates, collecting a background result, re-running a check) — feeling that the sentence is redundant is what this failure feels like from the inside.
+2. **Think in small steps, out loud.** Think → speak → act → repeat; keep each private reasoning stretch short enough that an interruption costs seconds, not minutes. In debugging, state hypotheses as they form, even half-formed ones. If you notice a long silent stretch, stop, write a sentence, and continue.
+3. **Directives**: "do X" gets a one-line acknowledgement and the first tool call in the same turn. Don't deliberate over near-identical implementations — pick one.
+4. **Questions**: first decide whether the answer is already in your context.
+   - **It is** → answer in text and end the turn. Don't run tool calls to re-derive what you already have.
+   - **It isn't** (it lives in the code, docs, git history, or needs a measurement) → say in a line what you already know and what you'll check ("I'll search lessons/decisions and git history for the 0.85"), then check, then answer the question's intent fully in the same turn. A turn that ends on "I don't know" or "I haven't checked" is a lookup left undone.
+   - **About what you did** → verify against the transcript, never reconstruct from memory of intent; private reasoning and emitted output are indistinguishable in hindsight and WILL be confabulated.
+5. **Clarifying questions**: one line, then stop — not a multi-option AskUserQuestion menu for something that fits in a sentence.
+6. **Background work**: never block on a background task; end the turn and let the completion notification resume work. A long operation you must run in the foreground (CDN downloads, full regens) gets its cause and rough duration stated before it starts.
 
 ### Other style
 
 **Style**: Direct, peer-to-peer, technically dense when warranted. Match the register of the conversation. Don't over-explain things he already knows. Don't pad responses with framing. He prefers compact responses unless he asks for depth.
 
-**Trust pattern**: He catches subtle regressions through hands-on testing. Trust him on testable claims; ask before pursuing dead-ends; favor compact responses over comprehensive ones.
+**Trust pattern**: He catches subtle regressions through hands-on testing. Trust him on testable claims; ask before pursuing dead-ends.
 
 **Stop and ask** when hitting circular reasoning, when a problem keeps not yielding to attempts, or when proceeding would commit to a direction he hasn't approved. Don't pursue unverified hypotheses.
 
@@ -68,142 +75,71 @@ If you catch yourself in a long thinking block, **stop the thinking, write a sen
 
 **Terminology preferences**: Spell out "augmented"/"diminished" (not abbreviated). Interval naming uses a fixed-meaning adjective hierarchy — `lesser/greater`, `acute/grave`, `septimal`, `subminor/supermajor`, `wolf`, with comma decomposition when no override fits. Full semantics in [docs/architecture/hkl.md](docs/architecture/hkl.md) (interval naming); HKL-specific septimal A2/A4/d5/d7 assignments are in decisions.md.
 
-**Verification before claims**. Use **pnpm, not npm**. Run `pnpm typecheck` (one root `tsc --noEmit` over `apps` + `packages`), `pnpm build` (or `pnpm --filter @hkl/<app> build`), and `pnpm check:boundaries` (enforces the package DAG — see decisions.md) before claiming a change works. Beyond that, **check `test/` for verification tooling specific to the module you're working in** (e.g., `test/composer-inspect/` for Composer rendering, `tools/lumatone-cal/` for calibration). If a tool exists for invariant checking or visual verification, run it before AND after the change — model-only verification has repeatedly missed visual / behavioral regressions that the tooling catches in one pass. Re-Read files between edits if intervening tool calls may have modified them; if `Edit` fails with "file modified since read", re-Read and re-attempt the same change before moving on. Search the codebase before saying something doesn't exist.
+**Look before claiming**. Search the codebase before saying something doesn't exist. Re-Read a file between edits if other tool calls may have modified it; if `Edit` fails with "file modified since read", re-Read and re-attempt the same change before moving on.
 
-**Identifiers are copied, never recalled**. Any opaque identifier in text Max reads — an absolute path, a UUID, a hash, an `xml:id` — is copied from a tool result or looked up with a tool call first, never typed from memory. A sentence that goes wrong is deleted and rewritten, never patched in-stream ("…is not the exact path; the correct one is…"), and a lookup is never handed to Max ("run `ls` to find it"); an optional reference is dropped rather than hedged. The final recap is a deliverable held to the same bar as code. (Added 2026-10-17 after a garbled scratchpad path in a wrap-up message; Max: "run-on sentence slop kills trust".)
-
-**File paths**. Repo is `/home/max/HexKeyLab` in Claude Code; that's the working directory for any code change.
+**Identifiers are copied, never recalled**. Any opaque identifier in text Max reads — an absolute path, a UUID, a hash, an `xml:id` — is copied from a tool result or looked up with a tool call first, never typed from memory. A sentence that goes wrong is deleted and rewritten, never patched in-stream ("…is not the exact path; the correct one is…"), and a lookup is never handed to Max ("run `ls` to find it"); an optional reference is dropped rather than hedged. The final recap is a deliverable held to the same bar as code.
 
 ## Critical hardware context
 
-These are non-negotiable constraints. Always respect them.
+Non-negotiable constraints. Protocol detail (commands, LED throughput, pedal calibration) is in [docs/architecture/hkl.md](docs/architecture/hkl.md) → Hardware integration.
 
 - **Lumatone is 5 boards × 56 keys = 280 keys.**
-- **Boards 3 and 4 are physically swapped on Max's unit.** This is now a **runtime toggle**, not hardcoded: *Calibrate Keys → "Swap boards 3 ↔ 4"*, **off by default** (standard units need no swap), persisted as the `swapBoards34` pref. **Max's unit needs it ON** — toggle it once. All SysEx board-byte routing goes through `sysexBoardFor(group)` (`apps/hkl/src/lumatone/protocol.ts`), which returns the identity map `[1,2,3,4,5]` when off and `[1,2,3,5,4]` when on. Never hardcode either map at a call site. (Only the board byte flips; the MIDI channel map is independent — see next line.)
-- **Fixed MIDI channel map is 0-indexed in SysEx**: `fixedMidiChannelMap = [0,1,2,3,4]`. The Lumatone firmware uses the SysEx channel byte directly.
+- **Boards 3 and 4 are physically swapped on Max's unit** — a runtime toggle (*Calibrate Keys → "Swap boards 3 ↔ 4"*, pref `swapBoards34`, off by default, ON for Max's unit). All SysEx board bytes go through `sysexBoardFor(group)` (`apps/hkl/src/lumatone/protocol.ts`); never hardcode a board map at a call site.
+- **The MIDI channel map is 0-indexed in SysEx**: `fixedMidiChannelMap = [0,1,2,3,4]`, independent of the board swap.
+- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. When LED updates are pending, prefer another board over the same one — interleaving boards is ~3× faster.
 - **A3 = 220 Hz** is the central reference of the tuning system.
-- **The expression pedal jack is Roland-wired** (wiper on ring). Korg-style pedals (DS-1H, DS-2H, switch pedals) leave the ring floating and produce noise; don't confuse this with a software bug. Roland DP-10, EV-5, and Yamaha (with polarity invert) work.
-- **CC 4 is hardcoded for the expression jack** in firmware; it cannot be remapped via SysEx. CC 64 is the sustain jack (binary).
+- **Pedals**: the expression jack is Roland-wired and fixed to CC 4; the sustain jack is CC 64 (binary). Neither is remappable via SysEx. Korg-style expression pedals read as noise — a wiring mismatch, not a software bug.
+- **Power-off emits a burst of protocol-valid spurious note-ons**; the liveness heartbeat (`apps/hkl/src/midi/heartbeat.ts`) clears it rather than filtering it — don't re-propose filters (decisions.md 2026-10-02).
+- **Calibration and firmware work** (SSH into the unit, per-key KeyData, the local firmware mirror at `/home/max/lumatone/`): read [docs/lumatone-calibration.md](docs/lumatone-calibration.md) and hkl.md → Lumatone internals first.
 
 ## Critical tuning context
 
-- **Coordinate axes**: q = major thirds (5:4), r = **fifths** (3:2). The r axis is fifths, NOT minor thirds. Minor thirds are a derived direction (-1, +1) in (q, r). This was verified empirically from LTN data and is easy to misremember.
-- **Band structure**: 3 keys wide along the q-axis. Every key is exactly 2:1 (octave) above the key 3 positions to its left. Band index = `floor((q+1)/3)`, position-in-band = `((q+1) % 3 + 3) % 3`.
+- **Coordinate axes**: q = major thirds (5:4), r = **fifths** (3:2). The r axis is fifths, NOT minor thirds — minor thirds are the derived direction (-1, +1). Easy to misremember.
+- **Band structure**: 3 keys wide along the q-axis; every key is exactly 2:1 above the key 3 positions to its left. Band index = `floor((q+1)/3)`, position-in-band = `((q+1) % 3 + 3) % 3`.
 - **Origin**: A3 sits at (q=0, r=0) with bandOf=0, posInBand=1.
-- **Constraint**: 5-limit mode constrains prime-5 exponent to ±2 (because posInBand ranges 0–2). Diesis (128:125) is unreachable in 5-limit; 7-limit syntonic adjustments can bring it within reach.
-
-### Tuning modes (`TuningMode` in `apps/hkl/src/state/persistence.ts`)
-
-`TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y'`. Selector displays them in this order with conceptual labels: **Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic · Syntonic · Polysyntonic**. Persistence values stay the original `'E'/'5'/'7'` plus `'P'/'D'/'V'` so old prefs and `.hkr` recordings load unchanged. ('V' for "variant" was the code first picked, retained for disambiguation even though the label is now "Schismatic" — see the mode entry below.)
-
-**Dual definition gotcha** (agent maintenance checklist when adding a mode): `TuningMode` is declared in TWO places that must stay in sync — `apps/hkl/src/state/persistence.ts` (HKL app state) and `@hkl/shared/freq.js` (shared with Composer, self-contained). Update both type aliases AND the `TUNING_MODES` array in `@hkl/shared/freq.js`. `Record<TuningMode, …>` sites needing new entries: `MODE_LABELS` (`apps/composer/src/notation/retune.ts`), `TUNING_LABELS` (`apps/composer/src/setupDialog.ts` + `apps/hkl/src/bridge/hkl-side.ts`; plus the `Record<string,…>` one in `apps/composer/src/input.ts`, which the compiler won't flag). Every `isTuningMode` guard derives from `TUNING_MODES` (no hand-written lists). Also the selector `<option>` in `apps/hkl/index.html` and the `tuningDescription()` switch in `apps/hkl/src/bridge/hkl-side.ts`. The bounds tables (`PIANO_BOUNDS_TABLE`, `VALID_REF_TABLE`) are generated by `test/bounds-probe/` (which runs the real picker, `apps/hkl/src/tuning/picker.ts`, over `TUNING_MODES`): re-run both probes so the new mode gets a bucket under each **mapping**. Colour needs nothing per mode (one pitch function — `@hkl/shared/keycolor.js`), nor does HEJI (derived from `coordExps`).
-
-**Note-name mapping** (`Mapping = 'euler' | 'wickiHayden' | 'chromatic'`, single definition in `@hkl/shared/mapping.js` with `MAPPINGS` / `MAPPING_LABELS` / `COLUMN_STEP`, toolbar `Mapping:` dropdown) is a second axis orthogonal to the mode: a `(q, r)` is interpreted in its mapping's frame, so the mapping travels with every coordinate (prefs, `.hkr` snapshot, `<hkl:layoutReq mapping>`, every coordinate-bearing bridge message). Shared primitives (`coordExps`, `freqAt`, `coordToMidi`, `noteName`, `keyOctave`, `hejiCommasFor`) take it as a **required** argument; HKL's state-based helpers read `tuning.mapping`. Never write `57 + 4q + 7r`, octave `q ± 3` or SC `(±7, ∓4)` against a frame coordinate — use `coordToMidi(…, mapping)` / `vecFromEuler`. Never branch on `mapping === 'wickiHayden'` either: a ternary silently turns any other mapping into Euler. Derive from `COLUMN_STEP` / `bandWidth`, or use a `Record<Mapping, …>` so the compiler enumerates every site. Two band functions: `bandOfCell` (spatial: seams, spine, anchor, Schismatic schisma) and `pitchBandOf` (the Syntonic/Polysyntonic offset a chromatic borrowed column carries). Semantics: docs/architecture.md → Note-name mapping.
-
-The per-mode behavior (E/5/P/D/7/V/S/Y), the Schismatic-V details, the Syntonic/Polysyntonic **anchor** (home band, `tuning.anchor`, derived from the ref tiers in `state/reference.ts`), coloring, and seams are documented in **[docs/architecture.md](docs/architecture.md) → Tuning system** (the human-readable source of truth). The per-mode tuning lives in exactly one place, `coordExps(q, r, mode, mapping, anchor)` (`@hkl/shared/freq.js`); frequency, ratios, HEJI commas and colour all derive from it. **Colour is one function of the pitch** for every JI mode (Equal's octave cycle is the one separate rule) — never add a per-mode colour branch; `test/color-gate/` pins it. Canonical source of truth is `tuning.mode`; `tuning.equalEnabled`/`tuning.septimalEnabled` are derived booleans kept in lockstep by `setTuning()`. Any unrecognized persisted `tuning` reverts to `'5'`.
-
-The **ref-driven layout shift** (`refSpine`), held-voice migration, ref validation, and the 88-cell picker (one ranking rule for every mode: TH, then the augmented 4th at the tritone tie, then key steps from the ref among identical pitches — `apps/hkl/src/tuning/picker.ts`) also live in [docs/architecture.md](docs/architecture.md) → Tuning system. Agent-relevant invariant: `validateRefNoteCandidate` (`apps/hkl/src/render/draw.ts`) gates a ref on (1) MIDI ∈ [21,108] and (2) the 88-cell footprint spelling with ≤ ±3 accidentals — no separate "valid-ref" gate exists.
+- **Modes**: `TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y'` = Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic · Syntonic · Polysyntonic (the persisted codes predate the labels; `'V'` is Schismatic). The per-mode tuning lives in exactly one place, `coordExps(q, r, mode, mapping, anchor)` (`@hkl/shared/freq.js`); frequency, ratios, HEJI and color all derive from it. `TuningMode` is declared twice — adding a mode follows the checklist in docs/architecture.md → Tuning system → Adding a tuning mode.
+- **Color is one function of the pitch** for every JI mode (Equal's octave cycle is the one separate rule) — never add a per-mode color branch; `test/color-gate/` pins it.
+- **Note-name mapping** (`Mapping = 'euler' | 'wickiHayden' | 'chromatic'`, `@hkl/shared/mapping.js`) is orthogonal to the mode: a `(q, r)` means nothing without its mapping, so the mapping travels with every coordinate and shared primitives take it as a **required** argument. Never write Euler arithmetic (`57 + 4q + 7r`, octave `q ± 3`, SC `(±7, ∓4)`) against a frame coordinate — use `coordToMidi(…, mapping)` / `vecFromEuler`. Never branch on `mapping === 'wickiHayden'` (a ternary silently turns any other mapping into Euler) — derive from `COLUMN_STEP` / `bandWidth`, or use a `Record<Mapping, …>` so the compiler enumerates every site.
+- Per-mode behavior, the Syntonic/Polysyntonic anchor, the ref-driven layout shift, ref validation, the 88-cell picker and the two band functions are in **[docs/architecture.md](docs/architecture.md) → Tuning system**, the source of truth.
 
 ## Architecture & app docs
 
-The human-readable "what it is / how it works" reference lives under [`docs/architecture/`](docs/architecture/) — overview ([docs/architecture.md](docs/architecture.md): tuning, color, coordinates, file formats, cross-app flows) + per-app deep-dives ([hkl.md](docs/architecture/hkl.md), [composer.md](docs/architecture/composer.md), [analyzer.md](docs/architecture/analyzer.md), [engine.md](docs/architecture/engine.md), [overlay.md](docs/architecture/overlay.md)). Agent-relevant philosophy in one line each:
+The "what it is / how it works" reference lives under [`docs/architecture/`](docs/architecture/): the overview ([docs/architecture.md](docs/architecture.md): tuning, color, coordinates, file formats, cross-app flows) plus per-app deep-dives ([hkl.md](docs/architecture/hkl.md), [composer.md](docs/architecture/composer.md), [analyzer.md](docs/architecture/analyzer.md), [orchestrator.md](docs/architecture/orchestrator.md), [engine.md](docs/architecture/engine.md), [overlay.md](docs/architecture/overlay.md)). The philosophy in one line each:
 
-- **Self-contained audio**: all tuning/layout interpretation + synthesis happen in HKL via `@hkl/engine`; the Lumatone sends fixed `(channel, note)`, no external synth / Scala / per-layout mappings. (→ [engine.md](docs/architecture/engine.md))
-- **Recording = coordinates, not pitch**: `.hkr` (JSON: layout snapshot + flat coord-event stream) is canonical; `.mid` is a deterministic MPE round-trip. Capture hooks live inside the audio-engine note path so all input sources record identically. (→ [hkl.md](docs/architecture/hkl.md))
-- **Composer is decoupled**: separate tab, talks to HKL only via the resolved `BroadcastChannel` bridge (`@hkl/bridge`); imports none of HKL's audio/MIDI/state. Engraving is Verovio (MEI in / SVG out); `.hkc` = MEI + `data-q`/`data-r`. (→ [composer.md](docs/architecture/composer.md))
-- **OBS overlay = one local relay + read-only mirror**: the performing HKL publishes render state over a localhost WebSocket; a `?overlay` instance (lean, audio/MIDI-free build) loaded as an OBS Browser Source renders it transparent. Served by the standalone `apps/overlay-host` (the only relay; run `pnpm overlay:host`). (→ [overlay.md](docs/architecture/overlay.md))
-
-**Headless Composer verification tooling** (`test/composer-inspect/`): use this whenever a Composer change touches rendering, cursor, layout, or DOM structure. Model-state inspection alone has repeatedly missed visual regressions — most commonly "cursor flat-index changes but the rendered bar doesn't move." Requires `pnpm dev` running. The `window.__hkl_composer` handle inside any expression exposes `bridge, model, renderer, cursor, reRender`.
-
-- **`inspect.mjs '<expr>'`** — runs a JS expression in a headless Chromium page; prints the result as JSON. Use for ad-hoc DOM/state queries: `node test/composer-inspect/inspect.mjs '[...document.querySelectorAll("g.accid use")].map(u => u.getAttribute("xlink:href"))'`.
-- **`inspect.mjs --screenshot <path> [<expr>]`** — captures the rendered page as PNG (the Read tool renders PNGs visually for you). The optional expression runs first, so you can drive the model into a specific state and screenshot the result. Use to see what Max sees without manual browser cycles.
-- **`sonata-probes/`** — whole-document gates, censuses and cost probes run against Max's sonata through `run-probe.mjs` (splice battery/sweep, command inventory, reference gate, engraving censuses, load/edit cost attribution). Run the edit-path gates after any change to the refill, splicer, partition or pagination. Index + rules: `test/composer-inspect/sonata-probes/README.md`.
-
-**Composer test suite** (`test/composer-test/`): ~650 fixtures in 27 feature categories (`fixtures/<category>.mjs`), each run through every universal invariant (placeholder, tie orphans, pagination first-fit, roundtrip, cursor-trace, console, splice ledger, visual baseline if declared) plus its own assertions. Every mode runs every invariant; modes only select fixtures:
-- **`pnpm test:composer:affected`** — fixtures that execute the lines you changed (per-fixture coverage map, `out/coverage-map.json`) ∪ the fast tier. **The default for a scoped change.** Read its report: UNTESTED changed lines mean a missing fixture; "not in the coverage map" (new module, CSS, HTML) or "runner changed" means choose `--group <category>` or the full suite.
-- **`pnpm test:composer:fast`** — the fast tier (~90 fixtures, ~45 s here / ~80 s on Max's machine), generated by `select-fast.mjs` for breadth (one fixture per category, one visual per category with baselines, then coverage per second). Never hand-edit `fast-tier.json`.
-- **`pnpm test:composer`** — every fixture (~6 min here, 10+ min on Max's machine): once per broad or cross-cutting change set, not per edit.
-- `--group a,b` / `--only <prefix>` narrow any mode; `--list` prints the selection without running. After large source or suite changes, regenerate the map and the tier: `node test/composer-test/run.mjs full --coverage && node test/composer-test/select-fast.mjs`.
-
-On failure, the runner emits `test/composer-test/out/summary.json` plus failure shots. See `test/composer-test/README.md`.
-
-The suite exposes `window.__hkl_composer.bridge` for direct send/receive, plus in-page test hooks injected once at startup: `window.__test.*` (assertModelState, assertNoTieOrphans, assertBracketRendered, assertCursorInViewport, runRoundTrip, …), `window.__bridgeMock` (a second BroadcastChannel for HKL-side simulation: `sendHeldKeys(notes)`, `captured()`, `drain()`), `window.__cursorTrace(voice, exemptions)` for ad-hoc cursor walks, and `window.__waitForScrollSettle(maxMs)`. When debugging interactively, `node test/composer-test/run.mjs scenario <name> --keep-open` leaves Chromium running so you can attach DevTools and probe these handles.
-
-**Every Composer bug fix or feature lands with a fixture.** This is how the suite grows naturally with the codebase. Fixtures live in `test/composer-test/fixtures/<category>.mjs` — add to the matching category's `FIXTURES` and define an `ASSERTIONS[name]` entry if the universal invariants (placeholder, tie orphans, cursor-trace, roundtrip, console) don't already cover what changed. For visual coverage, add a `visualBaseline: '<name>'` key; the first run seeds `baselines/<name>.png` automatically. A bug fix without a fixture is a bug fix waiting to regress.
-
-**When a test's pixel output disagrees with live behavior on the same code**: don't hypothesize about caching, animations, or paint timing first. Diff the flows: list every command the test runner issues between the user's last input and the screenshot that a live browser doesn't (mock-channel injects, cursor-trace, RAF waits, forced view modes, etc.), in order. The cause is usually one of those concrete differences. See lessons.md "Test invariants that mutate render state pollute later invariants' pixel reads" and "Test/live divergence: diff the flows before hypothesizing."
-
-**When verifying a write (baseline update, file regen, etc.)**: check mtime/size with `stat` or `ls -la`. "The command exited cleanly" is not proof the file was rewritten — tools can silently skip work when their tier filters don't match. See lessons.md "Verify file writes by checking mtime/size, not exit code."
-
-## Critical Lumatone protocol context
-
-- **LED throughput depends on board ordering**: the standalone USB MIDI benchmark measured ~121 changed-key updates/s on one board versus ~318/s interleaved; alternating just two boards gives the full gain. Max observed unchanged timing while playing. Always prefer another board when useful updates are pending; ~100/s is not a global LED ceiling. HKL color sync now uses a physical top-to-bottom interleaved sweep, confirmed working on Max's unit. Details and the parked Bad Apple experiment: [`tools/lumatone-bench/README.md`](tools/lumatone-bench/README.md); ordering gate: `test/hkl-midi/sync-order.mjs`.
-- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`
-- **Manufacturer ID**: `[0x00, 0x21, 0x50]`
-- **Reference repo**: https://github.com/hsstraub/TerpstraSysEx.2014 — the Terpstra Editor source. Has the authoritative command list.
-- **Key commands HKL uses**:
-  - `0x00 CHANGE_KEY_NOTE` — configure note/channel/keyType per key
-  - `0x01 SET_KEY_COLOUR` — extended 8-bit color as 6 nibbles (RR GG BB)
-  - `0x07 SET_LIGHT_ON_KEYSTROKES` — LED feedback on keypress
-  - `0x0E SET_AFTERTOUCH_FLAG` — global polyphonic aftertouch
-  - `0x31 GET_FIRMWARE_REVISION` — version query
-  - `0x38 CALIBRATE_EXPRESSION_PEDAL` — toggle calibration mode
-  - `0x39 RESET_EXPRESSION_PEDAL_BOUNDS` — reset to factory
-  - `0x3E PERIPHERAL_CALIBRATION_DATA` — spontaneous status packets emitted every 100ms during cal mode
-- **Key types**: 0=disabled, 1=noteOnNoteOff, 2=CC, 3=lumaTouch (continuous fader, NOT poly aftertouch).
-- **typeByte format**: `(faderUpIsNull << 4) | keyType`
-
-## Lumatone hardware (reverse-engineered, for calibration only)
-
-Most HKL work doesn't touch this. Documented here because deriving it again costs a session.
-
-- **Internals**: BeagleBone Black + Debian + 5 PIC microcontrollers. BBB↔PIC over UART `/dev/ttyO1`. BBB↔host over USB-MIDI plus USB-ethernet gadget.
-- **SSH access** (Max's unit only — broken macro buttons make this necessary): `ssh debian@192.168.6.2` (Linux host), password `temppwd`. Mac/Windows hosts use `192.168.7.2`.
-- **Firmware binary**: `/home/debian/TerpstraController/TerpstraController` (ARM 32-bit ELF, not stripped, full DWARF debug info, PIE). Launcher loop: `lmtn_launcher.sh` respawns it forever.
-- **Per-key calibration storage**: `/home/debian/TerpstraController/files/KeyData_1..5`. Text files, 4 sections × 56 values (MAX, MIN, validity, AT MAX). Loaded at every TC boot and pushed to PICs.
-- **In-memory `kbd_preset_params`**: TC `.bss` struct, 638-byte stride per board, section offsets +0x118 / +0x150 / +0x1c0 / +0x1fe. Indexed by PIC number (`sysex_board - 1`), NOT by spatial board_group — the physical-swap mapping only applies to file naming / SysEx routing, never to in-memory layout.
-- **0x24 calibration is unusable for Max's boards 1/4/5**. PIC firmware waits for hardware macro-button signal; no SysEx or BBB-side trick can substitute. Use direct file/memory editing instead.
-- **Local firmware mirror**: `/home/max/lumatone/` is a copy of the device's `debian` home — the `TerpstraController` binary, `LMTN-01_OctaveBoard.hex` (PIC side), and `files/`. Analysis needs no device. **Disassemble with `gdb -batch -ex "disassemble <fn>"`; Arch's binutils has no ARM target, so `objdump -d` fails with "can't disassemble for architecture UNKNOWN".**
-- **PIC→BBB protocol** (`MidiPicCommunication.c`): terminator-framed, **no checksum or length field**. `0xFF` ends a frame; `decodePicMessage` gates on `buf[0]=='0'` (0x30), a jump table on `buf[1]-'A'`, and an exact length. `buf[1]` is a **MIDI status byte** — note-on `0x90` / note-off `0x80` need `len==6`, aftertouch `0xA0` needs `len==5`. Keystroke frame: `30 90 <key> <b3> <b4> FF`. Velocity is NOT transmitted: the BBB rebuilds it from a 12-bit travel time `(b3<<4)|(b4&0x0F)` via `binary_search` over `files/VelocityLookUp_N`. Full detail + consequences in lessons.md.
-- **Power-off emits a burst of spurious note-ons** (mostly but not only velocity 127), protocol-valid and byte-identical to real playing. Nothing at runtime separates it from a dense loud chord, so it is **not filtered — it is cleared**: the always-on **liveness heartbeat** (`midi/heartbeat.ts`) pings the Lumatone (CMD 0x33 `LUMA_PING`, board 0; reply echoes the 4 data bytes) only while the Lumatone holds something and has been silent ≥200ms; two unanswered pings (jank-gated — a wait during which the main thread stalled is inconclusive, not a miss) call `markLumatoneGone`, which releases everything. Measured: the BBB stops answering within ~100ms of the burst. The firmware is one single-threaded loop and a ping is a preamble + one `write()` with no PIC traffic (lighter than an LED update); verified harmless on hardware at 50/s. Firefox keeps listing a dead Lumatone as connected, so after a self-declared departure a reappearing port must answer a ping before it is re-adopted. **Ruled out, do not re-propose**: the wheel-ADC pitch bend (intermittent); board spread; any velocity rule (v127 pairs are routine in real fortissimo — the 25ms v127-pair hold disconnected the Lumatone every few seconds; the burst passes through the 0x08 LUT like real strikes); per-key recalibration (out of scope); burst size; any OS-level hook or overlay-host dependency; and `requestMIDIAccess` polling while connected (audibly glitches playback). See decisions.md 2026-10-02.
-- **Toolchain**: `tools/lumatone-cal/` — Python scripts for live per-key editing (`keydata-live.py`), local file inspection (`keydata-locate.py`), diagnostic state dumps (`lmtncal-read.py`).
-- **Full guide**: `docs/lumatone-calibration.md`. Read that before doing any calibration work.
+- **Self-contained audio**: all tuning/layout interpretation + synthesis happen in HKL via `@hkl/engine`; the Lumatone sends fixed `(channel, note)`, no external synth / Scala / per-layout mappings.
+- **Recording = coordinates, not pitch**: `.hkr` (layout snapshot + coordinate-event stream) is canonical; `.mid` is a deterministic MPE round-trip. Capture hooks live inside the audio-engine note path so every input source records identically.
+- **Composer is decoupled**: separate tab, talks to HKL only through `@hkl/bridge`; imports none of HKL's audio/MIDI/state. Engraving is Verovio (MEI in / SVG out); `.hkc` = MEI + `data-q`/`data-r`.
+- **OBS overlay = one local relay + read-only mirror**: the performing HKL publishes render state over a localhost WebSocket; a `?overlay` instance (lean, audio/MIDI-free build) renders it transparent in OBS. `apps/overlay-host` is the only relay.
 
 ## Browser/runtime context
 
-- **Primary browser**: Firefox.
-- **Web MIDI in Firefox** requires secure context — localhost or HTTPS. `file://` URLs do NOT work. Use Chromium for `file://` testing.
-- **Web Audio API** for sample playback. Sample sources: `tonejs.github.io`, `gleitz.github.io`, `vcsl` (sharp notes URL-encoded as `%23`).
-- **Canvas** for rendering. devicePixelRatio scaling for retina.
+- **Primary browser**: Firefox. Run Firefox gates yourself, headless.
+- **Web MIDI** needs a secure context (localhost or HTTPS); `file://` does NOT work in Firefox — use Chromium for `file://` testing.
 
 ## Documentation map
 
-- **`CLAUDE.md`** (this file) — entry point for sessions. Read first.
-- **`docs/backlog.md`** — Max's source of truth for future direction, conceptual framing of layouts, and current task backlog. Read-only for Claude: suggest changes but never edit without explicit permission, even for "obvious" updates like striking completed items.
-- **`docs/architecture.md`** + **`docs/architecture/{hkl,composer,analyzer,orchestrator,engine,overlay}.md`** — the developer architecture reference: overview (tuning/color/coords/formats/flows) + per-app deep-dives.
-- **`docs/guide/{core,composer,analyzer,orchestrator,overlay}.md`** — the **user-facing guides** (how to *use* each app). Functionality-first; the architecture docs are the dev reference they cross-link to. (No `engine` guide — it's a library with no end-user surface.) Served by the HKL Guide app.
-- **`docs/analyzer-perception-handoff.md`** — the perceptual seam/sample/set gate methodology (2026-08 Intonalogy cello rebuild): every analyzer gate, why it exists, rejected formulations, calibration caveats, and the staged brass/winds plan. Read before touching analyzer gates or building instrument sets.
-- **`docs/lessons.md`** — gotchas, dead-ends, anti-patterns, hard-won truths. Read before debugging anything that smells familiar.
-- **`docs/decisions.md`** — append-only log of non-obvious design choices. Add an entry when committing a decision worth remembering.
-- **`docs/lumatone-calibration.md`** — how to do per-key hardware calibration via SSH + scripts in `tools/lumatone-cal/`. Only needed when working around the broken macro buttons on Max's unit.
-- **`README.md`** — contributor-facing repo description (structure, run/build).
-- **`docs/guide/core.md`** — end-user guide for the HKL viewer app (the rest of the guide set is listed above; this was formerly `docs/user-guide.md`).
+- **`docs/backlog.md`** — Max's source of truth for future direction and the task backlog. **Read-only for Claude**: suggest changes, never edit without explicit permission for that edit.
+- **`docs/architecture.md`** + **`docs/architecture/*.md`** — the developer architecture reference (above).
+- **`docs/guide/{core,composer,analyzer,orchestrator,overlay}.md`** — the user-facing guides (how to *use* each app), served by the HKL Guide app.
+- **`docs/analyzer-perception-handoff.md`** — the analyzer's perceptual gate methodology. Read before touching analyzer gates or building instrument sets.
+- **`docs/lessons.md`** — gotchas, dead-ends, hard-won truths. Read before debugging anything that smells familiar.
+- **`docs/decisions.md`** — append-only log of non-obvious design choices.
+- **`docs/lumatone-calibration.md`** — per-key hardware calibration over SSH with `tools/lumatone-cal/`.
+- **`README.md`** — contributor-facing repo description.
 
 ## Workflow patterns
 
-- **For feature work**: skim CLAUDE.md (this file) → read relevant section of architecture.md → check backlog.md for the matching category to surface Max's framing and any open items (proactively flag adjacent `?` items) → check lessons.md for related gotchas → propose design (if non-trivial) → implement → test.
-- **Before declaring any Composer change done**: `pnpm typecheck` + `pnpm build` + `pnpm check:boundaries` + `pnpm test:composer:affected` for a scoped change, or `pnpm test:composer` (all fixtures) for a broad one or when the affected report says it cannot speak for a changed file (requires `pnpm dev` — the umbrella proxy — in another terminal; the suite hits `http://localhost:5170/composer/`). The suite fails on any unhandled console error, cursor-position regression, model invariant break, roundtrip drift, splice regression, or keystroke-dispatch issue. For visual diffs, make a heatmap (`test/composer-test/heatmap.py`, README "Reviewing a visual failure"), never a side-by-side; if the diff is intentional and its cause known, re-run with `--update-baselines`.
-- **For debugging**: reproduce symptom → check lessons.md for similar past issues → narrow scope → propose hypothesis → test it before pursuing.
-- **For new modules**: place them in the owning app (`apps/{hkl,composer,analyzer,orchestrator,overlay-host}/src/`) or library package (`packages/{shared,engine,notation,bridge,analysis}/`) per the dependency DAG `@hkl/shared ← {engine, notation, bridge} ← apps` (plus `@hkl/analysis ← {analyzer, orchestrator}`) (see docs/architecture.md → Repo layout, and per-package responsibilities in docs/architecture/). Keep modules focused; export a small surface; hold internal state private.
-- **Import boundaries are enforced by `pnpm check:boundaries`**: a package may import only its declared `@hkl/*` deps, and no cross-package relative reaches. The load-bearing rules: `@hkl/shared` is pure data (no DOM/state/runtime); `@hkl/engine` imports only `@hkl/shared`; Composer never imports HKL audio/midi/state/lumatone (only `@hkl/bridge`/`@hkl/notation`/`@hkl/shared`); no app imports another app's `src/`.
-- **For commits**: small, focused, with a description that explains *why*, not just *what*.
+- **Feature work**: CLAUDE.md → the relevant architecture doc → backlog.md's matching category for Max's framing and open items (flag adjacent `?` items) → lessons.md for related gotchas → propose a design if non-trivial → implement → verify (above).
+- **Debugging**: reproduce the symptom → check lessons.md → narrow scope → propose a hypothesis → test it before pursuing.
+- **New modules** go in the owning app's `src/` or library package per the DAG; keep them focused, with a small exported surface and private internal state.
+- **Commits are Max's**: never `git commit`, stash or check out files on his behalf.
 
 ## What to update when
 
-- **Behavior changes** → update the relevant `docs/architecture/<app>.md` (or `docs/architecture.md` for cross-cutting); if the change affects what a user *does* (a control, keystroke, or workflow), also update the matching `docs/guide/<app>.md`
-- **Constraints discovered** → add to lessons.md
-- **Non-obvious choices made** → append to decisions.md
-- **Hardware/protocol facts learned** → update CLAUDE.md (this file) under critical context
-- **Future intent / backlog state** → Max edits docs/backlog.md directly; Claude suggests but does not edit.
+- **Behavior changes** → the relevant `docs/architecture/<app>.md` (or `docs/architecture.md` if cross-cutting); if it changes what a user *does* (a control, keystroke or workflow), also the matching `docs/guide/<app>.md`.
+- **Constraints discovered** → lessons.md.
+- **Non-obvious choices** → decisions.md.
+- **Hardware/protocol facts** → docs/architecture/hkl.md → Hardware integration (or docs/lumatone-calibration.md); CLAUDE.md only for a constraint every session must respect.
+- **Future intent / backlog state** → Max edits docs/backlog.md; Claude suggests.
 
-When in doubt about whether something is worth recording: yes. Future-you will be glad.
+When in doubt about whether something is worth recording: yes — in the doc it belongs to.

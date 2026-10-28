@@ -48,7 +48,7 @@ export function normalizePlaceholders(
   let rebuilt = 0;
   for (const layer of layers) {
     /* ONE children snapshot per layer (Phase D): this runs over every layer in
-       the document on every edit — ~1800 on the sonata — and used to materialise
+       the document on every edit — ~1800 on the sonata — and used to materialize
        `layer.children` twice (content sum and the idempotency check). Nothing
        mutates the layer between them. */
     const kids = Array.from(layer.children);

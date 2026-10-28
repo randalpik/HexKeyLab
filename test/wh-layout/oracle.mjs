@@ -9,7 +9,7 @@
 //        band (+6, 0) = the mode's band octave (2/1; Schismatic 2/1·schisma)
 //   B  interval table: the row and the major-scale shape from the reference, per mode
 //   C  spelling: a copy spells as its column cell, in its own octave
-//   D  colour: JI modes give a copy its column's colour; Equal colours every
+//   D  color: JI modes give a copy its column's color; Equal colors every
 //      cell by its sounding octave; light/dark follows the cell's own pitch class
 //   E  frame conversion: Euler → Wicki-Hayden exact; Wicki-Hayden → Euler
 //      pitch-exact except Schismatic copies, which land exactly one schisma low
@@ -105,7 +105,7 @@ for (let Q = -41; Q <= 41; Q += 2) {          /* odd columns: copies */
   }
 }
 
-/* ── D: colour ─────────────────────────────────────────────────────────── */
+/* ── D: color ─────────────────────────────────────────────────────────── */
 function colorIn(mode, mapping, q, r) {
   tuning.mode = mode;
   tuning.equalEnabled = mode === 'E';
@@ -126,7 +126,7 @@ for (const m of TUNING_MODES) {
         const e = eulerOf(Q, R, WH);                     /* same MIDI → sounding octave */
         want = colorIn(m, 'euler', e.q, e.r).hue;
       } else {
-        want = colorIn(m, 'euler', k, copy ? R + 2 : R).hue;   /* the column's colour */
+        want = colorIn(m, 'euler', k, copy ? R + 2 : R).hue;   /* the column's color */
       }
       check(`D ${m} (${Q},${R}) hue`, v.hue, want);
     }

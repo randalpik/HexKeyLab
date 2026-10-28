@@ -222,7 +222,7 @@ export const FIXTURES = {
   },
   /* USER PAGE BREAK reflow (Max, 2026-08-31). A Ctrl+B page break must (a) split
    * its line when it lands mid-system, and (b) cause everything after it to
-   * RE-PACK by height — the old behaviour layered the <pb> on top of an
+   * RE-PACK by height — the old behavior layered the <pb> on top of an
    * unchanged page pinning, so a break before a page's last line left a page
    * holding that single line and our page list one short of the DOM. Enough
    * content (with a shrunken page) for several pages, so a break has somewhere
@@ -751,7 +751,7 @@ export const FIXTURES = {
   },
   /* A user page break is a hard page start: the page before it may be
      under-full, and the page after it starts exactly there. */
-  pag_userPbHonoured: {
+  pag_userPbHonored: {
     setup: `
       window.__hkl_composer.renderer.setViewMode('page');
       ${PAG_BUILD}
@@ -970,7 +970,7 @@ export const FIXTURES = {
     skipCursorTrace: true,
   },
   /* A measure wider than a line sits alone on its line (no compression of its
-   * neighbours to make room, no split of the measure). */
+   * neighbors to make room, no split of the measure). */
   partF_wideMeasureAlone: {
     setup: `
       m.setCursor(0, 1);
@@ -1011,7 +1011,7 @@ export const FIXTURES = {
     skipCursorTrace: true,
   },
   /* A context's leading-block width must not depend on the bar NUMBER it was
-   * measured under: Verovio centres the system-start number on the staff
+   * measured under: Verovio centers the system-start number on the staff
    * start inside the first g.measure, so measuring from that measure's bbox
    * added half the number's width (+72 one digit, +144 two). A mid-measure
    * clef in bar 8 starts a new context at bar "9"; a bar inserted at the front
@@ -1158,7 +1158,7 @@ export const ASSERTIONS = {
         const J = JSON.stringify;
         const l = L();
         /* Was [0,6,8]: the two-bar remainder used to survive because [4,4]
-           missed MIN_FILL by 0.0049 — an artefact of the old budget, which
+           missed MIN_FILL by 0.0049 — an artifact of the old budget, which
            read the system BBOX and so carried ~222 units of ink overhang the
            per-measure naturals do not have, making every fill ~1.2 % too
            small. On the geometric budget [4,4] is 0.6787 / 0.6528 and legal,
@@ -2256,7 +2256,7 @@ export const ASSERTIONS = {
     { name: 'the growth added at least one page',
       expr: `(() => { const n = document.querySelectorAll('#score .score-page').length; return n > window.__pagPagesBefore ? { ok: true, detail: window.__pagPagesBefore + ' -> ' + n } : { ok: false, detail: window.__pagPagesBefore + ' -> ' + n }; })()` },
   ],
-  pag_userPbHonoured: [
+  pag_userPbHonored: [
     { name: 'page 2 starts at the measure after the user page break',
       expr: `(() => {
         const doc = window.__hkl_composer.model.getDoc();

@@ -357,7 +357,7 @@ export const FIXTURES = {
   },
   /* Mark placement policy (2026-10-07): a dynamic / hairpin / expressive text
      under the UPPER staff of a grand staff is @place="between" — Verovio's own
-     between pass centres it in the gap — and under a one-staff instrument it
+     between pass centers it in the gap — and under a one-staff instrument it
      is @place="below" (dynamDist under its staff). The live insert path picks
      the value from the instrument's shape; a load normalizes older files. */
   expr_dynamicInsertBetweenOnGrandStaff: {
@@ -788,7 +788,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   expr_dynamicInsertBetweenOnGrandStaff: [
-    { name: 'a live-inserted dynamic on the grand-staff upper staff is @place="between" and centred in the gap',
+    { name: 'a live-inserted dynamic on the grand-staff upper staff is @place="between" and centered in the gap',
       expr: `(() => {
         const doc = window.__hkl_composer.model.getDoc();
         const el = [...doc.querySelectorAll('dynam')].find((e) => e.textContent.trim() === 'p');

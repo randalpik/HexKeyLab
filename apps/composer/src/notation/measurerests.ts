@@ -3,7 +3,7 @@
 // A staff cell with no musical content — every layer holds only <space>
 // placeholders (or nothing), plus at most a <clef> — used to render as a bare
 // measure frame. Engraving never shows one: an empty complete bar carries a
-// whole-bar rest, the whole-rest glyph centred between the barlines whatever
+// whole-bar rest, the whole-rest glyph centered between the barlines whatever
 // the meter, which is exactly what Verovio draws for <mRest>. The exception is
 // a PICKUP (`hkl:pickup-ticks`): a whole rest would claim a full bar the
 // anacrusis doesn't have, so its first layer shows a rest of the pickup's

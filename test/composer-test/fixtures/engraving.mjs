@@ -56,6 +56,25 @@ export const FIXTURES = {
     `,
     visualBaseline: 'dark_theme_chord',
   },
+  /* Dark-mode playback bar beside a purple notehead: the bar is opaque
+     --cursor-color #bb91ff (decisions.md 2026-10-28) — it must stand off the
+     background and the silver staff lines and still read as purple. */
+  dark_playback_cursor: {
+    setup: `
+      window.__hkl_composer.renderer.setTheme('dark');
+      m.setCursor(0, 1);
+      const N = (q, r, p, o, midi, ink, light) => ({ q, r, pname: p, accid: '', oct: o, midi, colorHex: ink, lightColorHex: light, velocity: 80 });
+      const C4 = N(-4, -2, 'c', 4, 60, '#055ad1', '#4C96FF');
+      const E4 = N(1, 0, 'e', 4, 64, '#bd890f', '#FFF94C');
+      const G4 = N(0, 1, 'g', 4, 67, '#52b80a', '#55FF4C');
+      const A4 = N(3, 0, 'a', 4, 69, '#9405d1', '#C94CFF');
+      for (const notes of [[C4], [E4], [A4], [C4, E4, G4]]) m.insertChordAtCursor({ notes, duration: '4', dots: 0 });
+      const kids = [...m.getDoc().querySelector('layer').children];
+      c.setPlaybackMode(true);
+      c.setPlaybackPosition(1, kids[2].getAttribute('xml:id'), 'left');
+    `,
+    visualBaseline: 'dark_playback_cursor',
+  },
   /* Title + subtitle + composer + footer all populate the MEI + render
      into the page SVG. */
   titleBlock_all_fields: {
@@ -220,7 +239,7 @@ export const FIXTURES = {
     `,
   },
   /* Injected page text follows the page's REAL column at a non-default page
-     size: footer centred in the bottom margin, composer credit at the right
+     size: footer centered in the bottom margin, composer credit at the right
      column edge. */
   engr_pageScaleRepositionsInjectedText: {
     setup: `
@@ -233,7 +252,7 @@ export const FIXTURES = {
     `,
   },
   /* Pages 2+: page number in the OUTER corner (even left, odd right) and the
-     title as a centred running header; page 1 keeps Verovio's title block.
+     title as a centered running header; page 1 keeps Verovio's title block.
      Whole notes on a 60 % page buy three pages cheaply. */
   engr_runningHeaderCorners: {
     setup: `
@@ -247,7 +266,7 @@ export const FIXTURES = {
     skipCursorTrace: true,
   },
   /* Two identical rests at one moment in the two voices of a staff draw as
-     ONE rest, centred — Verovio pushed them above and below the staff. */
+     ONE rest, centered — Verovio pushed them above and below the staff. */
   engr_identicalRestsMerge: {
     setup: `
       const N = (o, midi) => ({ q: 0, r: 0, pname: 'a', accid: '', oct: o, midi, colorHex: '#888', velocity: 80 });
@@ -296,7 +315,7 @@ export const FIXTURES = {
       r();
     `,
   },
-  /* A dynamic under the upper staff of a grand staff is centred between the
+  /* A dynamic under the upper staff of a grand staff is centered between the
      two staves (the DOM pass in render/textlayout.ts). */
   engr_dynamicCenteredInGrandStaff: {
     setup: `
@@ -355,7 +374,7 @@ export const FIXTURES = {
   /* Barlines never break, and text marks stay off them (2026-09-05). A
      dynamic at tstamp 5 in 4/4 sits exactly on the m1|m2 barline; Verovio
      erases the grand-staff barline under it (draw-time only) and Composer
-     then centres the dynamic in the gap — render/barlines.ts refills the
+     then centers the dynamic in the gap — render/barlines.ts refills the
      barline and render/textlayout.ts moves the mark inside its own measure
      first. A wide dynamic under m3's first note exercises the left barline. */
   engr_barlineUnbrokenUnderDynamic: {
@@ -701,12 +720,12 @@ export const FIXTURES = {
       m.setCursor(0, 1); r();
     `,
   },
-  /* A grand-staff <dir> centred in the gap stops short of a CHORD's stem
+  /* A grand-staff <dir> centered in the gap stops short of a CHORD's stem
      (render/textlayout.ts, 2026-09-29; sonata p. 6, the piano's "cresc." over
      the left hand's A♭–C–E♭ in m. 90). A stem is a stroked zero-width path, so its
      getBBox has no width and the obstacle filter dropped it; a single note's
      stem still counted through its g.note box, but a chord's stem hangs off
-     g.chord, which is no obstacle — the centring move ran straight through it. */
+     g.chord, which is no obstacle — the centering move ran straight through it. */
   engr_dirCenteredClearsChordStem: {
     setup: `
       const P = (step, alter, oct, dur, type, staff, extra) => '<note>' + (extra || '') + '<pitch><step>' + step + '</step>'
@@ -823,7 +842,7 @@ export const FIXTURES = {
   },
   /* Max's 2026-09-06 regression: voice 1 rests against a voice-2 chord topping
      at the middle line (b4) and at the third space (c5) touched the top head
-     (the head's ink box is 1.1 locations tall above its centre, not 0.5).
+     (the head's ink box is 1.1 locations tall above its center, not 0.5).
      Every voice-1 rest must clear the chord's top head by half a space. */
   engr_twoVoiceRestClearsChordHead: {
     setup: `
@@ -882,7 +901,7 @@ export const FIXTURES = {
       m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
-  /* A mark inside a grand staff stays CENTRED when render/instrgap.ts has
+  /* A mark inside a grand staff stays CENTERED when render/instrgap.ts has
      shifted that instrument (2026-09-09). instrgap tags the shift on a mark
      and leaves the transform to textlayout, which owns it — so textlayout has
      to MEASURE the mark in the shifted frame too. It did not: the staff rows
@@ -895,9 +914,9 @@ export const FIXTURES = {
      since instrgap only ever shifts instruments BELOW a boundary. The viola's
      low C3 puts its `f` some four spaces under its own staff and one space
      over the piano — nearer the piano than its own staff, which is exactly the
-     demand instrgap exists to meet — and the piano's own `p` is the centred
+     demand instrgap exists to meet — and the piano's own `p` is the centered
      mark under test. The piano's outer notes (A5, C2) keep its grand-staff gap
-     clear of ink so the centring is unclamped and the assertion can be exact. */
+     clear of ink so the centering is unclamped and the assertion can be exact. */
   engr_instrGapCenteredDynamic: {
     setup: `
       const ATTR = (extra) => '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
@@ -967,6 +986,16 @@ export const FIXTURES = {
 };
 
 export const ASSERTIONS = {
+  dark_playback_cursor: [
+    { name: 'playback bar is opaque #bb91ff in dark mode',
+      expr: `(() => {
+        const pb = document.querySelector('#cursorOverlay rect[data-cursor-role="playback"]');
+        if (!pb) return { ok: false, detail: 'no playback bar' };
+        const fill = getComputedStyle(pb).fill, op = pb.getAttribute('opacity');
+        return fill === 'rgb(187, 145, 255)' && op === '1'
+          ? { ok: true } : { ok: false, detail: 'fill=' + fill + ' opacity=' + op };
+      })()` },
+  ],
   /* The dynamic anchors the cluster and must not move horizontally; the <dir>
      ends up clear to its RIGHT and vertically overlapping it (not stacked). */
   engr_sameMomentDynamAndDirSideBySide: [
@@ -1216,7 +1245,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   engr_pageScaleRepositionsInjectedText: [
-    { name: 'footer centred in the bottom margin and composer at the column edge of the 140 % page',
+    { name: 'footer centered in the bottom margin and composer at the column edge of the 140 % page',
       expr: `(() => {
         const page = document.querySelector('#score .score-page');
         const svg = page && page.querySelector('svg.definition-scale');
@@ -1266,7 +1295,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   engr_identicalRestsMerge: [
-    { name: 'the two quarter rests at beat 1 coincide, centred on the staff',
+    { name: 'the two quarter rests at beat 1 coincide, centered on the staff',
       expr: `(() => {
         const staff = document.querySelector('#score g.measure g.staff[data-n="1"]');
         if (!staff) return { ok: false, detail: 'no staff 1' };
@@ -1325,7 +1354,7 @@ export const ASSERTIONS = {
         const heads = [...staff.querySelectorAll('g.layer[data-n="1"] g.notehead')].map(h => h.getBoundingClientRect());
         const headTop = Math.min(...heads.map(h => h.top));
         const sb = g.getBoundingClientRect();
-        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur centre ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' is not above the upper-voice noteheads (top ' + headTop.toFixed(1) + ')' };
+        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur center ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' is not above the upper-voice noteheads (top ' + headTop.toFixed(1) + ')' };
         const path = g.querySelector('path'); const L = path.getTotalLength(); const ctm = path.getScreenCTM();
         const pts = []; for (let i = 0; i <= 64; i++) { const p = path.getPointAtLength(L * i / 64); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
         const boxes = [...staff.querySelectorAll('g.layer[data-n="2"] g.notehead, g.layer[data-n="2"] g.stem')].map(e => e.getBoundingClientRect());
@@ -1343,7 +1372,7 @@ export const ASSERTIONS = {
         const heads = [...staff.querySelectorAll('g.layer[data-n="1"] g.notehead')].map(h => h.getBoundingClientRect());
         const headTop = Math.min(...heads.map(h => h.top));
         const sb = g.getBoundingClientRect();
-        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur centre ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' is not above the upper-voice noteheads (top ' + headTop.toFixed(1) + ')' };
+        if (!((sb.top + sb.bottom) / 2 < headTop)) return { ok: false, detail: 'slur center ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' is not above the upper-voice noteheads (top ' + headTop.toFixed(1) + ')' };
         const path = g.querySelector('path'); const L = path.getTotalLength(); const ctm = path.getScreenCTM();
         const pts = []; for (let i = 0; i <= 64; i++) { const p = path.getPointAtLength(L * i / 64); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
         const boxes = [...staff.querySelectorAll('g.layer[data-n="2"] g.notehead, g.layer[data-n="2"] g.stem')].map(e => e.getBoundingClientRect());
@@ -1465,7 +1494,7 @@ export const ASSERTIONS = {
         const heads = notes.flatMap((n) => [...n.querySelectorAll('g.notehead')]).map((h) => h.getBoundingClientRect());
         const headBot = Math.max(...heads.map((h) => h.bottom));
         const sb = slur.getBoundingClientRect();
-        if (!((sb.top + sb.bottom) / 2 > headBot)) return { ok: false, detail: 'slur centre ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' not below the noteheads (' + headBot.toFixed(1) + ')' };
+        if (!((sb.top + sb.bottom) / 2 > headBot)) return { ok: false, detail: 'slur center ' + ((sb.top + sb.bottom) / 2).toFixed(1) + ' not below the noteheads (' + headBot.toFixed(1) + ')' };
         /* The slur path against every voice-3 stem and beam box. */
         const path = slur.querySelector('path'); const L = path.getTotalLength(); const ctm = path.getScreenCTM();
         const pts = []; for (let i = 0; i <= 64; i++) { const p = path.getPointAtLength(L * i / 64); pts.push(new DOMPoint(p.x, p.y).matrixTransform(ctm)); }
@@ -1508,11 +1537,11 @@ export const ASSERTIONS = {
         const gap = hb.top - bot;
         if (Math.abs(gap - 1.075 * space) > 2) return { ok: false, detail: 'hairpin top gap=' + gap.toFixed(1) + 'px, want ' + (1.075 * space).toFixed(1) + ' (space ' + space.toFixed(1) + ')' };
         const hc = hb.top + hb.height / 2, dc = db.top + db.height / 2;
-        return Math.abs(hc - dc) <= 0.6 * space ? { ok: true, detail: 'hairpin centre ' + hc.toFixed(1) + ' dynamic centre ' + dc.toFixed(1) } : { ok: false, detail: 'hairpin centre ' + hc.toFixed(1) + ' vs dynamic centre ' + dc.toFixed(1) };
+        return Math.abs(hc - dc) <= 0.6 * space ? { ok: true, detail: 'hairpin center ' + hc.toFixed(1) + ' dynamic center ' + dc.toFixed(1) } : { ok: false, detail: 'hairpin center ' + hc.toFixed(1) + ' vs dynamic center ' + dc.toFixed(1) };
       })()` },
   ],
   engr_dynamicCenteredInGrandStaff: [
-    { name: 'the dynamic centre sits at the midpoint of the gap between the staves',
+    { name: 'the dynamic center sits at the midpoint of the gap between the staves',
       expr: `(() => {
         const meas = document.querySelector('#score g.measure');
         const rows = {};
@@ -1524,9 +1553,9 @@ export const ASSERTIONS = {
         if (!d || !rows[1] || !rows[2]) return { ok: false, detail: 'dynam=' + !!d + ' rows=' + JSON.stringify(rows) };
         const b = d.getBoundingClientRect(); const cy = b.top + b.height / 2;
         const mid = (rows[1].bot + rows[2].top) / 2;
-        /* Verovio's between pass centres the mark's reference point, not its
+        /* Verovio's between pass centers the mark's reference point, not its
            glyph box — measured 0.31 space low on an mp (2026-10-07). Half a
-           space of tolerance; the DOM centring (±2 px) is gone with it. */
+           space of tolerance; the DOM centering (±2 px) is gone with it. */
         const space = (rows[1].bot - rows[1].top) / 4;
         if (d.getAttribute('data-place') !== 'between') return { ok: false, detail: 'data-place=' + d.getAttribute('data-place') };
         return Math.abs(cy - mid) <= 0.5 * space ? { ok: true, detail: 'cy-mid=' + (cy - mid).toFixed(1) + 'px' } : { ok: false, detail: 'cy=' + cy + ' mid=' + mid + ' space=' + space };
@@ -1618,7 +1647,7 @@ export const ASSERTIONS = {
         const headBot = Math.max(...heads.map(h => h.bottom));
         const s = slur.getBoundingClientRect(), be = beam.getBoundingClientRect();
         const sMid = (s.top + s.bottom) / 2;
-        if (!(sMid > headBot)) return { ok: false, detail: 'slur centre ' + sMid.toFixed(1) + ' is not below the noteheads (bottom ' + headBot.toFixed(1) + ')' };
+        if (!(sMid > headBot)) return { ok: false, detail: 'slur center ' + sMid.toFixed(1) + ' is not below the noteheads (bottom ' + headBot.toFixed(1) + ')' };
         if (!(be.bottom < headBot)) return { ok: false, detail: 'beam not above the heads: beam ' + be.bottom.toFixed(1) };
         return { ok: true };
       })()` },
@@ -1660,7 +1689,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   engr_dirCenteredClearsChordStem: [
-    { name: 'the centred grand-staff dir stops above the lower staff\'s chord stem instead of running through it',
+    { name: 'the centered grand-staff dir stops above the lower staff\'s chord stem instead of running through it',
       expr: `(() => {
         const sys = document.querySelector('#score g.system');
         const st = (n) => sys && sys.querySelector('g.measure g.staff[data-n="' + n + '"]');
@@ -1679,10 +1708,10 @@ export const ASSERTIONS = {
           .filter((r) => r.left <= d.right && r.right >= d.left);
         if (!stems.length) return { ok: false, detail: 'no chord stem under the dir\u2019s x-range: the fixture tests nothing' };
         const stemTop = Math.min(...stems.map((r) => r.top));
-        /* Meaningful only if an UNCLAMPED centring would reach the stem. */
-        const centredBottom = (b1.bottom + b2.top) / 2 + d.height / 2;
-        if (!(stemTop < centredBottom - 1)) return { ok: false, detail: 'stem top ' + stemTop.toFixed(1)
-          + ' is below the centred dir\u2019s bottom ' + centredBottom.toFixed(1) + ': the fixture tests nothing' };
+        /* Meaningful only if an UNCLAMPED centering would reach the stem. */
+        const centeredBottom = (b1.bottom + b2.top) / 2 + d.height / 2;
+        if (!(stemTop < centeredBottom - 1)) return { ok: false, detail: 'stem top ' + stemTop.toFixed(1)
+          + ' is below the centered dir\u2019s bottom ' + centeredBottom.toFixed(1) + ': the fixture tests nothing' };
         if (!(d.top > b1.bottom)) return { ok: false, detail: 'dir top ' + d.top.toFixed(1) + ' is on the upper staff (bottom line ' + b1.bottom.toFixed(1) + ') place=' + dirs[0].getAttribute('data-place') + ' transform=' + dirs[0].getAttribute('transform') + ' gap=' + (b2.top - b1.bottom).toFixed(1) + ' stemTop-b1=' + (stemTop - b1.bottom).toFixed(1) + ' dirH=' + d.height.toFixed(1) };
         if (!(d.bottom < stemTop)) return { ok: false, detail: 'dir bottom ' + d.bottom.toFixed(1) + ' overlaps the chord stem (top ' + stemTop.toFixed(1) + ')' };
         return { ok: true };
@@ -1735,7 +1764,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   engr_instrGapCenteredDynamic: [
-    { name: 'the piano is shifted for the viola\'s low f, and the piano\'s own dynamic stays centred in its grand-staff gap (not a shift lower)',
+    { name: 'the piano is shifted for the viola\'s low f, and the piano\'s own dynamic stays centered in its grand-staff gap (not a shift lower)',
       expr: `(() => {
         const sys = document.querySelector('#score g.system');
         if (!sys) return { ok: false, detail: 'no system rendered' };
@@ -1762,10 +1791,10 @@ export const ASSERTIONS = {
         const gapMid = (b2.bottom + b3.top) / 2, markMid = (box.top + box.bottom) / 2;
         /* The defect measured a whole shift — 2 staff spaces on the sonata —
            so half a space is far inside the failure. (Was 3 px under the DOM
-           centring; Verovio's between pass centres the mark's reference point,
+           centering; Verovio's between pass centers the mark's reference point,
            which leaves the glyph box ~0.3 space low — 2026-10-07.) */
         const err = markMid - gapMid, space = (b2.bottom - b2.top) / 4;
-        if (Math.abs(err) > 0.5 * space) return { ok: false, detail: 'piano dynamic sits ' + err.toFixed(1) + 'px off the gap centre (positive = too low; the double-counted shift was ' + (ish[0] / 10).toFixed(1) + 'px)' };
+        if (Math.abs(err) > 0.5 * space) return { ok: false, detail: 'piano dynamic sits ' + err.toFixed(1) + 'px off the gap center (positive = too low; the double-counted shift was ' + (ish[0] / 10).toFixed(1) + 'px)' };
         if (!(box.bottom < b3.top)) return { ok: false, detail: 'piano dynamic bottom ' + box.bottom.toFixed(1) + ' has reached the lower staff (top ' + b3.top.toFixed(1) + ')' };
         if (!(box.top > b2.bottom)) return { ok: false, detail: 'piano dynamic top ' + box.top.toFixed(1) + ' is inside the upper staff (bottom ' + b2.bottom.toFixed(1) + ')' };
         /* And the viola's f, whose crowding paid for the shift, keeps the

@@ -32,7 +32,7 @@ import type { SelectionState } from './selection/selection.js';
 
 export interface Snapshot {
   /** Full MEI. For a keystroke edit's AFTER this is a LAZY getter (A10): the
-   *  model serialises on idle, or synchronously before anything that could
+   *  model serializes on idle, or synchronously before anything that could
    *  change the document. Reading it always yields the right string. */
   mei: string;
   voice: Voice;
@@ -116,7 +116,7 @@ export class HistoryManager {
   canRedo(): boolean { this.resolvePending(); return this.redoStack.length > 0; }
 
   /** The last committed state's MEI (see `lastCommitted`), or null if unknown.
-   *  Reading it materialises a lazy AFTER — which is exactly when the next edit
+   *  Reading it materializes a lazy AFTER — which is exactly when the next edit
    *  needs it: as its BEFORE, before it mutates anything. */
   committedMei(): string | null { return this.lastCommitted ? this.lastCommitted.mei : null; }
 
@@ -127,7 +127,7 @@ export class HistoryManager {
     this.pending = null;
   }
 
-  /** Settle a lazily-pushed entry (A10): reading `after.mei` materialises the
+  /** Settle a lazily-pushed entry (A10): reading `after.mei` materializes the
    *  snapshot (the model asserts, under HKL_INDEX_CHECK, that the document has
    *  not moved since); if it equals the BEFORE the edit changed nothing
    *  observable — an attribute rewritten to its own value bumps the version
@@ -153,9 +153,9 @@ export class HistoryManager {
     this.resolvePending();
     /* No-op detection. Versioned snapshots (A10): equal versions mean the
        MutationObserver saw nothing — identical document, nothing pushed and
-       nothing serialised. Different versions do not PROVE a change, so the
+       nothing serialized. Different versions do not PROVE a change, so the
        string comparison is deferred to resolvePending, after the AFTER has
-       materialised on idle (or at the next history operation), and a no-op
+       materialized on idle (or at the next history operation), and a no-op
        entry is retracted then. Unversioned snapshots keep the eager compare. */
     const versioned = before.docVer !== undefined && after.docVer !== undefined;
     if (versioned) {
@@ -204,7 +204,7 @@ export class HistoryManager {
    *  entry's AFTER focus. Returns the entry consumed (for status messages /
    *  testing). */
   undo(model: ComposerModel, effects: UndoEffects): UndoEntry | null {
-    this.resolvePending();   // materialises the top entry's AFTER while the doc still IS that state
+    this.resolvePending();   // materializes the top entry's AFTER while the doc still IS that state
     const entry = this.undoStack.pop();
     if (!entry) return null;
     this.redoStack.push(entry);

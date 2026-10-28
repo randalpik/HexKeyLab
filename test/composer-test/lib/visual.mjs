@@ -180,7 +180,7 @@ export async function visualCheck(cdp, name, { updateBaselines = false, fullPage
       /* Record the FRAMING, not just the page state. A capture is only
          comparable to a baseline if the window it took is the same window, and
          a content-derived clip moves when the content's size changes — the
-         viewport is auto-sized from `scrollWidth` and the cards are centred in
+         viewport is auto-sized from `scrollWidth` and the cards are centered in
          it, so a purely VERTICAL layout change can shift the clip sideways by
          half a width delta and translate the whole image with the render
          untouched. Without these numbers that is indistinguishable from a

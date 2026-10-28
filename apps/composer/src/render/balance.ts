@@ -15,7 +15,7 @@
 //      balance);
 //   3. each DISTINCT layout scored on the lines it changes plus the untouched
 //      line before them — `min` fill of the changed lines, `sd` over
-//      neighbour + changed (the neighbour is what makes a stub look sparse),
+//      neighbor + changed (the neighbor is what makes a stub look sparse),
 //      `changes` = line starts off greedy;
 //   4. the pick: max(min − sd − γ·changes), ties to fewer changes.
 // No MIN_FILL and no compression: the only bound is the cap, and a single atom

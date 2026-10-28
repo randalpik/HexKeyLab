@@ -84,10 +84,10 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 /* The content frame (render.ts `container`, made by renderer.attach): the
    page cards / scroll SVG AND the cursor overlay, so the two can never drift
    apart. `flow-root` keeps the first card's top margin inside it (its top is
-   #score's content top). In page view the FRAME is what is centred: auto
-   margins centre it when the viewport is wider than the page, and collapse
+   #score's content top). In page view the FRAME is what is centered: auto
+   margins center it when the viewport is wider than the page, and collapse
    to 0 per CSS block layout when the page is wider (left-aligned, horizontal
-   scrolling). Centring the cards themselves moved them under an overlay that
+   scrolling). Centering the cards themselves moved them under an overlay that
    stayed at the pixels it was drawn at (2026-10-27). */
 #score > .score-content { position: relative; display: flow-root; width: max-content }
 #score.view-page > .score-content { margin: 0 auto }
@@ -227,7 +227,7 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
    implicit closed triangle solid orange — that's the glitch. Restoring
    fill: none keeps only the stroke (which the parent rule still tints
    orange via `stroke: #e47226`), so the wedge stays its normal weight
-   and just changes colour. */
+   and just changes color. */
 #score svg g.hairpin.expr-selected,
 #score svg g.hairpin.expr-selected * {
   fill: none !important;

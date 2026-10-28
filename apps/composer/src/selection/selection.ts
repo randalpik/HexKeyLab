@@ -256,7 +256,7 @@ export function moveMeasureMovable(
      its last); 'right' = anchor at the anchor unit's FIRST measure, movable at
      the range's last; 'left' = anchor at the anchor unit's LAST measure,
      movable at the range's first. With no runs every unit is one measure and
-     this is the historic behaviour exactly. */
+     this is the historic behavior exactly. */
   const units = model.unitsForView();
   const numMeasures = model.allMeasures().length;
   const last = numMeasures - 1;

@@ -44,7 +44,7 @@ export function flatChildren(model: ComposerModel, voice: Voice): Element[] {
      measure's twice — once for the empty test, once inside layerIsFull). On the
      sonata flatChildren runs several times per keystroke over 446 measures, so
      that redundancy was thousands of DOM scans per edit. Fullness of the
-     previous layer stays LAZY (memoised) exactly as layerIsFull was, since the
+     previous layer stays LAZY (memoized) exactly as layerIsFull was, since the
      rules short-circuit before it in the common cases. */
   let prevLayer: Element | null = null;
   let prevCc: Element[] = [];

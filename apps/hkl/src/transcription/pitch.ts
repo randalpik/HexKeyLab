@@ -1,4 +1,4 @@
-// Color helpers for transcription: the ink-on-paper notehead colour for a
+// Color helpers for transcription: the ink-on-paper notehead color for a
 // lattice cell under the current layout. The remap itself (per-hue ink
 // profiles) is @hkl/shared/keycolor.js's inkColorHex, shared with Composer.
 

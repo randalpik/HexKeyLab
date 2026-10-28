@@ -130,7 +130,7 @@ export function setMapping(): void {
   invalidatePianoOutline();
   applyRotation(currentRotationMode); /* the verticalFreq tilt depends on the mapping */
   /* Retunes held physical voices in place, rebuilds the layers + footprint,
-     resyncs Lumatone colours, broadcasts to Composer. */
+     resyncs Lumatone colors, broadcasts to Composer. */
   onTuningChanged();
   onSelectionChanged();
   savePrefs({ mapping: val });

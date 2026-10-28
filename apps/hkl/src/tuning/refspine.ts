@@ -6,7 +6,7 @@
 // flat/natural/sharp layout buttons with a continuous ref-driven mechanism.
 //
 // The spine is the qm0 column of the ref's OWN octave band, in the ref's row,
-// so the ref stays where it sits within its band, next to the centre.
+// so the ref stays where it sits within its band, next to the center.
 //
 // Euler (3-wide bands, per design decision):
 //   qmod3 = 0  → (q, r)              the cell IS on the Pythag spine

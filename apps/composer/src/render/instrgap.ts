@@ -14,7 +14,7 @@
 // within one space of piano ink.
 //
 // The rule: shift the lower instrument down until every boundary mark is at
-// least as close to its own staff as to its neighbour —
+// least as close to its own staff as to its neighbor —
 //   demand = max(0, min(dOwn, CAP) - dOther)
 // where `dOwn` is the mark's distance to its own staff's near line and `dOther`
 // its distance to the nearest ink or line of the other instrument within its

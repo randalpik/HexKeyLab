@@ -90,7 +90,7 @@ interface OpenPage { pageNo: number; div: HTMLElement; lines: string[] }
 interface Job {
   docVer: number;
   nextLine: number;
-  cancelled: boolean;
+  canceled: boolean;
   /** Line whose page the synchronous burst runs until (the cursor's), or -1. */
   targetLine: number;
   targetClosed: boolean;
@@ -256,7 +256,7 @@ export class PageAssembler {
     this.expected = expectedPages !== null && expectedPages >= 1 ? Math.floor(expectedPages) : null;
     if (this.expected !== null) { this.ensurePlaceholders(this.expected); this.restoreScroll(); }
     const target = targetMeasure === null ? -1 : this.lineOfMeasure(targetMeasure);
-    this.job = { docVer, nextLine: 0, cancelled: false, targetLine: Math.max(0, target), targetClosed: false, idle: null, t0: performance.now(), syncMs: 0, renderMs: 0, prepared: new Map(), preparedVer: docVer };
+    this.job = { docVer, nextLine: 0, canceled: false, targetLine: Math.max(0, target), targetClosed: false, idle: null, t0: performance.now(), syncMs: 0, renderMs: 0, prepared: new Map(), preparedVer: docVer };
     this.runSync(() => this.job?.targetClosed === true);
     this.scheduleSlice();
   }
@@ -300,7 +300,7 @@ export class PageAssembler {
 
   cancel(): void {
     if (!this.job) return;
-    this.job.cancelled = true;
+    this.job.canceled = true;
     if (this.job.idle !== null) cancelIdle(this.job.idle);
     this.job = null;
   }
@@ -337,7 +337,7 @@ export class PageAssembler {
     const job = this.job;
     if (!job) return;
     const t0 = performance.now();
-    while (this.job === job && !job.cancelled) {
+    while (this.job === job && !job.canceled) {
       if (!this.step()) break;
       if (stop()) break;
     }
@@ -346,10 +346,10 @@ export class PageAssembler {
 
   private scheduleSlice(): void {
     const job = this.job;
-    if (!job || job.cancelled) return;
+    if (!job || job.canceled) return;
     job.idle = scheduleIdle(() => {
       job.idle = null;
-      if (this.job !== job || job.cancelled) return;
+      if (this.job !== job || job.canceled) return;
       const budget = performance.now() + IDLE_BUDGET_MS;
       let more = true;
       while (this.job === job && performance.now() < budget && more) more = this.step();

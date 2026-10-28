@@ -238,7 +238,7 @@ function readPickupTicks(measure: Element): number | null {
   return isFinite(n) && n > 0 ? n : null;
 }
 
-/** Read `meter.sym` off a scoreDef element, normalised to MeterSym. */
+/** Read `meter.sym` off a scoreDef element, normalized to MeterSym. */
 function readMeterSym(sd: Element | null): MeterSym {
   const v = sd?.getAttribute('meter.sym');
   return v === 'common' || v === 'cut' ? v : null;
@@ -370,7 +370,7 @@ const BUDGET_SAFE_MEASURE_ATTRS = new Set(['right', 'left']);
 /** Can this mutation, which landed OUTSIDE any `<layer>`, be ignored by the
  *  scoped placeholder normalization? Only for the provably tick-neutral cases;
  *  everything else (a measure added or removed, a `<scoreDef>` meter change, a
- *  new `<staff>`/`<layer>`, an unrecognised measure attribute) must force the
+ *  new `<staff>`/`<layer>`, an unrecognized measure attribute) must force the
  *  full pass, because it can move some layer's budget. Verified empirically by
  *  the HKL_INDEX_CHECK gate in `normalizePlaceholdersAll`: after the scoped
  *  pass, a full pass must find nothing left to rebuild. */
@@ -401,7 +401,7 @@ function indexCheckEnabled(): boolean {
 }
 
 /** requestIdleCallback with a setTimeout fallback (for the lazy snapshot; the
- *  timeout bounds how long a snapshot can stay unserialised even when the tab
+ *  timeout bounds how long a snapshot can stay unserialized even when the tab
  *  never goes idle). */
 function scheduleIdleSnapshot(fn: () => void): void {
   const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
@@ -1074,12 +1074,12 @@ export class ComposerModel {
     return this.snapshotStateReusing(null);
   }
 
-  /** AFTER-snapshot for `withHistory` (A10): the MEI is serialised LAZILY — on
+  /** AFTER-snapshot for `withHistory` (A10): the MEI is serialized LAZILY — on
    *  idle, or synchronously before the next thing that could change the
    *  document. Sound because every mutation path in Composer takes a BEFORE
    *  snapshot first (`snapshotState` / `snapshotStateReusing`), and those, like
-   *  `restoreSnapshot*` and `replaceDocument`, materialise any pending lazy
-   *  snapshot before proceeding. Under HKL_INDEX_CHECK, materialising after the
+   *  `restoreSnapshot*` and `replaceDocument`, materialize any pending lazy
+   *  snapshot before proceeding. Under HKL_INDEX_CHECK, materializing after the
    *  document version moved throws instead of recording the wrong document.
    *  Takes the ~12 ms full-document XMLSerializer off the keystroke path; a
    *  second edit before idle pays it at its own start instead (no double work). */
@@ -1094,7 +1094,7 @@ export class ComposerModel {
         if (mei === null) {
           if (this.pendingSnapshot === pend) this.pendingSnapshot = null;
           if (this.documentVersion() !== ver) {
-            const msg = '[snapshotStateLazy] materialised after the document changed — a mutation path took no BEFORE snapshot';
+            const msg = '[snapshotStateLazy] materialized after the document changed — a mutation path took no BEFORE snapshot';
             if (indexCheckEnabled()) throw new Error(msg);
             console.warn(msg);
           }
@@ -1108,17 +1108,17 @@ export class ComposerModel {
     return { get mei() { return pend.materialize(); }, voice, cursors, docVer: ver };
   }
 
-  /** The lazy snapshot not yet serialised, if any (see snapshotStateLazy). */
+  /** The lazy snapshot not yet serialized, if any (see snapshotStateLazy). */
   private pendingSnapshot: { materialize: () => string } | null = null;
 
-  /** Serialise a pending lazy snapshot NOW — called by every entry point after
+  /** Serialize a pending lazy snapshot NOW — called by every entry point after
    *  which the document may change. No-op when nothing is pending. */
   private materializePendingSnapshot(): void {
     const p = this.pendingSnapshot;
     if (p) { this.pendingSnapshot = null; p.materialize(); }
   }
 
-  /** Diagnostics (fixtures): is a lazy snapshot still unserialised? */
+  /** Diagnostics (fixtures): is a lazy snapshot still unserialized? */
   hasPendingSnapshot(): boolean { return this.pendingSnapshot !== null; }
 
   /** snapshotState, but if `reuseMei` is supplied use it instead of
@@ -1135,7 +1135,7 @@ export class ComposerModel {
    *  HistoryManager's cached MEI stale). */
   snapshotStateReusing(reuseMei: string | null): { mei: string; voice: Voice; cursors: Record<Voice, number>; docVer: number } {
     /* A BEFORE snapshot precedes a mutation: any lazy AFTER still pending must
-       be serialised while the document is still that state (A10). */
+       be serialized while the document is still that state (A10). */
     this.materializePendingSnapshot();
     let mei: string;
     if (reuseMei !== null) {
@@ -2017,8 +2017,8 @@ export class ComposerModel {
     });
   }
 
-  /** Rewrite each note's baked colours (@color ink, data-light-color) from
-   *  its pitch under the current layout and its measure's anchor — colour is
+  /** Rewrite each note's baked colors (@color ink, data-light-color) from
+   *  its pitch under the current layout and its measure's anchor — color is
    *  one function of the pitch (@hkl/shared/keycolor.js), so the baked values
    *  are a cache. Call after anything that changes a note's pitch without
    *  re-entering it: a retune, a key edit in a Syntonic / Polysyntonic score.
@@ -2124,7 +2124,7 @@ export class ComposerModel {
   }
 
   /** Lazily build the instrument table from the head `<scoreDef>`'s root
-   *  `<staffGrp>`. Two shapes are recognised:
+   *  `<staffGrp>`. Two shapes are recognized:
    *   • IMPLICIT (old/default doc): the root staffGrp's direct children are
    *     `<staffDef>`s → ONE instrument ("Piano"), the root staffGrp itself.
    *     This shape is never rewritten on load (byte-identity for legacy .hkc).
@@ -2526,7 +2526,7 @@ export class ComposerModel {
   setKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {
     this.applyKeySigAt(mi, sig, mode);
     /* Syntonic / Polysyntonic: the key decides each measure's anchor, so a key
-       edit re-pitches (and recolours) the notes it governs (anchorAt). The meter
+       edit re-pitches (and recolors) the notes it governs (anchorAt). The meter
        invalidation above already widened the render dirty range to 'all'. */
     const m = this.getLayoutReq().tuningMode;
     if (m === 'S' || m === 'Y') this.recolorNotes();
@@ -3346,7 +3346,7 @@ export class ComposerModel {
   }
 
   /** Toggle a `<trill>` ornament on the current note/chord (voice mode). The
-   *  trill is diatonic (Verovio alternates with the upper neighbour). No-op
+   *  trill is diatonic (Verovio alternates with the upper neighbor). No-op
    *  on rests / placeholders / wrappers. Returns `{ id, on }` or null. */
   toggleTrillAtCursor(mode: "insert" | "overwrite"): { id: string; on: boolean } | null {
     const v = this.currentVoice;

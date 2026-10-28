@@ -213,7 +213,7 @@ export type ComposerEvent =
    *  connect / hello / request-state, cursor moves, edits, Setup save, file
    *  load, and transport steps — all diff-gated, so moving within one key is
    *  silent. Unlike set-reference-note this one is safe to send freely: it
-   *  carries a fact about the score, not about the cursor's neighbourhood.
+   *  carries a fact about the score, not about the cursor's neighborhood.
    *  HKL gates whether this also clears the selection tier on its
    *  "Sync to Composer" toggle (sync on → clear, so the lattice matches the
    *  score exactly; sync off → leave the user's explicit selection alone). */

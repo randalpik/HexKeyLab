@@ -70,9 +70,9 @@ The fixed-MIDI mapping is set up *once* per device-connection in `lumatone/sync.
 
 **Picked**: When a new color sync starts mid-flight, replace the queue but let the in-flight message complete naturally. The new diff folds the in-flight message's intended state into its diff via `sysex.inFlight` (the predicted snapshot).
 
-**Rejected**: Cancelling the in-flight message (Option A) — caused stuck colors when an ACK landed after the new queue was built but before the diff incorporated the predicted state.
+**Rejected**: Canceling the in-flight message (Option A) — caused stuck colors when an ACK landed after the new queue was built but before the diff incorporated the predicted state.
 
-**Why**: SysEx ACKs are atomic — the device commits the message either fully or not at all. Cancelling mid-flight produces inconsistent device state. Letting messages complete + folding their intent into the next diff is race-free.
+**Why**: SysEx ACKs are atomic — the device commits the message either fully or not at all. Canceling mid-flight produces inconsistent device state. Letting messages complete + folding their intent into the next diff is race-free.
 
 **Where**: `lumatone/sysex.ts:replaceQueue` (in-place swap), `lumatone/sync.ts` (predicted-snapshot trick using `sysex.inFlight`).
 
@@ -1003,7 +1003,7 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 - Parametric `low/high/gamma` model matches the HKL audio curve's UX and is enough resolution for the use case. A draggable-points editor was considered but deferred — three sliders cover the actually-useful curve shapes.
 - Migration: on `loadFromPrefs`, if a Phase A `inputCurve` is non-identity AND an `intervalCurve` exists, reset the inputCurve to identity. Prevents double-compression for users who tuned gamma=10 in Phase A and then upgrade.
 
-**Constraint surfaced**: CMD 0x20 persistence semantics are unverified. The Terpstra driver source has `SAVE_VELOCITY_CONFIG (0x09)` for 0x08 but no apparent analogue for 0x20. If 0x20 doesn't survive power cycles, the user will need to re-push after each Lumatone reboot. Mitigation: button-only push is acceptable for the MVP; if it becomes painful, add an opt-in auto-push gated on `lumatone.autoSyncEnabled`.
+**Constraint surfaced**: CMD 0x20 persistence semantics are unverified. The Terpstra driver source has `SAVE_VELOCITY_CONFIG (0x09)` for 0x08 but no apparent analog for 0x20. If 0x20 doesn't survive power cycles, the user will need to re-push after each Lumatone reboot. Mitigation: button-only push is acceptable for the MVP; if it becomes painful, add an opt-in auto-push gated on `lumatone.autoSyncEnabled`.
 
 **Where**:
 - `src/lumatone/protocol.ts` — `SYSEX_CMD_SET_VELOCITY_INTERVALS = 0x20`, `buildSetVelocityIntervalConfig`.
@@ -1076,11 +1076,11 @@ Any two can coexist; all three cannot. We picked (1) and (2)-ish (with floor=0.0
 | `intervalCurve.gamma` | 1.0 | linear distribution; only sensible value given the high=130 choice |
 | audio `floor` | 0.03 | 30 dB curve range, digital-piano convention |
 | audio `ceiling` | 1.00 | unchanged |
-| audio `gamma` | **13.9** | empirical sweep finds this minimises dB-step stddev *subject to achieving the full ~30 dB range* on the user's natural press range (T = 3..50, vel = 80..127 under 1:1) |
+| audio `gamma` | **13.9** | empirical sweep finds this minimizes dB-step stddev *subject to achieving the full ~30 dB range* on the user's natural press range (T = 3..50, vel = 80..127 under 1:1) |
 | CMD 0x08 LUT | "identity-from-1" (`lut[0]=1`, rest identity) | gives emitted range 1..127 instead of 0..127 (a played note shouldn't emit MIDI vel 0 = note-off) |
 
 **Rejected**:
-- **`high=50`**: produces only 48 distinct integer thresholds across 127 table entries → binary_search on duplicates returns a non-uniform reachable bin pattern (alternating runs of 2 and 3 reachable bins). User's natural play range maps to 47 + 2 boundary bins ≈ 48 velocities, but the periodic step pattern (3 small dB steps + 1 big step) is audibly stuttered. The previously-recommended γ_audio=2.30 minimised dB-stddev under this constraint, but the max-step (1.43 dB) was visibly larger than the high=130 setup's (0.94 dB).
+- **`high=50`**: produces only 48 distinct integer thresholds across 127 table entries → binary_search on duplicates returns a non-uniform reachable bin pattern (alternating runs of 2 and 3 reachable bins). User's natural play range maps to 47 + 2 boundary bins ≈ 48 velocities, but the periodic step pattern (3 small dB steps + 1 big step) is audibly stuttered. The previously-recommended γ_audio=2.30 minimized dB-stddev under this constraint, but the max-step (1.43 dB) was visibly larger than the high=130 setup's (0.94 dB).
 - **CMD 0x08 "bake" LUT** (briefly explored and removed): tried to map binary_search-reachable bins to evenly-spaced velocities. Unnecessary once we accept γ_int=1 and choose high appropriately — the reachable bin count is determined by the threshold *integer range*, and CMD 0x08 identity is already correct for "bin index = velocity output." Bake just re-encoded what CMD 0x20 already controlled.
 - **Stevens-power-law-based γ_audio ≈ 1.67** (perceived-loudness-linear-in-tick): empirically valid as a theoretical target, but doesn't achieve the full 30 dB dynamic range pianists expect — gives ~7 dB range with high=130 or ~20 dB with high=50. Wrong tradeoff for piano feel.
 
@@ -1092,7 +1092,7 @@ Any two can coexist; all three cannot. We picked (1) and (2)-ish (with floor=0.0
 
 **Constraint surfaced** (worth knowing if/when a future keyboard changes):
 - Per-tick dB steps are inherently non-uniform under a power-law audio curve: ~1.0 dB/tick at the loud end (vel ≈ 127) tapers to ~0.1 dB/tick at the soft end (vel ≈ 80). This is a property of the math, not a bug. Pianos behave similarly — wide differentiation at loud dynamics, compression near floor.
-- γ_audio is the only useful global lever once γ_int=1, low/high, and floor are fixed. Per-key residuals go to auto-capture (per-key gain). Sample-loudness residuals go to sample-side normalisation.
+- γ_audio is the only useful global lever once γ_int=1, low/high, and floor are fixed. Per-key residuals go to auto-capture (per-key gain). Sample-loudness residuals go to sample-side normalization.
 
 **Where**:
 - `src/audio/velocityCal.ts:DEFAULT_INTERVAL_CURVE` (note: factory defaults left as `low=1, high=310, gamma=2.1` for first-time users; Max's per-unit calibration overrides via lumadiag).
@@ -1106,7 +1106,7 @@ Any two can coexist; all three cannot. We picked (1) and (2)-ish (with floor=0.0
 
 **Filed but out of scope** for the current calibration cycle. None of these are gain-curve tweaks; they're sample-engine work.
 
-1. **Velocity → low-pass cutoff modulation**: real piano hammers excite more harmonics at higher velocities, so hard hits sound brighter. Without it, soft and loud notes have identical timbre. Probably the *single biggest* missing piece for piano realism given HKL's normalised single-layer samples. Implementation would be a per-voice biquad LPF with cutoff = `f(velocity)` — a 6 dB high-shelf delta between vel=1 and vel=127 in the 2–8 kHz region would be perceptually significant.
+1. **Velocity → low-pass cutoff modulation**: real piano hammers excite more harmonics at higher velocities, so hard hits sound brighter. Without it, soft and loud notes have identical timbre. Probably the *single biggest* missing piece for piano realism given HKL's normalized single-layer samples. Implementation would be a per-voice biquad LPF with cutoff = `f(velocity)` — a 6 dB high-shelf delta between vel=1 and vel=127 in the 2–8 kHz region would be perceptually significant.
 
 2. **Velocity → attack-time modulation**: harder hits produce sharper attacks. ~5–15 ms shorter at vel=127 vs vel=1. Subtle but adds "bite" to loud notes.
 
@@ -2366,7 +2366,7 @@ The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-p
 **Picked**: A "Piano output" toolbar toggle (`src/midi/piano-out.ts`) mirrors HKL playback to an external MIDI synth at true JI, using **RPN 0001 channel fine-tuning** (±100¢/14-bit) with **one voice per MIDI channel** (full 1..16, steal-oldest). Validated first in the `tools/sp250-spike/` browser spike against a Korg SP-250. Hooked at `syncOutput()` via `syncPianoOut()`, tracking `selectedKeys ∪ sustainedKeys`, gated on its own `pianoOutputEnabled` flag (independent of `audioEnabled`). Output port auto-matches the selected Piano *input* device by name.
 
 **Rejected**:
-- **Pitch bend / MPE** (as `src/midi-io/export.ts` uses for `.mid`). The target class of synths (SP-250 and similar consumer digital pianos) **does not receive pitch bend or MPE** — confirmed by spike. RPN 0001 fine-tune is the only tuning channel they honour.
+- **Pitch bend / MPE** (as `src/midi-io/export.ts` uses for `.mid`). The target class of synths (SP-250 and similar consumer digital pianos) **does not receive pitch bend or MPE** — confirmed by spike. RPN 0001 fine-tune is the only tuning channel they honor.
 - **Single-channel sequential retune.** Initially assumed the synth froze pitch per-voice at onset (the spike's sustain test suggested so). The chord player disproved it: a **note-on re-applies the channel's current fine-tune to every sounding voice on that channel**, so a single channel can hold only one tuning at a time. Hence one-voice-per-channel. Both the sustain-test result and the chord behavior are consistent under "bare retune doesn't move held notes, but a note-on does re-tune all of the channel's voices."
 - **Hooking inside `engine.noteOn/noteOff`** (where the recording capture taps). Those are short-circuited when Audio is muted (`syncAudio` → `stopAllNotes` at `audioEnabled` false), which would force internal audio on and double the sound. Hooking at `syncOutput`/`syncPianoOut` keeps the external synth usable as the *sole* source.
 - **Forwarding CC64 sustain.** Unnecessary — HKL already defers `engine.noteOff` until pedal release (released-under-pedal keys live in `sustainedKeys`), so note-off *timing* carries sustain to the synth for free.
@@ -3195,18 +3195,18 @@ Time/key work over the measures any selection touches; clef is beat-mode only (m
 All accidentals in Composer render as BravuraText `<text>` swapped in by `injectHejiGlyphs`
 (`@hkl/notation/heji-render.ts`) — note accidentals, key-sig accidentals, and HEJI comma stacks alike,
 so the whole score is uniformly Bravura. Empirically (measured on-a-line via `test/composer-inspect`)
-Verovio's own placement left every accidental reading slightly HIGH — its optical centre sits above the
+Verovio's own placement left every accidental reading slightly HIGH — its optical center sits above the
 notehead's staff line. Our injected glyph matched Verovio within ~0.07 space, so this is not an injection
 bug; centering on the line is a deliberate deviation from the engraving default. Lever: the single global
 `ACCID_BASELINE_CORRECTION_SPACES`, tuned **1.5 → 1.6** (≈0.1 space further down) — it moves every injected
 glyph the same amount. Only the septimal hook (U+E2DE/E2DF) still sat ~0.2 space high at that baseline, so
 its per-family `FAMILY_Y_OFFSET.septimal` → **0.05** (≈0.2 space down) to match the flat it trails. The five
-conventional families share offset 0. Values are empirical (verified glyph-centred on a staff line for
+conventional families share offset 0. Values are empirical (verified glyph-centered on a staff line for
 natural/flat/sharp/double-sharp/double-flat + ±arrow variants + flat+hook); re-tune against the same
 on-a-line probe if the font or scale changes, never against `getBBox`/`getBoundingClientRect` (see lessons).
 
 **Composer status-message taxonomy: purple ⇔ undoable edit; only `state` persists (2026-06-03).**
-`setStatus(text, kind, source)` kinds map to colour and lifetime: **info** (gray) = neutral/loading +
+`setStatus(text, kind, source)` kinds map to color and lifetime: **info** (gray) = neutral/loading +
 benign "nothing happened" + any action that does NOT mutate the model (layer/mode switches, navigation,
 zoom, view-filter, rewind, save/load/export, copy, cancels); **action** (purple) = confirmation of a real
 **undoable** model edit, and every purple call site must accompany one (audited); **error** (red) =
@@ -3224,7 +3224,7 @@ moment, so we (1) take the source current element's absolute ONSET (`getCursorAb
 (2) find the target element with `onset ≤ srcOnset < onset+dur`, and (3) set the cursor to THAT element's
 flat index (= past it → it becomes current). Matching the onset TICK instead lands the cursor at the note's
 left edge — i.e. the measure start when the note begins at tick 0 — which reads as "dropped to the start of
-the bar" (the bug). Matching the END tick (the older behaviour) jumps when the target has a longer note
+the bar" (the bug). Matching the END tick (the older behavior) jumps when the target has a longer note
 spanning the source end with no stop there. A zero-duration current element (measure-start wrapper /
 past-end) has no note to select, so it falls back to the positional `findCursorByTickPosition`. The
 visual-measure fallback (`getFirstVisualCursorInMeasure`) is unchanged.
@@ -3390,7 +3390,7 @@ from the existing `hkl-side.ts` handlers (`composer-score`/`composer-playback`; 
 — overlay is bars-only, no editing caret, per Max). Subscriber (`bridge/overlay-subscribe.ts`,
 loaded by main.ts INSTEAD of ui/init.ts under `?overlay`) reconstructs state via the same high-level
 apply functions the toolbar uses (`setTuning`/`applyRotation`/`applyHexSize`/`setOutline`/
-`setSelectionFromManual`) — their audio/MIDI/Lumatone side effects all self-gate on uninitialised
+`setSelectionFromManual`) — their audio/MIDI/Lumatone side effects all self-gate on uninitialized
 subsystems, and `savePrefs` is suppressed under `?overlay` so opening the overlay never clobbers the
 real instance's prefs (shared origin/localStorage). Transparent render: a `transparentBg` flag in
 draw.ts clears the main canvas + hex-layer base to transparent (vs filling `#111`); the keyboard bed
@@ -3912,7 +3912,7 @@ reaches `osc.type`.
 **Picked**: three coordinated changes, no volume adjustment (Max's constraint — a note is kept at its real gain or skipped, nothing in between):
 1. **`measureDecay` RMS fallback** (`@hkl/analysis`): a note too short for the K-weighting momentary window falls back to a loudest-window RMS gain instead of null → the note normalizes instead of going silent. This distinguishes *clean-but-short* (keep) from *noisy* (skip).
 2. **Per-layer skip on post-gain noise floor** (`buildHki`): the reliable whine predictor is `gain × cleaned pre-roll floor` (a clean high note with a big gain is fine; a noisy one isn't — gain alone mis-ranks). Drop any layer over **−45 dBFS** (clean 26 dB gap in the data between F#6 −56 and A6 −30) and report it; playback falls back to the nearest surviving layer via `pickLayer`. Never empties a note (keep the least-noisy layer if all fail).
-3. **Auto-retry-once** (`loop.ts`): re-record a yellow take once — failed gate, post-gain noise over threshold, or a **local gain outlier** (> 1.6× the sliding same-velocity median; same-velocity gains trend smoothly with pitch so a spike like A4's 105× vs ~65× neighbours stands out without flagging the whole quiet top register). Keep the cleaner take.
+3. **Auto-retry-once** (`loop.ts`): re-record a yellow take once — failed gate, post-gain noise over threshold, or a **local gain outlier** (> 1.6× the sliding same-velocity median; same-velocity gains trend smoothly with pitch so a spike like A4's 105× vs ~65× neighbors stands out without flagging the whole quiet top register). Keep the cleaner take.
 
 **Rejected**: an SNR-aware **gain cap / any volume adjustment** (Max: don't touch note volume beyond velocity + layer softening — cap it or skip it); using **raw gain** as the skip signal (mis-ranks clean-high vs noisy-high); flat gain cap (penalizes clean high notes that just need a big boost); recording high notes louder (whine scales with master volume → no SNR gain, and it costs the inter-layer data).
 
@@ -3968,7 +3968,7 @@ reaches `osc.type`.
 
 ## Ramp-aware seams: every-step reschedule, analytic trajectory, no getter reads (2026-07-24)
 
-**Context**: Intonalogy's live retune stress (hold a button, `sRampFreq` ±1¢ every few tens of ms) produced a loud hiccup at every loop seam while ramping, plus occasional wildly-wrong landing pitches on Android. Reproduced in `test/ramp-stress/` (one voice, hold-to-step harness). Root cause chain: (1) `sRampFreq` cancelled any pre-scheduled wrap-aligned switch and DEFERRED rescheduling to a re-anchor timer that only fired after the ramp settled — under continuous stepping "settled" never arrives, so the clean seam path starved; (2) the only remaining wrap path was `doImmediateSwitch`, which splices from the CURRENT mid-segment playhead to a new segment's `a` — not the validated `b→a` pair, phase-unvalidated → audible hiccup at every wrap while ramping; (3) all seam paths propagated rate via the `playbackRate.value` getter and gave new sources a constant snapshot with no ramp events — mid-ramp the getter is host-dependent (computed on Chromium, last-set on some hosts; RNAA/Android suspect), and a poisoned read at a seam sticks as the voice's rate (the wrong-pitch landings, if the hold ends right after that seam).
+**Context**: Intonalogy's live retune stress (hold a button, `sRampFreq` ±1¢ every few tens of ms) produced a loud hiccup at every loop seam while ramping, plus occasional wildly-wrong landing pitches on Android. Reproduced in `test/ramp-stress/` (one voice, hold-to-step harness). Root cause chain: (1) `sRampFreq` canceled any pre-scheduled wrap-aligned switch and DEFERRED rescheduling to a re-anchor timer that only fired after the ramp settled — under continuous stepping "settled" never arrives, so the clean seam path starved; (2) the only remaining wrap path was `doImmediateSwitch`, which splices from the CURRENT mid-segment playhead to a new segment's `a` — not the validated `b→a` pair, phase-unvalidated → audible hiccup at every wrap while ramping; (3) all seam paths propagated rate via the `playbackRate.value` getter and gave new sources a constant snapshot with no ramp events — mid-ramp the getter is host-dependent (computed on Chromium, last-set on some hosts; RNAA/Android suspect), and a poisoned read at a seam sticks as the voice's rate (the wrong-pitch landings, if the hold ends right after that seam).
 
 **Picked**:
 - **Analytic trajectory, never the getter**: `rateAtTime`/`positionAtTime`/`timeAtPosition` evaluate the anchor + `pendingRamp{Start,End,R0,R1}` piecewise (constant r0 on [t0,rs], linear ramp on [rs,re], constant r1 after; position inversion solves the quadratic — `(−r0+√(r0²+2kd))/k` is the forward crossing for both ramp signs).
@@ -4000,7 +4000,7 @@ reaches `osc.type`.
 
 **Context**: Intonalogy (engine 2.4.1, web + native alike) reported two one-cause symptoms from `cancelPendingSwitch`: a click on every note onset (attack fade deleted → silence-to-full in ~1.5ms where `sNoteOnFaded(dur=0.1)` should ramp 100ms) and a hard `setValueAtTime` throw inside the fade window. Cause: the function's teardown restored `oldSegGain` to `v.vol` anchored at `now` — written for the mid-crossfade case, where the gain sits at steady `v.vol`. But `segGain` also carries the voice's own attack (sNoteOn's 4ms `ATTACK_FADE_S` ramp, sNoteOnFaded's 100ms equal-power `setValueCurveAtTime`), which sits earlier on the same timeline, and every looping voice carries a `pendingSwitch` from birth. Cancel before the attack started → `cancelScheduledValues(now)` deleted the fade and the 5ms restore drove the gain to full before the source's start (click); cancel with the attack in flight → `setValueAtTime(now)` landed inside the live curve (throw on strict hosts). Reachable from every teardown/retune path — `sNoteOff`, `sHardStop`, `sRampFreq`, `sSlideAndFadeOut` (the report missed this one), defensively `scheduleSegmentSwitch` — so a retune sweep over future-scheduled voices clicked every note of a sequence. Report: `handoff/hkle-cancel-pending-switch-attack.md`.
 
-**Picked** (the report's own proposal, verified correct against source): branch on `now < p.switchTime`. Crossfade not yet begun → `cancelScheduledValues(p.switchTime)` only — everything `scheduleSegmentSwitch` put on `oldSegGain` sits at/after `switchTime`, so cancelling there removes exactly those two events and leaves an unstarted/in-flight attack intact; nothing to restore, the voice's own envelope is left alone. Crossfade in flight → the existing 5ms restore, unchanged. This also removes any `setValueAtTime` from the pre-crossfade path, so no event can land inside a live curve from this function.
+**Picked** (the report's own proposal, verified correct against source): branch on `now < p.switchTime`. Crossfade not yet begun → `cancelScheduledValues(p.switchTime)` only — everything `scheduleSegmentSwitch` put on `oldSegGain` sits at/after `switchTime`, so canceling there removes exactly those two events and leaves an unstarted/in-flight attack intact; nothing to restore, the voice's own envelope is left alone. Crossfade in flight → the existing 5ms restore, unchanged. This also removes any `setValueAtTime` from the pre-crossfade path, so no event can land inside a live curve from this function.
 
 **Rejected**: consumer-side avoidance (no call site avoids the function; the reporter confirmed no app-side workaround exists — their TEMPORARY `Pitch.tuneTo` guard should now be removed); `cancelAndHoldAtTime`-based restore (changes the designed in-flight behavior, and the hold semantics diverge across hosts).
 
@@ -4303,7 +4303,7 @@ reaches `osc.type`.
 1. **Splice only when nothing else moves (v1)**. Instead of emulating Verovio's content-driven stacker (the same trap spike 5 refuted for castoff fit), the splicer MEASURES the window's own consecutive-system spacing chain against the live DOM: every replaced system must land exactly at its live position (spacing-above per line, content-top hang for page-first lines, spacing-below after the last replaced line, bottom-extent stability for page-last lines — which also pins pagination). Any implied movement → full refill render, loudly. dy-cascades, page-boundary moves, and pagination ownership (pb pins + our height-fit rule) are C-B2.
 2. **The splicer is stateless** (`render/pagesplice.ts`, `PageSystemSplicer`): everything it needs lives in the mounted DOM, the refill result (`tryRefill` now returns changed run + old/new partition + a LAZY `mei()` so the splice path skips the ~130 ms full serialize+pin), and the model. Nothing to invalidate, no index to drift.
 3. **Synthetic leader AND trailer**: windowed renders diverge at BOTH sub-document edges — the leader (spike 2) absorbs score-start artifacts; the new pinned mRest TRAILER absorbs the end-of-score final barline (~5 px wider bbox on the window's last measure — found by the battery's context check as dW=52/dRelX=0). No trailer when the window reaches the true doc end.
-4. **Context-line sanity check as the divergence detector**: the unchanged neighbour lines (a−1, b+1) must reproduce their live per-measure x/width within 25 units. This structurally catches the section-boundary window divergence (probe k=59 — the k87 "castoff state at a mid-piece scoreDef" family) without any zone blacklist. Line 0 (score-start) is excluded outright; section-header measures are excluded (mount-only injections).
+4. **Context-line sanity check as the divergence detector**: the unchanged neighbor lines (a−1, b+1) must reproduce their live per-measure x/width within 25 units. This structurally catches the section-boundary window divergence (probe k=59 — the k87 "castoff state at a mid-piece scoreDef" family) without any zone blacklist. Line 0 (score-start) is excluded outright; section-header measures are excluded (mount-only injections).
 5. **New refill guards, needed the moment rendering stopped being whole-doc**: `computeInteriorSig` (mid-piece section-level scoreDefs are invisible to per-measure sig diffs) and composer/footer credits in `headSig` — both bail to derive. A signature-identical render request is now a NO-OP SKIP (page DOM untouched; sound because of those guards). `lastFullMs.page` updates only on actual full engraves so splices don't poison the heaviness predictor.
 6. **Inline acceptance gate under HKL_INDEX_CHECK**: every splice re-renders the same pinned MEI offscreen and throws on any divergence in system sequence, per-measure x/width, or spacing (section-header pages exempt spacing — their reserve translate is a main.ts injection, not Verovio's).
 
@@ -4355,7 +4355,7 @@ reaches `osc.type`.
 2. **Adoption reads page-based MEI instead of rendering pages.** `getMEI({scoreBased:false})` returns `<page>`/`<system>` wrappers encoding exactly what castoff decided: **98 ms including parse, versus 1830 ms for the page-by-page SVG walk**, with a byte-identical partition (118 lines / 37 pages). Being synchronous is what makes the bootstrap possible at all. Gotchas: `{pageNo:N, scoreBased:false}` returns an EMPTY string (ask for the whole document), and Verovio echoes our `hkl:` metadata without its `xmlns:hkl` declaration, so the output must have the prefix re-declared before parsing.
 3. **Accepted trade** (Max: "First paint is the one case I accept additional time, as long as it truly happens once"): first paint 1.2 s → ~2.0 s on the sonata (one extra loadData), against ~870 ms off every first interaction and the elimination of ~1830 ms of idle work. Total work per load-and-first-edit drops ~4.2 s → ~2.3 s. Verified the cost is per-derive only — three consecutive forced derives at ~2.0 s, no warnings, first edit after each splices at 333 ms, no idle tail.
 
-**Visual consequence, approved**: page rendering moved from `smartSb0` to `encoded` everywhere, so four page-mode baselines shifted (median ~2.6 px). Max reviewed and approved a full reseed. He flagged the `phase3_section_header` case, where the same phenomenon is extreme because a single whole note absorbs an entire page of slack (note moves 1368 → 2935 from the measure left) and because `encoded` leaves the document-final system at its natural width (18790 → 2553) instead of stretching an empty measure across the page — the latter being conventional engraving. Both characterised in the design doc; both are Verovio's behaviour, not tunable short of choosing the mode.
+**Visual consequence, approved**: page rendering moved from `smartSb0` to `encoded` everywhere, so four page-mode baselines shifted (median ~2.6 px). Max reviewed and approved a full reseed. He flagged the `phase3_section_header` case, where the same phenomenon is extreme because a single whole note absorbs an entire page of slack (note moves 1368 → 2935 from the measure left) and because `encoded` leaves the document-final system at its natural width (18790 → 2553) instead of stretching an empty measure across the page — the latter being conventional engraving. Both characterized in the design doc; both are Verovio's behavior, not tunable short of choosing the mode.
 
 **Where**: `render/linebreaks.ts` (`adoptFromCastoff`), `render/render.ts` (`castoffPlan` extracted from renderPage, `derivePageRender`), `test/composer-test/fixtures.mjs` (derive detection now uses `lastDeriveReason` — the old "idle adoption re-armed" proxy is dead now that adoption is synchronous; `pageLineBreaksDeriveFallback` engages ownership first), 4 baselines reseeded, `test/composer-inspect/phasec/` (cb-modes, cb-whymode, cb-sbcorrelate, cb-linepb, cb-getmei, cb-tkapi, cb-pagebased, cb-wholenote, cb-loadcost), docs/lessons.md.
 
@@ -4365,7 +4365,7 @@ reaches `osc.type`.
 
 **Ruled out by Max, permanently**: "Anything related to your 'endgame' is firmly out of scope of this effort. Our system is to use Verovio to render our scores. Musical spacing is incredibly complex in ways I don't even fully comprehend, and trying to replicate it ourselves for tens of ms is always a losing battle."
 
-**The settled division of labour**: **we own break decisions (line partition, pagination) and DOM surgery; Verovio owns everything inside a system.** Do not propose replicating spacing, justification, or glyph placement again.
+**The settled division of labor**: **we own break decisions (line partition, pagination) and DOM surgery; Verovio owns everything inside a system.** Do not propose replicating spacing, justification, or glyph placement again.
 
 **What this fixes and what it costs**: the latency floor now includes one small window engrave per edit. Measured, that is ~17 ms `loadData` FLAT in document length (22 ms on a one-page doc, 17 ms on the 446-bar sonata — the window is the same size either way), plus the window's own drawing cost, which scales with musical density rather than score size. Every remaining millisecond has to come from OUR overhead: the O(document) tax (Phase D), the mounted-DOM layout-flush cost, and how many measurements the splice takes. Realistic target ~120–150 ms, flat in document size — and flatness is the property that matters, since it is what makes a 2000-bar score behave like a 200-bar one.
 
@@ -4383,7 +4383,7 @@ The same records give the owner a per-measure dirty set: fold each record's targ
 
 **Verifications are permanent, not one-shot.** Under `HKL_INDEX_CHECK` the model re-enumerates and compares on every cache HIT, and the owner re-serializes the whole document and compares every string. The 339-fixture suite is therefore a standing gate on the mechanism itself, at no production cost — and measured, it did not slow the suite down (~190 s either way).
 
-**Measured (sonata, steady-state spliced edit)**: `querySelectorAll` 31 969 → ~3 400 calls, `XMLSerializer` 495 → 54 calls, `cursor.update` 62.6 → 1.8 ms, wall 308 → ~206 ms. Behaviour gate: the `cb-splice-battery` sonata battery was run on both code states — identical splice/skip outcome edit-for-edit, reference-clean on all 37 pages in both, every edit faster.
+**Measured (sonata, steady-state spliced edit)**: `querySelectorAll` 31 969 → ~3 400 calls, `XMLSerializer` 495 → 54 calls, `cursor.update` 62.6 → 1.8 ms, wall 308 → ~206 ms. Behavior gate: the `cb-splice-battery` sonata battery was run on both code states — identical splice/skip outcome edit-for-edit, reference-clean on all 37 pages in both, every edit faster.
 
 **Where**: `apps/composer/src/model/index.ts` (`documentVersion`, `flatChildren`, `allMeasures`), `apps/composer/src/render/linebreaks.ts` (`captureSigs`/`drainSigDirty`/`noteSigMutations`), docs/lessons.md, docs/composer-page-splice-design.md (Phase D passes 1–3).
 
@@ -4417,7 +4417,7 @@ The same records give the owner a per-measure dirty set: fold each record's targ
 
 **Where**: `apps/composer/src/render/render.ts` (`userPageBreakIndices`, `castoffSegmentedByUserBreaks`, `layoutBreaksWithLines`, derive hook), `test/composer-test/fixtures.mjs` (`pageUserBreakReflows`), `test/composer-inspect/phasec/` (cb-userpb, cb-pbadopt, cb-pbconverge, cb-pbunion, cb-segdiag, cb-pbcases), docs/lessons.md.
 
-## 2026-08-31 — Page splice B1: the window mirrors live pagination, so a moving system's position is measured rather than modelled
+## 2026-08-31 — Page splice B1: the window mirrors live pagination, so a moving system's position is measured rather than modeled
 
 **Context**: Phase C-B v1 spliced only when NOTHING moved — four vertical
 refusals (`page-first hang`, `spacing above`, `page-last bottom extent`,
@@ -4453,7 +4453,7 @@ it is not constant (a floor applies once the counted overflow is small).
 a 3-unit movement adds error and re-snaps a whole page for a sub-pixel edit —
 it surfaced immediately as a visual-baseline diff on `pageSystemSpliceEdit`.
 A splice therefore either pins systems to their live positions exactly (v1
-behaviour, `plan.static`: nothing moves by more than EPS 25) or applies the
+behavior, `plan.static`: nothing moves by more than EPS 25) or applies the
 whole plan plus the follower cascade.
 
 **Cross-page moves: repaginate, do not splice across.** Under owned pagination
@@ -4709,10 +4709,10 @@ to 37.
 **Picked**: `updateMountWindow(cursorMeasure)`, scheduled on idle from every
 cursor update. Mount everything within ONE viewport of the view (the same band
 the IntersectionObserver arms, so the two never fight) plus the cursor's page
-and its two neighbours; evict anything mounted, unpinned, and beyond TWO
+and its two neighbors; evict anything mounted, unpinned, and beyond TWO
 viewports. The gap between the bands is the hysteresis — without it, scrolling
 along a page boundary churns, and a re-mount costs the same ~138 ms. The
-cursor's neighbours are mounted eagerly because that is where the next edit
+cursor's neighbors are mounted eagerly because that is where the next edit
 needs context, which moves B5's mount off the edit path entirely.
 
 **Eviction only became safe earlier the same day.** Un-mounting restores the
@@ -4781,7 +4781,7 @@ document's final line.
 **Picked**: after the window is computed, extend it while the line just beyond
 begins a signature change — bounded at two, because the sonata has runs of
 consecutive meter changes that would otherwise chain the window forward
-indefinitely. `beginsSignatureChange` recognises a section-level `<scoreDef>`
+indefinitely. `beginsSignatureChange` recognizes a section-level `<scoreDef>`
 before the measure, or a `clef`/`keySig`/`meterSig` ahead of any event in its
 first staff (a signature AFTER the first note is mid-measure and generates no
 courtesy). Extending costs at most one or two lines on ~22 % of windows, and
@@ -4875,7 +4875,7 @@ The splice replaces whole systems, but HOW MANY comes from a MEASURE-level
 closure of the changed measures rounded to lines — so where in the line the edit
 lands decides whether that closure crosses a boundary. A first or last measure
 is ~half the time an endpoint of a slur or tie whose other end is on the
-neighbouring system, which must then be replaced too (its segment of that
+neighboring system, which must then be replaced too (its segment of that
 spanner genuinely changes). A middle measure almost never is. Cross-checks
 against the spanner census: 50 of 926 slurs cross a line boundary over 115
 boundaries, plus tie edges.
@@ -4928,7 +4928,7 @@ while the replaced set {L−1, L} fails?*
 outcome, and restores via `restoreSnapshot`. Chunked by `allmeasures.sh` — the
 runner's `Runtime.evaluate` deadline is 300 s and the full walk needs ~4× that;
 each chunk is saved as it completes so a kill costs one chunk and a re-run
-resumes. `allmeasures-report.mjs` merges and analyses.
+resumes. `allmeasures-report.mjs` merges and analyzes.
 
 **Answer: no such case exists.** 446 measures, 420 real edits, 0 undetermined:
 
@@ -5162,7 +5162,7 @@ within `EPS` of the stacked numerals. Fixture `pageScoreStartSpliceKeepsMeterSym
 reads the meter glyph codepoints across a line-0 splice. Whether to add a
 glyph-identity comparison to the reference gate and the context check is
 proposed in the design doc's START HERE (Max's call — the context-check half
-changes splice behaviour).
+changes splice behavior).
 
 ## 2026-09-01 — The reference gate compares signature glyph identity, not only geometry
 
@@ -5173,7 +5173,7 @@ rendered as "2/2" on a line-0 splice (not refused at all). `verifyAgainstReferen
 codepoints of every `g.clef` / `g.keySig` / `g.meterSig` glyph between the
 spliced DOM and the fresh reference render (`sigGlyphs`, the `use` href before
 its per-render hash). Exact, no layout flush, index-check only — so no hot-path
-cost and no behaviour change. The reference host is POST-PROCESSED first (the
+cost and no behavior change. The reference host is POST-PROCESSED first (the
 same `postProcessRendered` the live pages and window hosts get): the HEJI pass
 replaces key-signature `use` glyphs with injected `<text>`, so a raw reference
 compares its flats against a live page that has none — the check's first run on
@@ -5181,7 +5181,7 @@ the sonata's line 0 was exactly that false divergence.
 
 **Deliberately NOT done yet**: the same comparison in the live context check
 (`spliceDom`), which would refuse a wrong-signature window by construction. That
-changes splice behaviour (more refusals are possible) and is Max's call; it is
+changes splice behavior (more refusals are possible) and is Max's call; it is
 listed in the design doc's START HERE. The census that would feed it is already
 recorded on the refusal path (`lastContextDiff`).
 
@@ -5409,7 +5409,7 @@ design doc's "Where the time goes". What was decided:
   post-process only the replaced systems with HEJI still on the whole host
   (10–15 ms, measure the passes first), A9 `svgFormatRaw` (~3 ms), A10 lazy
   history snapshot (~12 ms), then A6 one-layout-per-host (~4.5 ms, fragile).
-  ≈ 40–45 ms of ~170 (25%). Behaviour gate for each: `cb-splice-battery.js`
+  ≈ 40–45 ms of ~170 (25%). Behavior gate for each: `cb-splice-battery.js`
   on both code states, outcomes and `reference.ok` identical; then
   `cb-splicecost.js` for the wall.
 
@@ -5487,21 +5487,21 @@ battery identical to base, every visual baseline unchanged under the full
 suite. Side effect: the PDF export's toolkit inherits the persisted option, so
 exported SVG is raw as well — whitespace only.
 
-## 2026-09-01 — A10: the history AFTER snapshot is serialised lazily, never after the document changes
+## 2026-09-01 — A10: the history AFTER snapshot is serialized lazily, never after the document changes
 
-`withHistory` serialised the whole document twice per edit until Phase B3
+`withHistory` serialized the whole document twice per edit until Phase B3
 halved it by reusing the previous AFTER as the next BEFORE; the remaining AFTER
 `XMLSerializer` (~12 ms on the sonata) was the largest non-Verovio cost left on
 the keystroke. It is now lazy: `model.snapshotStateLazy()` returns a snapshot
 whose `mei` is a getter, plus the exact document version.
 
-- **The invariant** is that a lazy snapshot is materialised before the document
+- **The invariant** is that a lazy snapshot is materialized before the document
   can change. Every mutation path in Composer takes a BEFORE snapshot first, so
-  `snapshotState` / `snapshotStateReusing` materialise any pending lazy one;
+  `snapshotState` / `snapshotStateReusing` materialize any pending lazy one;
   so do `restoreSnapshot*` (undo/redo swap the document) and `replaceDocument`
-  (load). An idle callback (300 ms timeout) serialises it when the user pauses;
+  (load). An idle callback (300 ms timeout) serializes it when the user pauses;
   a second edit before idle pays it at its own start — the same 12 ms as
-  before, never twice. Under HKL_INDEX_CHECK, materialising after the version
+  before, never twice. Under HKL_INDEX_CHECK, materializing after the version
   moved throws; in production it warns. This is the same failure class the
   existing "reused MEI is stale" assert catches one edit later.
 - **No-op detection moved.** `push` compared MEI strings, which would force the
@@ -5509,13 +5509,13 @@ whose `mei` is a getter, plus the exact document version.
   MutationObserver drain is exact) and push nothing. Different versions do not
   prove a change — `setAttribute` to the same value bumps the version — so the
   entry is pushed optimistically and the comparison is settled when the AFTER
-  materialises (`resolvePending`, run before any push / undo / redo / canUndo):
+  materializes (`resolvePending`, run before any push / undo / redo / canUndo):
   an identical MEI retracts the entry and restores the redo stack it cleared,
   exactly what the eager check used to do. The cut→paste merge path settles
   eagerly (not a keystroke path). Dialogs keep eager snapshots (no version) and
   the eager compare.
 - `HistoryManager.lastMei` became `lastCommitted: Snapshot`; `committedMei()`
-  reads it — which materialises a lazy AFTER precisely when the next edit needs
+  reads it — which materializes a lazy AFTER precisely when the next edit needs
   it as its BEFORE. `canUndo`/`canRedo` have no callers outside the manager, so
   deferred retraction has no UI consequence.
 
@@ -5543,8 +5543,8 @@ is why the idle step could run so late), and the timing shift that exposed it
 was A8's.
 
 Fix: `commitAdoption` returns without writing unless `this.adoption === task`
-and the task is not cancelled, and marks the task cancelled once it commits.
-`invalidate()` already cancelled in-flight tasks; the hole was a task that
+and the task is not canceled, and marks the task canceled once it commits.
+`invalidate()` already canceled in-flight tasks; the hole was a task that
 had FINISHED but whose continuation was still armed. Gates: two full suite
 runs green under the flag, battery identical to base.
 
@@ -5561,7 +5561,7 @@ nothing that needs layout.
   staff and system `transform`s. Same function on the window (a `DOMParser`
   document, never attached) and on the live page (whose `d` attributes are
   the same text). The bbox reading it replaces was polluted by content — a
-  measure's bbox includes spanners reaching into neighbours and, on a
+  measure's bbox includes spanners reaching into neighbors and, on a
   system's first measure, the brace 144 units to the left — which never
   mattered for the gate only because both sides carried the same pollution.
 - **The proof** (`cb-pathprofile.js`): 126 real edits (a deletion on every
@@ -5666,7 +5666,7 @@ cascade past the cursor's surroundings eventually off the interactive layer.
    page box) moves to the head of page P+1 — the owner's page start moves to the
    block's first line (`replacePageStarts`), and the move lands as a splice whose
    hunk has unchanged lines and a new target page; its window pins the block
-   page-first, so its position is read, never modelled (B1's rule holds). Then
+   page-first, so its position is read, never modeled (B1's rule holds). Then
    P+1 is checked. A last page spills into a page CREATED from the window's own
    page SVG with the systems stripped (`createPage`, then the full mount pass).
    When the receiving page is a placeholder that cannot be mounted cheaply, the
@@ -5738,7 +5738,7 @@ repair, `MAX_CASCADE_STEPS`), `test/composer-test/fixtures.mjs`,
 `test/composer-inspect/phasec/cb-splice-battery.js` (edits 9–10),
 docs/composer-page-splice-design.md, docs/architecture/composer.md, docs/lessons.md.
 
-## 2026-09-02 — Header pages keep Verovio's box: `pinExactScale` honours the injector's recorded base height (addendum to B2)
+## 2026-09-02 — Header pages keep Verovio's box: `pinExactScale` honors the injector's recorded base height (addendum to B2)
 
 **Context**: re-running `cb-sweep.js` after B2 to re-verify 115/115 also
 re-read its viewport counters, which had stood at 0/0 since the placeholder fix
@@ -5920,7 +5920,7 @@ whose bbox reaches ~3 units further below than Verovio's overflow.
    HEADER_GAP 2u, and C0 5.25u for a page with no header element (= the
    autogenerated one-line page-number header's bottom + the gap — that is
    what the first calibration measured as "the page-first constant" before the
-   header was recognised as a component; page 1's header is the title and is
+   header was recognized as a component; page 1's header is the title and is
    taller, which is why the first build crowded titles until the header was
    read per page).
 2. **`Renderer.placePage`** runs on every mount (`finishPageMount`, between
@@ -6025,7 +6025,7 @@ Phase 2).
    leaves ownership active; idle slices render each unmounted, non-stale page
    offscreen from the toolkit's current layout, post-process it, measure its
    systems into the store, discard the SVG. Adoption's discipline — the
-   current job only, cancelled by any document change, re-render, splice in
+   current job only, canceled by any document change, re-render, splice in
    progress or a toolkit that no longer holds the layout; a page that mounts
    meanwhile measures itself and is skipped. Test hooks `runExtentsJobNow`,
    `extentsJobState`, `extentsKnown`.
@@ -6124,7 +6124,7 @@ with no cascade involved. Four separate defects, found in this order
      it so entering spanners resolve, it just is not checked. Max's standing
      ruling applies — the live context comparison is a fallback, not an
      invariant — and the reference gate still covers every replaced line.
-   - B5's eager mount survives for the EDIT's own neighbourhood only (lines
+   - B5's eager mount survives for the EDIT's own neighborhood only (lines
      a−1..a+1), so an evicted cursor page is still drawn before the splice.
    - The idle extents job now WARMS what a clip deferred: one
      `ensureTkHoldsPageLayout` in an idle slice clears the stale set, so a
@@ -6186,7 +6186,7 @@ counts), fixtures `pageSpliceClipsToMountedBand`, `pageRenumberIsRedrawOnly`,
 
 ## 2026-09-03 — The splice window has no context lines: the reference gate is the only fidelity detector (vertical-ownership plan, Phase 3)
 
-**Context**: the window carried the edited line's neighbours, L−1 and L+1, and
+**Context**: the window carried the edited line's neighbors, L−1 and L+1, and
 compared each against the mounted page (per-measure x/width + signature glyph
 codepoints); a mismatch refused the splice. Phases 1 and 2 removed two of the
 three jobs those lines did — the vertical spacing chain (every system is now
@@ -6204,7 +6204,7 @@ principle rejects.
 **Decision**: drop them. The window is now leader? + the spanner/ending-closed
 hunk lines + courtesy stub? + trailer?. `profilesMatch`, `sigGlyphDiff`,
 `ContextDiff`/`contextDiff`/`clefGlyphs`, `lastContextDiff`, `EPS` and the
-`aboveComparable`/`belowComparable` clip flags are gone. The live neighbour
+`aboveComparable`/`belowComparable` clip flags are gone. The live neighbor
 LOOKUPS stay — they are DOM structure, not verification: they resolve a target
 line's page, anchor a non-page-first first line, and are the partition-drift
 detectors. `dxFrame` now reads the hunk's own outgoing live system against its
@@ -6228,7 +6228,7 @@ documentation to write:
    - `@tie="m"` — the interior note of a 3+-note chain (`realizeSlot`,
      `model/ties.ts` writes a bare `'m'`) — set NEITHER tie edge, because the
      test was `includes('t')` / `includes('i')`. A range seeded at a medial
-     measure pulled in neither neighbour. Live defect, proven: probe B renders
+     measure pulled in neither neighbor. Live defect, proven: probe B renders
      that measure with no tie where the full render draws one.
    - `pedal` is emitted as two independent point events (`dir="down"`/`"up"`,
      no `@tstamp2`), so no range exists to resolve — but `cb-pedalspan.js`
@@ -6562,7 +6562,7 @@ The root `<staffGrp>` had carried `symbol="brace" bar.thru="true"` since the ske
 
 ### Rests coincide / stay unaffected by hidden rests via `@loc`, not `<space>`
 
-Two identical rests at one moment in a staff's two voices drew above and below the staff; a hidden rest displaced the visible one. **Rejected**: converting the layer-2 twin / the hidden rest to `<space>` on the render clone — Verovio centres the survivor (probed), but `g.space` is an empty group with a zero bbox, so the cursor, click hit-testing and the selection overlay would lose the element (they resolve rests by xml:id). **Picked**: pin `@loc` (single-layer default: 6 for whole/`mRest`, 4 otherwise) on a rest whose span meets only void content, or exactly one identical visible rest, in the other layer; two rests at one `@loc` render as one glyph with no x shift (probed). Never against a note/chord/tuplet — that collides. **Where**: `notation/restlayout.ts`, run by `applyRenderConventions`.
+Two identical rests at one moment in a staff's two voices drew above and below the staff; a hidden rest displaced the visible one. **Rejected**: converting the layer-2 twin / the hidden rest to `<space>` on the render clone — Verovio centers the survivor (probed), but `g.space` is an empty group with a zero bbox, so the cursor, click hit-testing and the selection overlay would lose the element (they resolve rests by xml:id). **Picked**: pin `@loc` (single-layer default: 6 for whole/`mRest`, 4 otherwise) on a rest whose span meets only void content, or exactly one identical visible rest, in the other layer; two rests at one `@loc` render as one glyph with no x shift (probed). Never against a note/chord/tuplet — that collides. **Where**: `notation/restlayout.ts`, run by `applyRenderConventions`.
 
 ### Section breaks draw no courtesy signatures — Verovio restart + invisible meter, unconditionally
 
@@ -6572,13 +6572,13 @@ Verovio has no switch; the only mechanism is `<section restart="true">`, which d
 
 `spacingStaff` floors every pair (the piano's inner gap grew with it); `staffDef@spacing` is per pair. 18 units = 9 staff spaces against the grand staff's 6 — chosen by eye on the sonata's page 1, tunable in one constant (`INSTRUMENT_GAP_UNITS`). Stamped on the render clone, so it is a Composer default rather than a per-file setting and no `.hkc` changes. **Where**: `notation/instrumentSpacing.ts`.
 
-### Dynamics: `dynamDist 3.5` + a DOM centring pass; the PDF is behind
+### Dynamics: `dynamDist 3.5` + a DOM centering pass; the PDF is behind
 
-Verovio's default sat a dynamic's top a quarter staff space under the line. `dynamDist` has a dead zone below 2 (see lessons); 3.5 puts the top ~0.7 space down. Centring between a grand staff's staves is not a Verovio option at all, so it is a DOM post-process (`render/textlayout.ts`) in `postProcessRendered`, before placement measures the system: centre in the inter-staff gap, clamped by the other staff's glyphs in the mark's x-range; `<dir>` under any other staff nudged to the dynamics' clearance (the one case that grows a system's extents — hence before placement). Blocks of x-overlapping marks move together so Verovio's stacking and dynamic↔hairpin alignment survive. **Known gap**: PDF export re-renders through Verovio and never ran the DOM passes — it now shares `dynamDist` but not the centring, and it also predates the injected footer/composer/section titles and the page-size factor. Closing it means rendering the PDF from the same page DOM the screen shows; not done here.
+Verovio's default sat a dynamic's top a quarter staff space under the line. `dynamDist` has a dead zone below 2 (see lessons); 3.5 puts the top ~0.7 space down. Centering between a grand staff's staves is not a Verovio option at all, so it is a DOM post-process (`render/textlayout.ts`) in `postProcessRendered`, before placement measures the system: center in the inter-staff gap, clamped by the other staff's glyphs in the mark's x-range; `<dir>` under any other staff nudged to the dynamics' clearance (the one case that grows a system's extents — hence before placement). Blocks of x-overlapping marks move together so Verovio's stacking and dynamic↔hairpin alignment survive. **Known gap**: PDF export re-renders through Verovio and never ran the DOM passes — it now shares `dynamDist` but not the centering, and it also predates the injected footer/composer/section titles and the page-size factor. Closing it means rendering the PDF from the same page DOM the screen shows; not done here.
 
-### Running header: outer-corner page numbers + centred title on pages 2+
+### Running header: outer-corner page numbers + centered title on pages 2+
 
-Verovio's "– N –" centred header is restyled in place (x/anchor of its `tspan.rend`, dashes removed; baseline untouched so the header band `firstContentTop` measures is unchanged) — even pages left, odd right, the edge away from the binding — and the title is injected as a sibling `<text>` centred at the same baseline. Page 1 keeps Verovio's title block and stays unnumbered, as before. The number's corner is recomputed on every mount from `data-page`, so a renumbered page corrects itself when it re-mounts (the same staleness class as the number text). `createPageFromShell` strips the running title like the other injected texts.
+Verovio's "– N –" centered header is restyled in place (x/anchor of its `tspan.rend`, dashes removed; baseline untouched so the header band `firstContentTop` measures is unchanged) — even pages left, odd right, the edge away from the binding — and the title is injected as a sibling `<text>` centered at the same baseline. Page 1 keeps Verovio's title block and stays unnumbered, as before. The number's corner is recomputed on every mount from `data-page`, so a renumbered page corrects itself when it re-mounts (the same staleness class as the number text). `createPageFromShell` strips the running title like the other injected texts.
 
 ### Injected page text follows the page's real column
 
@@ -6599,7 +6599,7 @@ Footer, composer credit and section titles used the unscaled US-Letter constants
 Four corrections from Max's hands-on review, each a decision in its own right:
 
 ### Dynamics clearance: `dynamDist` 3.5 → 4.5
-3.5 moved a dynamic's top from a quarter to 0.7 of a staff space below the line — "still only a few px". 4.5 puts it 1.2 spaces down (a "p" centred about two spaces below the line); `DIR_GAP_PER_UNIT` follows (24 → 192 user units) so expressive text shares the baseline. Probed in-app, not only in a bare toolkit, before choosing.
+3.5 moved a dynamic's top from a quarter to 0.7 of a staff space below the line — "still only a few px". 4.5 puts it 1.2 spaces down (a "p" centered about two spaces below the line); `DIR_GAP_PER_UNIT` follows (24 → 192 user units) so expressive text shares the baseline. Probed in-app, not only in a bare toolkit, before choosing.
 
 ### Slur side: a render pass, not imported stems
 Max: the invariant is placement of elements relative to each other — a slur never on the tuplet-bracket side, on the beam side only when unavoidable — and exact Finale replication is not the goal, so importing Finale's `<stem>` (09-04) was reverted. Verovio's rules, probed exactly: in a two-voice staff stems follow the LAYER per moment (1 up, 2 down) whenever the other layer holds any element with a duration there — notes, rests, hidden rests — and the pitch rule only when it holds `<space>`; tuplet brackets go on the stem-majority side; slurs go opposite the stems in a single voice but by layer in two voices (1 above, 2 below), which lands the upper voice's slur on its own beams and brackets (m. 82) and the lower voice's on its own (m. 84). `notation/slurSides.ts` sets `@curvedir` to the notehead side for slurs whose endpoints meet non-space content in the other layer; everything else stays Verovio's. My 09-04 claims that Verovio's two-voice rule is standard and that m. 82's flipped slur would run into the lower voice were wrong (Max) and are withdrawn; the flipped m. 82 renders cleanly.
@@ -6624,7 +6624,7 @@ Max's preference "if we can do it". (e) is possible in 6.3.0 through
 `ScoreDef::ReplaceDrawingLabels` (see lessons.md for the three traps). The
 recipe: head staffGrps get `@n`; the boundary scoreDef is wrapped in a
 childless restart section; a second plain section carries a second scoreDef
-with `<staffGrp n><label>ABBR</label><staffDef n=firstStaff/>` per labelled
+with `<staffGrp n><label>ABBR</label><staffDef n=firstStaff/>` per labeled
 group. The restart system then draws what every continuation system draws
 (today: no labels — Composer's instruments have no `<labelAbbr>`), with the
 same indent, and no courtesy key or meter precedes it. Saved document unchanged.
@@ -6633,7 +6633,7 @@ same indent, and no courtesy key or meter precedes it. Saved document unchanged.
 `bar.thru` barlines under marks is refilled from the barline's own segments,
 draw-only, only inside grand-staff gaps the barline actually enters. Chosen
 over hiding the marks from Verovio (impossible: the erasure has no option) and
-over leaving the mark where Verovio put it (the vertical centring is the point).
+over leaving the mark where Verovio put it (the vertical centering is the point).
 
 **Text marks stay inside their own measure** (`render/textlayout.ts`): a
 `<dynam>`/`<dir>` whose box overlaps one of its measure's barlines is moved to
@@ -6642,7 +6642,7 @@ encoded in that measure, so it is drawn in it; a mark at tstamp beats+1 lands
 just before the barline, where Finale's `relative-x` nudge had it. Applied to
 every text mark, not only those inside a grand staff (Max: nothing sits on a
 measure boundary); hairpins exempt; a mark wider than its measure stays put.
-Import-time normalisation (moving a beats+1 dynamic to the next measure's
+Import-time normalization (moving a beats+1 dynamic to the next measure's
 tstamp 1) was considered and NOT done — it changes the document and would
 stack the mark on any downbeat text (sonata m. 90 "cresc.").
 
@@ -6680,7 +6680,7 @@ MIN_FILL (small documents), keep the last measure a stub as before.
    (Max: defective sections only, 2026-09-05).
 2. **The balancer is a repair, not a re-derivation**: merge rule first (the
    sparse final line folds into its predecessor while the merged fill stays ≤
-   `MERGE_MAX` 1.2), then a DP minimising Σ(fill−mean)² over the section at the
+   `MERGE_MAX` 1.2), then a DP minimizing Σ(fill−mean)² over the section at the
    CURRENT line count with every line inside [MIN_FILL, FIT_MAX], plus a change
    penalty `BALANCE_LAMBDA` 0.02 per line start absent from the current
    partition while any of the section's lines is mounted (0 when none is —
@@ -6722,7 +6722,7 @@ MIN_FILL (small documents), keep the last measure a stub as before.
      finishes, so a zoom round-trip neither re-balances nor re-arms.
    - **Edit path** (`repartition`, after the repair loop, `balanceTouched`):
      the sections the edit touched, with λ, and only when their naturals are all
-     cached — a section the job has not reached keeps today's behaviour and the
+     cached — a section the job has not reached keeps today's behavior and the
      job balances it on arrival. Never a whole-section window on the hot path.
 4. **`minLastJustification` moves to MIN_FILL − `LAST_JUSTIFY_SLACK` (0.05)**.
    The 2026-09-03 "one rule" tied it to MIN_FILL, but the two yardsticks are
@@ -6732,7 +6732,7 @@ MIN_FILL (small documents), keep the last measure a stub as before.
    justified; a stub it kept is far below by both yardsticks and is not.
 
 **Results** (sonata, headless Chromium, `cb-balance.js`): movements I/III/IV
-lose one line each (the stub folds into its neighbour), II keeps 21; minimum
+lose one line each (the stub folds into its neighbor), II keeps 21; minimum
 line fill 0.16/0.56/0.32/0.25 → 0.81/0.83/0.84/0.83, per-movement sd ≈ 0.05,
 116 → 113 lines, 31 pages; job 5.7 s in 10 slices; `page1Changed: false`; no
 Verovio or page-breaks notices. Suite 392/392 (no baseline moved — the balancer
@@ -6822,7 +6822,7 @@ bracket on its beamed triplet.
 Probed: Verovio's `dynamDist` governs `<dynam>` only — a lone hairpin's top
 sits 0.3 space under the staff at every setting, and a hairpin is aligned to a
 dynamic only when both share a moment (then its top sits 2 px above the
-dynamic's). In the sonata's viola, mm. 49–52, the crescendo's centre was 15 px
+dynamic's). In the sonata's viola, mm. 49–52, the crescendo's center was 15 px
 BELOW the following `f` (Verovio aligned it to something lower) and the
 decrescendo's 16 px ABOVE the following `p` (it hugged the staff) — exactly the
 "crescendo too low, decrescendo too high" Max saw. `render/textlayout.ts`
@@ -6831,7 +6831,7 @@ cluster holding a dynamic is left as Verovio placed it (dynamDist is the
 baseline; Verovio aligned what touches it); text is pushed down to the
 clearance as before; a hairpin-only cluster is put AT the line, up or down,
 its top `HAIRPIN_LIFT` (a quarter unit) above `DIR_GAP` to mirror Verovio's
-own alignment offset. Grand-staff centring is unchanged. Fixture
+own alignment offset. Grand-staff centering is unchanged. Fixture
 `engr_hairpinAloneOnDynamicsLine`.
 **Left for Max**: his note that the added separation should apply to staff
 lines, not notes. Probed: `dynamDist` does NOT stack on low notes (a dynamic
@@ -7142,7 +7142,7 @@ of piano ink; worst p. 21 m. 99 "dim." (785 vs 72), p. 13 m. 58 dynamic (757
 vs 163), p. 16 m. 22 "cresc." (669 vs 151). The viola→piano line gap is 960
 (Verovio's `spacingStaff` floor) on the median system, so almost every case is
 Verovio packing to its margin. **Proposed rule**: shift the lower instrument
-down by `max(0, min(dOwn, CAP) − dOther)` over its neighbour's marks (CAP 6
+down by `max(0, min(dOwn, CAP) − dOther)` over its neighbor's marks (CAP 6
 units so a mark under a very low ledger note does not demand its whole
 distance), plus a general ink floor of one space; on the sonata that moves 39
 systems, p90 shift 319 user units (2 spaces), max 408. **Mechanism**: a DOM
@@ -7197,10 +7197,10 @@ now adds `translateOf(system).ty`. Fixture `engr_titleBlockSizes`.
 ### Max's review, same day: rests touched chord heads; header gap
 Voice-1 rest against a voice-2 chord topping at the middle line or third
 space: the rest pinned by the new two-voice rule sat on the top head. Cause: a
-head's ink box reaches 1.1 locations above its centre (measured), the rule
+head's ink box reaches 1.1 locations above its center (measured), the rule
 assumed 0.5, and its margin was another 0.5 — a quarter space of "clearance"
 became contact. Now `HEAD_HALF` 1.1, `MARGIN` one location (half a space),
-accidentals/articulations 2.5 from the centre, half and whole rests snapped to
+accidentals/articulations 2.5 from the center, half and whole rests snapped to
 a line. Consequence: a rest against a chord at the middle line or higher
 computes a location above the staff's slack and defers to Verovio (whose own
 anchor for that case is location 8); the rule now only ever moves a rest DOWN
@@ -7310,12 +7310,12 @@ first assumed.
    placement, and the bracket is drawn from `@startid`/`@endid` anyway.
 3. **A negative offset past the bar start clamps to beat 1**, not migrating into
    the previous measure — the same call as the 2026-09-05 entry that declined
-   import-time anchor normalisation ("it changes the document and would stack
+   import-time anchor normalization ("it changes the document and would stack
    the mark on any downbeat text"). No upper clamp: `beats+1` is what the
    barline nudge exists for.
 4. **Finale's horizontal nudges stay dropped**, and the separation is DERIVED
    (`textlayout.ts`): a cluster's dynamic keeps its place and its same-anchor
-   `<dir>`s move to its right, centred on its line. `@ho` was rejected without a
+   `<dir>`s move to its right, centered on its line. `@ho` was rejected without a
    probe on the strength of lessons.md's HEJI finding — it nudges a glyph but
    reserves no layout space, so it could not ask Verovio to make room. Gated on
    `dynam@tstamp`/`dir@tstamp` (new in `svgAdditionalAttribute`, mirrored in
@@ -7326,8 +7326,8 @@ first assumed.
    honest answer, and p. 21 m. 99 is 259 tenths wide holding one dotted-half
    chord, so that guard was expected to fire there. It did not — all three
    groups found room.
-5. **The centring phase now ADDS its dy** instead of assigning it, so the
-   un-stack composes with a grand-staff centring. Equivalent for every cluster
+5. **The centering phase now ADDS its dy** instead of assigning it, so the
+   un-stack composes with a grand-staff centering. Equivalent for every cluster
    that has no un-stack (the assignment was always the first write).
 
 **Verified**: typecheck / boundaries / composer build clean; `pnpm test:composer`
@@ -7376,7 +7376,7 @@ visibly broken left edge.
 **Context**: the second half of the Layout pair above — the 09-06 "elements too
 close to the next instrument" item, whose mechanism sketch this supersedes.
 `render/instrgap.ts` shifts a lower instrument down until every boundary mark is
-at least as close to its own staff as to its neighbour.
+at least as close to its own staff as to its neighbor.
 
 **The 09-06 sketch was wrong in two ways**, both found by reading before
 writing:
@@ -7421,7 +7421,7 @@ note is in the previous system and whose band is ambiguous).
 space 33 → 12, systems with unmet demand 48 → 11, demand p50 223 → 80. 40
 systems shift, 10–410 user units, every value a whole device pixel. The residual
 28 are CAP-limited BY DESIGN: after a shift of `min(dOwn, CAP) − dOther` a mark
-whose `dOwn` exceeds CAP (480) is still nearer its neighbour, which is the point
+whose `dOwn` exceeds CAP (480) is still nearer its neighbor, which is the point
 of the cap — a mark under a very low ledger note must not demand its whole
 distance.
 
@@ -7466,7 +7466,7 @@ page divs, lineStarts vs rendered systems, doc vs rendered measures, the cascade
 counters, empty pages, per-page system counts) in one run. **Read the cascade
 counters AFTER `mountAllPages`** — that is the mistake above.
 
-Gated off, the tree is unchanged behaviour: sonata renders 446/446 measures, 113
+Gated off, the tree is unchanged behavior: sonata renders 446/446 measures, 113
 systems, 31 pages; typecheck / boundaries / build clean. The plumbing
 (`alignStaffRows`'s `data-hkl-ishift`, textlayout's `data-hkl-clamped` and
 ishift composition) is inert without the pass. **Fixtures are still owed** and
@@ -7519,7 +7519,7 @@ liberty the importer takes with `<offset>`. Fixture
 `engr_sameMomentDynamAndDirSideBySide` asserts the document keeps both marks on
 one tstamp and that the clone-only tag never leaks into it.
 
-Rejected, all measured (lessons.md has the table): `@ho`, which Verovio honours
+Rejected, all measured (lessons.md has the table): `@ho`, which Verovio honors
 as a pure draw-time offset and which therefore leaves the reserved row behind;
 `@vgrp`, which did nothing whatsoever; and merging the pair into a single
 `<dynam>`, which does reserve one row but returns a 1910-unit-tall bbox that
@@ -7541,7 +7541,7 @@ One consequence worth remembering: separated marks are no longer ONE cluster,
 so textlayout's vertical rules reach them independently — the dynamic keeps
 `dynamDist` while a now-lone `<dir>` goes to the `dirGapUser` line, and those
 lines differ by the glyph-vs-text box metrics (7.4 px in the fixture, not even
-overlapping). A final step in `layoutSystem` puts each mover's centre back on
+overlapping). A final step in `layoutSystem` puts each mover's center back on
 its anchor's, which is what the cluster rule did when it owned the separation.
 
 ## The instrgap `ENABLED` flag is gone (2026-09-09)
@@ -7555,7 +7555,7 @@ systems, 31 page divs, no empty pages and a 16-step cascade resolved entirely
 arithmetically. The flag and its early bail are removed; the pass is
 unconditional.
 
-Re-measured at the same time, since the centring fix and the same-moment
+Re-measured at the same time, since the centering fix and the same-moment
 separation both moved marks the census counts: marks nearer the other
 instrument than their own staff 59 → 29 (the entry above said 28), within one
 space of the other instrument's ink 33 → 12, systems with unmet demand 48 → 11,
@@ -7662,7 +7662,7 @@ in EVERY part. Choices worth keeping:
 - **A text-less mark becomes a bare `<sound tempo>`**, not a direction: an
   empty `<direction-type>` is invalid MusicXML, and a bare measure-level
   `<sound>` is exactly Finale's hidden-tempo encoding, which the importer
-  already recognises.
+  already recognizes.
 - **Gradual rit./accel. and "a tempo" export as italic `<words>` with no tempo
   value.** MusicXML has no gradual-tempo element; italic words are what Finale
   writes. They re-import as per-part `<dir>` expressive text — visually
@@ -7838,7 +7838,7 @@ Two Finale-parity features, one model. Decisions worth remembering:
   / >1 grpSym heuristic) and `ScoreDefOptimizeFunctor::VisitStaff` (a staffDef
   shows iff some staff on the system has a `<note>`, or a clef change, or —
   with `condenseTempoPages` — the measure has a tempo/fermata, which FORCES
-  visibility). It cannot honour a per-region flag; invisible-clef/note hacks
+  visibility). It cannot honor a per-region flag; invisible-clef/note hacks
   were rejected as fragile. `condense` is now pinned `'none'` — its `auto`
   default would have started hiding rest-only staves the day a scoreDef grew a
   second group symbol. Composer re-renders a hidden-set system alone with the
@@ -7896,7 +7896,7 @@ scan, hence the asymmetry.
   interior boundaries, so the remainder after two quarters is one "beat" (the
   status says `1 beat` for two beats of time). Cut/delete over it clears the
   remainder, which is empty — harmless; a finer grid would mean making
-  placeholders stops or synthesising boundaries, a cursor-semantics change left
+  placeholders stops or synthesizing boundaries, a cursor-semantics change left
   for Max to call.
 - **Fixture gate**: every new fixture asserts the rect COUNT and geometry, not
   just `state.selection` — none of the prior `sel_*` fixtures started from an
@@ -7912,14 +7912,14 @@ window (`updateMountWindow`), which now mounts one page per idle slice and
 reschedules itself. Pages that have left the band are dropped. Neither
 consumer mounts while `viewportMoving()`: the container's `scroll` events are
 sampled, and "moving" means the newest sample is younger than
-`PUMP_SETTLE_MS` (120) and the view travelled more than `PUMP_FAST_VH` (0.5)
+`PUMP_SETTLE_MS` (120) and the view traveled more than `PUMP_FAST_VH` (0.5)
 viewports over `PUMP_VELOCITY_MS` (400). Render/restore-time
 `mountVisiblePages` and the cursor path's `ensureMeasureMounted` stay
 synchronous. The toolkit warm is re-armed after the paint-time pagination
 repair and at balance completion (`rearmWarmIfStaleUnmounted`).
 
 **Why.** Measured on the sonata (Chromium): the callback-mounts design drew
-the off-screen neighbour before the visible page on a jump (294 ms to the
+the off-screen neighbor before the visible page on a jump (294 ms to the
 visible page) and, on a scrollbar drag, mounted every page swept through the
 band ahead of the landing page (15 mounts, 2.75 s), then evicted them. A
 first mount past page 14 also paid a 784 ms stale reload. With the pump: jump
@@ -7973,7 +7973,7 @@ by the next refill (dropped, logged, if that render derives). `forceGroup` is
 the previous system's last unit plus the pulled measures: Max's rule is that
 the pulled measures never flow back down — when the merged line is over
 FIT_MAX the forced section is reflowed around that fused atom
-(`balance.ts forceSection`: same line count, then one more, λ-penalised), and
+(`balance.ts forceSection`: same line count, then one more, λ-penalized), and
 when no legal reflow exists the over-tight line is KEPT. Alternatives
 rejected: pushing the overflow back down before the new lock (the repair
 loop's default — it partially undoes the command), refusing (makes the
@@ -8041,7 +8041,7 @@ guide tells users to lock the break after the measures they want moved up.
 **Why.** "Join the previous system" means "no break at a", and no document
 element can say that; anything ↑ did beyond ↓ was partition-only state. The
 alternative — a persisted "keep with previous" marker that the balancer
-treats as an atom and the derive path must also honour (Verovio has no such
+treats as an atom and the derive path must also honor (Verovio has no such
 thing) — is a second break type with its own reflow semantics, not a tweak.
 Not worth it for what is a cursor-placement convenience. Recorded so the
 backlog wording is not re-implemented as written.
@@ -8120,7 +8120,7 @@ a full-document measure).
 
 ## The scroll splicer owns the SVG box, and adopts the system's vertical frame (2026-09-13)
 
-**Context**: Live editing in scroll view was producing cut-off, malformed staves. Two independent defects, both original to the scroll splicer (checked every revision of `render/splice.ts` back to its introduction — neither behaviour was ever present and then lost).
+**Context**: Live editing in scroll view was producing cut-off, malformed staves. Two independent defects, both original to the scroll splicer (checked every revision of `render/splice.ts` back to its introduction — neither behavior was ever present and then lost).
 
 **Defect 1 — the box never moved.** Verovio emits the root `<svg>` + nested `<svg class="definition-scale">` viewBox once, at full-engrave time, sized to the content; `pinExactScale` derives the root's px dims from that viewBox. The splicer edits measures *inside* the box and never touched it. Typing 13 bars from a blank doc measured a **345 px box over 29 477 user units of content** — and because the root element's own width stayed small, `#score` had **no scrollable extent at all**, so the content was unreachable, not merely clipped.
 
@@ -8202,7 +8202,7 @@ every run to 2 / 1. So the deferral window is a hole where a ~40 ms splice can b
 full engrave.
 
 **Decision 1 — predict the path by asking, not by remembering.** Page mode now returns "light" when
-`pageBreaks.canAttemptRefill()`, the structural analogue of the scroll branch's `canSplice()` three
+`pageBreaks.canAttemptRefill()`, the structural analog of the scroll branch's `canSplice()` three
 lines below. Document cost genuinely carries between renders (measures/staves/zoom barely move); the
 PATH does not, and a one-sample path predictor is wrong exactly at the derive→edit boundary — which
 is the most common edit there is. Like `canSplice()` this is readiness, not a guarantee: a refill
@@ -8301,7 +8301,7 @@ bundle already pulls it in, so this costs the lean overlay build nothing (+765 B
 
 **Scope: the frame only.** `apps/composer/src/main.ts` keeps its native `scrollTo` — it follows per
 *measure*, not per note, so the hop is far less visible, and Composer is driven in Firefox where the
-native behaviour is already correct. Max's call: "just fix the frame, that's where steady scroll
+native behavior is already correct. Max's call: "just fix the frame, that's where steady scroll
 matters." If Composer is ever driven in Chromium for performance, this is the one-line swap.
 
 **Also**: `prefers-reduced-motion: reduce` jumps instead of animating, preserving what the native
@@ -8600,7 +8600,7 @@ renders unjustified. Fixture `pageBalanceRule2StubKept`.
 **A user page break makes a section boundary, and both sides rebalance** (approved 2026-09-18). A break
 early in a document can therefore collapse the measures before it onto a single system — five measures
 on one line rather than two sparse ones. `pageUserBreakReflows` lost its `+1 line` and
-`no single-system pages` assertions, which were arithmetic specific to the old behaviour; it keeps the
+`no single-system pages` assertions, which were arithmetic specific to the old behavior; it keeps the
 round-trip, which a pure-function partition now makes exact.
 
 **The idle balance job is removed.** Balancing the whole document before the paint (2026-09-08) had
@@ -8727,7 +8727,7 @@ and why it was zoom-50-only: not a splice defect, and not something to fix by wi
 
 **Scope.** One call site. The splice window is post-processed inside the live page, so its imported systems
 already snap on the live phase — a spliced page always agreed with a full re-engrave; only the reference
-disagreed. Default behaviour is unchanged when the phase is omitted, which a real on-screen page relies on.
+disagreed. Default behavior is unchanged when the phase is omitted, which a real on-screen page relies on.
 
 **Verified.** Whole-document inventory 0 diverging measures at zoom 50/75/100 (was 4 at zoom 50, one per
 system — the last measure of each, `dRelX` 0, music and bar lines identical). Flagged gate 499/499, up from
@@ -9029,9 +9029,9 @@ is deliberately suspended while connected (see the Firefox entries in lessons.md
 PIC to raise its data line and complete a CTS handshake — so the degenerate ADC read at power-off emits a bend
 a full loop-iteration *before* any keystroke frame can escape. That ordering is structural, not incidental,
 which is what makes the bend usable as a trigger rather than an after-the-fact cleanup. The firmware also
-keeps a dead-zone around centre (`SetPitchBendZeroThreshold`), so an emitted bend is always a large excursion.
+keeps a dead-zone around center (`SetPitchBendZeroThreshold`), so an emitted bend is always a large excursion.
 Confirmed empirically: every capture showed a bend preceding the burst, and HKL ignored 0xE0 entirely before
-this change, so there is no behaviour to regress.
+this change, so there is no behavior to regress.
 
 **The action is a detach, not a cleanup.** `markLumatoneGone` nulls `midiIn.onmidimessage` *first*: the burst is
 still in flight when the bend is handled, and an unhooked port is what stops those note-ons ever being latched.
@@ -9069,7 +9069,7 @@ check in `handler.ts`.
 
 **Problem**: switching the Lumatone off with HKL open latches a random set of keys that sound indefinitely.
 The spurious note-ons are protocol-valid frames from a browning-out key scanner — byte-for-byte
-indistinguishable from real playing (lessons.md) — so they cannot be recognised by content.
+indistinguishable from real playing (lessons.md) — so they cannot be recognized by content.
 
 **Every alternative was ruled out empirically, in this order. Do not re-propose them:**
 
@@ -9336,7 +9336,7 @@ already built. It was not: since the first implementation (2026-05-17, `bbda25c`
 MOMENT list, "selected" everything at or spanning the moment, and drew a band from staff geometry —
 the gap between a grand staff's staves, a fixed 28 px box ABOVE a single staff (the tempo band's math,
 copied in by the 2026-06-02 multi-instrument scaffold; `@place` was never consulted, though the
-`Ctrl+↑/↓` toggle predates that branch) — at the centre of whatever note began at the moment. No entry
+`Ctrl+↑/↓` toggle predates that branch) — at the center of whatever note began at the moment. No entry
 recorded that geometry; "between voices 2 and 3 matches `@place="between"`" (the fifth-voice entry) was
 the only placement rationale, and it described the stop list, not the bar.
 
@@ -9354,8 +9354,8 @@ the only placement rationale, and it described the stop list, not the bar.
 - **Geometry.** A mark stop: a bar flush right of the mark's rendered box, at its height (a hairpin start
   flush LEFT of the wedge, its end flush right of the last piece — across a system break if the wedge
   continues there). A placeholder: a fixed 28 px bar (the old band constant) at the onset's notehead,
-  centred on the previous mark — whether or not one exists the height is the same — and with no
-  previous mark, centred between a grand staff's staves or below a single staff (pedal: below the
+  centered on the previous mark — whether or not one exists the height is the same — and with no
+  previous mark, centered between a grand staff's staves or below a single staff (pedal: below the
   bottom staff; tempo: above the top staff). The previous mark's offset is taken from its staff LINES
   and reapplied to that staff where the placeholder is, so alignment survives a system or page break.
 - **Marks need an xml:id** — the stop identifies its mark, and the bar finds its glyph, by id. The
@@ -9422,7 +9422,7 @@ keys is out of scope; burst size is unreliable; nothing at runtime separates the
 chord with full accuracy; and the fix must work in standalone HKL, with no overlay-host or OS-specific
 dependency.
 
-**Decision:** don't try to recognise the burst. Let it sound, then notice the device has gone and release.
+**Decision:** don't try to recognize the burst. Let it sound, then notice the device has gone and release.
 Firefox never reports the port vanishing, so HKL asks: `midi/heartbeat.ts` sends `LUMA_PING` (CMD 0x33,
 board 0) only while the Lumatone is holding something (keys, damper or sostenuto) and has sent nothing for
 200ms. Any inbound message counts as proof of life, so active playing sends no pings. Two unanswered 250ms
@@ -9441,7 +9441,7 @@ waits call `markLumatoneGone()`, which releases everything. Burst to release tak
 - **Firmware (local mirror):** `main` is one single-threaded loop (`readFromMidi` → `readFromPic` /
   `writeToPic` → pedals → wheel), with no pthreads and the MIDI port opened `O_NONBLOCK` (flags 0x902).
   `sysexResponsePing` is a preamble fill plus one 12-byte `write()`, with no PIC traffic. That is a strict
-  subset of an LED update (`setOneLight` + a later `writeToPic`), which colour sync already sends at
+  subset of an LED update (`setOneLight` + a later `writeToPic`), which color sync already sends at
   ~300/s while Max plays.
 - **Hardware:** Max played through `lumaprobe.watch(20)` (50 probes/s, more than 10× the heartbeat's
   worst-case rate) with no effect.
@@ -9451,7 +9451,7 @@ waits call `markLumatoneGone()`, which releases everything. Burst to release tak
   held chords.
 - **An overlay-host / OS USB-remove hook:** Max ruled it out (dependency and platform-specific).
 - **An idle heartbeat to correct the badge when nothing is held:** not built. Nothing can be stuck
-  then, so only the badge is wrong. Max accepted this behaviour after hardware verification.
+  then, so only the badge is wrong. Max accepted this behavior after hardware verification.
 
 **Verified on hardware (2026-10-02, Max):** powering off while holding a chord, and the power-off burst
 itself, are both released automatically, and the device reconnects when powered back on.
@@ -9513,7 +9513,7 @@ select can be rebuilt from other fields.
 ## Composer HEJI: on by default, and cross-voice unisons draw the accidental on both notes (2026-10-05, Max)
 
 **Default on.** `getHejiEnabled` now reads `<hkl:config @heji> !== 'false'`: a missing attribute is on.
-Max kept forgetting to tick the Setup checkbox and ruled that a JI-centred app should show commas unless
+Max kept forgetting to tick the Setup checkbox and ruled that a JI-centered app should show commas unless
 told otherwise. Explicit off (`heji="false"`) is what the Setup checkbox and MusicXML import write, so
 those paths are unchanged; a document that never touched the checkbox now comes up with HEJI on. The
 suite's reset (`test/composer-test/lib/runner-core.mjs`) pins the shared fixture document OFF so the
@@ -9556,29 +9556,29 @@ importer (Finale's `placement="below"` is replaced by the policy; `above` is kep
 and instrument add/remove all apply it — idempotent, so the ROUNDTRIP invariant holds). A mark
 `above` the LOWER staff of a grand staff is the same gap, so it becomes `between` on the upper
 staff (the sonata's 16 left-hand dynamics and 2 words). With the model saying `between`, the
-grand-staff centring in `render/textlayout.ts` (its `center` mode and the `grandPairs` option) is
+grand-staff centering in `render/textlayout.ts` (its `center` mode and the `grandPairs` option) is
 deleted; the pass keeps its one-staff rules (a `<dir>` at the dynamics' clearance, a lone hairpin
 on the dynamics' line, barline nudges, slur clearance, the same-moment fallback).
 
 **Why**: the May expression layer defaulted every mark to `between` ("between voices 2 and 3",
 single-piano era) while Finale imports carried `below`, so the same mark placed live and reloaded
 engraved 1.25 spaces apart (sonata m. 19, the viola's mp: `below` sits 1.2 spaces under the viola,
-`between` 2.45 — Verovio centres a between mark toward the NEXT staff regardless of instrument).
+`between` 2.45 — Verovio centers a between mark toward the NEXT staff regardless of instrument).
 Max: "we spent so much effort designing an entire text layout pass to essentially recreate a
 built-in Verovio setting that we were already using elsewhere." Probed on the loaded build
-(6.3.0): `between` works on a single `@staff` for dynam, hairpin and dir, centres the mark's
-reference point (an mp lands 0.31 space below true centre; a `between` hairpin aligns with a
+(6.3.0): `between` works on a single `@staff` for dynam, hairpin and dir, centers the mark's
+reference point (an mp lands 0.31 space below true center; a `between` hairpin aligns with a
 `between` dynamic, 2.31 vs 2.45), and RESERVES the gap — a crowded gap grew from 6.03 to 8.0
 spaces for a 1.72-space mark — but gives up the mark's own-staff clearance under crowding (0.25
 space, against `below`'s 1.2 plus a wider gap, 8.94). Max took that trade for one mechanism.
 
-**Rejected**: keeping `below` everywhere and the DOM centring (two implementations of one idea);
+**Rejected**: keeping `below` everywhere and the DOM centering (two implementations of one idea);
 rewriting `place` on the render clone only (the document is the truth — a reload must engrave the
 same, and `.hkc` files written since May already carry `between`); converting `above` marks on
 one-staff instruments (those are genuinely above). Sonata census (`inventory-{before,after}` probe,
 298 marks, pagination unchanged): 101 marks moved ≥ 3 px, the largest a stray viola `between` at
 m. 85 (p. 6) rising 1.66 spaces to its `below` spot; right-hand marks move ±0.8 space either way
-(Verovio's centre vs the box centre, and lone hairpins now on the dynamics' line); left-hand
+(Verovio's center vs the box center, and lone hairpins now on the dynamics' line); left-hand
 `above` marks moved to the right hand shift up to 1.27 spaces (p. 8 m. 103).
 
 **Two consequences landed with it.** Ctrl+↓ on a mark of a grand staff's upper staff writes
@@ -9590,9 +9590,9 @@ word ended 2 px INTO the right hand's bottom line with the gap unchanged at its 
 to a quarter unit under its staff as far as the lower staff's content allows.
 
 **Files**: `apps/composer/src/expressions.ts` (policy + normalization), `importMusicXml.ts`,
-`input.ts`, `render/textlayout.ts` (centre mode removed; between clamp), `render/render.ts`. Fixtures:
+`input.ts`, `render/textlayout.ts` (center mode removed; between clamp), `render/render.ts`. Fixtures:
 `expr_dynamicInsertBetweenOnGrandStaff`, `expr_dynamicInsertBelowOnSingleStaff`,
-`expr_loadNormalizesMarkPlaces`; `engr_dynamicCenteredInGrandStaff` now asserts Verovio's centring
+`expr_loadNormalizesMarkPlaces`; `engr_dynamicCenteredInGrandStaff` now asserts Verovio's centering
 (half a space), and the fixtures that wrote raw `below` marks on the piano's upper staff write
 `between`.
 
@@ -9607,7 +9607,7 @@ systems' MEASURED extents in document order (the rule v1 fold; a user `<pb>` a h
 and pull one predicate), a page closing as soon as the next system fails to fit, placed by rule
 v2, revealed and furnished, synchronous until the cursor's page closes and in idle slices after.
 The `ExtentsStore` is the source of truth — filled by the load, overwritten only for a splice's
-hunk, invalidated with the owner's keys; nothing is re-measured because a neighbour changed.
+hunk, invalidated with the owner's keys; nothing is re-measured because a neighbor changed.
 Pages out of the mount window are parked (detached) and re-attached, never re-rendered. An edit
 re-paginates from one page BEFORE the first touched page (a touched line that starts its page
 may have shrunk enough to return to the page before it — pagination must be the same for the
@@ -9636,7 +9636,7 @@ Verovio needs to know nothing about pages; it needs to lay out systems, which it
 **Rejected**: estimating system heights arithmetically from per-measure extents to paginate
 before any render (Max retracted it the same day: spanner shapes and nested staff gaps are
 exactly the layout Verovio handles, and we would be rebuilding it to within a tolerance — the
-same mistake as the dynamics centring); a seed-then-correct scheme ("nothing should ever paint
+same mistake as the dynamics centering); a seed-then-correct scheme ("nothing should ever paint
 from the seed alone"); measuring every system before painting any page (document order is
 accepted, but a page can distribute and render as soon as it is full while later pages
 measure); re-measuring a page's systems on every edit (the store is the truth, spot-updated by
@@ -9652,7 +9652,7 @@ pages whose membership changed (the hide-empty fixture: a 7-line splice 187 ms, 
 metrics), `linebreaks.ts` (`seedPartition`, `setPageStarts`, adoption removed), `render.ts`,
 `pagesplice.ts` (the gate draws the Composer header), `main.ts`. Suite: universal
 `assertPaginationFirstFit`; fixtures `pag_hideEmptyNoHole`, `pag_shrinkPulls`,
-`pag_growPushes`, `pag_userPbHonoured`, `pag_zoomRoundTripKeepsPages`.
+`pag_growPushes`, `pag_userPbHonored`, `pag_zoomRoundTripKeepsPages`.
 
 ---
 
@@ -9661,7 +9661,7 @@ metrics), `linebreaks.ts` (`seedPartition`, `setPageStarts`, adoption removed), 
 **Picked**: in page view an edit on an owned document never re-assembles the document. The
 refill always returns a partition — a page break or section header is a line-start edit it
 carries like a lock (an added break splits its line; a removed page break or section header
-examines its neighbours so the remnant is repaired; a removed lock still changes nothing), a
+examines its neighbors so the remnant is repaired; a removed lock still changes nothing), a
 signature range is measured in chunked windows instead of refused past one window's cap — and
 the renderer applies it with one assembler operation, `PageAssembler.applyPartition`: lines the
 changed run reaches, and lines whose member set changed, get a fresh line window engraved and
@@ -9789,7 +9789,7 @@ Two claims in the previous entry were wrong and Max caught both. (1) The two lag
 
 ## OBS loop trims: a rest inside a piece is two "takes" — span them, don't lower the gap (2026-10-17, Max)
 
-`chopin28-4full.mkv` (one take, horizontal) "failed to recognize the start or end": Op. 28 No. 4's pause before its closing chords is 1.9 s of digital silence, so silencedetect at `--gap` 1 s split the piece into a 119 s take and an 11.7 s take; the default `--take -1` started on the closing chords and `--take 1` ended before them. The lattice crop was not the problem (this session draws the lattice smaller and centred, still inside the crop; 453 key-downs, lag quartiles +70/+80 ms). Fix: `--take A-B` and `--take all`, `--list` shows the silence gap before each take, and a hint prints when the chosen take borders a gap under 3 s. The gap default stays at 1 s: inter-take pauses in a real session (`revolutionary`, 28 takes) go down to 2.5 s, so no threshold separates a fermata from a restart; the user knows which it was. Also fixed: the onset-rise probe clamps the high-passed envelope at −75 dBFS, because the step from digital zero to AAC pre-echo (−85 dB) read as a rise ~20 ms before a first attack.
+`chopin28-4full.mkv` (one take, horizontal) "failed to recognize the start or end": Op. 28 No. 4's pause before its closing chords is 1.9 s of digital silence, so silencedetect at `--gap` 1 s split the piece into a 119 s take and an 11.7 s take; the default `--take -1` started on the closing chords and `--take 1` ended before them. The lattice crop was not the problem (this session draws the lattice smaller and centered, still inside the crop; 453 key-downs, lag quartiles +70/+80 ms). Fix: `--take A-B` and `--take all`, `--list` shows the silence gap before each take, and a hint prints when the chosen take borders a gap under 3 s. The gap default stays at 1 s: inter-take pauses in a real session (`revolutionary`, 28 takes) go down to 2.5 s, so no threshold separates a fermata from a restart; the user knows which it was. Also fixed: the onset-rise probe clamps the high-passed envelope at −75 dBFS, because the step from digital zero to AAC pre-echo (−85 dB) read as a rise ~20 ms before a first attack.
 
 ## OBS loop trims: `--gap` default 2.0 s, set by the data, not 1 s (2026-10-17, Max)
 
@@ -9807,7 +9807,7 @@ Max, sonata III p. 19 mm. 71–72, piano RH beat 3: the slurred triplet a5 g5 e5
 
 **"m. 83" is I m. 79.** The 09-05 slur entries cite "sonata m. 82 / 83 / 84" with no movement; the fixture built from it (two beamed triplets d♭4→b♭2 over a double-dotted-half b♭1+b♭2) matches today's first-movement m. 79, and "m. 82" is today's m. 78 — the first movement's numbering has shifted by four since. Max went looking on p. 20 (III m. 83) and found nothing of the kind. lessons.md: always give the movement.
 
-**Where**: `notation/slurSides.ts` (gate rewritten; `BLOCK_STEPS` = 3; `spanHeads` walks both layers across the span's measures). `render/slurlayout.ts` unchanged except its header: with the gate refusing same-column neighbours, its working case is the system-break re-draw. Fixtures: new `engr_slurKeepsLayerSideOverOtherVoice` (the mm. 71–72 shape, proven failing on the old gate: `data-curvedir=below`); `engr_slurBelowRedrawnAtNotes` (I m. 79's geometry) replaced by `engr_slurKeepsLayerSideUnisonInSpan`, asserting no flip and no re-draw; `engr_slurBrokenAtBreakRedrawn`'s upper line moved to a3 f3 d3 f3 (its g2 was a third over the chord's e2 and the new gate refused the flip, so the fixture had gone vacuous) and its assertion now requires a `redrawn` mark on both segments. Docs: architecture/composer.md (`slurSides.ts` bullet), guide/composer.md. **Open**: nothing; the residue is `Shift+L`.
+**Where**: `notation/slurSides.ts` (gate rewritten; `BLOCK_STEPS` = 3; `spanHeads` walks both layers across the span's measures). `render/slurlayout.ts` unchanged except its header: with the gate refusing same-column neighbors, its working case is the system-break re-draw. Fixtures: new `engr_slurKeepsLayerSideOverOtherVoice` (the mm. 71–72 shape, proven failing on the old gate: `data-curvedir=below`); `engr_slurBelowRedrawnAtNotes` (I m. 79's geometry) replaced by `engr_slurKeepsLayerSideUnisonInSpan`, asserting no flip and no re-draw; `engr_slurBrokenAtBreakRedrawn`'s upper line moved to a3 f3 d3 f3 (its g2 was a third over the chord's e2 and the new gate refused the flip, so the fixture had gone vacuous) and its assertion now requires a `redrawn` mark on both segments. Docs: architecture/composer.md (`slurSides.ts` bullet), guide/composer.md. **Open**: nothing; the residue is `Shift+L`.
 
 ## Breath marks: end-of-slot tstamp in the measure's own meter; the importer keeps `<breath-mark>` (2026-10-17, Max)
 
@@ -9937,11 +9937,11 @@ Since "Every edit is a splice" (2026-10-08), `balanceTouched` (`render/linebreak
 
 ## Composer exports ask for the destination before rendering (2026-09-28, recorded 2026-10-19)
 
-`files.ts` `exportDocument` opens the host's save dialog before calling `make()`, so cancelling a PDF export costs no render. With no host (or no dialog tool) it downloads `<base>.<ext>` after `make()`.
+`files.ts` `exportDocument` opens the host's save dialog before calling `make()`, so canceling a PDF export costs no render. With no host (or no dialog tool) it downloads `<base>.<ext>` after `make()`.
 
 ## Performance mode: residual limits after the 2026-09 matcher work (2026-10-19)
 
-**Accepted**: a run of notes from the trill's pitch set right after a trill can put the bar up to one element ahead of the player when the shadow lifts — bounded by the cap. **Unsupported**: play-ahead of the current frontier; a mid-piece start (the score is performed from the top). **Harmonics**: a harmonic's sounding coordinate has no written note at its lattice class, so its expected colour is `null` and it matches on pitch alone (`render/performance.ts`) — this updates "v1 doesn't follow harmonics" (2026-06-05).
+**Accepted**: a run of notes from the trill's pitch set right after a trill can put the bar up to one element ahead of the player when the shadow lifts — bounded by the cap. **Unsupported**: play-ahead of the current frontier; a mid-piece start (the score is performed from the top). **Harmonics**: a harmonic's sounding coordinate has no written note at its lattice class, so its expected color is `null` and it matches on pitch alone (`render/performance.ts`) — this updates "v1 doesn't follow harmonics" (2026-06-05).
 
 ## Slur-side gate is pitch-only by choice: span and slope rejected (2026-10-17, Max, recorded 2026-10-19)
 
@@ -9975,7 +9975,7 @@ Three choices behind `moveFullMeasuresToSiblingVoice` (`model/measure-ops.ts`) t
 
 **Wrapper stops** (completes "Composer nav stops: no placeholder stops…" above). Under the "cursor c = past `flat[c]`" convention (commit cc2f76b), the only stops that mean "insert at the front of measure k" are measure k's own wrapper and "past the last content of measure k−1" — and the latter inserts at k's front only when k−1 is FULL (a full measure's end is the barline slot; a partial one's end extends it). So the wrapper is emitted exactly when nothing else reaches k's front: measure 0 (no k−1; without it nothing could be inserted before the piece's first note — cc2f76b introduced it with the convention change), after an empty measure (no content to be past; its own wrapper inserts into itself), and after a partial one. It collapses only after a full measure, where it would duplicate the barline slot. Everything that inserts at a measure's front depends on this — notes, and clefs, since `clefSlotAt` derives the clef position from the cursor's insertion point (Max).
 
-**Accidental offset**: `ACCID_BASELINE_CORRECTION_SPACES` 1.58 (was 1.6) was set by eye for precise centring on the staff line (Max).
+**Accidental offset**: `ACCID_BASELINE_CORRECTION_SPACES` 1.58 (was 1.6) was set by eye for precise centering on the staff line (Max).
 
 ## Addendum: the bounded-balance undo failure, isolated (2026-10-19)
 
@@ -9993,7 +9993,7 @@ Resolves "Open: the bounded section balance…" above. **Problem**: G1 (load and
 
 ## MusicXML import: decode by the file's encoding; drop parts with unpitched notes; the rest of the sample-set findings ruled (2026-10-20, Max)
 
-Found by importing the MusicXML sample set (18 pieces) for the partition study. **Fixed**: (1) the import decoded every file as UTF-8 (`file.text()`; the host bridge's `/fs/read` used `readFile(…, 'utf8')`), so the two UTF-16 pieces failed to parse; `xmlText.ts` `decodeXmlText` decodes by BOM, then UTF-16's null-byte pattern, then the XML declaration (ASCII-compatible encodings only), and `fs-bridge.mjs` carries a twin because the host cannot import Composer modules. (2) Unpitched notes crashed the importer (`TypeError … 'spec'` in `eventToElement`); Composer cannot write them and takes no responsibility for them, so a part holding ANY `<unpitched>` note is removed whole — from `<part-list>` and the score — before anything reads it, the status line names it (with its instrument name when the part name is a bare number), and a score with nothing else fails with that reason. **Ruled out of scope** (Max): `.mxl`; mid-measure line breaks (an unbarred chant is one over-wide measure); keeping the source's engraved `new-system`/`new-page` breaks — Composer re-engraves with its own system, and the source's breaks would only mean something at a matched zoom. **Correct as is**: zero-length slurs (start and end on one note) are dropped. **Fixtures**: `musicxml_import_utf16le`, `_utf16be`, `_latin1`, `_unpitched_dropped`, `_unpitched_all` — each red on the unfixed tree for the predicted reason; `test/fs-bridge/run.mjs` reads a UTF-16LE and a declared ISO-8859-1 file. (3) Invisible playback notes (`<note print-object="no">` — Finale's realisation of a timpani roll in Actor Prelude, 48 per bar, which imported as visible notes and made two measures 1.9 and 1.5 lines wide) are dropped: Composer owns tremolo playback (Max). An invisible onset becomes hidden time, merged and emitted like a voiced `<forward>`, so later notes keep their beat; an invisible chord member vanishes; a visible member of a chord with an invisible head takes its place. Done in `buildEvents`, not on the DOM, because the clef and tempo walks count every `<note>`'s duration on the measure's global clock. Actor Prelude went from 13 lines / 13 pages to 11 / 11; fixture `musicxml_import_invisible_dropped` (red on the unfixed tree). **Not an import gap**: Actor Prelude's Verovio "Unable to match @tie" warnings — page view loads only the visible pages, so a tie into an unloaded page cannot match (known; the sonata emits 8 on a plain load); every tie start has its terminal in the MEI.
+Found by importing the MusicXML sample set (18 pieces) for the partition study. **Fixed**: (1) the import decoded every file as UTF-8 (`file.text()`; the host bridge's `/fs/read` used `readFile(…, 'utf8')`), so the two UTF-16 pieces failed to parse; `xmlText.ts` `decodeXmlText` decodes by BOM, then UTF-16's null-byte pattern, then the XML declaration (ASCII-compatible encodings only), and `fs-bridge.mjs` carries a twin because the host cannot import Composer modules. (2) Unpitched notes crashed the importer (`TypeError … 'spec'` in `eventToElement`); Composer cannot write them and takes no responsibility for them, so a part holding ANY `<unpitched>` note is removed whole — from `<part-list>` and the score — before anything reads it, the status line names it (with its instrument name when the part name is a bare number), and a score with nothing else fails with that reason. **Ruled out of scope** (Max): `.mxl`; mid-measure line breaks (an unbarred chant is one over-wide measure); keeping the source's engraved `new-system`/`new-page` breaks — Composer re-engraves with its own system, and the source's breaks would only mean something at a matched zoom. **Correct as is**: zero-length slurs (start and end on one note) are dropped. **Fixtures**: `musicxml_import_utf16le`, `_utf16be`, `_latin1`, `_unpitched_dropped`, `_unpitched_all` — each red on the unfixed tree for the predicted reason; `test/fs-bridge/run.mjs` reads a UTF-16LE and a declared ISO-8859-1 file. (3) Invisible playback notes (`<note print-object="no">` — Finale's realization of a timpani roll in Actor Prelude, 48 per bar, which imported as visible notes and made two measures 1.9 and 1.5 lines wide) are dropped: Composer owns tremolo playback (Max). An invisible onset becomes hidden time, merged and emitted like a voiced `<forward>`, so later notes keep their beat; an invisible chord member vanishes; a visible member of a chord with an invisible head takes its place. Done in `buildEvents`, not on the DOM, because the clef and tempo walks count every `<note>`'s duration on the measure's global clock. Actor Prelude went from 13 lines / 13 pages to 11 / 11; fixture `musicxml_import_invisible_dropped` (red on the unfixed tree). **Not an import gap**: Actor Prelude's Verovio "Unable to match @tie" warnings — page view loads only the visible pages, so a tie into an unloaded page cannot match (known; the sonata emits 8 on a plain load); every tie start has its terminal in the MEI.
 
 ## Corpus fixes: gestural double sharp, slur pairing in document order, Ctrl+L at a slur's ends (2026-10-20, Max)
 
@@ -10001,7 +10001,7 @@ Found importing 450 files of the MuseScore corpus (`~/Downloads/mxl.tar.gz`, a h
 
 ## Partition: the reach-back curve — supersedes "whole-section greedy lines with deficit windows" (2026-10-20, Max)
 
-**Superseded**: the 2026-10-19 design (greedy lines, then deficit windows against one target fill T). Measured and rejected: a single T is either too strict or MIN_FILL by another name, uniform bars make a window infeasible at any length (every sonata movement hit it), and greedy's body made medium width edits change p90 6 lines against the full balance's 2. **Picked** (Max): no MIN_FILL and no compression (no line past fill 1.00; a measure wider than a line sits alone); per section, greedy lines at ≤ 1.00, then the curve of every reach-back k (the last k lines re-divided at the same count into their most even arrangement — min Σ(1−f)², one right-to-left DP; k = N is the full balance), each distinct layout scored on its changed lines plus the untouched line before them (min fill of the changed lines, spread over neighbour + changed), and the pick max(min − spread − 0.03 × boundaries moved). A final section of fewer than 3 lines stays greedy. Validation is against the full balance on line appearance, never on boundary agreement (near ties rearrange whole movements for a 0.004 spread change). Accepted: a section just over one line → two lines, no compression; a flat per-change cost (locks force alternatives). Final-system justification (Max): always justified when its section was balanced; a greedy final section (1–2 lines) justifies only at fill ≥ 0.70, replacing MIN_FILL's 0.65 as Verovio's `minLastJustification`. **Status**: Phase 0 done (sonata + 18 MusicXML samples + 450 MuseScore files); the app does NOT run it yet — simulation in `test/balance/partition-f.mjs` + `curve-batch.mjs`. **Spec + plan**: `docs/composer-partition-consistency-spec.md`.
+**Superseded**: the 2026-10-19 design (greedy lines, then deficit windows against one target fill T). Measured and rejected: a single T is either too strict or MIN_FILL by another name, uniform bars make a window infeasible at any length (every sonata movement hit it), and greedy's body made medium width edits change p90 6 lines against the full balance's 2. **Picked** (Max): no MIN_FILL and no compression (no line past fill 1.00; a measure wider than a line sits alone); per section, greedy lines at ≤ 1.00, then the curve of every reach-back k (the last k lines re-divided at the same count into their most even arrangement — min Σ(1−f)², one right-to-left DP; k = N is the full balance), each distinct layout scored on its changed lines plus the untouched line before them (min fill of the changed lines, spread over neighbor + changed), and the pick max(min − spread − 0.03 × boundaries moved). A final section of fewer than 3 lines stays greedy. Validation is against the full balance on line appearance, never on boundary agreement (near ties rearrange whole movements for a 0.004 spread change). Accepted: a section just over one line → two lines, no compression; a flat per-change cost (locks force alternatives). Final-system justification (Max): always justified when its section was balanced; a greedy final section (1–2 lines) justifies only at fill ≥ 0.70, replacing MIN_FILL's 0.65 as Verovio's `minLastJustification`. **Status**: Phase 0 done (sonata + 18 MusicXML samples + 450 MuseScore files); the app does NOT run it yet — simulation in `test/balance/partition-f.mjs` + `curve-batch.mjs`. **Spec + plan**: `docs/composer-partition-consistency-spec.md`.
 
 ## Partition F lands: one function for load and edit; only mounted pages are engraved (2026-10-20)
 
@@ -10009,7 +10009,7 @@ Implements "Partition: the reach-back curve" above (spec Phases 1–3). **F** is
 
 ## Barline clefs are stored where they are drawn (2026-10-20, Max)
 
-A clef at a barline is drawn BEFORE it (`relocateInitialClefs` on every render) and saved there (`serialize`), but the clef dialog wrote it at the next measure's head ("a fresh clef is written head-of-M+1", 2026-09-27), so a user's clef sat in one place in the document and another on screen and in the saved file. **Ruled** (Max): a clef stays where the user put it — which is where it is shown. `applyClefAt` now stores a barline clef at the end of the previous measure's layer (`ClefSlot.writeLayer`/`writeRef`), and an existing barline clef it edits moves there; the one-slot model (both cursors, both spellings read) stands, and a movement start keeps its head clef. **Rejected** (built, then reverted the same day): letting a head clef render AFTER the barline (a second slot per barline, relocation removed). It changed user-facing behaviour the ruling did not ask for, and Verovio draws a layer-initial clef in a measure holding an `mRest` (Composer's empty bar) BEFORE its barline, where it collides with a clef at the previous measure's end — exactly the empty-bar head clef that path produced. Two fixes came with the storage change: content entered past a layer's last note lands before a trailing clef run (`insertAt`; filling an empty bar used to leave its barline clef at the bar's start), and Backspace on an empty measure also refuses when its opening barline clef sits at the end of the previous measure. Still producing head clefs (drawn and saved before the barline, so no visible effect): the MusicXML importer's boundary clefs, and a delete that leaves a mid-measure clef at a measure's start.
+A clef at a barline is drawn BEFORE it (`relocateInitialClefs` on every render) and saved there (`serialize`), but the clef dialog wrote it at the next measure's head ("a fresh clef is written head-of-M+1", 2026-09-27), so a user's clef sat in one place in the document and another on screen and in the saved file. **Ruled** (Max): a clef stays where the user put it — which is where it is shown. `applyClefAt` now stores a barline clef at the end of the previous measure's layer (`ClefSlot.writeLayer`/`writeRef`), and an existing barline clef it edits moves there; the one-slot model (both cursors, both spellings read) stands, and a movement start keeps its head clef. **Rejected** (built, then reverted the same day): letting a head clef render AFTER the barline (a second slot per barline, relocation removed). It changed user-facing behavior the ruling did not ask for, and Verovio draws a layer-initial clef in a measure holding an `mRest` (Composer's empty bar) BEFORE its barline, where it collides with a clef at the previous measure's end — exactly the empty-bar head clef that path produced. Two fixes came with the storage change: content entered past a layer's last note lands before a trailing clef run (`insertAt`; filling an empty bar used to leave its barline clef at the bar's start), and Backspace on an empty measure also refuses when its opening barline clef sits at the end of the previous measure. Still producing head clefs (drawn and saved before the barline, so no visible effect): the MusicXML importer's boundary clefs, and a delete that leaves a mid-measure clef at a measure's start.
 
 ## Partition F clean-up: line-break undo carries no layout; the pre-F balancer removed (2026-10-20)
 
@@ -10017,7 +10017,7 @@ Spec Phase 4 (`docs/composer-partition-consistency-spec.md`). **Line-break undo*
 
 ## Leading-block width is measured from the staff line's start (2026-10-21, Max)
 
-`measureLeadingSigW` took its origin from the first measure's `getBBox().x`. Verovio draws the system-start bar number (`g.mNum autogenerated`) inside that `g.measure`, centred on the staff start, so every context first measured under a numbered bar was wider by half the number's width — +72 for one digit, +144 for two ("11": +133) — and the width depended on the bar it was measured under: a live session keeps the width it measured, a reload measures the context's first bar afresh, so a renumber across a digit boundary made the two disagree. The width is now measured from the first staff line's start (`staffLine`, the path `staffLineSpan` already parsed); fixture `partF_sigWidthIgnoresBarNumber`, proven failing first (616.75 under "9", 688.70 under "10"), and `partF_clefInitialReload` now also requires the live and reload widths to agree. Checked on the way: the brace is not in that bbox (it sits under `g.system`, at −220…−60 in the page margin on every system but the first), and `pageBudgetW` is the staff span exactly (every later system's staff runs 0 → budget; on the first, names + brace push it to 1342 = `labelIndentW`, which line 0 pays). The ~222 constant in `pageBudgetW`'s comment is the brace, not stroke overhang; the comment is corrected. **Layout impact** (the app's F over the sonata's inputs before and after): 16 of 19 contexts lose 143.98 (178 measures) or 72.03 (29); movement I keeps 35 lines (26 starts shift one bar from m. 81 on, pick 1 → 2 changes, min fill 0.672 either way), II keeps 21 (12 starts, min 0.862 → 0.854), III goes from 23 lines to 22 (pick 3 → 1 change, min 0.693 → 0.811, spread 0.082 → 0.030), IV is unchanged — 75 of 117 line starts move. **Follow-up (same day)**: Max reviewed page 5 — the first page that changes — before and after, and approved the layout. `test/balance/sonata-inputs.json` was re-dumped from the live sonata (new widths; its committed starts are now F's — the 2026-10-20 dump had carried the pre-F balancer's starts) and `run.mjs` F1 asserts the new picks I 2 / II 0 / III 1 / IV 1 (29/29).
+`measureLeadingSigW` took its origin from the first measure's `getBBox().x`. Verovio draws the system-start bar number (`g.mNum autogenerated`) inside that `g.measure`, centered on the staff start, so every context first measured under a numbered bar was wider by half the number's width — +72 for one digit, +144 for two ("11": +133) — and the width depended on the bar it was measured under: a live session keeps the width it measured, a reload measures the context's first bar afresh, so a renumber across a digit boundary made the two disagree. The width is now measured from the first staff line's start (`staffLine`, the path `staffLineSpan` already parsed); fixture `partF_sigWidthIgnoresBarNumber`, proven failing first (616.75 under "9", 688.70 under "10"), and `partF_clefInitialReload` now also requires the live and reload widths to agree. Checked on the way: the brace is not in that bbox (it sits under `g.system`, at −220…−60 in the page margin on every system but the first), and `pageBudgetW` is the staff span exactly (every later system's staff runs 0 → budget; on the first, names + brace push it to 1342 = `labelIndentW`, which line 0 pays). The ~222 constant in `pageBudgetW`'s comment is the brace, not stroke overhang; the comment is corrected. **Layout impact** (the app's F over the sonata's inputs before and after): 16 of 19 contexts lose 143.98 (178 measures) or 72.03 (29); movement I keeps 35 lines (26 starts shift one bar from m. 81 on, pick 1 → 2 changes, min fill 0.672 either way), II keeps 21 (12 starts, min 0.862 → 0.854), III goes from 23 lines to 22 (pick 3 → 1 change, min 0.693 → 0.811, spread 0.082 → 0.030), IV is unchanged — 75 of 117 line starts move. **Follow-up (same day)**: Max reviewed page 5 — the first page that changes — before and after, and approved the layout. `test/balance/sonata-inputs.json` was re-dumped from the live sonata (new widths; its committed starts are now F's — the 2026-10-20 dump had carried the pre-F balancer's starts) and `run.mjs` F1 asserts the new picks I 2 / II 0 / III 1 / IV 1 (29/29).
 
 ## Every repartition repaginates: the splicer only engraves, `applyPartition` is the one landing (2026-10-21, Max)
 
@@ -10031,7 +10031,7 @@ Spec Phase 4 (`docs/composer-partition-consistency-spec.md`). **Line-break undo*
 
 **Phase 0 measurements** (the simulation reproduced the pre-F balancer's committed sonata partition exactly, 4/4 movements, so the inputs were right). Sonata curve on the pre-fix widths, distinct layouts as changes → min fill / spread: I 0 → .600/.145, 1 → .672/.089, 8 → .762/.043, full 27 → .746/.049; II needs nothing; III 0 → .331/.317, 3 → .693/.082, 10 → .806/.053, full 20 → .794/.068; IV 1 → .691/.051 (= full). Edit churn (simulated, first edit after load): inserting or deleting a bar re-flows the rest of the section in every scheme (p90 ≈ 25–33 lines); the curve variants reach back ≤ 1 line on early edits where the old page-bounded rebalance reached 3; for ±5 % width edits every pure variant changes nothing at p90, while the old edit path showed p90 10 lines, partly from the defect itself. **Rejected, with the data**: the page-causal partition (stubs at section ends); greedy + one target T with deficit windows (a single T is too strict or is MIN_FILL; no-window cases on every sonata movement — uniform bars make a window infeasible at any length; greedy's body made medium width edits change p90 6 lines against 2); merge windows compressing past 1.00 (collisions); anchoring the full balance to greedy or end-packed greedy breaks (anchors move with the content; 25–40 % of inserts changed MORE lines than the full balance).
 
-**Verification record of the landing (2026-10-20).** Unit: `test/balance/run.mjs` — F ≡ simulation on the sonata and 600 random sections; purity, line count, no compression, far end = full balance (against the old minimum-variance DP and brute force), final-section rule, atoms never split, an over-wide atom alone. Suite 651/651 with the universal invariant "partition is F" (`assertPartitionIsF`: committed starts = F of the document, mounted systems agree); new fixtures `partF_laterPageEditUndo`, `partF_editUndoChain`, `partF_reloadEqualsLive`, `partF_tailStubShortReach`, `partF_wideMeasureAlone`, `partF_clefInitialReload`, `partF_deferredTailMountsExact`; the fixtures that asserted the old balancer (`pageBalance*`, `lock_*`, `pag_meterChangeSplices`, `pageKeyChangeSplicesGovernedRange`, `pageRenumberIsRedrawOnly`, `engr_slurLiftedOffShiftedNumeral`) restated as F's rules; baselines `lock_down_splits` and `page_balance_section_final` re-seeded with Max's approval after heatmap review. Sonata gates (Chromium and headless Firefox, `run-probe.mjs --firefox --window 2600x1400`): `load-reference-gate` 32/32, `undo-reversibility-gate` 4/4 exact, `balance-consistency` m. 250 exact, `pagination-fold-check` clean in Chromium; `splice-exactness-census` against the gate's own reference (`PageSystemSplicer.referenceTops`): 322/344 pairs exact, 11 one device pixel (the `renderToSVG` header residual), 11 over a pixel, all on untouched neighbour pages (p. 12 for edits on lines 49–52, p. 18 for 70–72, p. 20 for 76–79) where Verovio's whole-document engrave disagrees with Composer's line windows — spliced ≡ fresh assembly checked directly at lines 49, 70, 76, 79. Corpus (450-file MuseScore sample): all 445 owned documents (511 sections) partition exactly as the simulation's pick, 0 console errors, Verovio "highly compressed" warnings 29 → 24. Cost, Firefox (sonata, median of 3): a note delete 102–162 ms and its undo 182–265 ms (F ≤ 1 ms); a bar inserted at m. 3 re-flows movement I's tail (38 boundaries) in 397 ms, leaving 7 unmounted pages deferred, each engraved on mount in ~480 ms; a bar at m. 241, 445 ms.
+**Verification record of the landing (2026-10-20).** Unit: `test/balance/run.mjs` — F ≡ simulation on the sonata and 600 random sections; purity, line count, no compression, far end = full balance (against the old minimum-variance DP and brute force), final-section rule, atoms never split, an over-wide atom alone. Suite 651/651 with the universal invariant "partition is F" (`assertPartitionIsF`: committed starts = F of the document, mounted systems agree); new fixtures `partF_laterPageEditUndo`, `partF_editUndoChain`, `partF_reloadEqualsLive`, `partF_tailStubShortReach`, `partF_wideMeasureAlone`, `partF_clefInitialReload`, `partF_deferredTailMountsExact`; the fixtures that asserted the old balancer (`pageBalance*`, `lock_*`, `pag_meterChangeSplices`, `pageKeyChangeSplicesGovernedRange`, `pageRenumberIsRedrawOnly`, `engr_slurLiftedOffShiftedNumeral`) restated as F's rules; baselines `lock_down_splits` and `page_balance_section_final` re-seeded with Max's approval after heatmap review. Sonata gates (Chromium and headless Firefox, `run-probe.mjs --firefox --window 2600x1400`): `load-reference-gate` 32/32, `undo-reversibility-gate` 4/4 exact, `balance-consistency` m. 250 exact, `pagination-fold-check` clean in Chromium; `splice-exactness-census` against the gate's own reference (`PageSystemSplicer.referenceTops`): 322/344 pairs exact, 11 one device pixel (the `renderToSVG` header residual), 11 over a pixel, all on untouched neighbor pages (p. 12 for edits on lines 49–52, p. 18 for 70–72, p. 20 for 76–79) where Verovio's whole-document engrave disagrees with Composer's line windows — spliced ≡ fresh assembly checked directly at lines 49, 70, 76, 79. Corpus (450-file MuseScore sample): all 445 owned documents (511 sections) partition exactly as the simulation's pick, 0 console errors, Verovio "highly compressed" warnings 29 → 24. Cost, Firefox (sonata, median of 3): a note delete 102–162 ms and its undo 182–265 ms (F ≤ 1 ms); a bar inserted at m. 3 re-flows movement I's tail (38 boundaries) in 397 ms, leaving 7 unmounted pages deferred, each engraved on mount in ~480 ms; a bar at m. 241, 445 ms.
 
 **Rulings that closed the spec's last items.** Firefox-only sub-pixel findings (lessons.md 2026-10-20: a spliced system's right edge following a fractional horizontal scroll; `placeFor` vs the fit's first-content top) are not relevant (Max, 2026-10-21), and Firefox tolerance-gate failures are accepted for now. The measure-start clef paths (the MusicXML importer's boundary clefs; a delete that leaves a mid-measure clef at a measure's start) are out of scope (Max, 2026-10-20: "do not touch these"); the width model handles them (`partF_clefInitialReload`).
 
@@ -10047,7 +10047,7 @@ Two final display adjustments before calling the Sonata port complete.
 
 The relay at `/overlay-ws` accepted any handshake. WebSockets are outside CORS and Firefox lets a public page dial localhost, so any site could read the retained state (lattice snapshot, the mirrored score's full MEI) and inject frames the OBS overlay renders, and stored ones replay to every later subscriber. Confirmed live with a receive-only `Origin: https://evil.example` client against the always-on host (now a systemd user service on Max's machine, so the exposure was permanent). `attachOverlayRelay` now refuses (403) unless `Host` is `127.0.0.1`/`localhost` at the listen port and the `Origin` is on its `origins` list. The default list is empty — fail-closed. `server.mjs` passes the file bridge's computed origins plus its own `http://127.0.0.1:<port>` / `http://localhost:<port>` (the page it serves dials same-origin), so there is one allowlist and `HKL_FS_ORIGINS` extends both.
 
-**Unlike the file bridge, a handshake with no `Origin` is admitted.** Every browser sends one on a WebSocket handshake, so none means a local non-browser process, which already has the user's rights; the relay holds nothing such a process couldn't read otherwise. The test tools (`relay-roundtrip.mjs`, `flash-mirror.mjs`'s Node publisher) connect that way. The file bridge refuses a missing `Origin` as defence in depth because it writes files; the relay does not. Gate: `node test/overlay-inspect/relay-roundtrip.mjs` sections 3–4.
+**Unlike the file bridge, a handshake with no `Origin` is admitted.** Every browser sends one on a WebSocket handshake, so none means a local non-browser process, which already has the user's rights; the relay holds nothing such a process couldn't read otherwise. The test tools (`relay-roundtrip.mjs`, `flash-mirror.mjs`'s Node publisher) connect that way. The file bridge refuses a missing `Origin` as defense in depth because it writes files; the relay does not. Gate: `node test/overlay-inspect/relay-roundtrip.mjs` sections 3–4.
 
 ## Physical inputs record the key they struck; one held-input registry (2026-10-25, Max)
 
@@ -10059,7 +10059,7 @@ Unified on the way (the copies had drifted): migration now moves `sustainedKeys`
 
 ## Wicki-Hayden note-name mapping: cells in their own frame, the mapping travels with every coordinate (2026-10-26, Max)
 
-Spec: `docs/wicki-hayden-spec.md` (folded into docs/architecture.md → Note-name mapping and deleted 2026-10-26; in git history). A **Mapping** (`'euler' | 'wickiHayden'`, toolbar dropdown under Tuning) orthogonal to the six tuning modes, landing for all of them at once. Max's rulings, in the order they were made: copies are their column shifted 2 down and an exact octave down, unadjusted (Schismatic included); the reference stays on qm0 with qm0′ to its right; the Lumatone range loss (109 → 55 semitones; the long axis `(7,−2)` carries no net pitch) is accepted; **every cell is its own cell** — never stored as an alias of, or offset from, another; Equal colours by sounding octave; the 88-cell picker chooses copies like any cell; switching keeps held Lumatone/QWERTY voices on their `(q,r)` (they retune in place) and converts mouse/piano notes; no drop case.
+Spec: `docs/wicki-hayden-spec.md` (folded into docs/architecture.md → Note-name mapping and deleted 2026-10-26; in git history). A **Mapping** (`'euler' | 'wickiHayden'`, toolbar dropdown under Tuning) orthogonal to the six tuning modes, landing for all of them at once. Max's rulings, in the order they were made: copies are their column shifted 2 down and an exact octave down, unadjusted (Schismatic included); the reference stays on qm0 with qm0′ to its right; the Lumatone range loss (109 → 55 semitones; the long axis `(7,−2)` carries no net pitch) is accepted; **every cell is its own cell** — never stored as an alias of, or offset from, another; Equal colors by sounding octave; the 88-cell picker chooses copies like any cell; switching keeps held Lumatone/QWERTY voices on their `(q,r)` (they retune in place) and converts mouse/piano notes; no drop case.
 
 How it is built: the mapping is part of the coordinate frame, so it rides wherever the tuning mode does (prefs, `.hkr` snapshot, `<hkl:layoutReq mapping>`, overlay snapshot). One fact carries the whole implementation — every Wicki-Hayden cell has an **Euler-equivalent** (`eulerOf`) with the same name, spelled octave and nominal MIDI, and the same pitch except a Schismatic copy (one schisma higher: it keeps its column's band). Verified exhaustively (10 125 cells × 5 JI modes, 0 mismatches) before building on it. So the shared primitives take a **required** `mapping` (typecheck enumerated every call site) and resolve through it; internal Euler math (regions, hue, the bounds probes) stays Euler. Lattice *vectors* (transpose buttons, SC shift, harmonics) go through `vecFromEuler` (q doubles — parity-preserving).
 
@@ -10069,13 +10069,13 @@ The entry-mismatch gate compares mode **and** mapping, as the spec says, even th
 
 Found on the way: `moveVoices` (ref-change migration, now also the mapping switch) moved pairs one at a time, so chained moves (A→B while B→C — an octave-sized anchor shift with two keys held an octave apart) overwrote a moving voice and orphaned it; it is now two-phase (detach every old key, then attach). The legacy fixed-layout MIDI out (`keyToMidi`/`degreeMap`; its reverse map `midi.midiToKey` is never read) only takes its pitch-class identity from the Euler-equivalent — not extended per mapping. The bounds probes had stale pre-monorepo paths; fixed, and their Euler output verified byte-identical before the Wicki-Hayden dimension was added. Gates: `test/wh-layout/oracle.mjs`, `test/hkl-midi/mapping-switch.mjs`, `test/bounds-probe/octave-consistency.mjs`.
 
-## Syntonic / Polysyntonic modes; colour and HEJI are one function of the pitch (2026-10-26, Max)
+## Syntonic / Polysyntonic modes; color and HEJI are one function of the pitch (2026-10-26, Max)
 
-Spec: `docs/syntonic-spec.md` (folded into docs/architecture.md → Tuning modes / Color scheme and docs/architecture/composer.md, then deleted 2026-10-26; never committed). Two tuning modes for 5-limit on Wicki-Hayden: every band Pythagorean (pure octaves and scales in a band), whole bands shifted by syntonic commas around the **home band** — **Syntonic** `k = 0, +1, 0, −1` by band distance, **Polysyntonic** `k` = band distance, unbounded on the whole lattice. Lowered band LEFT: a band's note window drifts ~12/7 fifths sharpward per octave, so the left neighbour holds the sharp-side spellings a 5-limit third lowers (just thirds 4–4.5 key-widths away instead of 7.5–8). Under Wicki-Hayden comma alternatives cannot coexist in one band (one key per MIDI note per band: the unison vector `(7,−2)` outruns the 6-wide band). Tempering vertical fifths (Max's second proposal) was ruled out — a column's octave error survives any fifth tempering, and meantone tempers out the comma the lattice exists to expose.
+Spec: `docs/syntonic-spec.md` (folded into docs/architecture.md → Tuning modes / Color scheme and docs/architecture/composer.md, then deleted 2026-10-26; never committed). Two tuning modes for 5-limit on Wicki-Hayden: every band Pythagorean (pure octaves and scales in a band), whole bands shifted by syntonic commas around the **home band** — **Syntonic** `k = 0, +1, 0, −1` by band distance, **Polysyntonic** `k` = band distance, unbounded on the whole lattice. Lowered band LEFT: a band's note window drifts ~12/7 fifths sharpward per octave, so the left neighbor holds the sharp-side spellings a 5-limit third lowers (just thirds 4–4.5 key-widths away instead of 7.5–8). Under Wicki-Hayden comma alternatives cannot coexist in one band (one key per MIDI note per band: the unison vector `(7,−2)` outruns the 6-wide band). Tempering vertical fifths (Max's second proposal) was ruled out — a column's octave error survives any fifth tempering, and meantone tempers out the comma the lattice exists to expose.
 
-Max's rulings: the layout **re-anchors** whenever the ref crosses a band so the home band is always unaltered (pitch, arrows, colour change; MIDI, spelling, band boundaries never), refs are not restricted to home bands; names Syntonic / Polysyntonic (no synonym pairs); the anchor ignores Composer's cursor prior-note selection (it can wander into another band); a Ctrl+click on an altered key alters that key's pitch (no comma drift); a key-signature edit re-pitches the measures it governs; Polysyntonic piano input takes a home-absent note from the nearest band; persistence `'S'`/`'Y'` after Schismatic; Euler allowed, unrecommended. In every other mode the band offset is constant, so the anchor drops out (Schismatic stacks schismas from A3's band, a fixed-anchor stacking — unchanged).
+Max's rulings: the layout **re-anchors** whenever the ref crosses a band so the home band is always unaltered (pitch, arrows, color change; MIDI, spelling, band boundaries never), refs are not restricted to home bands; names Syntonic / Polysyntonic (no synonym pairs); the anchor ignores Composer's cursor prior-note selection (it can wander into another band); a Ctrl+click on an altered key alters that key's pitch (no comma drift); a key-signature edit re-pitches the measures it governs; Polysyntonic piano input takes a home-absent note from the nearest band; persistence `'S'`/`'Y'` after Schismatic; Euler allowed, unrecommended. In every other mode the band offset is constant, so the anchor drops out (Schismatic stacks schismas from A3's band, a fixed-anchor stacking — unchanged).
 
-**Colour is a property of the pitch, not the layout (Max: "it must be unified").** The five per-mode colour paths (Ptolemaic `computeHue`, the P/D SC-sibling redirect, Schismatic's +5 per band, Septimal's region-B branch, the Wicki-Hayden column redirect) were each the same function computed another way: `hue = hueCycleOrder[floor((57 + 7·e3 + 4·e5 + 10·e7)/12) − 4 mod 7]` on `coordExps` (each prime's 12-TET step reduced into the octave), septimal variant when `e7 ≠ 0`. Verified identical to the old code on 146 410 cells (5/P/D/7/V × both mappings) before the swap, then pinned by `test/color-gate/`. Equal's octave cycle is the one separate rule (Max). It lives in `@hkl/shared/keycolor.js`, so Composer recolours notes itself (`recolorNotes`) — which also fixed a latent bug: retune left a stale `@color` on any inexact relocation, since the footprint recolour pass `retune.ts` described never existed. S/Y needed no colour code. The same argument retired HEJI's own copy of the per-mode shift table: arrows/hooks are the syntonic/septimal commas between a cell's pitch and its `'P'` pitch (verified identical on 175 692 cells), and HKL's dead `regionInfo` table went with it — `coordExps` is now the one place per-mode tuning lives.
+**Color is a property of the pitch, not the layout (Max: "it must be unified").** The five per-mode color paths (Ptolemaic `computeHue`, the P/D SC-sibling redirect, Schismatic's +5 per band, Septimal's region-B branch, the Wicki-Hayden column redirect) were each the same function computed another way: `hue = hueCycleOrder[floor((57 + 7·e3 + 4·e5 + 10·e7)/12) − 4 mod 7]` on `coordExps` (each prime's 12-TET step reduced into the octave), septimal variant when `e7 ≠ 0`. Verified identical to the old code on 146 410 cells (5/P/D/7/V × both mappings) before the swap, then pinned by `test/color-gate/`. Equal's octave cycle is the one separate rule (Max). It lives in `@hkl/shared/keycolor.js`, so Composer recolors notes itself (`recolorNotes`) — which also fixed a latent bug: retune left a stale `@color` on any inexact relocation, since the footprint recolor pass `retune.ts` described never existed. S/Y needed no color code. The same argument retired HEJI's own copy of the per-mode shift table: arrows/hooks are the syntonic/septimal commas between a cell's pitch and its `'P'` pitch (verified identical on 175 692 cells), and HKL's dead `regionInfo` table went with it — `coordExps` is now the one place per-mode tuning lives.
 
 How the anchor travels: `tuning.anchor` is recomputed with the ref tiers (`state/reference.ts`) and a change in S/Y runs `onTuningChanged` (a re-anchor is a tuning change) in a microtask after the caller finishes re-anchoring kbAnchor; playback and the overlay mirror pin it (`setAnchorOverride`). Composer derives a note's anchor from its measure's key (`model.anchorAt` = the band of the key-tonic cell `set-score-ref` carries, so both sides agree by construction) — derived, never stored; render clones get a render-only `data-anchor`. `.hkr` records the snapshot anchor plus `a` on a note-on after a mid-take re-anchor. The 88-cell picker ranks S/Y candidates by band comma count first, so piano input stays unaltered. Bounds tables are keyed by `ProbedMode` (S/Y read P's buckets — they only draw the valid-ref boundary and size the canvas; the live validator is authoritative). Gates: `test/syntonic/oracle.mjs`, `test/color-gate/gate.mjs`.
 
@@ -10091,18 +10091,18 @@ Follows "One picker rule" above. The picker's TH is octave- and complement-reduc
 
 ## Ref tiers: one authority for kbAnchor and one fan-out; the overlay relay replays the snapshot first (2026-10-27, Max)
 
-Max reported, right after the Syntonic / Wicki-Hayden merges (Semiditonal / Euler, Lumatone outline, Sync on): the ref sat several columns off centre after setting the key in Composer (a Ctrl+click on it fixed it), and after several performance takes the OBS overlay — not HKL — had shifted against the Lumatone outline while pressed keys still landed on the right cells. Neither incident reproduced end to end. The investigation found two classes of fault that produce exactly those symptoms:
+Max reported, right after the Syntonic / Wicki-Hayden merges (Semiditonal / Euler, Lumatone outline, Sync on): the ref sat several columns off center after setting the key in Composer (a Ctrl+click on it fixed it), and after several performance takes the OBS overlay — not HKL — had shifted against the Lumatone outline while pressed keys still landed on the right cells. Neither incident reproduced end to end. The investigation found two classes of fault that produce exactly those symptoms:
 
-1. **Every handler re-derived `kbAnchor` by hand**, and some didn't: `set-reference-note` overwrote a Ctrl+click held in the one shared selection slot (the ref fell to the score-ref, the view stayed on the Ctrl+click), `composer-bye` dropped the score-ref without re-anchoring, the S/Y `apply-layout` drop re-anchored without re-centring, and a snap left an in-flight Ctrl+click slide free to drag the view back to its stale target.
+1. **Every handler re-derived `kbAnchor` by hand**, and some didn't: `set-reference-note` overwrote a Ctrl+click held in the one shared selection slot (the ref fell to the score-ref, the view stayed on the Ctrl+click), `composer-bye` dropped the score-ref without re-anchoring, the S/Y `apply-layout` drop re-anchored without re-centering, and a snap left an in-flight Ctrl+click slide free to drag the view back to its stale target.
 2. **The relay replayed retained deltas before the snapshot** on `request-snapshot` (which the overlay sends on every open) and kept a `view` older than a later snapshot. A Ctrl+click slide publishes its snapshot at the first frame, so a reconnecting overlay landed on the pre-slide pan while keys kept landing correctly.
 
 Max: structural fixes, no temporary diagnostics. Built:
 
-- `state/reference.ts` is the one authority. Selection = two slots, the Ctrl+click and Composer's cursor note; home ref = Ctrl+click ?? score-ref ?? A3; effective ref = home, except in the piano outline, where the cursor note is the ref when newer than the Ctrl+click. `kbAnchor` = `refSpine(home)` and the S/Y `tuning.anchor` are derived there; every tier change runs one synchronous listener, `effects/onRefChanged(dq, dr)` (migration, MIDI reverse map, LEDs, piano-outline invalidation, view re-centre, redraw, Composer broadcast). Handlers only mutate tiers; Ctrl+click slides via `withRefSlide`. A mapping switch converts the tiers silently (held physical voices keep their (q, r)) and drops any tier invalid in the new frame.
+- `state/reference.ts` is the one authority. Selection = two slots, the Ctrl+click and Composer's cursor note; home ref = Ctrl+click ?? score-ref ?? A3; effective ref = home, except in the piano outline, where the cursor note is the ref when newer than the Ctrl+click. `kbAnchor` = `refSpine(home)` and the S/Y `tuning.anchor` are derived there; every tier change runs one synchronous listener, `effects/onRefChanged(dq, dr)` (migration, MIDI reverse map, LEDs, piano-outline invalidation, view re-center, redraw, Composer broadcast). Handlers only mutate tiers; Ctrl+click slides via `withRefSlide`. A mapping switch converts the tiers silently (held physical voices keep their (q, r)) and drops any tier invalid in the new frame.
 - A snap while a slide is in flight redirects the slide (`syncViewToOutline`, `snapViewForOutline`) instead of being overridden by it.
 - The relay: a retained snapshot supersedes the retained `view` / `keys`; one `replay()` sends the snapshot first on connect and on `request-snapshot`. Takes effect after `systemctl --user restart hkl-overlay-host`.
 
-Behaviour changes: outside the piano outline a cursor move never displaces a Ctrl+click (it used to clobber it), and leaving the piano outline resurfaces a Ctrl+click under a newer cursor note; in the piano outline with Sync off, a score-ref change under a cursor note now moves `kbAnchor` to the new key's spine (it used to snap to the cursor note's spine). Gates: `test/hkl-midi/ref-centring.mjs` (C1–C14), `test/overlay-inspect/relay-roundtrip.mjs` replay order (fails on the old relay); the HKL harnesses now publish to a private relay (lessons.md).
+Behavior changes: outside the piano outline a cursor move never displaces a Ctrl+click (it used to clobber it), and leaving the piano outline resurfaces a Ctrl+click under a newer cursor note; in the piano outline with Sync off, a score-ref change under a cursor note now moves `kbAnchor` to the new key's spine (it used to snap to the cursor note's spine). Gates: `test/hkl-midi/ref-centering.mjs` (C1–C14), `test/overlay-inspect/relay-roundtrip.mjs` replay order (fails on the old relay); the HKL harnesses now publish to a private relay (lessons.md).
 
 ## Chromatic note-name mapping: mirror construction, carry for the syntonic offset only (2026-10-27, Max)
 
@@ -10131,7 +10131,7 @@ A third `Mapping`, `'chromatic'` (q = semitone, r = fifth, (−1,+1) = tritone).
 - Every per-mapping quantity except `eulerOf` derives from `COLUMN_STEP` (4/2/1): band width, positions, `refSpine`, the picker's isotone and `k`-span, tilt, frame scale.
 - The `=== 'wickiHayden' ? :` ternaries (which a third value silently turned into Euler) became table lookups. `MAPPING_LABELS` is shared.
 
-**Accepted, not mitigated (Max).** On the Lumatone each board sits a fifth below its left neighbour (the case axis `(7,−2)` carries −7 semitones; MIDI 12–102). Fixing it would break numerical isomorphism.
+**Accepted, not mitigated (Max).** On the Lumatone each board sits a fifth below its left neighbor (the case axis `(7,−2)` carries −7 semitones; MIDI 12–102). Fixing it would break numerical isomorphism.
 
 Gates:
 - `test/chromatic-layout/oracle.mjs`;
@@ -10162,8 +10162,17 @@ Gates: the `grace` fixture category (51 fixtures, incl. `HKL_INDEX_CHECK`), five
 
 ## The cursor overlay shares the page cards' frame (2026-10-27, Max)
 
-**Bug.** Page view centred each `.score-page` card with `margin: auto` inside `#score`, while `#cursorOverlay` sat absolute at `#score`'s (0, 0) with pixel coordinates measured when it was drawn. Any change of `#score`'s width moved the cards and left the overlay (voice/layer cursor, playback bars, selection marks) where it was. Every page-view visual baseline with a cursor showed it ~12 px left of its note: the capture widens the viewport from the runner's 1600 px to fit the 2161 px card, the card re-centres, and nothing redraws. A live window resize does the same until the next keystroke.
+**Bug.** Page view centered each `.score-page` card with `margin: auto` inside `#score`, while `#cursorOverlay` sat absolute at `#score`'s (0, 0) with pixel coordinates measured when it was drawn. Any change of `#score`'s width moved the cards and left the overlay (voice/layer cursor, playback bars, selection marks) where it was. Every page-view visual baseline with a cursor showed it ~12 px left of its note: the capture widens the viewport from the runner's 1600 px to fit the 2161 px card, the card re-centers, and nothing redraws. A live window resize does the same until the next keystroke.
 
-**Fix (Max chose the structural option over a ResizeObserver redraw).** One frame owns both: `renderer.attach(#score)` creates `div.score-content` (`position: relative; display: flow-root; width: max-content`, centred in page view), and the cards / scroll SVG and the overlay live in it. The renderer's `container` is that frame (DOM root; `rectForElement` / `findSigEndXForStaff` measure against it with no scroll term); a new `scroller` (`#score`) takes the scroll listener, viewport rects, the `IntersectionObserver` root, the per-card centring cache key (`clientWidth`) and the theme tags; `AssemblyHost.scroller` carries the assembler's scroll save/restore. The overlay is sized by CSS (100 % of the frame, `overflow: visible`) instead of JS extents. The one consumer doing scroll math (`maybeScrollMeasureIntoView`) adds `renderer.contentOrigin()`. Rejected: redraw on resize — correct pixels, but two placements kept in step by a callback rather than one placement.
+**Fix (Max chose the structural option over a ResizeObserver redraw).** One frame owns both: `renderer.attach(#score)` creates `div.score-content` (`position: relative; display: flow-root; width: max-content`, centered in page view), and the cards / scroll SVG and the overlay live in it. The renderer's `container` is that frame (DOM root; `rectForElement` / `findSigEndXForStaff` measure against it with no scroll term); a new `scroller` (`#score`) takes the scroll listener, viewport rects, the `IntersectionObserver` root, the per-card centering cache key (`clientWidth`) and the theme tags; `AssemblyHost.scroller` carries the assembler's scroll save/restore. The overlay is sized by CSS (100 % of the frame, `overflow: visible`) instead of JS extents. The one consumer doing scroll math (`maybeScrollMeasureIntoView`) adds `renderer.contentOrigin()`. Rejected: redraw on resize — correct pixels, but two placements kept in step by a callback rather than one placement.
 
-Gate: `cursorFollowsRecentre` (cursor category) widens `#score` past the page with no re-render and requires the bar's offset from its note to hold (failed first: offset 4.0 → −296.0 as the card moved 300 px).
+Gate: `cursorFollowsRecenter` (cursor category) widens `#score` past the page with no re-render and requires the bar's offset from its note to hold (failed first: offset 4.0 → −296.0 as the card moved 300 px).
+
+## Cursor bars are opaque; the dark-mode cursor is #bb91ff (2026-10-28, Max)
+
+Max found the playback bar too low-contrast in dark mode. Two changes, both his picks after rounds of rendered options (scratch fixtures, the bar beside a purple `#C94CFF` notehead):
+
+- **Opacity 1 everywhere.** The `0.85` on the editing bar, the playback bar, the layer (expression / pedal / tempo) bars and HKL's Composer-view copy had no recorded reason. `git log -S` traces it to the first Composer commit (`15b7344`), where opacity told insert mode (0.85) from overwrite mode (0.45). The overwrite box later took its own fill/stroke opacity and the 0.85 was left behind. At 0.85 the dark background bleeds through and turns every light color gray, costing about a quarter of the contrast against the background and the staff lines. Max chose 1 in both themes over a dark-only override, to avoid a special case.
+- **Dark `--cursor-color` `#a96bff` → `#bb91ff`**: OKLCH L 0.74, hue 300 (the old dark cursor's hue), with the most chroma sRGB holds at that lightness. **Rejected:** near-white tints (`#f6f3fe` … `#d5b2ff`) and lighter, paler purples. WCAG contrast ratios favored them, but they are a measure for text on a solid ground. Against thin silver staff lines it is the color difference that reads, so the more purple the better, short of losing the background contrast. Hue shifts toward magenta and toward periwinkle were also rejected: keep the original hue.
+
+The editing cursor and its V label share `--cursor-color`, so they take the new color too. Gate: `dark_playback_cursor` (engraving) pins the bar's computed fill and opacity, with a visual baseline.

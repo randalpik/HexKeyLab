@@ -168,10 +168,10 @@ tools/obs-trim/align.py --score-only             # parse + self-checks, no video
 ```
 
 **Key-downs** are read per hex, not per cell: lighting blobs give the hex
-spacing and angle, and the `(q, r)` labelling (12 orientations × integer
+spacing and angle, and the `(q, r)` labeling (12 orientations × integer
 offset) is fitted against the score's key histogram. Each key's *whiteness*
-(min of R, G, B over a disk at its centre) is sampled per frame — a lit key is
-its colour blended toward white, which a luma series misses on pale keys (a
+(min of R, G, B over a disk at its center) is sampled per frame — a lit key is
+its color blended toward white, which a luma series misses on pale keys (a
 pale-yellow key gains ~12 luma levels lit). A key-down is an unlit→lit
 transition (hysteresis at 60 % / 40 % of the key's range; a key needs ≥ 30 of
 contrast and a ≥ 30 jump between frames, which edge hexes over the camera never

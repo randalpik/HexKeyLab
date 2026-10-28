@@ -238,7 +238,7 @@ export function snapBarlines(container: Element, scale: number, evenWidth: boole
  *  splice gate's 10-unit tolerance at zoom 50 and never at zoom 100
  *  (`lock_after_zoom_reflows`; lessons.md, same date). Pass the LIVE page's
  *  fractional device x and an offscreen host snaps exactly as the live page
- *  does. Omitted, the behaviour is unchanged: the host snaps by its own
+ *  does. Omitted, the behavior is unchanged: the host snaps by its own
  *  position, which is what a real on-screen page must do to be crisp. */
 export function snapSystemRightEdge(container: Element, scale: number, originPhaseX?: number): void {
   const ds = scale / 1000;

@@ -179,7 +179,7 @@ version, and every feature with its happy path plus its rejection cases.**
    scope; `setupKeys` entries are characters or
    `{ key: 'ArrowRight', ctrl: true, shift: true, alt: true }`.
 2. Add `ASSERTIONS[name]` if the universal invariants don't cover the
-   behaviour. Assertion and setup bodies are untagged template literals
+   behavior. Assertion and setup bodies are untagged template literals
    injected as strings: every backslash is consumed by the template — see
    lessons.md before writing a regex or a backtick in one.
 3. For pixels, add `visualBaseline: '<name>'`; the first run seeds
@@ -190,7 +190,7 @@ version, and every feature with its happy path plus its rejection cases.**
 4. Run it against the current code first — it must fail for the reason the
    fix addresses — then implement.
 
-Prefer existing assertions to new ones, and one fixture per behaviour surface:
+Prefer existing assertions to new ones, and one fixture per behavior surface:
 the grid of fixtures × universal invariants is the coverage.
 
 ## Reviewing a visual failure
@@ -249,7 +249,7 @@ reRender`), `window.__test.*` (assertion helpers, `runRoundTrip`),
 `window.__bridgeMock` (`sendHeldKeys`, `captured`, `drain`, `reset`),
 `window.__cursorTrace(voice, exemptions)`, `window.__waitForScrollSettle(ms)`.
 
-When a test's pixels disagree with live behaviour on the same code, list every
+When a test's pixels disagree with live behavior on the same code, list every
 command the runner issues that a live session does not (mock injects,
 cursor-trace, forced view mode, RAF waits) before hypothesizing (lessons.md
 "Test/live divergence: diff the flows before hypothesizing").

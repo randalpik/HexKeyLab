@@ -225,7 +225,7 @@ function toggleGraph(entry){
    • Background bands: attack region (yellow), steady region (green)
    • Envelope curve as the gate sees it (blue stroke) — moving-average RMS
      with the fundamental-period window
-   • Boundary lines: trimStart (grey), smartStart (orange), steadyEnd (grey)
+   • Boundary lines: trimStart (gray), smartStart (orange), steadyEnd (gray)
    • Per-candidate dots: green filled = in final clique, yellow hollow =
      rejected by pair gates (rms, slope, pitch, tilt, tiltSlope, or corr)
    • Slope tangent line at each candidate: slope of the env curve, visually
@@ -489,7 +489,7 @@ function renderGraphForEntry(entry){
   }
   /* Mean-RMS reference + steady-region threshold lines (segments pipeline). */
   if(diag.pipeline==='segments'&&diag.meanRms!=null){
-    /* Mean RMS — solid grey line across steady region only. */
+    /* Mean RMS — solid gray line across steady region only. */
     var meanY=ys(diag.meanRms);
     ctx.strokeStyle='#888';
     ctx.lineWidth=1;
@@ -595,7 +595,7 @@ function renderGraphForEntry(entry){
     ctx.setLineDash([]);
   }
   /* ── Pitch panel ───────────────────────────────────────────────────────
-     0-cent center line = T_actual. Mean over steady = dashed grey. Curve
+     0-cent center line = T_actual. Mean over steady = dashed gray. Curve
      in teal. NaN gaps break the polyline (use moveTo to skip). */
   if(hasPitch){
     var pc2=diag.pitchCurve;
@@ -636,7 +636,7 @@ function renderGraphForEntry(entry){
   /* ── Tilt panel ────────────────────────────────────────────────────────
      Fine curve (100ms window, light brown) shows vibrato-scale brightness
      modulation. Trend curve (600ms window, bold dark brown) shows slow drift
-     — THIS is what the gate compares. Mean over steady = dashed grey.
+     — THIS is what the gate compares. Mean over steady = dashed gray.
      Candidate dots in this panel sit on the trend value, since that's what
      the gate sees. */
   if(hasTilt){
@@ -697,7 +697,7 @@ function renderGraphForEntry(entry){
     ctx.beginPath();
     ctx.moveTo(ml,ysTiltSlope(0));ctx.lineTo(ml+pw,ysTiltSlope(0));
     ctx.stroke();
-    /* Curve — dark green to echo the segment-bar arrow colour, distinct
+    /* Curve — dark green to echo the segment-bar arrow color, distinct
        from RMS-slope's black. Break the line on NaN so gaps at the curve
        edges (where the finite-difference window is incomplete) read as
        missing data rather than as zero. */
@@ -853,7 +853,7 @@ function renderGraphForEntry(entry){
     var pickInfo=pcCount+' +ZCs · '+(stx.nValidPairs||0)+' valid pairs → '+segCount+' segments · '+sccStr+' · '+bridgeStr+
       ' · dots: '+nFinal+' green / '+nGhost+' orange / '+nPartner+' blue / '+nIsolated+' yellow / '+nHidden+' hidden';
     var tiltTrendMs=diag.tiltTrendWinSec!=null?Math.round(diag.tiltTrendWinSec*1000):600;
-    var legend='env: blue=fast env, gray=1000ms avg, dashed grey=meanRMS, dashed red=amp trend, purple=normalized env.  slope: black=raw, purple-dashed=normalized.  pitch: teal=cents from T_actual, dashed grey=mean.  tilt: tan=fine (100ms), brown=slow trend ('+tiltTrendMs+'ms, gate uses this), dashed grey=mean.  tilt-slope: dark green=d/dt of trend, band=±threshold/2 (only shown when gated).  bars: green segments span [a,b], arrow→b.  dots: green=final segment endpoint, orange=greedy-picked but pruned (these also gated separation rejection), blue=separation-rejected, yellow=outside steady.';
+    var legend='env: blue=fast env, gray=1000ms avg, dashed gray=meanRMS, dashed red=amp trend, purple=normalized env.  slope: black=raw, purple-dashed=normalized.  pitch: teal=cents from T_actual, dashed gray=mean.  tilt: tan=fine (100ms), brown=slow trend ('+tiltTrendMs+'ms, gate uses this), dashed gray=mean.  tilt-slope: dark green=d/dt of trend, band=±threshold/2 (only shown when gated).  bars: green segments span [a,b], arrow→b.  dots: green=final segment endpoint, orange=greedy-picked but pruned (these also gated separation rejection), blue=separation-rejected, yellow=outside steady.';
     var paramInfo='envWin='+(diag.envWinSec*1000).toFixed(1)+'ms  slopeStride=±'+((diag.slopeHSec||0)*1000).toFixed(1)+'ms  rmsThresh='+diag.rmsStepThreshold+'  slopeThresh='+diag.slopeStepThreshold;
     if(diag.pitchStepThresholdCents!=null&&isFinite(diag.pitchStepThresholdCents))paramInfo+='  pitchThresh='+diag.pitchStepThresholdCents+'¢';
     if(diag.tiltStepThreshold!=null&&isFinite(diag.tiltStepThreshold))paramInfo+='  tiltThresh='+diag.tiltStepThreshold;

@@ -162,7 +162,7 @@ export interface ScoreSkeletonSetup {
   /* Required layout for this score. Tuning mode only — the reference note is
      derived from the key signature, not stored. Default Ptolemaic. */
   /** `mapping` is written only when it is not the default 'euler', so
-   *  Euler scores serialise exactly as before mappings existed. */
+   *  Euler scores serialize exactly as before mappings existed. */
   layoutReq?: { tuningMode: string; mapping?: string };
 }
 

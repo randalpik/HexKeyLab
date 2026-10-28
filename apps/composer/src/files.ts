@@ -110,7 +110,7 @@ async function exclusive<T>(work: () => Promise<T>): Promise<T | 'busy'> {
 /**
  * Open a file for Load (`score`) or Import (`musicxml`). Resolves:
  *   'browser' — no host (or no dialog on it): use the <input type=file> path;
- *   null      — the user cancelled the dialog;
+ *   null      — the user canceled the dialog;
  *   the text  — `load` has been called with it and the binding updated.
  * `load` does the document swap (which calls resetFile) — the binding is set
  * AFTER it, so the swap's reset cannot clobber it.
@@ -171,7 +171,7 @@ export async function saveDocument(model: ComposerModel, as: boolean): Promise<s
         (gone) => gone
           ? `${name} no longer exists on disk. Save it there anyway?`
           : `${name} changed on disk since it was opened or last saved. Overwrite it with this version?`);
-      if (!w) return 'Save cancelled — the file on disk was left as it is.';
+      if (!w) return 'Save canceled — the file on disk was left as it is.';
       set({ path: w.path, mtimeMs: w.mtimeMs, dir: w.dir, base: baseOf(w.name) });
       return 'Saved ' + w.path;
     }
@@ -185,13 +185,13 @@ export async function saveDocument(model: ComposerModel, as: boolean): Promise<s
 
     if (h && h.picker) {
       const chosen = await h.fs.pickSave('hkc', base + '.hkc', cur.dir ?? lastDir());
-      if (!chosen) return 'Save cancelled.';
+      if (!chosen) return 'Save canceled.';
       /* The dialog confirmed overwriting the name it returned — unless the host
          had to add the extension, in which case the final name is unconfirmed. */
       const w = await writeConfirmed(h.fs, chosen.path, blob,
         chosen.appended ? { kind: 'ifAbsent' } : { kind: 'overwrite' },
         () => `${chosen.name} already exists. Replace it?`);
-      if (!w) return 'Save cancelled.';
+      if (!w) return 'Save canceled.';
       set({ path: w.path, mtimeMs: w.mtimeMs, dir: w.dir, base: baseOf(w.name) });
       return 'Saved ' + w.path;
     }

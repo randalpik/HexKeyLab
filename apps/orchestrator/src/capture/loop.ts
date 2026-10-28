@@ -6,7 +6,7 @@
 // Auto-retry-once: a take is re-recorded a single time when it comes out
 // "yellow" — a failed gate, a post-gain noise floor over the skip threshold (its
 // boosted hiss would be audible), OR a local gain OUTLIER (abnormally quiet
-// take: gain far above its same-velocity neighbours, usually a soft/mis-struck
+// take: gain far above its same-velocity neighbors, usually a soft/mis-struck
 // strike a fresh take fixes). The cleaner of the two takes is kept. Layers that
 // are still too noisy after retry are dropped at export (buildHki), not here.
 

@@ -47,14 +47,14 @@ const SEAM_CAP = 300;      // plenty for a long single-note hold
 const WINDOW_SEC = 15;
 const MIN_DB = -60;
 const MAX_DB = 0;
-/* Dip thresholds (dB). Markers are coloured by measured midpoint dip:
+/* Dip thresholds (dB). Markers are colored by measured midpoint dip:
    green (clean) > YELLOW_DB ≥ yellow (small) > RED_DB ≥ red (audible). */
 const YELLOW_DB = -0.5;
 const RED_DB = -2.0;
 const COLOR_CLEAN = '#0f8';     // green
 const COLOR_SMALL = '#fc0';     // yellow
 const COLOR_AUDIBLE = '#f44';   // red
-const COLOR_UNMEASURED = '#888'; // grey — measurement window not covered yet
+const COLOR_UNMEASURED = '#888'; // gray — measurement window not covered yet
 
 let domBuilt = false;
 let enabled = false;
@@ -466,8 +466,8 @@ function draw(): void {
 
   /* Seam markers: vertical lines through the plot, labels in the header strip
      at the top (above the dB grid so they don't share a row with grid labels).
-     Marker colour encodes the measured midpoint dip: green clean, yellow
-     small, red audible, grey if the measurement window hasn't fully arrived
+     Marker color encodes the measured midpoint dip: green clean, yellow
+     small, red audible, gray if the measurement window hasn't fully arrived
      yet (e.g., the most recent seam < 50 ms ago). */
   const distinctVoiceKeys: Record<string, true> = {};
   for (const ev of seamBuf) {

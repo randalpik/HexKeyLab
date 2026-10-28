@@ -252,7 +252,7 @@ function rewriteNoteCoord(note: Element, q: number, r: number, mapping: Mapping)
        (heji-render.ts). */
     note.setAttribute('accid', token);
   }
-  /* Colour is rewritten by model.recolorNotes() once the new layout is set
+  /* Color is rewritten by model.recolorNotes() once the new layout is set
      (setupDialog) — it's a function of the pitch under that layout. */
 }
 

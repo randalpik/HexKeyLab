@@ -39,11 +39,14 @@ const CSS = `
   /* Staff + bar lines: a slightly darker silver than the ink so they recede
      behind notes/glyphs (see rule 4). */
   --notation-line: #9a9a9a;
-  /* Edit/playback cursor: a brighter purple than the light-mode #7226e4 for
-     contrast on #161616. Consumed by the cursor overlays (cursor.ts /
-     composer-frame.ts) via \`var(--cursor-color, …)\`; the overlays live inside
-     the themed container so they inherit it. */
-  --cursor-color: #a96bff;
+  /* Edit/playback cursor: the light-mode purple (#7226e4) lightened to OKLCH
+     L 0.74 at hue 300 with the most chroma sRGB holds there (Max's pick,
+     2026-10-28) — light enough to stand off #161616 and the silver staff lines,
+     purple enough to read as color beside the white ink. Consumed by the
+     cursor overlays (cursor.ts / composer-frame.ts) via
+     \`var(--cursor-color, …)\`; the overlays live inside the themed container
+     so they inherit it. */
+  --cursor-color: #bb91ff;
 }
 
 /* 1. Universal stroke recolor. Verovio strokes EVERY shape with

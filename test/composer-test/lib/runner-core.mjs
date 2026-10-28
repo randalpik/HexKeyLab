@@ -73,6 +73,11 @@ export const RESET_SNIPPET = `
    * fire sendHklHello() would otherwise leak that state into every
    * subsequent fixture. */
   if (window.__hkl_composer.__testReset) window.__hkl_composer.__testReset();
+  /* __testReset ends playback only when main.ts is playing; a fixture that
+   * drives the cursor directly (c.setPlaybackMode(true) to pin a playback-bar
+   * render) bypasses that, and would hide the editing cursor in every later
+   * fixture. Clear the cursor's own playback mode unconditionally. */
+  if (window.__hkl_composer.cursor) window.__hkl_composer.cursor.setPlaybackMode(false);
 
   /* Clear held keys via a bridge broadcast — main.ts's bridge.on
    * handler is the only writer to lastHeldKeys. The test-side mock

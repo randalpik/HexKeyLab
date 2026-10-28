@@ -111,7 +111,7 @@ function stripNote(note: Element, wantsForward: WeakMap<Element, boolean>): void
   removeLvForNote(note);
 }
 
-/** Re-realize ties for the WHOLE document, all voices (the original behaviour). */
+/** Re-realize ties for the WHOLE document, all voices (the original behavior). */
 function realizeFull(model: ComposerModel, doc: Document): void {
   for (const lv of Array.from(doc.querySelectorAll('lv'))) lv.parentNode?.removeChild(lv);
   const wantsForward = new WeakMap<Element, boolean>();
@@ -133,7 +133,7 @@ function realizeFull(model: ComposerModel, doc: Document): void {
 }
 
 /** Re-realize ties ONLY within measures [lo-1 .. hi+1] per voice (Phase B3).
- *  Tie realization for a note depends only on its immediate neighbour events,
+ *  Tie realization for a note depends only on its immediate neighbor events,
  *  so an edit confined to [lo..hi] can only change realization in that ±1
  *  window. The offer entering the window (from the measure before it) and
  *  exiting it (to the measure after) lie between UNCHANGED measures, so they're
@@ -256,7 +256,7 @@ export function clearTieFlag(note: Element): void {
 
 /** Drop a note's tie intent AND realization (incl. its <lv> stub) — for a
  *  note becoming a grace, which is no tie event at all, so neither pass would
- *  strip it. The neighbours re-realize in the caller's normalizeTies. */
+ *  strip it. The neighbors re-realize in the caller's normalizeTies. */
 export function clearTieState(note: Element): void {
   note.removeAttribute('tie');
   note.removeAttribute('data-pending-tie');

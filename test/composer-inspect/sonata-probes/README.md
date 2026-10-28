@@ -105,7 +105,7 @@ Run these after any change to the refill, splicer, partition or pagination.
   block and section-header band as splice error. A fresh load reads 30/32 pages
   exact, pages 2 and 25 one device pixel (the `renderToSVG` header residual).
   After edits (2026-10-20, both browsers): 322/344 pairs exact in Chromium; the
-  11 pairs over one pixel are all UNTOUCHED neighbour pages (p. 12 for edits on
+  11 pairs over one pixel are all UNTOUCHED neighbor pages (p. 12 for edits on
   lines 49–52, p. 18 for 70–72, p. 20 for 76–79) where Verovio's full-document
   engrave disagrees with Composer's line windows — checked spliced ≡ fresh
   assembly at lines 49, 70, 76 and 79 (the gate itself checks only touched

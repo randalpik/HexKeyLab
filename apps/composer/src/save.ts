@@ -509,7 +509,7 @@ function buildVoiceOrder(model: ComposerModel): Map<number, number> {
 
 /** Index the note-anchored control events by the id they reference.
  *
- *  Slur numbers are assigned by interval colouring over the notes' real
+ *  Slur numbers are assigned by interval coloring over the notes' real
  *  positions: a slur takes the lowest number no slur still open at its start
  *  is using, so overlapping slurs are always distinguishable (MusicXML allows
  *  1–6; a seventh simultaneous slur wraps, which no real score reaches). */
@@ -764,7 +764,7 @@ function buildDirections(
 /** A manual break before this measure → `<print>`. The model keeps `<pb>` /
  *  `<sb>` as section-level siblings BEFORE the measure they break at (a
  *  section header's `<sb>` carries `data-hkl-section`). One-way: the importer
- *  does not read `<print>` back, but an external editor honours it. */
+ *  does not read `<print>` back, but an external editor honors it. */
 function printBreakXml(measure: Element): string {
   let page = false; let system = false;
   for (let sib = measure.previousElementSibling; sib; sib = sib.previousElementSibling) {
@@ -1440,7 +1440,7 @@ function inlineComputedStroke(svg: SVGSVGElement): void {
  *  and the live toolkit's layout is left alone. (The previous export re-loaded
  *  the document under its own fixed options and re-ran a copy of the three
  *  passes that existed in June; everything added since — line-break and
- *  vertical ownership, dynamics centring, balancing, the injected header /
+ *  vertical ownership, dynamics centering, balancing, the injected header /
  *  footer / section titles, the page-size factor — never reached it.)
  *
  *  Each page is CLONED into an attached off-screen host and normalized for
