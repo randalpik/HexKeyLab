@@ -1,11 +1,17 @@
 import { defineConfig } from 'tsup';
 import { writeFile, copyFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 
 /* Published package identity. The workspace package stays `@hkl/engine`
    (private, raw-.ts subpath exports for in-repo Vite consumers — untouched);
    this build emits a self-contained artifact under the public name below.
    Change PUBLISH_NAME if claiming a different npm scope. */
 const PUBLISH_NAME = '@hexkeylab/engine';
+/* The published version is the workspace package.json's `version` — the one
+   source; bump it with `pnpm version <patch|minor|major>` here, and add a
+   changelog line below. */
+const VERSION: string = JSON.parse(readFileSync('package.json', 'utf8')).version;
+// Changelog.
 // 2.0.0: breaking — sNoteOn/sNoteOnFaded take an instrumentKey; the global
 // setInstrument/isLoaded are gone (instrument is per-voice now).
 // 2.2.0: onset-lead timing fix — the flat 50ms pre-schedule lead (audible,
@@ -56,7 +62,6 @@ const PUBLISH_NAME = '@hexkeylab/engine';
 // fading (measured −3..−6dB seam dips at 20–40ms retune cadence; floor
 // restored to clean). (c) SeamEvent.deferredMs reports any surviving deferral
 // (now stall-only; non-zero under normal load is a bug).
-const VERSION = '2.4.3';
 
 export default defineConfig({
   entry: ['src/index.ts'],
@@ -73,9 +78,9 @@ export default defineConfig({
      Metro builds — caught by test/react-consumer.) */
   noExternal: [/^@hkl\//],
   external: ['fflate'],
-  /* Emit the publish manifest into dist/. pnpm's `publishConfig.directory:
-     "dist"` (see package.json) packs THIS directory, using this package.json —
-     so the published name/exports/deps are these, not the workspace ones. */
+  /* Emit the publish manifest into dist/. Publishing runs from dist/
+     (`pnpm publish` there), so the published name/exports/deps are these, not
+     the workspace ones. */
   async onSuccess() {
     const pkg = {
       name: PUBLISH_NAME,

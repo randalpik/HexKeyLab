@@ -10176,3 +10176,7 @@ Max found the playback bar too low-contrast in dark mode. Two changes, both his 
 - **Dark `--cursor-color` `#a96bff` → `#bb91ff`**: OKLCH L 0.74, hue 300 (the old dark cursor's hue), with the most chroma sRGB holds at that lightness. **Rejected:** near-white tints (`#f6f3fe` … `#d5b2ff`) and lighter, paler purples. WCAG contrast ratios favored them, but they are a measure for text on a solid ground. Against thin silver staff lines it is the color difference that reads, so the more purple the better, short of losing the background contrast. Hue shifts toward magenta and toward periwinkle were also rejected: keep the original hue.
 
 The editing cursor and its V label share `--cursor-color`, so they take the new color too. Gate: `dark_playback_cursor` (engraving) pins the bar's computed fill and opacity, with a visual baseline.
+
+## Engine version: one source, the workspace package.json (2026-10-28, Max)
+
+`@hexkeylab/engine`'s published version came from a `VERSION` constant in `packages/engine/tsup.config.ts`, which writes `dist/package.json`. The workspace `package.json` version is never published (`@hkl/engine` is private and every consumer depends on it as `workspace:*`), so it had silently drifted to 2.4.2 while 2.4.3 was on npm. **Picked** (Max): the build reads the version from the workspace `package.json`, so `pnpm version` bumps the one source. Rejected: deleting the workspace field (leaves a constant that the standard tooling doesn't know about). The release steps are in engine.md → Publishing.
