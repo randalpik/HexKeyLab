@@ -61,7 +61,7 @@ export const KEYBINDINGS: KeySection[] = [
   {
     title: "Voice mode",
     intro:
-      "Active when the current voice is 1..4. Step entry follows Finale convention.",
+      "Active on any voice: two per staff, so four for a grand-staff instrument and two for a single-staff one. Step entry follows Finale convention.",
     bindings: [
       {
         keys: "1 .. 7",
@@ -264,7 +264,7 @@ export const KEYBINDINGS: KeySection[] = [
   {
     title: "Expression mode",
     intro:
-      "A virtual voice between voices 2 and 3 in the cycle. Edits expression marks (dynamics, hairpins, expressive text).",
+      "One virtual stop per instrument in the ↑/↓ cycle: between a grand staff's upper and lower voices, or after a single staff's two voices; skipped in a measure with no marks. Edits expression marks (dynamics, hairpins, expressive text).",
     bindings: [
       { keys: "←  /  →", desc: "Step through the layer's stops: each mark (a hairpin's start and end separately) and each note onset without a mark." },
       {
@@ -303,7 +303,7 @@ export const KEYBINDINGS: KeySection[] = [
   {
     title: "Pedal layer",
     intro:
-      "A virtual layer after voice 4 in the cycle (reachable only when pedal marks exist). Navigates the same moment list as expression mode (note onsets ∪ pedal marks).",
+      "A virtual stop after a grand-staff instrument's lower voices, reachable only when that instrument has pedal marks. Navigates the same moment list as expression mode (note onsets ∪ pedal marks).",
     bindings: [
       { keys: "←  /  →", desc: "Step through the moment list." },
       { keys: "Home  /  End", desc: "Jump to first / last moment." },
@@ -321,7 +321,7 @@ export const KEYBINDINGS: KeySection[] = [
   {
     title: "Tempo layer",
     intro:
-      "A top-level layer ABOVE voice 1 (↑ from V1). Tempo applies to all instruments, so it lives in its own layer with a fixed placement above the staff. Navigates note onsets ∪ tempo marks.",
+      "A score-wide layer at the top of the cycle (↑ from the first instrument's top voice). Tempo applies to all instruments, so it lives in its own layer with a fixed placement above the staff. Navigates note onsets ∪ tempo marks.",
     bindings: [
       { keys: "←  /  →", desc: "Step through the moment list." },
       { keys: "Home  /  End", desc: "Jump to first / last moment." },

@@ -10,9 +10,9 @@ Open it at **`/composer/`** (same address as HKL, in its own browser tab). It ru
 
 Composer and HKL are two separate tabs that talk over a local channel: no setup, as long as both are open at the same address. The badge in Composer's top bar tells you the state:
 
-- **`no HKL`** (red): no HKL tab found yet.
-- **`connected`** (green): an HKL tab is open and linked.
-- **`standalone`** (yellow): running on its own; you can still edit and save, just not enter notes live.
+- **`no HKL`** (red): no HKL tab found yet, or the HKL tab was closed.
+- **`HKL connected`** (green): an HKL tab is open and linked.
+- **`standalone`** (yellow): no HKL answered within a second of loading. You can still edit, load and save, but not enter notes, play back or perform — HKL owns the audio.
 
 When connected, hold a chord on HKL and it becomes the "held notes" Composer is ready to write.
 
@@ -50,8 +50,8 @@ Composer is keyboard-first. The cursor sits in one **voice** at a time; most key
 | Key | Action |
 |---|---|
 | `←` / `→` | Move the cursor within the current voice. |
-| `↑` / `↓` | Switch voice / layer (and into the dynamics, pedal, and tempo layers; see [Pedal, tempo & expressive text](#pedal-tempo-expressive-text)). Lands on the note sounding at the same moment, not the bar start. |
-| `Ctrl+←` / `Ctrl+→` | In a dynamics/pedal/tempo layer, jump mark to mark — skipping notes without marks. Each mark sharing a beat, and each hairpin's end, is a stop of its own. |
+| `↑` / `↓` | Move between voices and the dynamics, pedal and tempo layers (order and rules in [Voices and the grand staff](#voices-and-the-grand-staff)). Lands on the note sounding at the same moment, not the bar start. |
+| `Ctrl+←` / `Ctrl+→` | In voice mode, jump to the previous / next bar line. In a dynamics/pedal/tempo layer, jump mark to mark — skipping notes without marks. Each mark sharing a beat, and each hairpin's end, is a stop of its own. |
 | `Home` / `End` | Jump to the start / end of the voice. |
 | Click | Click anywhere in the score to place the cursor there. |
 
@@ -62,11 +62,11 @@ Composer is keyboard-first. The cursor sits in one **voice** at a time; most key
 | `Space` | Start / stop playback. |
 | `Shift+Space` | Start **performance mode** (you play the part live; see [Playing it back](#playing-it-back)); `Space` stops it. |
 
-A read-only list of every binding lives in the **Help** dialog (the `?` button); it's always in sync with what the editor actually does.
+The complete list of bindings is in the **Help** dialog (the **Help** button in the toolbar).
 
 ---
 
-## Voices & the grand staff
+## Voices and the grand staff
 
 A new document is a grand staff (treble + bass) with two voices per staff, four voices in all:
 
@@ -77,7 +77,9 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 | 3 | bass (upper) |
 | 4 | bass (lower) |
 
-`↑`/`↓` cycle through the voices, plus the virtual **dynamics**, **pedal**, and **tempo** layers (shown as `E`, `P`, `T` in the voice indicator). Empty measures autofill with rests so the notation always reads correctly; delete the rests to extend a measure. A bar with nothing entered on a staff shows a whole-bar rest, centered in the bar whatever the meter (a pickup bar shows a single rest of its length instead — two only when no single value fits). It is display only: the cursor doesn't stop on it, and anything you enter replaces it.
+`↑`/`↓` cycle through the voices and the virtual **dynamics**, **pedal** and **tempo** layers (shown as `E`, `P`, `T` in the voice indicator). Tempo is at the top; on a grand staff the order is then voice 1 → voice 2 → dynamics → voice 3 → voice 4 → pedal. With more instruments, each adds its voices and a dynamics stop (after a single staff's two voices), and a grand-staff instrument adds a pedal stop. A dynamics stop is skipped in a measure with no dynamics, hairpins or expressive text, and a pedal stop when the instrument has no pedal marks, so place the first one from voice mode (`Shift+1`…`Shift+8`, `<`/`>`, `Shift+P`).
+
+A bar with nothing entered on a staff shows a whole-bar rest, centered in the bar whatever the meter (a pickup bar shows a single rest of its length instead — two only when no single value fits). It is display only: the cursor doesn't stop on it, and anything you enter replaces it. A partly filled bar stays partly filled until you finish it, or until you run Setup → **Fill incomplete measures with rests**.
 
 ---
 
@@ -85,7 +87,7 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 
 **Ties** (`=`) join a note to the next same-pitch note. They're per-pitch in a chord, survive edits and re-spelling, and form automatically when a note's duration overflows a bar line.
 
-**Tuplets**: press `Ctrl+N` (where N is `2`–`7`) to start a tuplet, then a duration digit to set its base note. For example `Ctrl+3` then `5` is a triplet of eighth notes filling a quarter. A tuplet stays within one bar. When the cursor sits at the end of a **full** bar, a new tuplet starts the next bar instead — ahead of anything already there, and creating the bar if it doesn't exist yet — so you can enter tuplets back to back across a bar line without moving the cursor yourself. In a part-filled bar a tuplet too big for the space left is refused rather than moved on; press `→` to step into the next bar and place it there. A tuplet that is beamed as a whole (eighths and shorter) shows just its number; an unbeamed one (a quarter-note triplet, say) gets a bracket as well. (`Ctrl+R` is used for trills because Firefox reserves `Ctrl+T`; see [Misc elements](#misc-elements).)
+**Tuplets**: press `Ctrl+N` (where N is `2`–`7`) to start a tuplet, then a duration digit for the **span** it fills (a dotted span for `Ctrl+2` and `Ctrl+4`), then enter its notes as usual. For example `Ctrl+3` then `5` is a triplet of eighth notes filling a quarter. A tuplet stays within one bar. When the cursor sits at the end of a **full** bar, a new tuplet starts the next bar instead — ahead of anything already there, and creating the bar if it doesn't exist yet — so you can enter tuplets back to back across a bar line without moving the cursor yourself. In a part-filled bar a tuplet too big for the space left is refused rather than moved on; press `→` to step into the next bar and place it there. A tuplet that is beamed as a whole (eighths and shorter) shows just its number; an unbeamed one (a quarter-note triplet, say) gets a bracket as well. (`Ctrl+R` is used for trills because Firefox reserves `Ctrl+T`; see [Misc elements](#misc-elements).)
 
 | Tuplet | Ratio | Example |
 |---|---|---|
@@ -110,12 +112,12 @@ On a grace, `.` dots it, overwrite (`Insert`, then a duration) replaces it with 
 
 **Playback**: each grace sounds as its own note, in order, before its main note. An appoggiatura sounds **on the beat** for its written value — at most half its main note, which starts that much later. An acciaccatura sounds **before the beat** for its written value — at most half the way back to the previous note. Starting playback at a note with an acciaccatura before it plays that grace first. In **performance mode** you play every grace as its own note, before its main note.
 
-## Dynamics, hairpins, slurs & articulations
+## Dynamics, hairpins, slurs and articulations
 
-**Dynamics & hairpins** live in their own layer (reach it with `↑`/`↓`, or place them straight from voice mode):
+**Dynamics and hairpins** live in their own layer (reach it with `↑`/`↓` once the measure has a mark, or place them straight from voice mode):
 
 - `Shift+1`…`Shift+8` (`!`…`*`) → `fff` … `ppp` (`1` = loudest) at the cursor moment.
-- `<` / `>` → start / end a crescendo or diminuendo hairpin (two steps: mark the start, navigate, mark the end).
+- `<` crescendo, `>` decrescendo: press it at the start, move with `←`/`→`, then press the **same** key at the end. Pressing the other key instead starts a new hairpin of that kind; `Esc` cancels.
 
 Dynamics and hairpins affect playback loudness. **Above/below placement**: `Ctrl+↑` / `Ctrl+↓`.
 
@@ -123,7 +125,7 @@ Dynamics and hairpins affect playback loudness. **Above/below placement**: `Ctrl
 
 **Slurs** (`Ctrl+L`): press once to mark the start note, navigate, press again to close the slur. `Ctrl+L` on a note inside a slur removes it, and so does `Ctrl+L` on a slur's first note when no slur is waiting to be closed. On a slur's **last** note, `Ctrl+L` starts a new slur from there, and while a slur is waiting, `Ctrl+L` on another slur's first note closes it there — so one note can end a slur and begin the next. In playback, slurs become legato: overlapping releases on plucked/struck instruments, smooth pitch glides on sustained ones.
 
-**Articulations** (in voice mode, a plain letter on the current note/chord/rest):
+**Articulations** (in voice mode, a plain letter acting on the note, chord or rest at the cursor; `S`, `A`, `T` and `B` need a note or chord):
 
 | Key | Mark |
 |---|---|
@@ -145,9 +147,10 @@ Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
 
 ## Misc elements
 
-- **Repeats**: `{` opens a repeat, `}` closes it; `]` sets a final double bar. Playback expands repeats automatically.
-- **1st / 2nd endings**: `Ctrl+E` toggles a volta over the current measure.
-- **Octave lines (8va)**: `Ctrl+8` over a selection; the notes sound (and print) an octave higher/lower.
+- **Repeats**: `{` opens a repeat, `}` closes it. Playback expands repeats automatically.
+- **Double bar**: `]` toggles a double bar at the end of the current measure (the last measure always keeps its final bar).
+- **1st / 2nd endings**: `Ctrl+E` toggles an ending in a repeat context — on a measure that ends with a repeat barline (`}`) it makes a 1st ending, on the measure after one a 2nd ending, and next to an existing ending it extends that ending. Anywhere else it is refused.
+- **Octave lines (8va)**: `Ctrl+8` toggles an 8va over the selection (or the current beat) on the cursor's staff. The notes print where they are and sound an octave higher.
 - **Trills & tremolos** (`Ctrl+R`): a trill on a single note, or a tremolo / diatonic trill on a two-note equal-duration selection. Playback realizes the alternation.
 - **Page break**: `Ctrl+B`. **Section header**: `Ctrl+Shift+H` (restarts measure numbering).
 - **Manual line break**: `Alt+Shift+↓` — see [Manual line breaks](#manual-line-breaks).
@@ -161,7 +164,7 @@ Page view lays systems out for you, re-breaking a section whenever its music no 
 
 A locked break shows a small **padlock** at the end of its system. Locked breaks never move during reflow — measures flow freely on either side of them but not across — and because a lock is part of the score, a reload lays the score out the same way. **Click the padlock to unlock**: the break is removed and the music on both sides reflows together, exactly as it would after a reload. Locks are saved with the score and export to MusicXML as system breaks; `Ctrl+Z` puts the layout back exactly as it was before the command. Page view only — scroll view is one continuous line.
 
-## Hiding empty staves & multimeasure rests
+## Hiding empty staves and multimeasure rests
 
 Both work on **empty measures** only — bars with nothing entered in any voice of a staff — and both are flags a bar carries per staff. Leave the cursor in a bar, or select a range (`Shift+←/→`, or `Shift+↑/↓` for whole measures across staves), and press:
 
@@ -172,9 +175,9 @@ The command looks at every empty bar the selection touches, on the selected stav
 
 ---
 
-## Pedal, tempo & expressive text
+## Pedal, tempo and expressive text
 
-These are navigable layers alongside dynamics:
+Pedal and tempo have layers of their own; expressive text shares the dynamics layer:
 
 - **Pedal**: `Shift+P` (down) / `Shift+O` (lift). Drives the sustain engine during playback.
 - **Tempo**: `Ctrl+Shift+T` opens a builder for instant markings (♩ = 120) or gradual ones (rit., accel., *a tempo*). All playback follows the tempo timeline. A tempo marking is score-global: you write it once, and it is engraved above **every part** (and stays with a part when you view or print it alone). Editing or deleting it anywhere changes the one marking.
@@ -182,7 +185,7 @@ These are navigable layers alongside dynamics:
 
 ---
 
-## Mid-piece signatures, clefs & pickups
+## Mid-piece signatures, clefs and pickups
 
 From any measure forward (or, in select mode, over the selected span):
 
@@ -194,16 +197,16 @@ From any measure forward (or, in select mode, over the selected span):
 
 ## Multiple instruments
 
-A document starts as one piano (the grand staff). Add more instruments from [Document Setup](#document-setup) → **Instruments → Manage…** (drag to reorder; changes apply on Save). Each instrument gets its own staves, voices, and dynamics/pedal layers.
+A document starts as one piano (the grand staff). Add more instruments from [Document Setup](#document-setup) → **Instruments → Manage…** (drag to reorder; changes apply on Save). Each instrument gets its own staves, voices and dynamics layer; a grand-staff instrument also gets a pedal layer.
 
 - A toolbar **instrument selector** filters the view (and PDF export) to a single instrument's part. The part is laid out as a score of its own: line and page breaks, and the balancing of each section's last system, are computed for that part, and edits in the view splice in place like in the full score.
-- **Pizzicato / arco**: an [expressive-text](#pedal-tempo-expressive-text) `pizz.`/`arco` cue switches the spanned notes to a pizzicato sample where one is available.
+- **Pizzicato / arco** (multi-instrument scores): an [expressive-text](#pedal-tempo-and-expressive-text) `pizz.`/`arco` cue switches the spanned notes to the instrument's own pizzicato sound, or to a substitute string pizzicato when it has none.
 - **String harmonics**: `Alt+H` marks an open-diamond harmonic; playback sounds the harmonic pitch.
 - MusicXML export writes one part per instrument, with each part's staves and voices renumbered from 1.
 
 ---
 
-## Selecting, copying & pasting
+## Selecting, copying and pasting
 
 Hold **Shift** while moving the cursor to select:
 
@@ -211,7 +214,7 @@ Hold **Shift** while moving the cursor to select:
 - **Shift+↑/↓**: select measures across staves.
 - **Ctrl+Shift+←/→**: extend the selection to the next bar line.
 
-Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real OS clipboard, so you can move material within a score. Paste snaps to the current beat and pushes following content as needed. **Alt+V** moves the selected whole measures into the **other voice on the same staff** — the fix for notes typed into the wrong voice. It needs at least one *whole* measure holding something, and the other voice has to be free in each of them; otherwise it refuses and tells you which measure is in the way, rather than moving part of it. The selection follows the music across, so pressing **Alt+V** again moves it straight back.
+Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real OS clipboard, so you can move material within a score. Paste starts at the current beat and replaces what is there for its length; nothing after it moves, and measures are added if it runs past the end of the score. **Alt+V** moves the selected whole measures into the **other voice on the same staff** — the fix for notes typed into the wrong voice. It needs at least one *whole* measure holding something, and the other voice has to be free in each of them; otherwise it refuses and tells you which measure is in the way, rather than moving part of it. The selection follows the music across, so pressing **Alt+V** again moves it straight back.
 
 **Backspace** / **Delete** clear the selection. Clearing part of a bar leaves rests in the gap; clearing a **whole** bar leaves it genuinely empty — the same state the bar had before you entered anything, whichever selection mode you used to point at it.
 
@@ -219,7 +222,7 @@ Then **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut, and paste through the real 
 
 ## Playing it back
 
-- **Space** plays from the cursor (or from the top). A bar follows each sounding voice; the editing cursor is untouched.
+- **Space** plays from the cursor; press the **Rewind** button first to play from the start. A bar follows each sounding voice. Pressing **Space** again stops and puts the cursor back where playback began; `←`/`→` stop and leave the cursor where you heard; `Ctrl+←`/`Ctrl+→` jump a measure back or forward while playing.
 - **Performance mode** (**Shift+Space**) is the inverse: *you* play the part live on the Lumatone and the on-screen bars advance as you strike the matching notes, for recording a scrolling-score video to your own performance. Single instrument; mistakes are simply ignored rather than failing. Each bar sits just **past the note you last played** (like the editing cursor after you enter a note), so it follows your playing and never jumps backward. Voices are expected **only in the bars where they actually have something**: a voice that doesn't come in until bar 20 shows no bar and can't be advanced before then — playing its entry note earlier does nothing — and a voice that drops out, whether for a few bars or for good, loses its bar until it has something again. A voice notated with visible rests counts as present and keeps its bar; one whose staff is simply empty there does not. There is no entry cue: a returning voice's bar appears when you play its first note, not before. A chord that is partly **tied** into from the chord before advances when you play its *new* notes — you don't re-strike the tied ones. A **trill or tremolo** counts as a single note however many alternations you actually play: strike either of its notes once and its bar moves there, and the rest of your trill is absorbed. When the note after a trill is one of the trill's own notes — a resolution, most often — nothing in what you play can say whether you are still trilling or have moved on, so the bar **waits on the trill** rather than guessing. It catches up the moment something settles it: another voice landing on that beat, or your own next note outside the trill. Playing a chordal texture it resolves right on the beat; in a bare single line the bar sits on the trill until your next different note. It will lag, never run ahead. When two voices share the same note at the same moment, one key press counts for both — that's a single real note on the page. When they merely happen to use the same pitch at *different* moments, the press only counts for the earlier one, so playing bar 1 can't accidentally tick off a voice that doesn't enter until beat 4. Reaching the end of the score leaves the mode on — press **Perform** (or **Space**) when you want out; the editing cursor comes back then, not before.
 
 The **Play** and **Perform** toolbar buttons switch directly between the two transports.
@@ -228,10 +231,10 @@ The **Play** and **Perform** toolbar buttons switch directly between the two tra
 
 ## Document Setup
 
-The **Setup…** button opens a dialog for the whole-document settings:
+The **Setup** button opens a dialog for the whole-document settings:
 
 - **Title**, **Subtitle**, **Composer**, and **Footer** text (subtitle and footer are optional; a blank footer hides it). All four are page furniture: they appear in page view (and in the PDF), not in scroll view.
-- **Time / key…** and **Tempo…** buttons open the measure-1 signature and tempo dialogs (the same ones you can apply mid-piece; see [Mid-piece signatures, clefs & pickups](#mid-piece-signatures-clefs-pickups)).
+- **Time / key…** and **Tempo…** buttons open the measure-1 signature and tempo dialogs (the same ones you use mid-piece — see [Mid-piece signatures, clefs and pickups](#mid-piece-signatures-clefs-and-pickups) — except that the tempo here is a plain marking, not a rit. or accel.). These two buttons and **Fill incomplete measures with rests** apply immediately, each as its own undo step: Setup's **Cancel** doesn't revert them (use `Ctrl+Z`).
 - **Instruments**: a **Manage…** button to add / remove / reorder (see [Multiple instruments](#multiple-instruments)).
 - **Tuning**: the tuning system the score is pinned to; it drives the spelling and the layout HKL adopts when the score is sent over.
 - **Mapping**: Euler, Wicki-Hayden or Chromatic — the HKL key arrangement the score's notes are stored in (see the HKL guide). Changing it (or the tuning) on a score with notes asks to retune them: every note keeps its pitch, except that switching a Schismatic, Syntonic or Polysyntonic score from Wicki-Hayden or Chromatic toward Euler may move some notes by a schisma (about 2 cents) or a comma, and the prompt reports each one. If HKL is in a different tuning or mapping, note entry and playback offer to switch HKL to the score's.
@@ -241,22 +244,23 @@ The **Setup…** button opens a dialog for the whole-document settings:
   In **Syntonic** and **Polysyntonic** scores that key root also decides the *home band* (the unaltered band; see the HKL
   guide): each note sounds, and is colored and arrowed, relative to the key of its own measure. So **changing a key
   signature re-pitches the notes it covers** — same keys, new comma arrows, tunings and colors. If HKL's home band differs
-  from the score's (you Ctrl+clicked a reference in another band), the layout indicator shows ⚠ and note entry offers to
-  switch HKL back to the score's, which drops that Ctrl+click reference.
+  from the score's (you Ctrl+clicked a reference in another band), note entry offers to switch HKL back to the
+  score's, which drops that Ctrl+click reference.
 - **Page size** (%): how big the page is relative to the notation. A *larger* page fits more bars per line and makes the score look smaller on the page; a *smaller* page does the reverse. This changes the paper, not the note size — use **zoom** (`Shift`+`=` / `Shift`+`-`) to change how big the notation itself appears. Saved with the document (and reflected in PDF export). Page view only.
 - **HEJI accidentals**: show comma arrows & septimal hooks. On by default; untick it for a plain conventional score. The choice is saved in the document, and a MusicXML import starts with it off.
 - **Ignore color**: render noteheads plain black instead of in lattice colors.
-- **Dynamics → velocity**: the loudness each dynamic (fff…ppp) plays at, plus the gradual-dynamic step sizes (poco / plain / molto) that hairpins use.
+- **Dynamics → velocity**: the loudness each dynamic (fff…ppp) plays at.
+- **Gradual tempo change (%)**: how far an open-ended *rit.* or *accel.* changes the tempo, for *poco*, plain and *molto* (20, 40 and 60 % by default).
 - **Fill incomplete measures with rests**: pads every short measure across the score in one action.
 
 ---
 
-## Saving & exporting
+## Saving and exporting
 
 | Button | Format | Notes |
 |---|---|---|
 | Save / Load | **`.hkc`** | Composer's native format: MEI XML carrying the lattice coordinates and colors. The canonical, lossless round-trip. |
-| Export | **MusicXML** | One part per instrument; opens in MuseScore / Finale / Sibelius. Everything the editor can write carries over: notes, chords, rests, ties, tuplets, beams, stems, slurs, articulations, fermatas, trills, tremolos, dynamics, hairpins, expressive text, pedal, ottavas, tempo markings (in every part, as Finale writes them), key/meter/clef changes including mid-piece (cut and common time keep their ¢ / C symbol), pickups, repeat barlines, double bars and voltas, your manual page and system breaks, instrument abbreviations, and lattice colors. Not carried: a movement's **title** text and HEJI comma accidentals. Movement breaks themselves survive (as a final barline), and a re-import re-numbers the movements I, II, III… — so an auto-numbered title comes back unchanged and only a title you typed yourself is replaced by its numeral. `.hkc` remains the lossless format. |
+| Export | **MusicXML** | One part per instrument; opens in MuseScore / Finale / Sibelius. Everything the editor can write carries over: notes, chords, rests, ties, tuplets, beams, stems, slurs, articulations, fermatas, breath marks, grace notes, string harmonics, trills, tremolos, dynamics, hairpins, expressive text, pedal, ottavas, tempo markings (in every part, as Finale writes them), key/meter/clef changes including mid-piece (cut and common time keep their ¢ / C symbol), pickups, repeat barlines, double bars and voltas, your manual page and system breaks, hidden-staff regions, multimeasure rests, instrument abbreviations, and lattice colors. Not carried: a movement's **title** text and HEJI comma accidentals. Movement breaks themselves survive (as a final barline), and a re-import re-numbers the movements I, II, III… — so an auto-numbered title comes back unchanged and only a title you typed yourself is replaced by its numeral. `.hkc` remains the lossless format. |
 | Import | **MusicXML** | Loads a `.musicxml` score authored in Finale / MuseScore / Sibelius (notes, chords, grace notes, multiple voices and instruments, tuplets, ties, slurs, articulations including breath marks, dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's hidden playback tempi), key/meter/clef changes). The document is set to **Equal tuning, HEJI off, colors ignored** — the imported score is a starting point you then retune toward just intonation. Each note keeps its original spelling (a G♭ stays a G♭). UTF-8, UTF-16 and other declared encodings all open. Parts containing **unpitched (percussion) notes** are left out — Composer cannot write them — and the status line names each part it skipped. Invisible playback-only notes (such as a roll a notation program writes out under a tremolo) are ignored. Compressed `.mxl` files are not supported; the source file's own line and page breaks are not kept (Composer lays the score out itself). |
 | Export | **PDF** | Vector, and exactly the page view as shown on screen, page for page — HEJI accidentals, colors, headers, footers, section titles — honoring the current single-part view. From scroll view it exports the page layout (switching to page view for the moment of the export). Always US Letter; **Page size** changes how much score sits on each sheet, not the sheet. |
 
@@ -289,7 +293,7 @@ the file you opened or the score's title (`Sonata No. 1.hkc`); the browser decid
 
 ---
 
-## View & theme
+## View and theme
 
 Two selectors in the top bar (remembered across reloads):
 
@@ -354,11 +358,5 @@ in a slur: the slur arcs a little higher to clear it, its ends where the
 engraving engine put them. Two identical
 rests at the same moment in a staff's two voices draw as
 one rest, and a hidden rest never nudges a visible one. A movement break
-(section header) with a new meter shows no courtesy meter at the end of the
-previous movement (a courtesy key signature still appears there — the engraving
-engine offers no way to drop it without also restating the instrument names).
-
-This means the layout reflects the editing you've done, not a fresh engraving of
-the current music — that's deliberate, so the page stops moving under you while
-you work. (An explicit "re-flow the whole document" command, and commands to
-move a bar between systems by hand, are planned.)
+(section header) shows no courtesy key, meter or clef at the end of the previous
+movement; the new movement simply starts in its own.

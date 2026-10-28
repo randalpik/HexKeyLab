@@ -9,14 +9,14 @@ It works by running a tiny local server that serves a stripped-down, read-only c
 ## What you need
 
 - **OBS** (or any tool that can add a Browser Source).
-- **[Node](https://nodejs.org)** installed, to run the overlay host (a small bundled server).
+- **[Node](https://nodejs.org)** and **[pnpm](https://pnpm.io)**, with a clone of this repository and `pnpm install` run once at its root: the overlay host is built from source.
 - An internet connection while streaming (the notation font for the Composer view is local, but the music-engraving engine loads from a CDN).
 
 ---
 
 ## Setup
 
-1. **Build and start the overlay host** (one time to build, then run whenever you stream):
+1. **Build and start the overlay host** from the repository root (one time to build, then run whenever you stream):
 
    ```bash
    pnpm overlay:dist     # build the lean overlay + bundle it into the host
@@ -29,11 +29,13 @@ It works by running a tiny local server that serves a stripped-down, read-only c
    http://127.0.0.1:5190/?overlay
    ```
 
-   Size it to your lattice; the background comes through transparent.
+   Size it to your lattice.
 
-3. **Now open (or reload) the normal HKL page in Firefox** (the hosted/production HKL is fine). Publishing to the overlay starts **automatically**; there's no checkbox.
+3. **Now open (or reload) the normal HKL page in Firefox.** The official site and a local dev server both work; a copy of HKL served from any other address has to be added to the host's allow-list first (`HKL_FS_ORIGINS`, comma-separated). Publishing to the overlay starts **automatically**; there's no checkbox.
 
-   **The order of steps 1 and 3 matters.** HKL looks for the overlay host once, a second or so after the page loads, and if nothing answers it stops looking for the rest of that page's life. Starting the host afterwards won't wake it up — only reloading the HKL tab will. So: **host first, then HKL.** If your HKL tab was already open, just reload it.
+   **The order of steps 1 and 3 matters.** HKL looks for the overlay host for about a second and a half after the page loads, and if nothing answers it stops looking for the rest of that page's life. Starting the host afterwards won't wake it up — only reloading the HKL tab will. So: **host first, then HKL.** If your HKL tab was already open, just reload it.
+
+4. **In the performing HKL, turn Extend pattern off** (Layout tab), so only the keyboard inside its outline is drawn and everything around it stays transparent. With Extend pattern on, the lattice outside the outline is painted too (dimmed), and with Outline set to None there is no outline to cut out.
 
 That's the whole setup. The overlay mirrors lattice colors, selections, panning/animation, and (if you have **Composer view** on in HKL) the scrolling score.
 
@@ -49,7 +51,7 @@ That's the whole setup. The overlay mirrors lattice colors, selections, panning/
 
 ## What it shows
 
-- The **hex lattice**, transparent outside the keyboard outline, identical to your performing screen.
+- The **hex lattice**, transparent outside the keyboard outline (with Extend pattern off), identical to your performing screen.
 - The **Composer view** score (bars following each sounding voice), if you have Composer view enabled in HKL.
 
 ### Score size on the overlay
@@ -103,7 +105,8 @@ This is easy to misread, because the two halves fail differently. The Browser So
 
 Everything else worth checking, if a reload didn't do it:
 
-- The host is actually running (`pnpm overlay:host`) and on the expected port — `127.0.0.1:5190` unless you changed it.
+- The host is actually running (`pnpm overlay:host`) and on the expected port, `127.0.0.1:5190` by default. To use another port, start the host with `HKL_OVERLAY_PORT=<port>` (or the port as its first argument) **and** point the performing HKL tab at it, with `?obsrelay=<port>` in its address or `localStorage.hklOverlayPort` set to it.
+- The lattice shows up but the area around the keyboard is opaque: turn **Extend pattern** off in the performing HKL tab.
 - Your Browser Source URL ends in **`?overlay`**. Without it you'll get the full HKL app, not the transparent mirror.
 - On a Chromium-based browser, you granted the one-time "access other apps and services on your network" prompt.
 - **Composer view** is toggled on in HKL, if the score is the part that's missing (the lattice and the score are independent).
