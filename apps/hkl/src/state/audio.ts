@@ -1,4 +1,5 @@
 import type { KeyId, Voice } from '../types.js';
+import { DEFAULT_PREFS } from './persistence.js';
 
 // Audio engine state. Mutate `audio.x` directly from any module.
 //
@@ -63,7 +64,7 @@ export const audio: {
   highShelf: null,
   limiter: null,
   audioEnabled: false,
-  activeWaveform: 'maestro_piano',
+  activeWaveform: DEFAULT_PREFS.waveform,
   wfLoadingKey: null,
   activeOscs: {},
   keyVelocity: {},

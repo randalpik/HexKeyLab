@@ -81,7 +81,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 ### Keyboard shortcuts
 
 - **Ref note**: set via **Ctrl+click** on any hex — lattice tweens to put that ref's qm=0-normalized spine cell at the outline center. Ctrl+click on the current effective ref clears the selection (Ctrl+click and Composer cursor note). Every ref change — click or Composer message — re-centers through one fan-out (`state/reference.ts` → `effects/onRefChanged`; docs/architecture.md → Ref-driven layout shift).
-- No global window-level shortcuts at present (legacy arrow-key layout cycle/seam shift removed). `apps/hkl/src/ui/keyboard.ts` is reserved as the entry point for future shortcuts.
+- **Hotkeys**: `Shift+\` toggles Calibrate Keys (listener registered at startup by `setLumaDiagHotkeyCallback`, `lumatone/lumadiag.ts`); while the Diagnostics overlay is open, `Ctrl+D` freezes its trace (overriding the browser's bookmark shortcut) and `Shift+D` dumps it to the console (`audio/diagnostics/loopOverlay.ts`). QWERTY note input (`input/keyboard-notes.ts`) ignores any key pressed with Shift, Ctrl, Alt or Meta, so modifier combinations are free for hotkeys. `apps/hkl/src/ui/keyboard.ts` is reserved as the entry point for future shortcuts (the legacy arrow-key layout cycle/seam shift is gone).
 
 ### Selection & interaction
 

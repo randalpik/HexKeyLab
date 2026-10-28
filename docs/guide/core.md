@@ -87,7 +87,7 @@ This is the easiest way to play HKL melodically. **The H key is A3.** The four r
 
 Each row down is a minor third lower. Each step right is a major third higher. So `H J` is a major third, `H U` is a perfect fifth, `H G` is a major third down, `H J U` is a major triad (root, M3, P5), and so on.
 
-Held keys play polyphonically. Releasing a key stops the note (subject to the sustain / sostenuto state). The mapping rides with the current ref note: Ctrl+click a new ref and the QWERTY slab shifts with the lattice, just like the Lumatone outline does, so the same physical keys play the new key. Held QWERTY notes migrate with the shift, so a held chord keeps playing the same pitches relative to the keys you're pressing.
+Held keys play polyphonically. A key pressed with Shift, Ctrl, Alt or Meta never plays a note; those combinations are hotkeys. Releasing a key stops the note (subject to the sustain / sostenuto state). The mapping rides with the current ref note: Ctrl+click a new ref and the QWERTY slab shifts with the lattice, just like the Lumatone outline does, so the same physical keys play the new key. Held QWERTY notes migrate with the shift, so a held chord keeps playing the same pitches relative to the keys you're pressing.
 
 ### 2. Mouse / click selection
 
@@ -122,7 +122,7 @@ Aftertouch and pedal modulation work per-voice (see [Lumatone integration](#luma
 
 #### Diagnostics overlay (Playback tab)
 
-The **Diagnostics** checkbox opens a developer overlay for vetting sustained instruments. It draws a scrolling RMS/dB envelope of the audio output with a vertical marker at every loop-seam crossfade (where a held note jumps between loop segments), so you can see whether a volume dip lands *on* a seam (a sample- or seam-data problem) or *between* seams (a crossfade-curve problem). It also overlays the held notes' velocity and aftertouch on the same scale. Hotkeys while open: `D` freezes the trace, `Shift+D` dumps the seam data to the console. Leave it off for normal play.
+The **Diagnostics** checkbox opens a developer overlay for vetting sustained instruments. It draws a scrolling RMS/dB envelope of the audio output with a vertical marker at every loop-seam crossfade (where a held note jumps between loop segments), so you can see whether a volume dip lands *on* a seam (a sample- or seam-data problem) or *between* seams (a crossfade-curve problem). It also overlays the held notes' velocity and aftertouch on the same scale. Hotkeys while open: `Ctrl+D` freezes the trace, `Shift+D` dumps the seam data to the console. Leave it off for normal play.
 
 ### 4. Lumatone (optional)
 

@@ -181,8 +181,9 @@ export const DEFAULT_PREFS: PrefsV1 = {
   audioEnabled: true,
   /* Must be a real #waveform <option> value, else applyPrefsToDom's
      `sel.value = p.waveform` silently falls back to '' and the first note plays
-     as an empty-type oscillator. "maestro_piano" is the menu's "Piano" option. */
-  waveform: "maestro_piano",
+     as an empty-type oscillator. "splendid_piano" is the menu's "Piano" option
+     (test/hkl-midi/fresh-profile.mjs pins every select-backed default). */
+  waveform: "splendid_piano",
   pedalMode: "sustain",
   autoSync: false,
   /* Layout + Playback cover the core single-keyboard workflow; Analysis,

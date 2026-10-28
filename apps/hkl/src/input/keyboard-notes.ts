@@ -71,7 +71,8 @@ export function migrateHeldQwertyVoices(): number {
      (shouldIgnore) — typing should never be hijacked. */
   window.addEventListener('keydown', function (e) {
     if (shouldIgnore()) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    /* Any modifier means a hotkey, never a note (Shift+D, Ctrl+D, …). */
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     if (!qwertyKeyMap[e.code]) return;
     e.preventDefault();
     if (e.repeat) return;

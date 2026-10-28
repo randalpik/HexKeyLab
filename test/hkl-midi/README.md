@@ -100,6 +100,23 @@ refSpine(ref)` outside the piano outline). Includes a snap landing mid-slide.
 **Run it before declaring any change to `state/reference.ts`,
 `effects/onRefChanged.ts`, a ref-moving handler, or the view tween done.**
 
+## Fresh profile
+
+```sh
+node test/hkl-midi/fresh-profile.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+A first session (no saved prefs) must show every select-backed `DEFAULT_PREFS`
+value in its `<select>` — assigning a value with no `<option>` silently blanks
+the select, which is how the default instrument once drifted from the menu's
+"Piano" and played the first note through an empty-type oscillator — and the
+audio engine's starting instrument must agree with the pref. Also checks the
+hotkeys: `Shift+\` opens Calibrate Keys before its overlay was ever built; a
+plain `D` holds a QWERTY note but `Shift+D` doesn't (a modified key is never a
+note); with Diagnostics open, `Ctrl+D` is claimed by the overlay and holds no
+note. **Run it after changing `DEFAULT_PREFS`, a pref-backed menu's options,
+QWERTY input, or a hotkey.**
+
 Every gate here loads HKL through `isolatedHklUrl()`
 (`test/composer-test/lib/private-relay.mjs`), so its page publishes to a private
 in-process overlay relay — never the live one on `:5190`.

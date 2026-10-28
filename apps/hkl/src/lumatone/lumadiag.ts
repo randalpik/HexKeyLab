@@ -98,6 +98,7 @@ const FIELDS: { key: FieldKey; label: string; tip: string }[] = [
 let domBuilt = false;
 let panel: HTMLDivElement | null = null;
 let hotkeyCallback: (() => void) | null = null;
+let hotkeyListening = false;
 const boardStates: BoardState[] = [];
 const valueLabels: Record<string, HTMLSpanElement> = {};
 const sliders: Record<string, HTMLInputElement> = {};
@@ -1568,8 +1569,15 @@ function onKey(e: KeyboardEvent): void {
   }
 }
 
+/** Install the Shift+\ handler. The listener is registered here (at startup),
+ *  not in ensureLumaDiag(): the hotkey must open the overlay before its DOM has
+ *  ever been built. */
 export function setLumaDiagHotkeyCallback(fn: (() => void) | null): void {
   hotkeyCallback = fn;
+  if (!hotkeyListening) {
+    hotkeyListening = true;
+    window.addEventListener('keydown', onKey);
+  }
 }
 
 export function setLumaDiagVisible(visible: boolean): void {
@@ -1617,8 +1625,6 @@ export function ensureLumaDiag(): void {
   panel.appendChild(makePerKeyStatsSection());
   panel.appendChild(makeGlobalFooter());
   document.body.appendChild(panel);
-
-  window.addEventListener('keydown', onKey);
 
   /* Auto-fetch real values after a short delay so MIDI access has time to
      resolve. Sliders remain disabled until each board's response arrives. */

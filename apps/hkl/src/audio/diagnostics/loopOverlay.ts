@@ -10,7 +10,7 @@
 // calls are no-ops. setLoopOverlayVisible() toggles display + the rAF loop.
 // recordSeamEvent and the rAF tick both gate on `enabled` so a hidden overlay
 // has near-zero overhead.
-// Hotkeys (when visible): D = freeze · Shift+D = console-dump JSON.
+// Hotkeys (when visible): Ctrl+D = freeze · Shift+D = console-dump JSON.
 //
 // Tap point is sampleMaster (samples-only output, not oscillators), exposed
 // by SampleEngine.tapMaster.
@@ -179,7 +179,7 @@ export function ensureLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSu
   buildMasterControls(controlsEl);
   document.body.appendChild(controlsEl);
 
-  console.log('%c[loopdiag] built · D=freeze · Shift+D=dump',
+  console.log('%c[loopdiag] built · Ctrl+D=freeze · Shift+D=dump',
     'color:#0ff;font-weight:bold');
 }
 
@@ -308,12 +308,14 @@ function onKey(e: KeyboardEvent): void {
   if (!enabled) return;
   const tag = (document.activeElement?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
-  if (e.altKey || e.metaKey || e.ctrlKey) return;
-  if (e.key === 'D' && e.shiftKey) {
+  if (e.altKey || e.metaKey || e.code !== 'KeyD') return;
+  if (e.shiftKey && !e.ctrlKey) {
     e.preventDefault();
     /* Single-line JSON keeps this paste-friendly into other tools. */
     console.log(JSON.stringify({ envelope: envelopeBuf.slice(), seams: seamBuf.slice() }));
-  } else if (e.key === 'd' && !e.shiftKey) {
+  } else if (e.ctrlKey && !e.shiftKey) {
+    /* Ctrl+D, overriding the browser's bookmark shortcut: a plain d is the
+       QWERTY note. */
     e.preventDefault();
     frozen = !frozen;
   }
