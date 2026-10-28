@@ -46,7 +46,7 @@ import { publishComposerScore, publishComposerPlayback, publishComposerZoom } fr
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote, isSelectionManual } from '../state/reference.js';
 import { setTuning, setMapping } from '../ui/controls.js';
-import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { convertCell, isMapping, MAPPING_LABELS, type Mapping } from '@hkl/shared/mapping.js';
 import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
 import { TUNING_MODES } from '@hkl/shared/freq.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
@@ -1161,7 +1161,7 @@ function layoutMatches(req: ComposerLayoutReq): boolean {
 }
 
 function layoutLabelFor(req: ComposerLayoutReq): string {
-  return tuningLabelFor(req.tuningMode) + (req.mapping === 'wickiHayden' ? ' · Wicki-Hayden' : '');
+  return tuningLabelFor(req.tuningMode) + (req.mapping === 'euler' ? '' : ' · ' + MAPPING_LABELS[req.mapping]);
 }
 
 /** Most-recently-broadcast layout requirement from Composer's `<hkl:layoutReq>`.

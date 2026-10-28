@@ -1,6 +1,6 @@
 // Algorithmic note naming — handles any r value with no lookup table.
-// Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden cells take
-// their Euler-equivalent's spelling and octave.
+// Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden and chromatic
+// cells take their Euler-equivalent's spelling and octave.
 
 import { eulerOf, type Mapping } from './mapping.js';
 

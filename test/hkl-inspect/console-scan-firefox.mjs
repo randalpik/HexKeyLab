@@ -33,6 +33,8 @@ const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/'
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 const VEROVIO_MS = Number(process.env.VEROVIO_MS ?? 6000);
 const SHOW_ALL = process.env.ALL === '1';
+/* Optional layout before the chord: MAPPING=chromatic, TUNING=S (toolbar values). */
+const LAYOUT = { selMapping: process.env.MAPPING ?? null, selTuning: process.env.TUNING ?? null };
 
 const ALLOW = [/favicon\.ico/i];
 const isAllowed = (t) => ALLOW.some((re) => re.test(t));
@@ -110,6 +112,10 @@ async function main() {
    * renders). */
   const evalRes = await send('script.evaluate', {
     expression: `(() => {
+      for (const [id, v] of Object.entries(${JSON.stringify(LAYOUT)})) {
+        const sel = document.getElementById(id);
+        if (v && sel) { sel.value = v; sel.dispatchEvent(new Event('change',{bubbles:true})); }
+      }
       const found = {};
       for (const id of ['cbStaff','cbHeji']) {
         const cb = document.getElementById(id);

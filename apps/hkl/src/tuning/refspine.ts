@@ -19,16 +19,15 @@
 // docs/architecture.md → Note-name mapping): the band's qm0 ORIGINAL column — at most 3
 // columns away — so the spine always has its copy qm0′ immediately to the
 // right: qm2 → Q+2, qm2′ → Q+1, qm0′ → Q−1, qm1 → Q−2, qm1′ → Q−3.
+//
+// Chromatic (12-wide bands, qm0 at position 4): the same rule — the ref sits
+// at most 4 columns left or 7 right of the spine.
+//
+// One formula covers all three: q − posInBand + W/3 (W = band width, qm0 at
+// position W/3).
 
-import type { Mapping } from '@hkl/shared/mapping.js';
+import { bandWidth, posInBandOf, type Mapping } from '@hkl/shared/mapping.js';
 
 export function refSpine(refQ: number, refR: number, mapping: Mapping): { q: number; r: number } {
-  if (mapping === 'wickiHayden') {
-    const pos = (((refQ + 2) % 6) + 6) % 6;
-    return { q: refQ - pos + 2, r: refR };
-  }
-  const qm = ((refQ % 3) + 3) % 3;
-  if (qm === 0) return { q: refQ, r: refR };
-  if (qm === 1) return { q: refQ - 1, r: refR };
-  return { q: refQ + 1, r: refR };
+  return { q: refQ - posInBandOf(refQ, mapping) + bandWidth(mapping) / 3, r: refR };
 }

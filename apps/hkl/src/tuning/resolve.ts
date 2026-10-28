@@ -20,6 +20,7 @@
 
 import { jiRatio, tenneyHeightFromExps } from './ratios.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
+import { COLUMN_STEP } from '@hkl/shared/mapping.js';
 import { tuning } from '../state/tuning.js';
 import type { KeyId } from '../types.js';
 
@@ -36,9 +37,10 @@ export function resolve12TetToCoord(
   footprint: Set<KeyId>,
 ): ResolvedCoord | null {
   /* Octave step in (q, r) is (+12/c, 0) with c the column step in semitones
-     (4 Euler, 2 Wicki-Hayden); proj = 7Δq − cΔr shifts by 7·12/c per octave. */
+     (4 Euler, 2 Wicki-Hayden, 1 chromatic); proj = 7Δq − cΔr shifts by 7·12/c
+     per octave. */
   const mapping = tuning.mapping;
-  const c = mapping === 'wickiHayden' ? 2 : 4;
+  const c = COLUMN_STEP[mapping];
   const PROJ_PER_OCT = 7 * (12 / c);
   const refMidi = coordToMidi(refQ, refR, mapping);
   const octaveDelta = Math.round((midiNote - refMidi) / 12);

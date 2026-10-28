@@ -6,10 +6,10 @@
 // What it does decide, in Syntonic ('S') and Polysyntonic ('Y'), is the
 // `anchor` — the home band, the one band left unaltered — so every pitch
 // function takes the anchor explicitly (`anchorOf`). Only S and Y read it.
-// Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden cells
-// resolve through their Euler-equivalent.
+// Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden and chromatic
+// cells resolve through their Euler-equivalent.
 
-import { eulerOf, bandOfCell, type Mapping } from './mapping.js';
+import { eulerOf, bandOfCell, pitchBandOf, COLUMN_STEP, type Mapping } from './mapping.js';
 
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 
@@ -46,10 +46,10 @@ export const MIDI_HIGH = 108;
 
 /** Nominal 12-TET MIDI note number for the lattice cell. Origin: A3 (MIDI 57)
  *  at (0, 0). Used to bound the retune search and to validate cells. A column
- *  step is a major third (4 semitones) under 'euler', a whole tone (2) under
- *  'wickiHayden'; a row step is a fifth in both. */
+ *  step is COLUMN_STEP semitones (4 Euler, 2 Wicki-Hayden, 1 chromatic); a
+ *  row step is a fifth in every mapping. */
 export function coordToMidi(q: number, r: number, mapping: Mapping): number {
-  return 57 + (mapping === 'wickiHayden' ? 2 : 4) * q + 7 * r;
+  return 57 + COLUMN_STEP[mapping] * q + 7 * r;
 }
 
 /** Prime-exponent vector [e2, e3, e5, e7] of (q, r)'s frequency under a JI
@@ -64,32 +64,36 @@ export function coordToMidi(q: number, r: number, mapping: Mapping): number {
  *  shift by a syntonic comma and, for Septimal, a septimal comma; Schismatic
  *  adds schisma^b octave stacking — see SCHISMA above).
  *
- *  Syntonic / Polysyntonic: every band is Pythagorean, then shifted by
- *  `bandOffset(mode, band − anchor)` syntonic commas, the band taken in the
- *  cell's OWN frame (a Wicki-Hayden copy shares its column's 6-band). `anchor`
- *  is ignored by every other mode.
+ *  Two modes add a per-band term on top of a band-uniform base mode:
+ *  - Schismatic is Semiditonal × schisma^band, the band being the cell's own
+ *    (spatial) band in its frame (`bandOfCell`).
+ *  - Syntonic / Polysyntonic are Pythagorean shifted by
+ *    `bandOffset(mode, band − anchor)` syntonic commas, the band being the one
+ *    whose offset the cell carries (`pitchBandOf`: a chromatic column copied
+ *    from the band to its left keeps that band's offset). `anchor` is ignored
+ *    by every other mode.
  *
- *  Wicki-Hayden cells take their Euler-equivalent's vector. A Schismatic copy
- *  is its column an exact octave down, so it keeps the column's schisma count
- *  — one more than its Euler-equivalent one band lower. */
+ *  Every other cell takes its Euler-equivalent's vector. */
 export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number): [number, number, number, number] {
   const c = eulerOf(q, r, mapping);
-  const e = eulerExps(c.q, c.r, mode === 'S' || mode === 'Y' ? 'P' : mode);
-  if (c.copy && mode === 'V') { e[0] += -15; e[1] += 8; e[2] += 1; }
-  const k = bandOffset(mode, bandOfCell(q, mapping) - anchor);
+  const e = eulerExps(c.q, c.r, mode === 'V' ? 'D' : mode === 'S' || mode === 'Y' ? 'P' : mode);
+  if (mode === 'V') {                                               /* ×schisma^band = (3⁸·5/2¹⁵)^band */
+    const b = bandOfCell(q, mapping);
+    e[0] += -15 * b; e[1] += 8 * b; e[2] += b;
+  }
+  const k = bandOffset(mode, pitchBandOf(q, mapping) - anchor);
   if (k) { e[0] += -4 * k; e[1] += 4 * k; e[2] += -k; }             /* ×(81/80)^k */
   return e;
 }
 
+/** Prime exponents of Euler cell (q, r) under a band-uniform `mode` (5/P/D/7). */
 function eulerExps(q: number, r: number, mode: TuningMode): [number, number, number, number] {
   const b = Math.floor((q + 1) / 3);
   const p = ((q + 1) % 3 + 3) % 3;
   /* 2^b·(5/4)^(p−1)·(3/2)^r decomposed: (5/4)=5·2⁻², (3/2)=3·2⁻¹ */
   let e2 = b - 2 * (p - 1) - r, e3 = r, e5 = p - 1, e7 = 0;
   const qm = ((q % 3) + 3) % 3;
-  /* Schismatic: schisma^b = (3⁸·5/2¹⁵)^b on top of the Pythagorean octave. */
-  if (mode === 'V') { e2 += -15 * b; e3 += 8 * b; e5 += b; }
-  if (mode === 'D' || mode === 'V') {
+  if (mode === 'D') {
     if (qm === 2) { e2 += 4; e3 += -4; e5 += 1; }              /* A-d1 upper: −SC (80/81) */
   } else if (mode === 'P') {
     if (qm === 1) { e2 += -4; e3 += 4; e5 += -1; }             /* A-d1 lower: +SC (81/80) */

@@ -14,7 +14,7 @@ import { openSignatureModal } from './sigDialog.js';
 import { openInstrumentsModal, instrEditsFromModel, summarizeInstrEdits, reconcileInstruments, type InstrEdit } from './instrumentsDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
-import { MAPPINGS, isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { MAPPINGS, MAPPING_LABELS, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { planRetune, summarizePlan, applyRetune } from './notation/retune.js';
 import type { HistoryManager } from './history.js';
 
@@ -30,11 +30,6 @@ const TUNING_LABELS: Record<TuningMode, string> = {
   V: 'Schismatic',
   S: 'Syntonic',
   Y: 'Polysyntonic',
-};
-
-const MAPPING_LABELS: Record<Mapping, string> = {
-  euler: 'Euler',
-  wickiHayden: 'Wicki-Hayden',
 };
 
 function populateSelect(sel: HTMLSelectElement, options: ReadonlyArray<{ value: string; label: string }>, current: string): void {

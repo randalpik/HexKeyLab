@@ -12,8 +12,8 @@
 // Run:
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/bounds-probe/compute-bounds.mjs
 //
-// Every piano bound is computed per note-name mapping ('euler' and
-// 'wickiHayden', docs/architecture.md → Note-name mapping): the mapping changes the picker's
+// Every piano bound is computed per note-name mapping (every MAPPINGS value,
+// docs/architecture.md → Note-name mapping): the mapping changes the picker's
 // candidate cells and the verticalFreq tilt.
 //
 // The picker is the real module (imported through the TS loader). The script
@@ -28,6 +28,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { TUNING_MODES, anchorOf } from '../../packages/shared/src/freq.ts';
+import { MAPPINGS, COLUMN_STEP, bandWidth } from '../../packages/shared/src/mapping.ts';
 import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,7 +39,8 @@ const hexR = 16;
 const dxH = hexR * 1.78;
 const dyH = hexR * 1.54;
 
-/* qStep = average log-frequency per q step: log(2)/3 Euler, log(2)/6 Wicki-Hayden */
+/* qStep = average log-frequency per q step: log(2)·COLUMN_STEP/12 (log(2)/3 Euler,
+   /6 Wicki-Hayden, /12 chromatic) */
 function verticalFreqTilt(qStep) {
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
   const gx = qStep / dxH;
@@ -48,10 +50,8 @@ function verticalFreqTilt(qStep) {
 const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
 const TILT_PIANO = 0;
 
-const ROTATIONS = {
-  euler: { verticalFreq: verticalFreqTilt(Math.log(2) / 3), lumatone: TILT_LUMATONE, piano: TILT_PIANO },
-  wickiHayden: { verticalFreq: verticalFreqTilt(Math.log(2) / 6), lumatone: TILT_LUMATONE, piano: TILT_PIANO },
-};
+const ROTATIONS = Object.fromEntries(MAPPINGS.map((m) => [m,
+  { verticalFreq: verticalFreqTilt(Math.log(2) * COLUMN_STEP[m] / 12), lumatone: TILT_LUMATONE, piano: TILT_PIANO }]));
 
 /* Mirrors the actual rendering transform (src/render/draw.ts main draw
    loop). */
@@ -81,7 +81,6 @@ for (const row of qwertyRows) {
 }
 
 // ── picker: the real module ────────────────────────────────────────────────
-const MAPPINGS = ['euler', 'wickiHayden'];
 
 /* Each probed ref is ranked as its own home band (Syntonic / Polysyntonic). */
 function pianoCells(refQ, refR, mode = '5', mapping = 'euler') {
@@ -133,9 +132,8 @@ function pianoPoints(tilt, mode, mapping) {
     const [vQ, vR] = pianoViewCenter(refQ, refR, m[0], m[1], tilt);
     for (const [q, r] of cells) pts.push(hexToScreen(q - vQ, r - vR, tilt));
   }
-  /* every column position of an octave band: 3 Euler, 6 Wicki-Hayden */
-  const bandWidth = mapping === 'wickiHayden' ? 6 : 3;
-  for (let refQ = 0; refQ < bandWidth; refQ++) {
+  /* every column position of an octave band: 3 Euler, 6 Wicki-Hayden, 12 chromatic */
+  for (let refQ = 0; refQ < bandWidth(mapping); refQ++) {
     for (let refR = REFR_MIN; refR <= REFR_MAX; refR++) {
       accum(pianoCells(refQ, refR, mode, mapping), refQ, refR);
     }

@@ -27,17 +27,15 @@
 
 import { TUNING_MODES, anchorOf } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
+import { MAPPINGS, bandWidth } from '../../packages/shared/src/mapping.ts';
 import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
-
-const MAPPINGS = ['euler', 'wickiHayden'];
 
 let total = 0, bad = 0;
 for (const mapping of MAPPINGS) {
-  const bandWidth = mapping === 'wickiHayden' ? 6 : 3;
   for (const mode of TUNING_MODES) {
     let modeBad = 0, modeTotal = 0;
     const examples = [];
-    for (let refQ = 0; refQ < bandWidth; refQ++) {
+    for (let refQ = 0; refQ < bandWidth(mapping); refQ++) {
       for (let refR = -3; refR <= 3; refR++) {
         const cells = pianoFootprint(refQ, refR, {
           mode, mapping, anchor: anchorOf(refQ, mapping),

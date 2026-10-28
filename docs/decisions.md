@@ -10103,3 +10103,37 @@ Max: structural fixes, no temporary diagnostics. Built:
 - The relay: a retained snapshot supersedes the retained `view` / `keys`; one `replay()` sends the snapshot first on connect and on `request-snapshot`. Takes effect after `systemctl --user restart hkl-overlay-host`.
 
 Behaviour changes: outside the piano outline a cursor move never displaces a Ctrl+click (it used to clobber it), and leaving the piano outline resurfaces a Ctrl+click under a newer cursor note; in the piano outline with Sync off, a score-ref change under a cursor note now moves `kbAnchor` to the new key's spine (it used to snap to the cursor note's spine). Gates: `test/hkl-midi/ref-centring.mjs` (C1–C14), `test/overlay-inspect/relay-roundtrip.mjs` replay order (fails on the old relay); the HKL harnesses now publish to a private relay (lessons.md).
+
+## Chromatic note-name mapping: mirror construction, carry for the syntonic offset only (2026-10-27, Max)
+
+A third `Mapping`, `'chromatic'` (q = semitone, r = fifth, (−1,+1) = tritone). With `r` the fifth, `q`-step `a` and `(−1,+1)` = `7 − a` are mirror images, so Euler (4), Wicki-Hayden (2) and chromatic (1) are the only three fifth-axis hex layouts whose steps all lie within a fifth. Each one doubles `q` (Euler `(q,r)` = WH `(2q,r)` = chromatic `(4q,r)`).
+
+**Construction (Max).** Every WH column stays. Six new columns per band are exact-octave copies along the octave vector `(5,1)`, the shortest one that changes column parity. The **mirror** form was chosen: right of each column sits the cell five columns left and one row down, up an octave (its M7 below, i.e. its m2 above).
+- Compared with Max's first instinct (left of each column, its M7 an octave down), both forms give a 5-limit duodene per row (Ellis: 3 rows × 4 fifths, rows a 5:4 apart). The mirror gives the duodene **of the ref**: the ref's just major and minor along its own row. The M7 form gives the duodene of E: acute 4th and 6th from the ref, and its D comes from the raised band under S/Y.
+- At C# and D# the M7 vector crosses the Euler seam (qm1 → d4), which is why both forms spell a contiguous 12-fifth window. That compaction is the Euler seam's own job, not a coincidence.
+- **Rejected:**
+  - real leading tones everywhere (B#, C##): C#/D# have no 5-limit leading tone in the lattice at all (15/16 below C# needs 5²);
+  - adjacent-column copies: remote spellings and wolf intervals.
+
+**Carry (Max).** Under the mirror, F# and G# (positions 1 and 3) are copied from the band to the left, and they **keep that band's Syntonic/Polysyntonic offset**.
+- The home band is Pythagorean except the ref's M6 and leading tone, which are just (5/6, 15/16 on A). The leading tone sits directly beside the ref, and the ref's just I, IV and V each lie within 3 keys.
+- Max's reasoning: the Pythagorean leading tone is already reachable (as the in-band twin 7 keys away), and a truly pure Pythagorean 12-band is what Pythagorean mode is for.
+- Neither carry nor "pure bands" is exception-free. Carry needs a second band function for two columns; pure bands need a copy-rule carve-out. Playability decided it.
+- *An earlier argument that carry keeps the copy relation exact was the definition of carry, not evidence (Max caught it).*
+
+**Schismatic does not carry (Max).** It is Semiditonal (where carry is a no-op) with the schisma then applied per **visual** band, so the borrowed columns keep 5/6 and 15/16. Carrying the schisma would have made them the Pythagorean Gb/Ab pitches and the ref's leading tone the apotome.
+
+**Anchor (Max).** The clicked band becomes home, unchanged (`anchorOf` = the spatial band). A borrowed key clicked in another band makes that band home and stays one comma below Pythagorean; clicked in the home band, it just becomes the ref.
+
+**Code consequences:**
+- `bandOfCell` (spatial: seams, spine, anchor, V schisma, schismatic-chord check) vs `pitchBandOf` (the S/Y offset only).
+- `coordExps` = band-uniform base on the Euler-equivalent + the V schisma by spatial band + the S/Y offset by pitch band. Verified identical for Euler/WH: color-gate, WH and Syntonic oracles unchanged. This retired `EulerCell.copy` and the dead `columnSourceOf`.
+- Every per-mapping quantity except `eulerOf` derives from `COLUMN_STEP` (4/2/1): band width, positions, `refSpine`, the picker's isotone and `k`-span, tilt, frame scale.
+- The `=== 'wickiHayden' ? :` ternaries (which a third value silently turned into Euler) became table lookups. `MAPPING_LABELS` is shared.
+
+**Accepted, not mitigated (Max).** On the Lumatone each board sits a fifth below its left neighbour (the case axis `(7,−2)` carries −7 semitones; MIDI 12–102). Fixing it would break numerical isomorphism.
+
+Gates:
+- `test/chromatic-layout/oracle.mjs`;
+- the chromatic rows of `test/syntonic/oracle.mjs`, `test/color-gate/`, `test/bounds-probe/` and `test/hkl-midi/mapping-switch.mjs`;
+- the Composer `mapping` / `syntonic` fixtures.

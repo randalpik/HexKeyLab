@@ -1,13 +1,15 @@
 // Syntonic ('S') / Polysyntonic ('Y') oracle (docs/architecture.md → Tuning modes, Syntonic / Polysyntonic; colour: → Color scheme).
 //
 // Pure Node gate — imports the REAL @hkl/shared modules through the repo's TS
-// loader and checks every rule the spec states, under both mappings, over a
+// loader and checks every rule the spec states, under every mapping, over a
 // wide cell window and a spread of anchors (incl. far beyond the Lumatone's ±3):
-//   A  home band = Pythagorean exactly; every band = P · (81/80)^k(band − anchor)
+//   A  home band = Pythagorean exactly; every band = P · (81/80)^k(band − anchor),
+//      the band being the one whose offset the cell carries (pitchBandOf: a
+//      chromatic column copied from the band to its left keeps that band's)
 //   B  k: Syntonic 0,+1,0,−1 (period 4), Polysyntonic = band distance (unbounded)
 //   C  (+band, 0) band step: Polysyntonic 81/40 everywhere; Syntonic 81/40,
-//      160/81, 160/81, 81/40 by transition (Wicki-Hayden 6-band; Euler 3-band
-//      step is P's 2/1 times the same comma)
+//      160/81, 160/81, 81/40 by transition (Wicki-Hayden 6-band, chromatic
+//      12-band; Euler 3-band step is P's 2/1 times the same comma)
 //   D  re-anchoring: Polysyntonic = global shift by −n·SC; Syntonic = period 4
 //   E  colour: hue = P's hue + 2k steps (mod 7); septimal never; white/black =
 //      MIDI pitch class
@@ -18,13 +20,12 @@
 // Exits non-zero on any failure.
 
 import { coordExps, coordToMidi, anchorOf, bandOffset } from '../../packages/shared/src/freq.ts';
-import { bandOfCell } from '../../packages/shared/src/mapping.ts';
+import { bandOfCell, pitchBandOf, bandWidth, COLUMN_STEP, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOrder, hueIdx } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain } from '../../packages/shared/src/heji.ts';
 
 const SC = [-4, 4, -1, 0];
-const MAPPINGS = ['euler', 'wickiHayden'];
 const ANCHORS = [-9, -4, -3, -1, 0, 1, 2, 5, 8];
 
 let pass = 0, fail = 0;
@@ -46,14 +47,14 @@ function ratio(e) {
 }
 
 for (const mapping of MAPPINGS) {
-  const W = mapping === 'euler' ? 3 : 6;           /* band width in q */
-  const QR = mapping === 'euler' ? 20 : 40;
+  const W = bandWidth(mapping);                    /* band width in q */
+  const QR = 20 * 4 / COLUMN_STEP[mapping];
   for (const mode of ['S', 'Y']) {
     for (const anchor of ANCHORS) {
       for (let q = -QR; q <= QR; q++) {
         for (let r = -10; r <= 10; r++) {
           const tag = `${mode} ${mapping} a=${anchor} (${q},${r})`;
-          const d = bandOfCell(q, mapping) - anchor;
+          const d = pitchBandOf(q, mapping) - anchor;
           const k = bandOffset(mode, d);
           const e = coordExps(q, r, mode, mapping, anchor);
           const p = coordExps(q, r, 'P', mapping, anchor);
@@ -81,21 +82,21 @@ for (const mapping of MAPPINGS) {
       }
       /* C: the band step (+W, 0) across each transition */
       for (let b = anchor - 6; b <= anchor + 6; b++) {
-        const q0 = b * W - (mapping === 'euler' ? 1 : 2);       /* first column of band b */
+        const q0 = b * W - W / 3;                                /* first column of band b */
         const step = sub(coordExps(q0 + W, 0, mode, mapping, anchor), coordExps(q0, 0, mode, mapping, anchor));
         const kStep = bandOffset(mode, b + 1 - anchor) - bandOffset(mode, b - anchor);
         const pStep = sub(coordExps(q0 + W, 0, 'P', mapping, anchor), coordExps(q0, 0, 'P', mapping, anchor));
         check(`C ${mode} ${mapping} a=${anchor} band ${b}→${b + 1}`, ratio(step), ratio(addK(pStep, kStep)));
-        if (mapping === 'wickiHayden') {
+        if (mapping !== 'euler') {
           const want = kStep === 1 ? '81/40' : kStep === -1 ? '160/81' : '2/1';
-          check(`C ${mode} WH a=${anchor} band ${b}→${b + 1} ratio`, ratio(step), want);
+          check(`C ${mode} ${mapping} a=${anchor} band ${b}→${b + 1} ratio`, ratio(step), want);
         }
       }
     }
   }
 }
 
-/* anchorOf = the reference's own-frame band */
+/* anchorOf = the reference's own-frame (spatial) band — the clicked band becomes home */
 for (const mapping of MAPPINGS) {
   for (let q = -30; q <= 30; q++) check(`anchorOf ${mapping} ${q}`, anchorOf(q, mapping), bandOfCell(q, mapping));
 }

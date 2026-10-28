@@ -25,7 +25,7 @@ export type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
          syntonic commas around the always-unaltered home band (the anchor):
          Syntonic 0,+1,0,−1 per band, Polysyntonic stacking without bound */
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
-/* Note-name mapping ('euler' | 'wickiHayden'), orthogonal to the tuning mode.
+/* Note-name mapping ('euler' | 'wickiHayden' | 'chromatic'), orthogonal to the tuning mode.
    Single definition in @hkl/shared/mapping.js (no dual-definition here). */
 export type { Mapping };
 export type PedalMode = 'sustain' | 'sostenuto';

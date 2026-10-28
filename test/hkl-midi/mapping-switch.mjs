@@ -137,6 +137,38 @@ const SCRIPT = `(async () => {
   check('M4c: release clears it', selection.selectedKeys.size, 0);
   check('M4d: no record left', held.heldCount('lumatone'), 0);
 
+  /* M6: Euler → chromatic → Wicki-Hayden with held keys, reference A4 */
+  reset();
+  switchTo('euler');
+  setRef(3, 0);
+  deliver(0x90, 21, 100);
+  const K3 = held.heldKey('lumatone', '1,21');
+  selection.selectedKeys.add('1,0');            /* Euler C#4 */
+  const mouseHz6 = keyFreq(1, 0);
+  switchTo('chromatic');
+  check('M6a: mapping switched', tuning.mapping, 'chromatic');
+  check('M6b: anchor converted (A4 stays centred)', view.kbAnchorQ + ',' + view.kbAnchorR, '12,0');
+  check('M6c: held key keeps its (q,r)', held.heldKey('lumatone', '1,21'), K3);
+  check('M6d: mouse note converted to (4,0)', selection.selectedKeys.has('4,0'), true);
+  check('M6e: mouse note keeps its pitch', near(keyFreq(4, 0), mouseHz6), true);
+  switchTo('wickiHayden');
+  check('M6f: chromatic → Wicki-Hayden anchor', view.kbAnchorQ + ',' + view.kbAnchorR, '6,0');
+  check('M6g: held key still keeps its (q,r)', held.heldKey('lumatone', '1,21'), K3);
+  check('M6h: mouse note converted to (2,0)', selection.selectedKeys.has('2,0'), true);
+  deliver(0x80, 21, 0);
+  check('M6i: release clears the held key', selection.selectedKeys.has(K3), false);
+  check('M6j: no Lumatone record left', held.heldCount('lumatone'), 0);
+
+  /* M7: a mouse note on a new chromatic column converts out by the frame formula */
+  reset();
+  switchTo('chromatic');
+  setRef(0, 0);
+  selection.selectedKeys.add('-1,0');           /* chromatic G#3, Euler-equivalent (−2, 1) */
+  const gSharpHz = keyFreq(-1, 0);
+  switchTo('euler');
+  check('M7a: G#3 converted to Euler (−2,1)', selection.selectedKeys.has('-2,1'), true);
+  check('M7b: G#3 keeps its pitch', near(keyFreq(-2, 1), gSharpHz), true);
+
   /* leave the page as found */
   reset();
   setRef(0, 0);

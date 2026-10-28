@@ -1,11 +1,13 @@
-// Composer test fixtures — note-name mapping (Euler / Wicki-Hayden).
+// Composer test fixtures — note-name mapping (Euler / Wicki-Hayden / chromatic).
 // docs/architecture.md → Note-name mapping. Fixture spec: { setup?: string, setupKeys?: string[], ...flags };
 // ASSERTIONS maps fixture name → [{ name, expr }]. See ../README.md.
 //
 // A score's <hkl:layoutReq mapping> is the frame of every note's data-q/data-r.
-// Euler (q, r) ↔ Wicki-Hayden (2q, r) is exact; a Wicki-Hayden copy column
-// (odd Q) → Euler lands on its Euler-equivalent ((Q−1)/2 − 3, R+2), exactly in
-// every mode but Schismatic, where it is one schisma (≈1.954¢) low.
+// Euler (q, r) ↔ Wicki-Hayden (2q, r) ↔ chromatic (4q, r) is exact; a copy
+// column → Euler lands on its Euler-equivalent (Wicki-Hayden odd Q:
+// ((Q−1)/2 − 3, R+2); chromatic: mapping.ts eulerOf), exactly in every
+// band-uniform mode — a Wicki-Hayden copy in Schismatic is one schisma
+// (≈1.954¢) low.
 
 /* In-page helpers: a ResolvedNote literal, the note list as "q,r:pname/accid/oct"
    strings, and Setup driven through its real form (confirm stubbed to accept,
@@ -86,6 +88,48 @@ export const FIXTURES = {
     `,
     setupKeys: ['5'],
   },
+  /* Setup Euler → chromatic → Euler on the same Ptolemaic chord: every note
+     moves to its original column (4q, r) and comes back exactly. */
+  map_chromatic_setup_roundtrip: {
+    setup: `
+      ${HELPERS}
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [RN(0, 0, 'a', '', 3, 57), RN(-1, 1, 'c', '', 4, 60), RN(1, 0, 'c', 's', 4, 61), RN(0, 1, 'e', '', 4, 64)], duration: '4', dots: 0 });
+      window.__mapBefore = window.__mapNotes();
+      window.__mapSetupTo('chromatic');
+      window.__mapCh = window.__mapNotes();
+      window.__mapChReq = m.getLayoutReq().mapping;
+      window.__mapSetupTo('euler');
+      window.__mapBack = window.__mapNotes();
+      r();
+    `,
+  },
+  /* Ptolemaic chromatic → Euler: notes on the NEW columns (G#3, Bb3, C4 at
+     Q = −1, 1, 3) land on their Euler-equivalents (−2,1), (2,−1), (−1,1),
+     pitch-exact, spelling unchanged. */
+  map_chromatic_new_columns_to_euler: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '5', mapping: 'chromatic' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [RN(-1, 0, 'g', 's', 3, 56), RN(1, 0, 'b', 'f', 3, 58), RN(3, 0, 'c', '', 4, 60)], duration: '4', dots: 0 });
+      window.__mapSetupTo('euler');
+      r();
+    `,
+  },
+  /* Entry under chromatic: HKL and the score agree; held keys (a new column
+     and an original column) are stored at their own chromatic cells with HKL's
+     spelling, and the score carries mapping="chromatic". */
+  map_chromatic_entry: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '5', mapping: 'chromatic' });
+      window.__bridgeMock.sendTuningChanged('5', 'chromatic');
+      window.__bridgeMock.sendHeldKeys([RN(-1, 0, 'g', 's', 3, 56), RN(4, 0, 'c', 's', 4, 61)], 'chromatic');
+      m.setCursor(0, 1);
+    `,
+    setupKeys: ['5'],
+  },
   /* HKL in Euler, score in Wicki-Hayden but the SAME tuning mode: the held
      keys' Euler coordinates are converted into the score's frame on use
      (HKL's (1,0) C#4 → the score's (2,0)). With the gate comparing mapping
@@ -151,6 +195,39 @@ export const ASSERTIONS = {
       expr: `(() => {
         const lr = [...window.__hkl_composer.model.getDoc().getElementsByTagName('*')].find((e) => e.localName === 'layoutReq');
         return lr && lr.getAttribute('mapping') === 'wickiHayden' ? { ok: true } : { ok: false, detail: lr ? lr.outerHTML : 'no layoutReq' };
+      })()` },
+  ],
+  map_chromatic_setup_roundtrip: [
+    { name: 'Euler → chromatic: each note on (4q, r), spelling unchanged',
+      expr: `(${expect.toString()})(window.__mapCh, ['0,0:a//3', '-4,1:c//4', '4,0:c/s/4', '0,1:e//4'])` },
+    { name: 'score records mapping="chromatic"',
+      expr: `(${expect.toString()})(window.__mapChReq, 'chromatic')` },
+    { name: 'retune prompt: all exact both ways',
+      expr: `(() => {
+        const a = window.__mapAsked ?? [];
+        const ok = a.length === 2 && a.every((s) => s.includes('Changing layout from') && s.includes('4 exact matches') && !s.includes('relocated'));
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(a) };
+      })()` },
+    { name: 'and back to Euler: the original cells',
+      expr: `(${expect.toString()})(window.__mapBack, window.__mapBefore)` },
+  ],
+  map_chromatic_new_columns_to_euler: [
+    { name: 'G#3 → (−2,1), Bb3 → (2,−1), C4 → (−1,1), spelling unchanged',
+      expr: `(${expect.toString()})(window.__mapNotes(), ['-2,1:g/s/3', '2,-1:b/f/3', '-1,1:c//4'])` },
+    { name: 'prompt: 3 exact matches, nothing relocated',
+      expr: `(() => {
+        const a = window.__mapAsked ?? [];
+        const ok = a.length === 1 && a[0].includes('3 exact matches') && !a[0].includes('relocated');
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(a) };
+      })()` },
+  ],
+  map_chromatic_entry: [
+    { name: 'notes stored at their own chromatic cells',
+      expr: `(${expect.toString()})(window.__mapNotes(), ['-1,0:g/s/3', '4,0:c/s/4'])` },
+    { name: 'score carries mapping="chromatic"',
+      expr: `(() => {
+        const lr = [...window.__hkl_composer.model.getDoc().getElementsByTagName('*')].find((e) => e.localName === 'layoutReq');
+        return lr && lr.getAttribute('mapping') === 'chromatic' ? { ok: true } : { ok: false, detail: lr ? lr.outerHTML : 'no layoutReq' };
       })()` },
   ],
   map_held_keys_converted: [

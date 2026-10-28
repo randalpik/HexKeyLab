@@ -2,7 +2,7 @@
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
-import type { Mapping } from '@hkl/shared/mapping.js';
+import { MAPPING_LABELS, type Mapping } from '@hkl/shared/mapping.js';
 import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
 } from './model/index.js';
@@ -67,7 +67,7 @@ function tuningLabel(mode: string): string {
 
 /** Tuning label plus the mapping when it is not the default Euler. */
 function layoutLabel(mode: string, mapping: Mapping): string {
-  return tuningLabel(mode) + (mapping === 'wickiHayden' ? ' · Wicki-Hayden' : '');
+  return tuningLabel(mode) + (mapping === 'euler' ? '' : ' · ' + MAPPING_LABELS[mapping]);
 }
 
 /** HKL's layout when it differs from the score's (tuning mode or note-name

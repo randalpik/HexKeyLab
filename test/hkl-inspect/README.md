@@ -23,6 +23,7 @@ pnpm scan:hkl:firefox                                  # Firefox (BiDi): scan + 
 node test/hkl-inspect/console-scan.mjs --screenshot /tmp/hkl.png   # Chromium, also save a PNG
 ALL=1 pnpm scan:hkl:firefox                            # Firefox: include info/debug levels
 HKL_URL=http://localhost:5170/ WAIT_MS=3000 VEROVIO_MS=3000 pnpm scan:hkl
+MAPPING=chromatic TUNING=S pnpm scan:hkl:firefox       # set the toolbar layout before the chord
 ```
 
 ## What it does

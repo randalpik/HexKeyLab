@@ -16,6 +16,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { TUNING_MODES } from '../../packages/shared/src/freq.ts';
+import { MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { hueCycle } from '../../packages/shared/src/colors.ts';
 import { tuning } from '../../apps/hkl/src/state/tuning.ts';
 import { keyColorVariant, keyColorHex, lightSourceHex } from '../../apps/hkl/src/render/colors.ts';
@@ -23,7 +24,6 @@ import { darkColorHex } from '../../apps/hkl/src/transcription/pitch.ts';
 
 const SNAP = fileURLToPath(new URL('./snapshot.json', import.meta.url));
 const W = 40;
-const MAPPINGS = ['euler', 'wickiHayden'];
 
 function setLayout(mode, mapping) {
   tuning.mode = mode;

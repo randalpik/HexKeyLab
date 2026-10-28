@@ -26,7 +26,7 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '@hkl/shared/freq.js';
-import { convertCell, type Mapping } from '@hkl/shared/mapping.js';
+import { convertCell, COLUMN_STEP, MAPPING_LABELS, type Mapping } from '@hkl/shared/mapping.js';
 import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
 import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { pruneDanglingSlurs } from '../slurs.js';
@@ -131,8 +131,9 @@ interface Candidate { q: number; r: number; cents: number; taxi: number }
 
 function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout, anchor: number): Candidate {
   let best: Candidate = { q: origQ, r: origR, cents: Infinity, taxi: Infinity };
-  /* a Wicki-Hayden column is a whole tone: twice the q radius, same span */
-  const qRadius = to.mapping === 'wickiHayden' ? 2 * SEARCH_RADIUS : SEARCH_RADIUS;
+  /* a Wicki-Hayden column is a whole tone, a chromatic one a semitone: the q
+     radius scales by 4/COLUMN_STEP to cover the same span */
+  const qRadius = (4 / COLUMN_STEP[to.mapping]) * SEARCH_RADIUS;
   for (let dq = -qRadius; dq <= qRadius; dq++) {
     for (let dr = -SEARCH_RADIUS; dr <= SEARCH_RADIUS; dr++) {
       const q = origQ + dq;
@@ -188,11 +189,6 @@ const MODE_LABELS: Record<TuningMode, string> = {
 function labelForMode(m: TuningMode): string {
   return MODE_LABELS[m];
 }
-
-const MAPPING_LABELS: Record<Mapping, string> = {
-  euler: 'Euler',
-  wickiHayden: 'Wicki-Hayden',
-};
 
 function labelForLayout(l: RetuneLayout): string {
   return MODE_LABELS[l.tuningMode] + ', ' + MAPPING_LABELS[l.mapping] + ' mapping';

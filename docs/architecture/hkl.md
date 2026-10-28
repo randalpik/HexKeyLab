@@ -66,7 +66,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 | Control | Behavior |
 |---|---|
 | Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic}. Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
-| Mapping selector | {Euler, Wicki-Hayden} (`#selMapping`, pref `mapping`). `setMapping()` re-expresses the reference, anchor and held mouse / piano-input / pedal-sustained notes in the new coordinate frame (same pitch); held Lumatone / QWERTY voices keep their `(q,r)` and retune in place; rebuilds layers, footprint, Lumatone colours, tilt; broadcasts to Composer. See architecture.md → Note-name mapping. |
+| Mapping selector | {Euler, Wicki-Hayden, Chromatic} (`#selMapping`, pref `mapping`). `setMapping()` re-expresses the reference, anchor and held mouse / piano-input / pedal-sustained notes in the new coordinate frame (same pitch); held Lumatone / QWERTY voices keep their `(q,r)` and retune in place; rebuilds layers, footprint, Lumatone colours, tilt; broadcasts to Composer. See architecture.md → Note-name mapping. |
 | Outline selector | {Lumatone, QWERTY, Piano, None}. Selects the footprint outline; lattice slides via refSpine (Lumatone/QWERTY/None) or piano-viewport math (Piano). Ctrl+click any hex sets the ref note → drives positioning. |
 | Transpose | 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC), always visible. Key-repeat 400ms initial / 80ms subsequent. Selection transpose only — positioning is via ref note. |
 | Audio | Toggle + instrument/waveform selector. Piano default. Samples lazy-load with a blue "loading…" state. |
@@ -94,7 +94,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 ### Chord transposition (5 axes)
 
-Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vectors; under the Wicki-Hayden mapping each goes through `vecFromEuler` (q doubles: M3 (+2,0), P8 (+6,0), SC (−14,+4)).
+Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vectors; under the other mappings each goes through `vecFromEuler` (q scales by 4/`COLUMN_STEP`: Wicki-Hayden M3 (+2,0), P8 (+6,0), SC (−14,+4); chromatic M3 (+4,0), P8 (+12,0), SC (−28,+4)).
 
 - **Bounds check**: blocked if any note's screen center would leave canvas.
 - **Audio**: 100ms slide (`exponentialRampToValueAtTime`); sustained samples glide-and-fade; decaying instruments stop+retrigger.

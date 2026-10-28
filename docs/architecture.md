@@ -122,12 +122,25 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
 | Syntonic (`[0, +1, 0, −1][d mod 4]`) | 0 | +1 | 0 | −1 | 0 | +1 | 0 | −1 | 0 |
 | Polysyntonic (`d`) | −4 | −3 | −2 | −1 | 0 | +1 | +2 | +3 | +4 |
 
-- **Pitch**: `coordExps(q, r, 'P', mapping) + k(bandOfCell(q, mapping) − anchor)·SC`, SC =
-  `[−4, 4, −1, 0]`. The band is the cell's **own** frame band (a Wicki-Hayden copy shares its
-  column's 6-band, as Schismatic copies do). The band step `(6, 0)` is 81/40 everywhere in
-  Polysyntonic; in Syntonic, by transition `0→1, 1→2, 2→3, 3→0`, it is 81/40, 160/81, 160/81, 81/40.
-  Both rules hold on the whole lattice, not just the Lumatone (which shows `d = −3…+3` under
-  Wicki-Hayden: 48 keys in each of −2…+2, fragments of 22 at −3 and 18 at +3).
+- **Pitch**: `coordExps(q, r, 'P', mapping) + k(pitchBandOf(q, mapping) − anchor)·SC`, SC =
+  `[−4, 4, −1, 0]`. The band is the one whose offset the cell **carries**: its own frame band
+  (a Wicki-Hayden copy shares its column's 6-band), except a chromatic column copied from the band
+  to its left (below), which keeps that band's offset.
+  - The band step `(6, 0)` is 81/40 everywhere in Polysyntonic.
+  - In Syntonic, by transition `0→1, 1→2, 2→3, 3→0`, it is 81/40, 160/81, 160/81, 81/40.
+  - Both rules hold on the whole lattice, not just the Lumatone (which shows `d = −3…+3` under
+    Wicki-Hayden: 48 keys in each of −2…+2, fragments of 22 at −3 and 18 at +3).
+- **Chromatic home band.** Under the chromatic mapping, the F# and G# columns (positions 1 and 3)
+  are copies from the band to the left, and **carry** its offset. So the home band is Pythagorean
+  except for the ref's M6 and M7, which arrive one comma lower, i.e. just: on A3, F#3 = 5/6 and
+  G#3 = 15/16, the leading tone beside the ref.
+  - The ref's just I, IV and V each lie within 3 keys of A3, each using one borrowed column:
+    - I: A3 – C#4↓ `(−3,1)` – E4
+    - IV: D3 – F#3↓ – A3
+    - V: E3 – G#3↓ – B3
+  - Syntonic's period 4 makes the borrowed columns lowered relative to their spatial band in the
+    home band and the band to its right, and raised in the two bands to its left. Polysyntonic
+    lowers them in every band.
 - **Why lowered is LEFT**: under Wicki-Hayden each band holds at most one key per MIDI note (the
   12-TET unison vector `(7,−2)` outruns the 6-wide band), so comma alternatives (9/8 vs 10/9, 81/64
   vs 5/4) can only coexist in different bands. A band's note window drifts ~12/7 fifths sharpward
@@ -136,7 +149,10 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
   round. Hole census, ref A3, A1–A6: the left band lacks only D#2 of the lowered set; the right
   band lacks nine notes between B1 and D#4. Under Euler the same rule runs on 3-wide bands, where
   the `+3q` octaves become ±SC — allowed, unrecommended, not gated.
-- **The anchor** (home band) is `anchorOf(refQ, mapping)` = the band of the *anchor reference* —
+- **The anchor** (home band) is `anchorOf(refQ, mapping)` = the (spatial) band of the *anchor
+  reference*, so the clicked band becomes home. A borrowed chromatic key keeps its comma relative
+  to home: clicked in another band, it makes that band home and stays one comma below
+  Pythagorean; clicked in the home band, it just becomes the ref. The anchor reference is
   manual Ctrl+click selection ?? score-ref ?? A3. Composer's cursor prior-note selection never
   moves it (it can sit in another band, and one entered note must not retune the layout and the
   score). Ctrl+clicking an altered key makes its band home, so that key's own pitch changes by its
@@ -232,16 +248,18 @@ separate gate.
 
 **88-cell picker** (`apps/hkl/src/tuning/picker.ts`, wrapped by `compute88PianoCoords`; the bounds
 probes run the same module): for each MIDI 21..108, among the cells with that nominal MIDI, ONE
-ranking rule in every mode and mapping — (1) lowest reduced Tenney Height of the ratio from the ref
+ranking rule in every mode and mapping. The three rules are:
+(1) lowest reduced Tenney Height of the ratio from the ref
 under the mode's own ratios; (2) if the lowest-TH cells differ in pitch — only at the tritone, whose
 two spellings are complements (45/32 vs 64/45) — the **augmented 4th** (the spelling a fourth above
 the ref by letter; any other tie would fall back to the ref's octave line); (3) among
 cells of that pitch (Wicki-Hayden twins, P/D comma siblings, in-band vs cross-band octaves), the one
 fewest key steps from the ref — so the footprint clusters on the ref's band. TH is octave-invariant,
-so spelling is octave-consistent by construction (`test/bounds-probe/octave-consistency.mjs`: 0 breaks
-outside S/Y, and in Wicki-Hayden Syntonic; in Euler S/Y and Wicki-Hayden Polysyntonic a spelling's
-5-limit pitch can exist in one octave's band and not the next, so some drift is expected and
-reported). The ref maps to itself. `'V'` ranks under `'D'` ratios so
+so spelling is octave-consistent by construction.
+- `test/bounds-probe/octave-consistency.mjs` finds 0 breaks outside S/Y, and also in Wicki-Hayden
+  and chromatic Syntonic.
+- In Euler S/Y and in Wicki-Hayden and chromatic Polysyntonic, a spelling's 5-limit pitch can
+  exist in one octave's band and not the next, so some drift is expected and reported. The ref maps to itself. `'V'` ranks under `'D'` ratios so
 schisma exponents don't distort the spelling. → decisions.md 2026-10-26 "One picker rule".
 
 Coverage: ~55 unique MIDI/ref in 5-limit; 88-cell footprint per ref in 7-limit (~208–210 unique
@@ -249,12 +267,27 @@ pitches reachable from a central key). One LTN file gives every physical key a s
 `(channel, note)`; all tuning/layout interpretation is runtime software state — no per-layout LTN,
 `.scl`/`.kbm`, or external synth config.
 
-### Note-name mapping (Euler / Wicki-Hayden)
+### Note-name mapping (Euler / Wicki-Hayden / Chromatic)
 
 A second axis, orthogonal to the tuning mode: **where note names sit** on the hex grid
-(`Mapping = 'euler' | 'wickiHayden'`, single definition in `@hkl/shared/mapping.js`; toolbar
-`Mapping:` dropdown). It applies identically to every tuning mode — no per-mode gating. **Euler** is
-everything above. **Wicki-Hayden** inserts, after every fifths column, a column holding the same notes
+(`Mapping = 'euler' | 'wickiHayden' | 'chromatic'`, single definition in `@hkl/shared/mapping.js`
+with `MAPPINGS`, `MAPPING_LABELS`; toolbar `Mapping:` dropdown). It applies identically to every
+tuning mode — no per-mode gating.
+
+**One column step.** `r` is always the fifth, and a column step `(+1, 0)` is `COLUMN_STEP`
+semitones: 4 Euler, 2 Wicki-Hayden, 1 chromatic. Everything except `eulerOf` derives from it:
+- `coordToMidi = 57 + c·q + 7r`;
+- band width `W = 12/c`, with `bandOfCell = floor((q + W/3)/W)` and `posInBandOf = (q + W/3) mod W`;
+- the ref's qm0 column at position `W/3`;
+- `fromEuler` / `vecFromEuler` scale `q` by `4/c`;
+- the picker's isotone `(7, −c)`;
+- the `verticalFreq` column gradient `log(2)·c/12`.
+
+These are the only three fifth-axis hex layouts whose steps all lie within a fifth, up to
+reflection: `q`-step `a` and `(−1,+1)` = `7 − a` are mirror images. Each one doubles `q`: Euler
+`(q, r)` = Wicki-Hayden `(2q, r)` = chromatic `(4q, r)`.
+
+**Euler** is everything above. **Wicki-Hayden** inserts, after every fifths column, a column holding the same notes
 shifted down 2 cells and exactly one octave, unadjusted (no region / comma / schisma change): a copy
 cell is its left neighbour × 9/8 (`coordExps` of the column + `[−3, 2, 0, 0]`). Rows step in whole
 tones (9:8 / 10:9 / mode-dependent), so the neighbour set is ±M2 (row), ±P5 (`r`), ±P4 `(−1,+1)`, and
@@ -270,9 +303,12 @@ occupies the middle four columns.
   keeps its column's band). The shared primitives (`coordExps`, `freqAt`, `coordToMidi`, `noteName`,
   `keyOctave`, `hejiCommasFor`) take a required `mapping` and resolve through it; HKL's state-based
   helpers read `tuning.mapping` (carried on `TuningStateLike`).
-- **Frame conversion** (`convertCell`): Euler → Wicki-Hayden exact (original column `(2q, r)`);
-  Wicki-Hayden → Euler pitch-exact except Schismatic copies (brute force: 625/625 copies equal an
-  Euler cell in 5/P/D/7, 0/625 in Schismatic, which land one schisma, 1.95¢, away). Used by Composer
+- **Frame conversion** (`convertCell`): Euler → Wicki-Hayden exact (original column `(2q, r)`).
+  Wicki-Hayden → Euler is pitch-exact in the band-uniform modes (brute force: 625/625 copies equal
+  an Euler cell in 5/P/D/7). In the band-indexed modes every copy is off, because its
+  Euler-equivalent sits one band lower: in Schismatic by one schisma (1.95¢), in Syntonic /
+  Polysyntonic by a syntonic comma (1025/2075 cells exact in V, S and Y alike, i.e. the originals).
+  Used by Composer
   retune (as the seed of its search — a taxicab tiebreak means nothing across frames), the bridge
   (every coordinate-bearing message carries its `mapping`; receivers convert on use), and
   cross-score paste. Lattice *vectors* (transpose buttons, SC shifts, harmonics) map via `vecFromEuler`
@@ -282,8 +318,9 @@ occupies the middle four columns.
   it sits in its band — Euler's rule (`qm1 → q−1`, `qm2 → q+1`) with 6-wide bands; the anchor is
   that cell. (A first rule moved a copy ref to its same-name original one board away, `(Q−7, R+2)`;
   that misaligned the ref horizontally and was replaced.) **Picker / resolver**: candidates satisfy
-  `c·q + 7r = N` (c = 4 Euler, 2 Wicki-Hayden), stepping along the isotone `(7, −c)`; projection
-  `7Δq − c·Δr`; copies are candidates like any cell. `VALID_REF_TABLE` / `PIANO_BOUNDS_TABLE` carry an
+  `c·q + 7r = N` (c = 4 Euler, 2 Wicki-Hayden, 1 chromatic), stepping along the isotone `(7, −c)`
+  over `k ∈ ±80/c` (the same ±80-fifth span in every mapping); projection `7Δq − c·Δr`; copies are
+  candidates like any cell. `VALID_REF_TABLE` / `PIANO_BOUNDS_TABLE` carry an
   outer mapping dimension (regenerated by `test/bounds-probe/`).
 - **Switching mapping** (`setMapping`, `apps/hkl/src/ui/controls.ts`): the reference, anchor, held mouse /
   piano-input / pedal-sustained notes convert by the frame formula (same pitch); held Lumatone / QWERTY
@@ -314,6 +351,98 @@ occupies the middle four columns.
   Lumatone cells), `test/hkl-midi/mapping-switch.mjs` (held keys across a switch), the Composer
   `mapping` fixtures. Decisions: decisions.md 2026-10-26 "Wicki-Hayden note-name mapping".
 
+#### Chromatic
+
+**Construction.** Chromatic keeps every Wicki-Hayden column (at even `Q`, pitch-exact in every
+mode). It interpolates six new columns per band at odd `Q`, so rows step in semitones and bands
+are 12 wide.
+- Each new column is the cell one `(5,1)` octave-vector to its left, up an exact octave and
+  unadjusted: `(Q, R) = (Q−5, R−1) × 2`. Equivalently, right of each column sits its M7 below,
+  up an octave.
+- The neighbour set is ±m2 (row), ±P5 (`r`) and ±A4/d5 `(−1,+1)`. The isotone (12-TET unison)
+  is `(7, −1)`.
+
+**Euler-equivalent** (`eulerOf`), with `Q = 4k + j`:
+
+| j | column | Euler-equivalent |
+|---|---|---|
+| 0 | the original | `(k, R)` |
+| 1 | its m2 above | `(k+2, R−1)` |
+| 2 | the Wicki-Hayden copy | `(k−3, R+2)` |
+| 3 | the original's m3 above | `(k−1, R+1)` |
+
+**Band layout.** Column order by `(Q+4) mod 12` is `[qm2, ·, qm2′, ·, qm0, ·, qm0′, ·, qm1, ·,
+qm1′, ·]` (· = new). A3 sits at `(0,0)`, position 4, and A's row reads
+F F# G G# A Bb B C C# D D# E.
+
+**Why this construction** (decisions.md 2026-10-27):
+- In every row it gives the **5-limit duodene of the ref**: Ellis's 3 rows × 4 fifths, the rows a
+  5:4 apart (Bb F C G / D A E B / F# C# G# D# on A). The ref's just major and minor lie along its
+  own row.
+- The alternatives were all rejected:
+  - the mirror rule `(Q+5, R+1) ÷ 2`, i.e. the M7 left of each column, gives the duodene of E,
+    with an acute 4th and 6th from the ref;
+  - real leading tones everywhere give B# and C## in the ref's m3/P4 slots;
+  - adjacent-column copies give remote spellings and wolf intervals.
+
+**Two band functions.**
+- `bandOfCell` is the spatial band. It drives seams, position in band, `refSpine`, the anchor,
+  the Schismatic schisma and the schismatic-chord check.
+- `pitchBandOf` is the band whose Syntonic/Polysyntonic offset a cell carries. It equals
+  `bandOfCell(Q−5)` at the two positions whose source is in the band to the left (1 and 3:
+  F#, G# on A's row), and the own band everywhere else.
+- So under S/Y the borrowed columns carry the left band's comma: the home band is Pythagorean
+  except the ref's just M6 and leading tone (Tuning modes → Syntonic / Polysyntonic).
+- Schismatic deliberately does **not** carry: it is Semiditonal × schisma^(spatial band). The
+  borrowed columns therefore keep 5/6 and 15/16, and a new column against `(Q−5, R−1)` is
+  2/1 × schisma at those two positions.
+
+**Spine and conversion.**
+- `refSpine` centres the qm0 of the ref's own band, in its row, so the ref sits ≤4 columns left
+  or ≤7 right of centre.
+- The frames nest, so `convertCell` maps a cell that exists in the target frame to that same cell,
+  exact in every mode. Euler / Wicki-Hayden → chromatic therefore always is exact. Other cells
+  go through their Euler-equivalent.
+- Chromatic → Euler is pitch-exact in 5/P/D/7. In V and S/Y it is exact for 525 of 1050 new
+  columns (the same class as Wicki-Hayden copies).
+
+**Interval structure** (`test/chromatic-layout/oracle.mjs` asserts these):
+- An even column equals its Wicki-Hayden cell.
+- `(+4, 0)` is the mode's Euler `(1, 0)` step.
+- The band step `(12, 0)` is the mode's band octave. In S it follows the transition of the cell's
+  pitch band.
+
+The ref's row at A3, read upward:
+
+| mode | `(+1,0)…(+12,0)` from the ref |
+|---|---|
+| E | 1 … 12 semitones |
+| 5 | 16/15 9/8 6/5 5/4 4/3 45/32 3/2 8/5 5/3 9/5 15/8 2/1 |
+| P | 256/243 9/8 32/27 81/64 4/3 729/512 3/2 128/81 27/16 16/9 243/128 2/1 |
+| D | 256/243 9/8 32/27 5/4 4/3 45/32 3/2 128/81 5/3 16/9 15/8 2/1 |
+| 7 | 28/27 9/8 7/6 5/4 4/3 45/32 3/2 14/9 5/3 7/4 15/8 2/1 (4:5:6:7 along the row) |
+| V | as D within the band; the crossing E→F is 135/128 (limma·schisma) |
+| S / Y | home band F→E: 64/81 5/6 8/9 15/16 1 256/243 9/8 32/27 81/64 4/3 729/512 3/2 |
+
+**Twins.** A band holds most notes twice, one isotone apart (7 keys).
+- They are identical, except at the duodene's 5-row seam (G/G at 80/81; Septimal 64/63) and,
+  under S/Y, the borrowed F#/G# against their Pythagorean twins.
+- The 280 Lumatone keys carry 136 distinct 5-limit pitches over 58 pitch classes (Wicki-Hayden
+  168 / 57, Euler 280 / 55).
+
+**Lumatone.** The case axis `(7, −2)` carries −7 semitones, so each board sits a fifth below its
+left neighbour.
+- From left to right the boards span 40–102 … 12–74, and each one alone spans ~62 semitones
+  vertically.
+- All 280 keys cover MIDI 12–102 with 88 distinct notes.
+- This is accepted and not mitigated: fixing it would break numerical isomorphism.
+
+**Gates:**
+- `test/chromatic-layout/oracle.mjs`;
+- the chromatic rows of `test/syntonic/oracle.mjs`, `test/color-gate/`, `test/bounds-probe/` and
+  `test/hkl-midi/mapping-switch.mjs`;
+- the Composer `mapping` and `syntonic` fixtures.
+
 ---
 
 ## Color scheme
@@ -331,8 +460,9 @@ Composer recolours notes with the same functions.
   octave minus the octaves its factorisation contains; octave (`e2`) never enters. Steps per comma:
   syntonic 2, schisma 5, Pythagorean 7 ≡ 0, 35/36 0. Hence Ptolemaic's `floor(midi/12) − band`,
   P/D's "colour as the SC sibling", Schismatic's +5 per band, Septimal's "Ptolemaic hue", a
-  Wicki-Hayden copy's "its column's colour", and Syntonic/Polysyntonic's +2 per comma (purple A →
-  orange → green … raised, teal → yellow … lowered) are all this one function.
+  Wicki-Hayden copy's "its column's colour", a chromatic borrowed column's "its source band's
+  hue" under S/Y, and Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised,
+  teal → yellow … lowered) are all this one function.
 - **Septimal variant**: a cell with `e7 ≠ 0` takes `.sl`/`.sd`, a 50% lerp toward the next hue.
 - **Equal — 3 hues**: `[BL,PU,PK][floor(midi/12) % 3]` by sounding octave, rotated so A3 = purple —
   the one genuinely separate rule.

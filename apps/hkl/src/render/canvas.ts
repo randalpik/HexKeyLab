@@ -131,6 +131,38 @@ const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode
       'Y': { kbMinW: 1314, CH: 702 },
     },
   },
+  chromatic: {
+    verticalFreq: {
+      'E': { kbMinW: 4817, CH: 392 },
+      '5': { kbMinW: 4817, CH: 392 },
+      'P': { kbMinW: 5712, CH: 392 },
+      'D': { kbMinW: 5881, CH: 392 },
+      '7': { kbMinW: 5247, CH: 392 },
+      'V': { kbMinW: 5881, CH: 392 },
+      'S': { kbMinW: 6290, CH: 392 },
+      'Y': { kbMinW: 3636, CH: 392 },
+    },
+    lumatone: {
+      'E': { kbMinW: 4688, CH: 921 },
+      '5': { kbMinW: 4688, CH: 921 },
+      'P': { kbMinW: 5577, CH: 1126 },
+      'D': { kbMinW: 5741, CH: 1126 },
+      '7': { kbMinW: 5112, CH: 913 },
+      'V': { kbMinW: 5741, CH: 1126 },
+      'S': { kbMinW: 6152, CH: 1300 },
+      'Y': { kbMinW: 3675, CH: 574 },
+    },
+    piano: {
+      'E': { kbMinW: 4846, CH: 406 },
+      '5': { kbMinW: 4846, CH: 406 },
+      'P': { kbMinW: 5728, CH: 603 },
+      'D': { kbMinW: 5899, CH: 406 },
+      '7': { kbMinW: 5273, CH: 406 },
+      'V': { kbMinW: 5899, CH: 406 },
+      'S': { kbMinW: 6298, CH: 751 },
+      'Y': { kbMinW: 3536, CH: 702 },
+    },
+  },
 };
 
 /* Lumatone / QWERTY are static cell sets (no tuning dependence). Project

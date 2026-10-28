@@ -837,15 +837,18 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
 - **Retune**: changing the score's tuning mode or note-name mapping in Setup
   rewrites each note's `(q, r)` to keep its frequency (`notation/retune.ts`).
   A mapping change seeds each note's search at its closed-form frame
-  conversion (`convertCell`), so every note relocates exactly except a
-  Schismatic Wicki-Hayden copy going to Euler (≈1.95¢). Afterwards
+  conversion (`convertCell`), so every note relocates exactly in the
+  band-uniform modes; in Schismatic / Syntonic / Polysyntonic a Wicki-Hayden or
+  chromatic copy going toward Euler can land a schisma (≈1.95¢) or a comma
+  away, and the search reports it. Afterwards
   `model.recolorNotes()` rewrites every baked colour from the note's pitch
   under the new layout (colour is one function of the pitch,
   `@hkl/shared/keycolor.js`), so an inexact relocation no longer keeps a stale
   colour. A note whose `@color` isn't a lattice ink (an import's black) keeps it.
 - **Syntonic / Polysyntonic anchor**: each note sounds under the anchor of the
   key signature at its measure — `model.anchorAt(mi)` = the band of the same
-  key-tonic cell `set-score-ref` carries (`findTonicCoord`), so Composer and
+  key-tonic cell `set-score-ref` carries (`findTonicCoord`, always an original
+  spine column, so never a chromatic borrowed column), so Composer and
   HKL agree by construction. Derived, never stored (no `.hkc` change). Render
   clones get a render-only `data-anchor` per note (`stampAnchors`, S/Y only;
   never on the save path) for the HEJI transform and accidental pass
@@ -856,7 +859,7 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   HKL's anchor (`hkl-layout-state.anchor`) with the score's at the
   position/cursor; `apply-layout` in S/Y drops HKL's manual Ctrl+click
   selection so the score-ref drives the anchor.
-- **Note-name mapping**: `<hkl:layoutReq mapping="wickiHayden">` (absent =
+- **Note-name mapping**: `<hkl:layoutReq mapping="wickiHayden|chromatic">` (absent =
   Euler, so Euler scores serialise exactly as before) is the frame of every
   `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
   SC shifts and the performance matcher all read it; MusicXML import makes

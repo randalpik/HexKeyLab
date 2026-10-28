@@ -1,8 +1,8 @@
 // Hex lattice → screen geometry. The tilt angle is selectable at runtime via
 // setRotation():
 //   verticalFreq — average log-frequency gradient is screen-vertical
-//                  (q-axis: log(2)/3 per step under the Euler mapping,
-//                  log(2)/6 under Wicki-Hayden; r-axis: midpoint of 5-limit
+//                  (q-axis: log(2)·COLUMN_STEP/12 per step — log(2)/3 Euler,
+//                  /6 Wicki-Hayden, /12 chromatic; r-axis: midpoint of 5-limit
 //                  log(3/2) and 7-limit log(3/2)-log(81/80)/6)
 //   lumatone     — (+7q, -2r) direction is screen-horizontal (Lumatone case row)
 //   piano        — q-axis is screen-horizontal (octaves tile left-to-right)
@@ -11,6 +11,7 @@
 // updates to every importer without re-importing.
 
 import type { HexSize, Mapping, RotationMode } from '../state/persistence.js';
+import { COLUMN_STEP } from '@hkl/shared/mapping.js';
 
 /* Hex inradius (px) and derived axis pitches. `let` exports: setHexSize()
    reassigns them and ES module live bindings propagate to every importer.
@@ -45,7 +46,6 @@ function verticalFreqTilt(qStep: number): number {
   return Math.PI / 2 - Math.atan2(gy, gx);
 }
 const TILT_VERTICAL_FREQ = verticalFreqTilt(Math.log(2) / 3);
-const TILT_VERTICAL_FREQ_WH = verticalFreqTilt(Math.log(2) / 6);
 const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
 const TILT_PIANO = 0;
 
@@ -62,7 +62,7 @@ export function setRotation(mode: RotationMode, mapping: Mapping): void {
   switch (mode) {
     case 'lumatone': tiltAngle = TILT_LUMATONE; break;
     case 'piano': tiltAngle = TILT_PIANO; break;
-    default: tiltAngle = mapping === 'wickiHayden' ? TILT_VERTICAL_FREQ_WH : TILT_VERTICAL_FREQ;
+    default: tiltAngle = verticalFreqTilt(Math.log(2) * COLUMN_STEP[mapping] / 12);
   }
   cosT = Math.cos(tiltAngle);
   sinT = Math.sin(tiltAngle);

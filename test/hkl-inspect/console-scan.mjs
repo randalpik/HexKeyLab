@@ -37,6 +37,8 @@ const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/'
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 const VEROVIO_MS = Number(process.env.VEROVIO_MS ?? 2500);
 
+/* Optional layout before the chord: MAPPING=chromatic, TUNING=S (toolbar values). */
+const LAYOUT = { selMapping: process.env.MAPPING ?? null, selTuning: process.env.TUNING ?? null };
 const argv = process.argv.slice(2);
 const shotIdx = argv.indexOf('--screenshot');
 const screenshotPath = shotIdx >= 0 ? argv[shotIdx + 1] : null;
@@ -100,6 +102,10 @@ async function main() {
   /* Enable the staff inset + HEJI accidentals so the note triggers Verovio +
    * the BravuraText font path. staff-inset reads these checkboxes live. */
   const enabled = await cdp.evalJSON(`(() => {
+    for (const [id, v] of Object.entries(${JSON.stringify(LAYOUT)})) {
+      const sel = document.getElementById(id);
+      if (v && sel) { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
     const ids = ['cbStaff', 'cbHeji'];
     const out = {};
     for (const id of ids) {

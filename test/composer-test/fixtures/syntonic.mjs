@@ -14,6 +14,14 @@ const C4_HOME = { ink: '#055ad1', light: '#4C96FF' };   /* Syntonic, anchor 2: P
 const C4_UP1 = { ink: '#f90673', light: '#FF4C79' };    /* Syntonic, anchor 1: C·81/80 */
 const C4 = (col) => `{ q: 12, r: -3, pname: 'c', accid: '', oct: 4, midi: 60, colorHex: '${col.ink}', lightColorHex: '${col.light}', velocity: 80 }`;
 
+/* Chromatic: B3 at (23,−3) is a BORROWED column (position 3 of band 2, an
+   unadjusted copy from band 1), so it carries band 1's offset. Key C (tonic
+   C4 (24,−3), anchor 2): one comma down, C's just leading tone. Key G (anchor 1):
+   its carried band is home, so it is Pythagorean. */
+const B3_LOW1 = { ink: '#055ad1', light: '#4C96FF' };   /* Syntonic, anchor 2: B·80/81 */
+const B3_PYTH = { ink: '#f90673', light: '#FF4C79' };   /* Syntonic, anchor 1: Pythagorean B */
+const B3 = (col) => `{ q: 23, r: -3, pname: 'b', accid: '', oct: 3, midi: 59, colorHex: '${col.ink}', lightColorHex: '${col.light}', velocity: 80 }`;
+
 const HELPERS = `
   window.__synCol = () => { const n = m.getDoc().querySelector('note'); return n ? [n.getAttribute('color'), n.getAttribute('data-light-color')] : null; };
   window.__synAsked = [];
@@ -47,6 +55,31 @@ export const FIXTURES = {
       m.setKeySigAt(0, '1s', 'major');
       m.setCursor(0, 1);
       m.insertChordAtCursor({ notes: [${C4(C4_UP1)}], duration: '4', dots: 0 });
+    `,
+  },
+  /* Chromatic: a key change re-anchors a borrowed column like any other — it
+     keeps its cell and spelling, and its carried comma re-pitches (C → G:
+     lowered → Pythagorean), colours following. */
+  syn_chromatic_borrowed_reanchors: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: 'S', mapping: 'chromatic' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${B3(B3_LOW1)}], duration: '4', dots: 0 });
+      window.__synC = [m.anchorAt(0), ...window.__synCol()];
+      m.setKeySigAt(0, '1s', 'major');
+      window.__synG = [m.anchorAt(0), ...window.__synCol()];
+      r();
+    `,
+  },
+  /* Chromatic, key C: the borrowed B3 is one comma down — a diatonic natural
+     that must show its arrow: natural-with-one-down-arrow U+E2C2. */
+  syn_chromatic_borrowed_heji: {
+    setup: `
+      m.setLayoutReq({ tuningMode: 'S', mapping: 'chromatic' });
+      m.setHejiEnabled(true);
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [${B3(B3_LOW1)}], duration: '4', dots: 0 });
     `,
   },
   /* The same note in C is home: no comma, no accidental drawn. */
@@ -134,6 +167,19 @@ export const ASSERTIONS = {
   syn_heji_arrow_render: [
     { name: 'C4 one comma up in G → natural + one up-arrow U+E2C7',
       expr: `(${expect.toString()})(${accidGlyphs}, ['e2c7'])` },
+  ],
+  syn_chromatic_borrowed_reanchors: [
+    { name: 'key C: anchor 2, borrowed B3 one comma down',
+      expr: `(${expect.toString()})(window.__synC, [2, '${B3_LOW1.ink}', '${B3_LOW1.light}'])` },
+    { name: 'key G: anchor 1, borrowed B3 Pythagorean',
+      expr: `(${expect.toString()})(window.__synG, [1, '${B3_PYTH.ink}', '${B3_PYTH.light}'])` },
+    { name: 'the cell and spelling never moved',
+      expr: `(() => { const n = window.__hkl_composer.model.getDoc().querySelector('note');
+        return (${expect.toString()})([n.getAttribute('data-q'), n.getAttribute('data-r'), n.getAttribute('pname'), n.getAttribute('oct')], ['23', '-3', 'b', '3']); })()` },
+  ],
+  syn_chromatic_borrowed_heji: [
+    { name: 'borrowed B3 one comma down in C → natural + one down-arrow U+E2C2',
+      expr: `(${expect.toString()})(${accidGlyphs}, ['e2c2'])` },
   ],
   syn_heji_home_plain: [
     { name: 'C4 home in C → no accidental drawn',

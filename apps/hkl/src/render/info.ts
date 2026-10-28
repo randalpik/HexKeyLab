@@ -4,7 +4,7 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { keyFreq } from '../tuning/frequency.js';
-import { posInBand } from '../layout/coords.js';
+import { posInBandOf } from '@hkl/shared/mapping.js';
 import { fmtNote, noteName, keyOctave, parseNote } from '@hkl/shared/notes.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { jiRatio, intervalTierFromExps, fmtFactors } from '../tuning/ratios.js';
@@ -72,8 +72,8 @@ export function updateInfo(): void {
   keys.forEach(function (k, i) {
     if (i > 0) html += ' ';
     const bTag = k.inB ? '<span style="color:#E44CBC;font-size:9px;font-weight:700;margin-left:2px">7</span>' : '';
-    /* position in the octave band: 0–2 Euler, 0–5 Wicki-Hayden */
-    const p = tuning.mapping === 'wickiHayden' ? (((k.q + 2) % 6) + 6) % 6 : posInBand(k.q);
+    /* position in the octave band: 0–2 Euler, 0–5 Wicki-Hayden, 0–11 chromatic */
+    const p = posInBandOf(k.q, tuning.mapping);
     const coordTag = showCoords ? '<span style="color:#666;font-size:10px;margin-left:4px">(q=' + k.q + ' r=' + k.r + ' p=' + p + ')</span>' : '';
     html += '<span class="note-tag"><span class="note-name" style="color:' + k.col + '">' + k.name + k.oct + '</span>' + bTag + coordTag + ' <span class="freq">' + k.freq.toFixed(2) + ' Hz</span></span>';
   });

@@ -25,9 +25,9 @@
 // pitch is played.
 //
 // Candidates for a MIDI live on a 1-parameter family (q0+7k, r0−c·k), c the
-// column step in semitones (4 Euler, 2 Wicki-Hayden); k ∈ [−20, 20] (Euler,
-// twice that under Wicki-Hayden) is comfortably wider than any sensible
-// enharmonic excursion. At the ref's MIDI the ref itself wins (TH 0,
+// column step in semitones (4 Euler, 2 Wicki-Hayden, 1 chromatic); k ∈ [−20, 20]
+// (Euler, scaled by 4/c in the other mappings) is comfortably wider than any
+// sensible enharmonic excursion. At the ref's MIDI the ref itself wins (TH 0,
 // distance 0), so the ref never falls outside its own footprint.
 //
 // Schismatic ('V') ranks under Semiditonal ('D') ratios — same column shifts,
@@ -38,6 +38,7 @@
 // MIDI resolves to.
 
 import { coordToMidi, tenneyHeightFromExps } from '@hkl/shared/freq.js';
+import { COLUMN_STEP } from '@hkl/shared/mapping.js';
 import { noteName } from '@hkl/shared/notes.js';
 import { jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
@@ -45,11 +46,13 @@ import type { TuningStateLike } from './regions.js';
 export function pianoFootprint(refQ: number, refR: number, state: TuningStateLike): Array<[number, number]> {
   const cells: Array<[number, number]> = [];
   const mapping = state.mapping;
-  /* Octave step is (12/c, 0): (+3, 0) Euler, (+6, 0) Wicki-Hayden. The
-     isotone projection 7(q−refQ) − c(r−refR) shifts by 7·12/c per octave. */
-  const c = mapping === 'wickiHayden' ? 2 : 4;
-  const inv = c === 4 ? 2 : 4; /* c·inv ≡ 1 (mod 7) */
-  const K = mapping === 'wickiHayden' ? 40 : 20;
+  /* Octave step is (12/c, 0): (+3, 0) Euler, (+6, 0) Wicki-Hayden, (+12, 0)
+     chromatic. The isotone projection 7(q−refQ) − c(r−refR) shifts by 7·12/c
+     per octave. */
+  const c = COLUMN_STEP[mapping];
+  let inv = 1; /* c·inv ≡ 1 (mod 7) */
+  while ((c * inv) % 7 !== 1) inv++;
+  const K = 80 / c;
   const PROJ_PER_OCT = 7 * (12 / c);
   const refMidi = coordToMidi(refQ, refR, mapping);
   const pickerState: TuningStateLike = state.mode === 'V' ? { ...state, mode: 'D' } : state;
