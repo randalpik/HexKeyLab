@@ -21,3 +21,4 @@ docs/local/
 tools/obs-trim/hkltrim
 tools/obs-trim/align.py
 tools/obs-trim/validate.py
+tools/overlay/

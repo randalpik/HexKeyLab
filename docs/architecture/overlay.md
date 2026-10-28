@@ -275,28 +275,16 @@ both auto-dial the host's `:5190` relay — HMR for both, no `?obsrelay` needed 
 (There is **no** dev-proxy relay — one relay, no dev/prod divergence. A dev performer is NOT
 same-origin-routed; it dials `127.0.0.1:5190` exactly like production does.)
 
-**On Max's machine the host runs permanently as a systemd user service** (since 2026-10-24), so
-"relay first" is already met there and no terminal holds it. Unit:
-`~/.config/systemd/user/hkl-overlay-host.service` — `WorkingDirectory` = the repo,
-`ExecStart=/usr/bin/node apps/overlay-host/src/server.mjs` (node directly: the `pnpm overlay:host`
-wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (2 s), `WantedBy=` +
-`PartOf=graphical-session.target`. It runs the checkout's code directly, so:
-- **Graphical session, not `default.target`.** The `/fs/*` dialogs need the session's display +
-  D-Bus env, which Plasma's systemd startup imports into the user manager (`systemctl --user
-  show-environment` carries `WAYLAND_DISPLAY`, `DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`). Started
-  earlier (`default.target`, lingering) the relay would work but the dialogs would not.
-- **Edits to `apps/overlay-host/src/*.mjs` need `systemctl --user restart hkl-overlay-host`**, as do
-  `HKL_OVERLAY_PORT` / `HKL_FS_*` / picker changes (all read once at startup). `pnpm overlay:dist`
-  does not: `static.mjs` reads `embedded/` per request and `index.html` is `no-cache`.
-  `hkloverlay` (`tools/overlay/`, on `PATH` via `~/.local/bin`) does either or both — rebuild
-  (`-b`), restart (`-r`), default both — and verifies the unit is the port's listener serving the
-  freshly embedded entry.
-- **Don't also run `pnpm overlay:host` by hand** — the second instance exits on `EADDRINUSE`. The
-  reverse crash-loops the service until the port frees (9 restarts at install, while the old terminal
-  instance still held it). `test/overlay-inspect/` and `test/fs-bridge/` bind their own ports and are
-  unaffected.
-- Output goes to `journalctl --user -u hkl-overlay-host`; the startup banner names the detected picker
-  and roots.
+**Keeping the host running.** The host runs the checkout's code directly, so:
+- **Edits to `apps/overlay-host/src/*.mjs` need a host restart**, as do `HKL_OVERLAY_PORT` /
+  `HKL_FS_*` / picker changes (all read once at startup). `pnpm overlay:dist` does not:
+  `static.mjs` reads `embedded/` per request and `index.html` is `no-cache`.
+- **One host per port** — a second instance exits on `EADDRINUSE`. `test/overlay-inspect/` and
+  `test/fs-bridge/` bind their own ports and are unaffected.
+- **As a service, start it with the graphical session.** The `/fs/*` dialogs need the session's
+  display + D-Bus env (`WAYLAND_DISPLAY` / `DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`); started earlier,
+  the relay works but the dialogs do not.
+- The startup banner names the detected picker and roots.
 
 ---
 
@@ -325,5 +313,4 @@ wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (
 | Composer-frame mirror | `apps/hkl/src/bridge/hkl-side.ts`, `apps/hkl/src/render/composer-frame.ts` |
 | Protocol / client | `packages/bridge/src/overlay-protocol.ts`, `overlay-ws.ts` |
 | Publisher auto-start | `apps/hkl/src/ui/init.ts` (unconditional `setOverlayPublishing(true)` at boot) |
-| Rebuild overlay + restart host service | `tools/overlay/hkloverlay` (README alongside) |
 | OBS recording → loop-ready mp4 | `tools/obs-trim/trim.py` (onset-anchored cut, downbeat end, declick ramps; README alongside) |
