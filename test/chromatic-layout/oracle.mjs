@@ -21,6 +21,10 @@
 //   I  anchor on a borrowed key: its spatial band becomes home and it stays
 //      one syntonic comma below Pythagorean (S and Y)
 //   J  Schismatic = Semiditonal × schisma^(spatial band), every mapping
+//   K  tritone-axis octaves (Q,R)/(Q+2,R−2): pure except at band positions 3
+//      and 10 (the spelling-window wraps, enharmonic augmented 7ths); there
+//      Pythagorean 2/1·PC, Polysyntonic always 2/1·schisma, Syntonic by
+//      transition — carry puts both wraps on a pitch-band boundary
 //   F  the 280 Lumatone keys: distinct cells, MIDI 12–102, 88 distinct notes
 //
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/chromatic-layout/oracle.mjs
@@ -195,6 +199,36 @@ for (const map of MAPPINGS) {
   for (let q = -40; q <= 40; q++) {
     for (let r = -15; r <= 15; r++) {
       check(`J ${map} (${q},${r})`, coordExps(q, r, 'V', map, 0).join(), add(coordExps(q, r, 'D', map, 0), SCHISMA, bandOfCell(q, map)).join());
+    }
+  }
+}
+
+/* ── K: tritone-axis octaves (emergent; docs/architecture.md → Chromatic) ──────
+   (Q,R) above (Q+2,R−2), two tritone steps = an octave. Pure everywhere except
+   where the upper cell sits at band position 3 or 10 — the two places two
+   tritones run past the row's 12-fifth spelling window, so the pair is an
+   enharmonic augmented 7th (lower note flat-side, upper sharp-side; every pitch
+   class occurs as rows vary). Pythagorean: 2/1·PC there. Carry puts both
+   positions on a pitch-band boundary (pitch band of the lower cell = upper + 1),
+   so the band offset step dk = k(lower) − k(upper) applies: 2/1·PC/SC^dk —
+   Polysyntonic always dk = 1 → 2/1·schisma; Syntonic ±1 by transition. */
+const PC = [-19, 12, 0, 0];
+for (const m of ['P', 'S', 'Y']) {
+  for (const a of anchorsFor(m)) {
+    for (let Q = -40; Q <= 40; Q++) {
+      for (let R = -12; R <= 12; R++) {
+        const iv = sub(ex(Q, R, m, a), ex(Q + 2, R - 2, m, a));
+        const wrap = [3, 10].includes(posInBandOf(Q, CH));
+        let want = OCT;
+        if (wrap) {
+          check(`K (${Q},${R}) wrap crosses one pitch band`, pitchBandOf(Q + 2, CH) - pitchBandOf(Q, CH), 1);
+          const dk = m === 'P' ? 0 : bandOffset(m, pitchBandOf(Q + 2, CH) - a) - bandOffset(m, pitchBandOf(Q, CH) - a);
+          want = add(add(OCT, PC), SC, -dk);
+          if (m === 'Y') check(`K Y a${a} (${Q},${R}) = 2/1·schisma`, iv.join(), add(OCT, SCHISMA).join());
+          check(`K (${Q},${R}) spelled as an enharmonic pair`, noteName(Q, R, CH)[0] !== noteName(Q + 2, R - 2, CH)[0], true);
+        }
+        check(`K ${m} a${a} (${Q},${R}) tritone-axis octave`, iv.join(), want.join());
+      }
     }
   }
 }

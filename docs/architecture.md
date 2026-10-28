@@ -424,6 +424,41 @@ The ref's row at A3, read upward:
 | V | as D within the band; the crossing E→F is 135/128 (limma·schisma) |
 | S / Y | home band F→E: 64/81 5/6 8/9 15/16 1 256/243 9/8 32/27 81/64 4/3 729/512 3/2 |
 
+**Tritone-axis octaves (an emergent property, found 2026-10-27, not designed).** Two steps along
+the tritone axis, `(Q,R)` above `(Q+2,R−2)`, are an octave.
+- **Where they are pure.** They are pure everywhere except where the upper cell sits at band
+  position 3 or 10, i.e. the lower cell is in the first or sixth column of a band.
+  - Those two columns are where two tritone steps run past the ends of the row's 12-fifth
+    spelling window, so the pair is spelled as an enharmonic augmented 7th: flat-side note below,
+    its sharp-side twin above.
+  - On A's row that is Ab→G# and Eb→D#. Because each column holds every pitch class as the rows
+    step by fifths, all 12 pitch classes occur.
+- **What carry does.** Pythagorean must tune those pairs 2/1 × Pythagorean comma. Carry puts
+  **both** positions on a pitch-band boundary:
+  - Eb→D# crosses the visual seam;
+  - Ab→G# reaches the borrowed G#, which carries the band to the left.
+  So the band offset applies at exactly those places:
+  - Polysyntonic always steps one comma there, leaving 2/1 × schisma: every tritone-axis octave is
+    pure or 1.95¢ wide.
+  - Syntonic's 0, +1, 0, −1 cycle steps the comma back at two of every four transitions. Those
+    pairs come out 2/1 × PC × SC (45¢ wide).
+
+Census of the 223 such octaves on the Lumatone (ref A3):
+
+| mode | pure | other |
+|---|---|---|
+| E | 223 (12-TET) | — |
+| Y | 188 | 35 × +schisma |
+| P | 188 | 35 × +PC |
+| S | 188 | 26 × +schisma, 9 × +PC+SC |
+| D | 150 | 35 × +schisma, 38 × +SC |
+| V | 166 | 19 × +schisma, 20 × +SC, 18 × +diaschisma |
+| 5 | 112 | 76 × +SC, 35 × −diaschisma |
+| 7 | 112 | 38 × +SC, 38 × −64/63, 35 × +schisma+64/63 |
+
+Without carry, Polysyntonic would give 170 pure, 16 × +schisma, 19 × +PC and 18 × −SC. So this is
+a consequence of carry, not its definition. `test/chromatic-layout/oracle.mjs` section K pins it.
+
 **Twins.** A band holds most notes twice, one isotone apart (7 keys).
 - They are identical, except at the duodene's 5-row seam (G/G at 80/81; Septimal 64/63) and,
   under S/Y, the borrowed F#/G# against their Pythagorean twins.

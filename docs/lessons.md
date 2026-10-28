@@ -5528,3 +5528,22 @@ A relay that retains last-value-per-type and replays a snapshot *after* the delt
 ## `apps/hkl/src/types.ts` holds a literal NUL — grep and Edit skip it (2026-10-27)
 
 `VOICE_SEP = '\0'` is a raw NUL byte, so ugrep (this machine's `grep`) treats the file as binary and prints nothing for a match, and the Edit tool refuses it. A codebase-wide `grep` silently misses every declaration in it (`AnimationModule`, `VoiceId`, …). Search it with `grep -a` or Python, and edit it with a byte-preserving script.
+
+## On a fifth-axis lattice, a column fact read on one row is not a pitch fact (2026-10-27)
+
+Every column of the Euler / Wicki-Hayden / chromatic lattice holds all 12 pitch classes, one per row, because rows step by fifths. Structural properties (a column's spelling offset, which boundaries are chromatic or diatonic, where the spelling window wraps, which columns a mapping borrows) belong to **column positions**. Naming them by the pitches on one row turns a positional fact into a false pitch fact.
+
+The chromatic tritone-axis octave census was reported as "every non-pure octave is G#→Ab or D#→Eb". Those were only row 0's spellings of band positions 3 and 10; Max found non-pure octaves above every chromatic pitch. Likewise, "the As with Ab to their left" is a row-dependent subset of every pitch class.
+
+State such results by position (or by interval class: "an enharmonic augmented 7th"), give one row's spellings only as an example, and spot-check another row before generalising.
+
+## Evidence for a construction rule must be a consequence, not its definition (2026-10-27)
+
+Arguing for the chromatic "carry" rule (an unadjusted copy keeps its source band's comma), I cited "the copy relation then holds exactly in every mode, 72,625 cells". Max: that *is* carry. Copying a cell exactly makes the copy match it, and a check of it only exercises the implementation.
+
+Before calling something evidence, ask whether the alternative could have passed the same check. Real evidence turned up afterwards, unplanned:
+- Carry puts both of the band's spelling-window wraps on a pitch-band boundary.
+- So every Polysyntonic tritone-axis octave is pure or 2/1·schisma (188 + 35 on the Lumatone).
+- Without carry: 170 pure, 16 schisma, 19 +PC, 18 −SC.
+
+Search a design's consequences, not its definition. Censuses over the real footprint find properties no one designed (docs/architecture.md → Chromatic, "Tritone-axis octaves").
