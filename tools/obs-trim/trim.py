@@ -132,7 +132,7 @@ def probe_size(path):
 
 
 GAP_DEFAULT = 2.0  # s of digital silence that separates takes. Library (35 kept takes): the shortest
-                   # setup pause before a legitimate take is 2.26 s (revolutionary take 20), the longest
+                   # setup pause before a legitimate take is 2.26 s, the longest
                    # rest inside a kept take 0.62 s; in-piece fermatas longer than 2 s (rare) need --take A-B.
 CELL = 24          # full-res px per tracking cell (a hex is ~60 px wide, so 2-3 cells)
 CELL_THR = 10      # luma-level change of a cell mean that counts as an event (noise floor ~1-2)

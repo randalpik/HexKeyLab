@@ -327,4 +327,3 @@ wrapper chain cost ~170 MB RSS over the server's ~80 MB), `Restart=on-failure` (
 | Publisher auto-start | `apps/hkl/src/ui/init.ts` (unconditional `setOverlayPublishing(true)` at boot) |
 | Rebuild overlay + restart host service | `tools/overlay/hkloverlay` (README alongside) |
 | OBS recording → loop-ready mp4 | `tools/obs-trim/trim.py` (onset-anchored cut, downbeat end, declick ramps; README alongside) |
-| Library video + score → per-note JSON | `tools/obs-trim/align.py` (README alongside) |

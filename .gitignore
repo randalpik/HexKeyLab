@@ -17,3 +17,7 @@ docs/backlog.md
 test/composer-test/out/
 handoff/
 __pycache__/
+docs/local/
+tools/obs-trim/hkltrim
+tools/obs-trim/align.py
+tools/obs-trim/validate.py
