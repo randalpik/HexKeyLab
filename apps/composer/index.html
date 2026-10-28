@@ -81,14 +81,18 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
   overflow: auto;
   position: relative;
 }
+/* The content frame (render.ts `container`, made by renderer.attach): the
+   page cards / scroll SVG AND the cursor overlay, so the two can never drift
+   apart. `flow-root` keeps the first card's top margin inside it (its top is
+   #score's content top). In page view the FRAME is what is centred: auto
+   margins centre it when the viewport is wider than the page, and collapse
+   to 0 per CSS block layout when the page is wider (left-aligned, horizontal
+   scrolling). Centring the cards themselves moved them under an overlay that
+   stayed at the pixels it was drawn at (2026-10-27). */
+#score > .score-content { position: relative; display: flow-root; width: max-content }
+#score.view-page > .score-content { margin: 0 auto }
 /* Page view: dark surround. The page-wrapper margins (below) supply the
-   gap between the page card and the #score edges, so absolute-positioned
-   children (the cursor overlay) can still sit at #score's (0, 0) without
-   any padding offset to compensate for. Horizontal margins are `auto` so
-   the page is centered when the score viewport is wider than the page;
-   when the page is wider (e.g. at 100% zoom on narrow screens) the auto
-   margins collapse to 0 per CSS block layout and the page aligns left
-   with horizontal scrolling. */
+   gap between the page card and the frame's edges. */
 #score.view-page { background: #111 }
 #score.view-page .score-page {
   background: #fff;
@@ -132,13 +136,12 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
    and rectForId returns container-local coords that already account for it, so
    cursor + selection markers land correctly without further adjustment. */
 #score.view-scroll svg:not(#cursorOverlay) { margin-left: 24px }
-/* Cursor overlay is sized to match Verovio's SVG dimensions in JS so it
-   covers the same scrollable area. Both children of #score scroll together.
-   Positioned absolute at (0, 0); the overlay's width/height are extended
-   in JS to cover any page-wrapper margin offset so container-local cursor
-   coordinates (from rectForId) land at the correct visual position. */
+/* Cursor overlay: fills the content frame (every card, pending placeholders
+   included), so rectForId's frame coordinates land on their notes. Marks
+   that reach past the frame (a label above the first staff) stay visible. */
 #score svg#cursorOverlay {
-  position: absolute; left: 0; top: 0;
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -161,6 +164,13 @@ body { font-family: system-ui, -apple-system, sans-serif; color: #ccc; display: 
 #score svg .stem path,
 #score svg .stem line,
 #score svg .stem rect { shape-rendering: geometricPrecision }
+/* Stems (and a grace's slash, drawn inside g.stem) are single straight
+   segments: no joins, so the join style draws nothing. But under the default
+   miter join Firefox pads a stroked path's reported box by stroke-width ×
+   miter-limit / 2 — a stem's box came back 8 px wide around ~1 px of ink,
+   which pushed the cursor past a stem-edged grace onto its main note. A
+   round join brings the pad down to half the stroke width (2026-10-28). */
+#score svg .stem path { stroke-linejoin: round }
 
 /* The MEI @color attribute on <note> propagates to all descendants by default
    — notehead AND stem AND flag AND accidental AND dots. We want color on

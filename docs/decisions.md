@@ -10137,3 +10137,33 @@ Gates:
 - `test/chromatic-layout/oracle.mjs`;
 - the chromatic rows of `test/syntonic/oracle.mjs`, `test/color-gate/`, `test/bounds-probe/` and `test/hkl-midi/mapping-switch.mjs`;
 - the Composer `mapping` / `syntonic` fixtures.
+
+## Grace notes: bare `@grace`, timing as performance mode needs it (2026-10-27, Max)
+
+**Rulings (Max).** Acciaccatura (slashed, `unacc`) and appoggiatura (`acc`), beamed multi-note groups for the latter. Stems are never forced (Verovio's default, `L` to flip). `G` toggles the note at the cursor between grace and normal; a placed note is always normal; consecutive graces beam by default; `Shift+G` toggles the slash, and a slashed grace leaves its beam; on a normal note `Shift+G` makes a slashed grace directly rather than refusing. Out of scope: slashed beamed groups, trailing graces (Nachschlag). Playback is what performance mode follows: every grace is its own event before its main note's attack — acc on the beat for min(written, ½ main note), unacc before the beat for min(written, ½ the way back to the previous note, if any).
+
+**Encoding: `@grace` on the note/chord, never `<graceGrp>`.** Verovio draws the slash only from the note's own `@grace="unacc"`, never from a group's, and never inside a beam (`view_element.cpp`, verified on 6.3.0). A wrapper would be no cursor stop and would hit `writtenTicks`'s 16-tick fallback in every walk over layer children; group `@grace.time`/`@attach` serve nothing we do. `realTicks` = 0 (the inline-`<clef>` precedent) while `writtenTicks` keeps the written value — that one line makes bar fill, placeholders and the voice index right.
+
+**Graces travel with their main note.** A tick never resolves to the position just past a grace (`findCursorByTickPosition`, measure and beat boundaries), so every [lo, hi) range holds lo's graces and not hi's; the planner's displacement and `truncateLayer` move/drop a run with its main note; beat cut/copy/paste decide a grace by its main note; a pasted grace is placed directly (at a full bar's end, at the next bar's head). A grace is a tie barrier and holds no tie state.
+
+**Beaming.** Graces are transparent to regular beams: a regular `<beam>` wraps the whole span through any graces between its notes (wrapping only the members would reorder the graces — the clef `breakBefore` hazard), and a grace beam nests inside it. Breaking the regular beam at a grace (rendered and rejected) leaves its notes flagged. Grace runs need no beat logic, so `@hkl-beam-break` on a grace is simply "starts a new beam".
+
+**Accidentals (Max: matches convention).** A grace is an earlier note of its bar (sub-tick before its main note), so a grace's F♯ carries to an F♯ main note.
+
+**Timing details.** A run splits at its last unacc — any other split reorders it in time. The before-the-beat cap is onset to onset to the previous attack in the voice; this voice's notes still sounding there are cut (HKL keys voices by `(instrument, q, r)`, so a same-pitch release would end the grace). Context is read at the main note's tick. A before-the-beat grace at the start point opens a lead-in shared by notes and pedals (`playbackRun`). The cap follows written order under repeats (accepted).
+
+**Performance-mode gate.** A before-the-beat grace sounds during the previous bar. Counted in its own bar it is ignored while another voice still owes the previous bar; counted in the previous bar it holds the current measure back and another voice's simultaneous downbeat is ignored — both halt a correct take. So a pending grace listens from the occurrence it sounds in through its own and counts as its own for `currentOcc`. Pinned by `grace_perf_gate_tail` / `grace_perf_gate_downbeat`.
+
+**Deviations from the spec, decided in implementation:** `Ctrl+2..7` is not refused at a grace — it creates a tuplet at the insertion point and never makes the grace a tuplet member; `G` refuses trilled and harmonic notes (the commands that would add them to a grace are refused too). Overwrite keeps a grace a grace (Max: works).
+
+**MusicXML.** Import reads `<grace>` (slashed beamed groups → `acc`; ties, ornaments, tremolos, tuplet roles dropped); the corpus sample has graces in 15 % / 34 % of files, all previously imported as real notes overfilling their bars. Export writes `<grace/>` / `<grace slash="yes"/>` with no `<duration>`. This supersedes "Grace notes are absent because the model has none" in "MusicXML export brought to parity (2026-09-09)".
+
+Gates: the `grace` fixture category (51 fixtures, incl. `HKL_INDEX_CHECK`), five visual baselines.
+
+## The cursor overlay shares the page cards' frame (2026-10-27, Max)
+
+**Bug.** Page view centred each `.score-page` card with `margin: auto` inside `#score`, while `#cursorOverlay` sat absolute at `#score`'s (0, 0) with pixel coordinates measured when it was drawn. Any change of `#score`'s width moved the cards and left the overlay (voice/layer cursor, playback bars, selection marks) where it was. Every page-view visual baseline with a cursor showed it ~12 px left of its note: the capture widens the viewport from the runner's 1600 px to fit the 2161 px card, the card re-centres, and nothing redraws. A live window resize does the same until the next keystroke.
+
+**Fix (Max chose the structural option over a ResizeObserver redraw).** One frame owns both: `renderer.attach(#score)` creates `div.score-content` (`position: relative; display: flow-root; width: max-content`, centred in page view), and the cards / scroll SVG and the overlay live in it. The renderer's `container` is that frame (DOM root; `rectForElement` / `findSigEndXForStaff` measure against it with no scroll term); a new `scroller` (`#score`) takes the scroll listener, viewport rects, the `IntersectionObserver` root, the per-card centring cache key (`clientWidth`) and the theme tags; `AssemblyHost.scroller` carries the assembler's scroll save/restore. The overlay is sized by CSS (100 % of the frame, `overflow: visible`) instead of JS extents. The one consumer doing scroll math (`maybeScrollMeasureIntoView`) adds `renderer.contentOrigin()`. Rejected: redraw on resize — correct pixels, but two placements kept in step by a callback rather than one placement.
+
+Gate: `cursorFollowsRecentre` (cursor category) widens `#score` past the page with no re-render and requires the bar's offset from its note to hold (failed first: offset 4.0 → −296.0 as the card moved 300 px).

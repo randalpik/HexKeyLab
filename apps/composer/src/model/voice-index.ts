@@ -13,7 +13,7 @@
  * via per-measure prefix sums instead of one `locateCursor` per stop.
  */
 
-import { realTicks } from './ticks.js';
+import { realTicks, isGrace } from './ticks.js';
 import { tupletNavStops } from './cursor-location.js';
 import type { ComposerModel, Voice } from './index.js';
 
@@ -148,6 +148,7 @@ export function buildVoiceIndex(model: ComposerModel, voice: Voice): VoiceIndex 
     const prefixOf = (k: number): number => model.measureStartTick(k);
     for (let c = 0; c <= n; c++) {
       if (c < n && inTuplet[c]) continue;
+      if (c < n && isGrace(stops[c])) continue; /* never land just past a grace */
       const t = tickPos[c];
       while (mi + 1 <= measureCount && prefixOf(mi + 1) <= t + TICK_EPS) mi++;
       if (mi >= measureCount) mi = Math.max(0, measureCount - 1);

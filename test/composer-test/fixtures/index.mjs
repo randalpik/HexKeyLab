@@ -23,6 +23,7 @@ import * as emptyCells from './empty-cells.mjs';
 import * as engraving from './engraving.mjs';
 import * as expression from './expression.mjs';
 import * as files from './files.mjs';
+import * as grace from './grace.mjs';
 import * as instruments from './instruments.mjs';
 import * as keyboard from './keyboard.mjs';
 import * as layerCursor from './layer-cursor.mjs';
@@ -53,6 +54,7 @@ export const CATEGORIES = {
   engraving: engraving,
   expression: expression,
   files: files,
+  grace: grace,
   instruments: instruments,
   keyboard: keyboard,
   'layer-cursor': layerCursor,

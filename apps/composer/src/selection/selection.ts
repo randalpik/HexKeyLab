@@ -16,6 +16,7 @@
 import type { ComposerModel, Voice } from '../model/index.js';
 import { readTimeSig } from '../notation/beams.js';
 import { beatTicks } from '../model/restfill.js';
+import { isGrace } from '../model/ticks.js';
 
 /** A global staff @n (1-based, 1..model.totalStaves()). Was `1 | 2` when the
  *  model was a fixed grand staff; now any staff in a multi-instrument score. */
@@ -74,6 +75,7 @@ export function beatBoundariesInVoice(model: ComposerModel, voice: Voice): numbe
       const info = model.getFlatStopInfo(voice, c);
       if (!info) continue;
       if (info.inTuplet) continue;
+      if (isGrace(flat[c])) continue; /* never land just past a grace */
       t = model.getTickPositionAt(voice, c);
       const inMeas = t - model.measureStartTick(model.measureIdxAtTick(t));
       const rem = inMeas % bt;

@@ -72,7 +72,9 @@ function noteOnsets(doc: Document, staffFilter?: ReadonlyArray<number>): Onset[]
         for (const child of flatLayerChildren(layer)) {
           const local = child.localName;
           const id = child.getAttribute('xml:id');
-          if ((local === 'note' || local === 'chord') && id && !isTieTerminalOnly(child)) {
+          /* A grace has no onset of its own on the tick line — its main note
+             represents the moment. */
+          if ((local === 'note' || local === 'chord') && id && !isTieTerminalOnly(child) && !child.hasAttribute('grace')) {
             out.push({ moment: { measureIdx: mi, tstamp: 1 + cumTicks / ticksPerBeat }, id });
           }
           cumTicks += realTicks(child);

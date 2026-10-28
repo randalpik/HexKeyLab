@@ -137,6 +137,11 @@ interface ImpEvent {
    *  (`<forward>`, e.g. a voice that enters mid-bar) → `<rest visible="false">`.
    *  Occupies ticks (keeps following notes in place) but draws no glyph. */
   hidden?: boolean;
+  /** A grace note (`<grace>`): `unacc` for a slashed single grace, `acc`
+   *  otherwise — a slashed grace in a beamed group imports as `acc` (slashed
+   *  groups are out of scope; docs/architecture/composer.md → Files). No bar
+   *  time, no ties, no ornament/tremolo/tuplet role. */
+  grace?: 'acc' | 'unacc';
   /** Did the source start a new beam at this event? Derived from
    *  <beam number="1"> (begin/absent = true; continue/end = false). Consulted
    *  only for beamable events by the post-build beam-diff pass. */
@@ -339,9 +344,20 @@ function applyBeamMarkers(doc: Document): void {
     const naturalStarts = naturalBeatGroupStarts(doc, layer);
     let prevBeamable: Element | null = null;
     let clefSince = false;
+    /* Graces beam only among themselves (graceBeamRuns), where there is no
+       natural boundary — so the marker IS the source's "starts a new beam" —
+       and are transparent to the regular run around them. */
+    let prevGrace: Element | null = null;
     for (const c of Array.from(layer.children)) {
       const ln = c.localName;
-      if (ln === 'clef') { clefSince = true; continue; }
+      if (ln === 'clef') { clefSince = true; prevGrace = null; continue; }
+      if ((ln === 'note' || ln === 'chord') && c.hasAttribute('grace')) {
+        const beamable = c.getAttribute('grace') === 'acc' && isBeamableElement(c);
+        if (beamable && prevGrace && c.getAttribute('data-imp-beamstart') === '1') c.setAttribute('hkl-beam-break', 'true');
+        prevGrace = beamable ? c : null;
+        continue;
+      }
+      prevGrace = null;
       if (ln === 'note' || ln === 'chord' || ln === 'rest') {
         const beamable = isBeamableElement(c);
         if (beamable && prevBeamable && !clefSince) {
@@ -569,6 +585,12 @@ function buildEvents(
     const beam1 = children(note, 'beam').find((b) => (b.getAttribute('number') ?? '1') === '1');
     const beamVal = beam1?.textContent?.trim() ?? '';
     ev.finaleBeamStart = beamVal === '' || beamVal === 'begin';
+    /* A grace carries no <duration>, so the divisions clock above already
+       gave it none; it sits at its main note's onset. */
+    const graceEl = child(note, 'grace');
+    if (graceEl && !isRest) {
+      ev.grace = graceEl.getAttribute('slash') === 'yes' && beamVal === '' ? 'unacc' : 'acc';
+    }
 
     /* Tuplet boundaries from <notations><tuplet type=start|stop>. num/numbase
        come from <time-modification> (actual-notes / normal-notes). */
@@ -589,6 +611,11 @@ function buildEvents(
       }
     }
     mergeNotations(note, ev);
+    /* What a grace can't carry (docs/architecture/composer.md → Grace notes). */
+    if (ev.grace) {
+      delete ev.tupletStart; delete ev.tupletStop;
+      delete ev.trill; delete ev.wavyStart; delete ev.wavyStop; delete ev.tremolo;
+    }
     events.push(ev);
   }
   flushHidden();
@@ -700,6 +727,9 @@ function applyTie(noteEl: Element, im: ImpNote): void {
  *  Sets ev.el to the built element for downstream slur/fermata wiring. */
 function eventToElement(doc: Document, ev: ImpEvent): Element {
   let element: Element;
+  /* Graces carry no ties (a tie into the main note is dropped too: its stop
+     has no start left once the grace's goes, and normalizeTies clears it). */
+  const tieUnlessGrace = (n: Element, im: ImpNote): void => { if (!ev.grace) applyTie(n, im); };
   if (ev.kind === 'rest') {
     element = buildRestElement(doc, { duration: ev.dur, dots: ev.dots });
     if (ev.hidden) element.setAttribute('visible', 'false');
@@ -711,7 +741,7 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
       const match = childNotes.find((c) =>
         c.getAttribute('data-q') === String(im.spec.q) && c.getAttribute('data-r') === String(im.spec.r));
       if (match) {
-        applyTie(match, im);
+        tieUnlessGrace(match, im);
         if (im.parenCaut) match.setAttribute('hkl-paren-caut', 'true');
         if (im.harmonic) applyHarmonic(element, match);
         else if (im.voidHead) match.setAttribute('head.fill', 'void');
@@ -719,11 +749,12 @@ function eventToElement(doc: Document, ev: ImpEvent): Element {
     }
   } else {
     element = buildNoteElement(doc, ev.notes[0].spec, ev.dur, ev.dots);
-    applyTie(element, ev.notes[0]);
+    tieUnlessGrace(element, ev.notes[0]);
     if (ev.notes[0].parenCaut) element.setAttribute('hkl-paren-caut', 'true');
     if (ev.notes[0].harmonic) applyHarmonic(element, element);
     else if (ev.notes[0].voidHead) element.setAttribute('head.fill', 'void');
   }
+  if (ev.grace) element.setAttribute('grace', ev.grace);
   /* Articulations: <artic artic="…"> children of the note/chord. */
   for (const a of ev.artics) {
     const artic = el(doc, 'artic', { artic: a });
@@ -1423,7 +1454,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
             runDivisions.get(part) ?? part.divisions, runCount, runUnit, octSpansFor(g, mi));
           /* A measure-rest voice is EMPTY — it's sized TO the pickup budget, so
              it must not define it (its default quarter would inflate the bar). */
-          const t = evs.filter((e) => !e.measureRest).reduce((s, e) => s + dottedTicks(e.dur, e.dots), 0);
+          const t = evs.filter((e) => !e.measureRest && !e.grace).reduce((s, e) => s + dottedTicks(e.dur, e.dots), 0);
           maxTicks = Math.max(maxTicks, t);
         }
       }

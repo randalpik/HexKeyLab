@@ -125,6 +125,7 @@ Categories (`fixtures/<name>.mjs`):
 | `instruments` | multi-instrument, part view, harmonics, pizz/arco |
 | `musicxml` | MusicXML import/export |
 | `files` | save/load via the local file bridge, PDF export |
+| `grace` | grace notes: `G` / `Shift+G`, beaming, cursor landing, ties, accidentals, selection, playback timing, performance gate, MusicXML |
 | `playback` | transport, bridge events, score ref, playback cursor |
 | `performance` | performance-mode matcher |
 | `empty-cells` | hide-empty, multimeasure rests, empty-bar rests |

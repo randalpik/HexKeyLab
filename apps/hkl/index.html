@@ -154,6 +154,10 @@ html.overlay .composer-frame-hint{display:none !important}
 #composerFrame svg .stem path,
 #composerFrame svg .stem line,
 #composerFrame svg .stem rect{shape-rendering:geometricPrecision}
+/* Same as Composer: a round join keeps Firefox from padding a stem's (or a
+   grace slash's) reported box by 2× its stroke width, which moved the cursor
+   past a stem-edged grace onto its main note. Single segments: no visible change. */
+#composerFrame svg .stem path{stroke-linejoin:round}
 /* Mirror Composer's render: hide tuplet-bracket placeholder rests and
    user-hidden rests (Verovio ignores @visible on rests, so they're exposed via
    svgAdditionalAttribute — prefixed data- → data-data-tuplet-placeholder /

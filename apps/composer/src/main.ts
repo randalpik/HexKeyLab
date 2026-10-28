@@ -28,7 +28,7 @@ import { loadHkcFromFile, musicXmlBlob, renderPdf, exportMusicXml } from './save
 import { openFile, saveDocument, exportDocument, resetFile, bindBrowserFile, onFileChange, fileState, setLocalFs, type OpenedFile } from './files.js';
 import { importMusicXml, type MusicXmlImportReport } from './importMusicXml.js';
 import { decodeXmlText } from './xmlText.js';
-import { buildPlayback, buildPedalEvents, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
+import { buildPlayback, buildPedalEvents, playbackRun, playbackStartMs, highlightElement, clearHighlights, readTempo, tickMsFromTempo } from './render/playback.js';
 import { PerformanceMatcher } from './render/performance.js';
 import { addDir } from './expressions.js';
 import { openSetupDialog } from './setupDialog.js';
@@ -127,9 +127,12 @@ function maybeScrollMeasureIntoView(measureIdx: number): void {
   /* Scroll mode: the target measure may be off-screen and thus unmounted —
      mount its chunk so rectForId can resolve it (no-op in page mode). */
   renderer.ensureMeasureMounted(measureIdx);
-  const rect = renderer.rectForId(id);
+  const local = renderer.rectForId(id);
   const score = $('score');
-  if (!rect || !score) return;
+  if (!local || !score) return;
+  /* rectForId is in the content frame; scroll math is in #score's. */
+  const o = renderer.contentOrigin();
+  const rect = new DOMRect(local.x + o.x, local.y + o.y, local.width, local.height);
   const PAD = SCROLL_PAD;
   const cw = score.clientWidth;
   const ch = score.clientHeight;
@@ -1017,51 +1020,24 @@ function doReRender(): void {
        hook registered in bootRenderer — NOT here, so a lazily-mounted page
        gets them exactly once. */
     renderer.renderComposer(model, viewStavesFilter());
-    /* Verovio just rewrote #score's innerHTML — re-attach the cursor overlay
-       as a sibling of the rendered SVG (in scroll mode) or as a sibling of
-       the .score-page wrappers (in page mode), positioned absolute at #score's
-       (0, 0). The overlay is sized to cover from (0, 0) to the Verovio SVG's
-       bottom-right in container-local coords. That way, cursor markers drawn
-       at the container-local coordinates returned by renderer.rectForId()
-       land at the correct visual position over the SVG even when the SVG is
-       offset from #score's origin by a .score-page wrapper's margin. */
-    const scoreEl = $('score');
-    if (!scoreEl) return;
+    /* Verovio just rewrote the content frame — re-attach the cursor overlay
+       inside it (renderer.contentElement(), `div.score-content` in #score),
+       beside the .score-page cards / the scroll SVG. The overlay fills the
+       frame in CSS (absolute, 100% × 100%, every card and pending placeholder
+       included), and the frame is what page view centres, so markers drawn at
+       rectForId's content-frame coordinates stay on their notes through any
+       change of #score's width (window resize, scrollbar, capture viewport). */
+    const content = renderer.contentElement();
+    if (!content) return;
     /* Remove any prior overlay(s) before re-attaching. A full render replaces
-       #score's innerHTML (wiping the old overlay), but a scroll SPLICE edits
+       the frame's innerHTML (wiping the old overlay), but a scroll SPLICE edits
        measures in place and leaves it — so without this, every spliced reRender
        would stack a new #cursorOverlay on top of stale ones (the "double cursor
        overlay" bug). Always start from a clean single overlay. */
-    for (const old of Array.from(scoreEl.querySelectorAll('#cursorOverlay'))) old.remove();
-    /* Size the overlay to cover EVERY page SVG, not just the first — in page
-       view with a page break there are multiple .score-page svgs stacked
-       vertically, and a cursor on a later page would otherwise fall outside
-       the overlay's bounds and not draw. */
+    for (const old of Array.from(content.querySelectorAll('#cursorOverlay'))) old.remove();
     const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     overlay.id = 'cursorOverlay';
-    /* Size the overlay to cover the whole score extent: page view = every
-       .score-page wrapper (INCLUDING pending placeholders, which carry explicit
-       dims — a cursor may later land on a lazily-mounted page); scroll = the
-       one wide single-system SVG. Adding scrollLeft/scrollTop converts the
-       on-screen rect to content coords. */
-    {
-      const extents = Array.from(scoreEl.children).filter(
-        (el) => el.matches('.score-page, svg:not(#cursorOverlay)'),
-      );
-      if (extents.length) {
-        const scoreRect = scoreEl.getBoundingClientRect();
-        let overlayW = 0;
-        let overlayH = 0;
-        for (const el of extents) {
-          const r = el.getBoundingClientRect();
-          overlayW = Math.max(overlayW, r.right - scoreRect.left + scoreEl.scrollLeft);
-          overlayH = Math.max(overlayH, r.bottom - scoreRect.top + scoreEl.scrollTop);
-        }
-        overlay.setAttribute('width', String(Math.max(0, overlayW)));
-        overlay.setAttribute('height', String(Math.max(0, overlayH)));
-      }
-    }
-    scoreEl.appendChild(overlay);
+    content.appendChild(overlay);
     cursor.attach(overlay);
     selectionOverlay.attach(overlay);
     /* The cursor's page may be a placeholder (virtualized page view) — mount it
@@ -1323,12 +1299,13 @@ function startPlayback(): void {
   const v = model.getCurrentVoice();
   const startTicks = model.getCursorAbsoluteTicks(v);
   const startMs = playbackStartMs(model, startTicks);
-  const events = buildPlayback(model, startMs);
+  /* Notes + pedal from one run: a before-the-beat grace at the start shifts
+     both by the same lead-in. */
+  const { events, pedalEvents } = playbackRun(model, startMs);
   if (events.length === 0) {
     setStatus(startMs > 0 ? 'Nothing left to play from cursor.' : 'Nothing to play.', 'error');
     return;
   }
-  const pedalEvents = buildPedalEvents(model, startMs);
   /* Snapshot editing cursor before playback so we can restore on stop/finish. */
   preplaybackVoice = v;
   preplaybackCursor = model.getCursor();
@@ -1938,6 +1915,7 @@ void bootRenderer();
   history,
   buildPlayback,
   buildPedalEvents,
+  playbackRun,
   exportMusicXml,
   /* Test-only: the document's file binding (files.ts), and a LocalFs
      substitute — null disables the local-host path (browser download/picker).

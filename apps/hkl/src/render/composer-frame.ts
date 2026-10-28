@@ -187,6 +187,12 @@ function frameQuery(svg: SVGSVGElement): CursorRectQuery {
       }
       return rightmost === -Infinity ? null : rightmost;
     },
+    isGrace(id) {
+      return findById(svg, id)?.hasAttribute('data-grace') ?? false;
+    },
+    notationScale() {
+      return frameZoom / 100;
+    },
   };
 }
 

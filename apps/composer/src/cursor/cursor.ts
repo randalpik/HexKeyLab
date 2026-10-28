@@ -82,6 +82,8 @@ export interface CursorUpdateOpts {
 const COMPOSER_QUERY: CursorRectQuery = {
   rectForId: (id) => renderer.rectForId(id),
   sigEndXForStaff: (id) => renderer.findSigEndXForStaff(id),
+  isGrace: (id) => renderer.queryRendered('#' + cssId(id))[0]?.hasAttribute('data-grace') ?? false,
+  notationScale: () => renderer.getZoom() / 100,
 };
 
 /** True when the rendered element for `meiId` is a user-hidden rest (the `H`

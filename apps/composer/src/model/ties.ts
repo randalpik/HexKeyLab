@@ -23,7 +23,7 @@ import { MEI_NS, type ComposerModel, type Voice } from './index.js';
 import { pruneDanglingSlurs } from '../slurs.js';
 import { pruneDanglingArticControls } from '../articulations.js';
 import { meterForMeasure } from '../expressions.js';
-import { ticksBeforeInLayer } from './ticks.js';
+import { ticksBeforeInLayer, isGrace } from './ticks.js';
 
 /** Per-voice, time-ordered sequence of atomic tie-able events (note / chord /
  *  rest), descending INTO tuplets so a tuplet's first/last notes are real
@@ -49,7 +49,10 @@ function tieEventSequence(
       if (c.localName === 'tuplet') {
         for (const tc of Array.from(c.children)) if (isEvent(tc)) { events.push(tc); measureOf.push(mi); pushed++; }
       } else if (isEvent(c)) {
-        events.push(c); measureOf.push(mi); pushed++;
+        /* A grace re-attacks its main note, so no tie crosses it: it is a
+           barrier slot (the layer, as for an empty measure below), never a
+           tie endpoint. */
+        events.push(isGrace(c) ? layer : c); measureOf.push(mi); pushed++;
       }
     }
     /* A measure where this voice has NO content is a gap that must break a tie
@@ -249,6 +252,16 @@ export function setTieFlag(note: Element, value: 'i' | 'm' | 't'): void {
 /** Remove any tie marker from this note. */
 export function clearTieFlag(note: Element): void {
   note.removeAttribute('tie');
+}
+
+/** Drop a note's tie intent AND realization (incl. its <lv> stub) — for a
+ *  note becoming a grace, which is no tie event at all, so neither pass would
+ *  strip it. The neighbours re-realize in the caller's normalizeTies. */
+export function clearTieState(note: Element): void {
+  note.removeAttribute('tie');
+  note.removeAttribute('data-pending-tie');
+  note.removeAttribute('data-tie-partner');
+  removeLvForNote(note);
 }
 
 /** Mark a note as a stub tie:

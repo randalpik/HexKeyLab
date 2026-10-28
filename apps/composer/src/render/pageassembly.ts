@@ -41,7 +41,10 @@ import { mergeGlyphDefs } from './splice.js';
 
 /** What the assembler needs from the renderer. */
 export interface AssemblyHost {
+  /** The content frame the cards live in (renderer `container`). */
   container: HTMLElement;
+  /** #score, the scrolling viewport: scroll position is saved/restored here. */
+  scroller: HTMLElement;
   model(): ComposerModel;
   /** Every measure's xml:id, document order. */
   measureIds(): readonly string[];
@@ -239,7 +242,8 @@ export class PageAssembler {
     /* `scrollScale` = new card height / old card height on a re-assembly of
        the same document (zoom, page scale): the reader stays on the same
        page, not at the same pixel. */
-    this.keepScroll = { top: c.scrollTop * scrollScale, left: c.scrollLeft * scrollScale };
+    const sc = this.host.scroller;
+    this.keepScroll = { top: sc.scrollTop * scrollScale, left: sc.scrollLeft * scrollScale };
     c.innerHTML = '';
     this.pbStarts = this.readPbStarts();
     /* Card geometry is the shell's (createPageShell) — known before anything
@@ -275,8 +279,8 @@ export class PageAssembler {
 
   private restoreScroll(): void {
     if (!this.keepScroll) return;
-    this.host.container.scrollTop = this.keepScroll.top;
-    this.host.container.scrollLeft = this.keepScroll.left;
+    this.host.scroller.scrollTop = this.keepScroll.top;
+    this.host.scroller.scrollLeft = this.keepScroll.left;
     this.keepScroll = null;
   }
 
@@ -604,8 +608,8 @@ export class PageAssembler {
     const g = this.host.shellGeom();
     this.pageW = g.pageWidth * g.scale / 100;
     this.pageH = g.pageHeight * g.scale / 100;
-    const c = this.host.container;
-    const top = c.scrollTop * scrollScale, left = c.scrollLeft * scrollScale;
+    const sc = this.host.scroller;
+    const top = sc.scrollTop * scrollScale, left = sc.scrollLeft * scrollScale;
     for (let p = 1; p <= this.pageCount; p++) {
       const root = this.rootOf(p);
       if (!root) {
@@ -627,8 +631,8 @@ export class PageAssembler {
         if (div) { div.style.width = this.pageW + 'px'; div.style.height = this.pageH + 'px'; }
       }
     }
-    c.scrollTop = top;
-    c.scrollLeft = left;
+    sc.scrollTop = top;
+    sc.scrollLeft = left;
   }
 
   /** The line starts the built pages render, in order — the partition the DOM

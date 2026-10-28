@@ -3094,6 +3094,35 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
        treats the marker as "this element starts a new beam," producing a
        manual split mid-beat. No-op when the next element isn't beamable
        (rest, dur < 8, or past-end). */
+    /* Voice-mode `G` toggles the current note/chord between grace and normal;
+       `Shift+G` toggles a grace's slash (acciaccatura ↔ appoggiatura), and
+       makes a normal note a slashed grace. Same
+       cursor-anchor rule as `.` / `L` (flat[cursor]). */
+    if (state.cursorMode === 'voice' && (e.key === 'g' || e.key === 'G') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      if (hooks.isPlaybackActive()) return;
+      let msg: string | null = null;
+      if (e.shiftKey) {
+        withHistory('grace-slash', () => {
+          const r = model.toggleGraceSlashOnCurrent(state.mode);
+          if (!r.ok) { hooks.setStatus?.(r.reason, 'error'); return false; }
+          msg = r.slashed ? 'Acciaccatura (slashed grace).' : 'Appoggiatura (grace, no slash).';
+          return true;
+        });
+      } else {
+        withHistory('grace', () => {
+          const r = model.toggleGraceOnCurrent(state.mode);
+          if (!r.ok) { hooks.setStatus?.(r.reason, 'error'); return false; }
+          msg = r.grace ? 'Grace note.' : 'Normal note.';
+          return true;
+        });
+      }
+      if (msg !== null) hooks.setStatus?.(msg, 'action');
+      hooks.onStateChange();
+      hooks.onChange();
+      return;
+    }
+
     if (state.cursorMode === 'voice' && e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
       e.preventDefault();
       if (hooks.isPlaybackActive()) return;

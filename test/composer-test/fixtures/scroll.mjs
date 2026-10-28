@@ -993,7 +993,7 @@ export const ASSERTIONS = {
         const bar = [...document.querySelectorAll('#cursorOverlay rect')]
           .find(el => el.getAttribute('opacity') === '0.85');
         const cursorRight = bar ? parseFloat(bar.getAttribute('x')) + parseFloat(bar.getAttribute('width')) : 0;
-        const overlayW = parseFloat(document.getElementById('cursorOverlay').getAttribute('width'));
+        const overlayW = document.getElementById('cursorOverlay').getBoundingClientRect().width;
         const sw = score.scrollWidth;
         /* mr.right (= barline region) and the past-end cursor must both fit
            within scrollWidth (reachable) and the overlay width (drawable). */

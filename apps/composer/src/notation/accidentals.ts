@@ -137,21 +137,35 @@ function elementDurationTicks(el: Element): number {
   return realTicks(el);
 }
 
+/** Sub-tick step that orders a grace run before its main note (ticks are
+ *  64ths, so this never reaches the previous event). */
+const GRACE_TICK_EPS = 1e-3;
+
 function notesInLayer(layer: Element): Array<{ note: Element; startTick: number; layerN: number }> {
   const layerN = parseInt(layer.getAttribute('n') ?? '1', 10);
   const out: Array<{ note: Element; startTick: number; layerN: number }> = [];
   let t = 0;
   for (const child of Array.from(layer.children)) {
     const ln = child.localName;
+    /* A grace is an earlier note of its bar, not a simultaneous one: it sits
+       just before its main note's tick, in run order, so ordinary carry
+       applies and the same-tick rules (clash, unison restate) don't fire
+       between a grace and its main note. */
+    let at = t;
+    if (child.hasAttribute('grace')) {
+      let k = 0;
+      for (let s: Element | null = child; s && s.hasAttribute('grace'); s = s.nextElementSibling) k++;
+      at = t - GRACE_TICK_EPS * k;
+    }
     if (ln === 'rest') {
       t += elementDurationTicks(child);
     } else if (ln === 'note') {
-      out.push({ note: child, startTick: t, layerN });
+      out.push({ note: child, startTick: at, layerN });
       t += elementDurationTicks(child);
     } else if (ln === 'chord') {
       const chordTicks = elementDurationTicks(child);
       for (const n of Array.from(child.children)) {
-        if (n.localName === 'note') out.push({ note: n, startTick: t, layerN });
+        if (n.localName === 'note') out.push({ note: n, startTick: at, layerN });
       }
       t += chordTicks;
     } else if (ln === 'tuplet') {

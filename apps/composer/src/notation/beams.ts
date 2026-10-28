@@ -21,6 +21,9 @@
 //     stay un-wrapped (Verovio renders a flag).
 //   - An element belongs to the beat-group containing its startTick. An
 //     element overflowing the group end stays in its starting group.
+//   - Grace notes are outside all of the above: consecutive unslashed graces
+//     beam among themselves (graceBeamRuns), and a regular beam runs straight
+//     through any graces between its members, nesting their beam.
 //
 // `regroupBeams` is idempotent: it unwraps any existing <beam> wrappers
 // before re-computing. This means the same function can be called repeatedly
@@ -116,6 +119,11 @@ function perMeasureTimeSig(doc: Document, head: TimeSigInfo): Map<Element, TimeS
 export function beamGroupForElement(doc: Document, elem: Element): Element[] {
   const layer = elem.closest('layer');
   if (!layer) return [elem];
+  /* A grace beams only with its own run's graces (see graceBeamRuns). */
+  if (elem.hasAttribute('grace')) {
+    for (const run of graceBeamRuns(layer)) if (run.includes(elem)) return run;
+    return [elem];
+  }
   /* Inside a tuplet, the tuplet-internal beam pass is what would beam it.
      Tuplets don't have inter-beat boundaries inside them (the whole tuplet
      is one beat group), so the XOR logic collapses to just the marker. */
@@ -232,6 +240,8 @@ export function regroupBeams(doc: Document, ts: TimeSigInfo): void {
     const measureTicks = mts.count * (64 / mts.unit);
     const layers = m.querySelectorAll('layer');
     for (const layer of Array.from(layers)) {
+      /* Grace beams first, so a regular beam spanning them nests them. */
+      for (const run of graceBeamRuns(layer)) if (run.length >= 2) wrapInBeam(doc, layer, run);
       regroupOneLayer(doc, layer, mts, measureTicks);
     }
   }
@@ -363,8 +373,41 @@ function regroupOneLayer(
   if (current.length > 0) runs.push(current);
 
   for (const run of runs) {
-    if (run.length >= 2) wrapInBeam(doc, layer, run.map((r) => r.el));
+    if (run.length < 2) continue;
+    /* Graces are transparent to a regular beam: the beam runs straight through
+       them (Verovio draws a grace inside a <beam> outside its geometry, and a
+       grace <beam> nested in it as its own beam). Wrap the whole sibling span,
+       graces included — wrapping only the run's members would move them past
+       the graces between them and reorder the layer. */
+    const first = run[0].el, last = run[run.length - 1].el;
+    const span: Element[] = [];
+    for (let e: Element | null = first; e; e = e.nextElementSibling) {
+      span.push(e);
+      if (e === last) break;
+    }
+    wrapInBeam(doc, layer, span);
   }
+}
+
+/** The grace beam runs of `layer`: maximal stretches of consecutive grace
+ *  layer children that are unslashed (`acc`) and beamable (8th or shorter).
+ *  A slashed grace, a quarter-or-longer grace or any non-grace child ends a
+ *  stretch; `@hkl-beam-break` on a grace (the `/` key) starts a new one —
+ *  graces have no beat boundaries, so the XOR rule reduces to the marker.
+ *  Runs of one are returned too (they render flagged). Read on the live doc
+ *  (no beams) by the stem flip and on the render clone before wrapping. */
+export function graceBeamRuns(layer: Element): Element[][] {
+  const runs: Element[][] = [];
+  let cur: Element[] = [];
+  const flush = (): void => { if (cur.length > 0) runs.push(cur); cur = []; };
+  for (const c of Array.from(layer.children)) {
+    if (!c.hasAttribute('grace')) { flush(); continue; }
+    if (c.getAttribute('grace') !== 'acc' || !beamablePredicate(c)) { flush(); runs.push([c]); continue; }
+    if (c.getAttribute('hkl-beam-break') === 'true') flush();
+    cur.push(c);
+  }
+  flush();
+  return runs;
 }
 
 /** Tuplet-internal beam pass. The tuplet's content children form a single
@@ -414,6 +457,10 @@ function annotateLayer(layer: Element): StreamEntry[] {
       continue;
     }
     if (ln !== 'chord' && ln !== 'note' && ln !== 'rest') continue;
+    /* Graces are not in the regular stream: they neither break nor join a
+       regular run, nor count toward its beat groups (graceBeamRuns beams
+       them; a regular beam spans them). */
+    if (c.hasAttribute('grace')) continue;
     const ticks = elementDurationTicks(c);
     out.push({ el: c, startTick: t, durTicks: ticks, breakBefore: pendingBreak });
     pendingBreak = false;

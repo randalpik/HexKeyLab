@@ -180,6 +180,12 @@ Navigation reads a per-voice index (`model/voice-index.ts`: stops, ticks,
 measure boundaries), rebuilt lazily after a structural change. Under
 `HKL_INDEX_CHECK` every index is checked against the uncached computation.
 
+A grace note is an ordinary stop with no ticks of its own. A tick never
+resolves to the position just past a grace — `findCursorByTickPosition`, the
+measure boundaries and `beatBoundariesInVoice` skip it — so a tick lands
+before a grace run: a range [lo, hi) holds lo's graces and not hi's, and voice
+switches and bar jumps land before a bar's leading graces.
+
 **Backspace** deletes the element before the cursor and never auto-removes a
 measure it empties: at an empty measure's wrapper it deletes the measure
 (never the last one; never one holding a clef; a multimeasure-rest run only
@@ -194,8 +200,9 @@ other wrapper it moves left; at an empty tuplet it deletes the tuplet.
 - **Insertion** (`planInsert`, `model/insertion-plan.ts`): a note longer than
   what remains splits at the barline into tied pieces (`decomposeTicks`); the
   cursor measure's later items and the next measure's items are repacked whole
-  (ids and ties kept). Overflow reaches only the next measure: "Doesn't fit in
-  next measure.", "Tuplet too large for measure.", "Doesn't fit.".
+  (ids and ties kept), a grace run with its main note. Overflow reaches only
+  the next measure: "Doesn't fit in next measure.", "Tuplet too large for
+  measure.", "Doesn't fit.".
   `canInsertHere` runs the same planner dry so the status line matches.
 - **Ties** (`model/ties.ts`): a note's **intent** (`@tie` `i`/`m`, or
   `data-pending-tie`) is persisted; its **realization** — `@tie` `i`/`m`/`t`
@@ -415,7 +422,11 @@ cautionary (`P`) always shows; a tie destination hides but updates the carry;
 two different identities at one position and tick (a chromatic cluster) both
 show; a repeated identity hides — except on a unison partner drawn by another
 layer at the same tick, after a clash, and after a tie into the bar whose
-identity differs from the key. A clef change does not reset the carry.
+identity differs from the key. A clef change does not reset the carry. A
+grace note is an earlier note of its bar, not a simultaneous one:
+`notesInLayer` places a grace run just before its main note's tick, so the
+carry runs through it (a grace's F♯ carries to an F♯ main note, which then
+shows none) and the same-tick rules don't apply between them.
 
 HEJI glyphs are render-only (`packages/notation/src/heji-render.ts`). Verovio
 cannot draw them and collapses repeated identical `<accid>`s, so
@@ -436,7 +447,12 @@ present; in 4/4, each half bar is one group only when it is exactly four
 eighths, else quarters; compound meters group in threes; otherwise one beat
 unit per group. Rests and quarters or longer break a run, as does an inline
 clef; `/` (`@hkl-beam-break`) inverts the natural break at a note. Tuplets are
-beamed as their own group.
+beamed as their own group. Grace notes are outside all of this: consecutive
+unslashed graces of an 8th or shorter beam among themselves (`graceBeamRuns`;
+a slashed or quarter grace, or `/` on a grace, splits the run), and a regular
+beam runs straight through any graces between its notes, wrapping the whole
+span so a grace beam nests inside it (Verovio draws a grace in a regular
+`<beam>` outside the beam's geometry, and a nested grace `<beam>` as its own).
 
 ### Clefs before the barline
 
@@ -761,12 +777,32 @@ outside every measure). A failure throws.
   recolours ink, and noteheads switch to their light-source colour.
   Non-notehead ink uses `--notation-ink`; only the notehead carries lattice
   colour. Strokes use `shape-rendering: geometricPrecision`.
-- **Cursor overlay**: a fresh `svg#cursorOverlay` per render, covering the
-  whole score. Editing mode draws the voice cursor (`V<n>`) or the layer
+- **Content frame**: `renderer.attach(#score)` puts one `div.score-content`
+  inside `#score`; every page card / the scroll SVG and the cursor overlay live
+  in it. It is the renderer's `container` (DOM root, and the frame `rectForId` /
+  `findSigEndXForStaff` measure in — no scroll term), while `#score` is the
+  `scroller` (scroll offsets, viewport rects, the mount observer's root, the
+  theme tags). Page view centres the frame, not the cards, so a change of
+  `#score`'s width (window resize, scrollbar, a capture's viewport) moves cards
+  and overlay together. Scroll math converts with `renderer.contentOrigin()`.
+- **Cursor overlay**: a fresh `svg#cursorOverlay` per render, filling the
+  content frame in CSS. Editing mode draws the voice cursor (`V<n>`) or the layer
   cursor (`EXPR`/`PED`/`TEMPO`); playback mode draws one bar per voice
   (left edge = sounding now; performance mode uses the right edge = just
   played). The anchor resolution (`resolveVoiceCursorAnchor`) and geometry
-  (`computeVoiceCursorRect`) are shared with HKL's Composer view.
+  (`computeVoiceCursorRect`) are shared with HKL's Composer view. A bar past a
+  grace (editing cursor and performance-mode bar alike) scales its offset (not
+  its width) by `GRACE_SCALE` (0.5, which centres the bar between the grace's
+  ink and its main note — Verovio packs graces too tightly for the full
+  offset); each side reads grace-ness from
+  its own render (`data-grace`, via `svgAdditionalAttribute` `note@grace` /
+  `chord@grace`). The horizontal offsets and the bar widths are pixels at zoom
+  100 and scale with the render (`CursorRectQuery.notationScale`: Composer's
+  zoom / 100, HKL's frame zoom / 100), so at 50 % a bar past a grace sits 1 px
+  out and is 1 px wide, like a staff line there (2 px → 1 px; playback 3 → 1.5).
+  Without the width scaling, a 2 px bar cannot fit the 3 px gap Verovio leaves
+  between a grace's ink and its main note at 50 %. The vertical padding and the
+  overwrite box's stroke stay fixed.
 - Plain navigation and clicks move the cursor without re-rendering
   (`onCursorMove`).
 
@@ -812,6 +848,24 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   breath shortens, accent adds velocity. Also: `P` parenthesized cautionary
   accidental, `H` hide rest, `/` beam break, `L` / `Shift+L` stem / slur
   direction.
+- **Grace notes**: `@grace` on the `<note>`/`<chord>` itself — `acc`
+  (appoggiatura) or `unacc` (acciaccatura, slashed) — never `<graceGrp>`
+  (Verovio slashes from the note's own `@grace`, and a wrapper would be no
+  cursor stop). `@dur` is the written value: `writtenTicks` reads it,
+  `realTicks` is 0, so a grace takes no bar time and sits at its main note's
+  tick (the next non-grace child of its layer). `G`
+  (`toggleGraceOnCurrent`) toggles the note at the cursor: to a grace (its tie
+  state goes — a grace is a tie barrier in `tieEventSequence`), or back, as an
+  insertion of its written value through the planner (the element itself kept
+  when it lands in one piece). Refused on rests, tuplet notes, tremolos and
+  trilled or harmonic notes. `Shift+G` toggles the slash; on a normal note it
+  is `G` then the slash (one undo step, refused where `G` is). A new note is always
+  normal; entered right after a grace it becomes that grace's main note. On a
+  grace: `.` cycles dots with no fit test, overwrite keeps it a grace, and
+  `=`, trills and harmonics are refused. Stems are Verovio's (no forced
+  direction; `L` flips a grace beam as a whole). A grace with no note after it
+  in its bar is legal (mid-entry); it renders as Verovio draws it and plays
+  against whatever comes next in the voice.
 - **Slurs** (`slurs.ts`, `Ctrl+L` twice): `<slur @startid @endid>` between two
   slots. `Ctrl+L` deletes a slur only where the cursor bisects it (an interior
   slot) or from its first slot with nothing pending; on its last slot it starts
@@ -873,7 +927,22 @@ events: tie chains coalesce, trills and tremolos expand into alternations,
 visible rests emit silent events (so the playback bars step through them),
 repeats expand, and events before the start are dropped. Playback starts at
 the cursor; each `playback-position` moves that voice's bar (overlay only);
-the end restores the editing cursor.
+the end restores the editing cursor. The transport sends `playbackRun`'s
+notes and pedals together, shifted by one lead-in (below).
+
+**Grace timing.** Every grace is its own event, in order, before its main
+note's attack. A run splits at its last slashed grace: those up to it play
+before the beat, the rest on it (any other split would reorder the run).
+On the beat (acc), the written values take at most half the main note, which
+starts that much later (its end unchanged). Before the beat (unacc), they take
+at most half the way back to the previous attack in the voice — onset to
+onset, after that attack's own delay — and this voice's notes still sounding
+there are cut, since HKL keys voices by pitch and an overlapping same-pitch
+release would end the grace. Over a cap, the values scale together. Context
+(velocity, 8va, pizz.) is read at the main note's tick. A before-the-beat
+grace whose main note is at or after the start point is kept and opens a
+**lead-in** (everything, pedals included, shifts later by it) — at the start
+of the score too. The cap uses written order, not repeat-played order.
 
 **Performance mode** (`render/performance.ts`) is input-driven playback for
 filming a performance: the player plays the part on the Lumatone and each
@@ -892,6 +961,12 @@ sent).
   would take a strike, only those at the earliest onset do.
 - Voices are listened to only in the current measure (that of the earliest
   pending step); a voice's bar shows only where it has content.
+- Every grace is its own step. A before-the-beat grace belongs to its main
+  note's measure but sounds during the previous one, so a pending grace is
+  listened to from the occurrence it sounds in through its own, and counts as
+  its own for the current measure — either bar alone would ignore a correct
+  strike (decisions.md 2026-10-27). Its duplicate-key pitch uses its own
+  measure's anchor.
 - A trill or tremolo is one step satisfied by any of its notes; when the next
   step's notes all belong to the ornament, its advance waits for the first
   strike outside them (the bar lags rather than runs ahead).
@@ -933,13 +1008,19 @@ sent).
   a note's stop before its start (a note may end slur N and begin the next
   slur N), a stop with no open start waiting for a start in its measure that
   is no later in time (a slur written end-first across voices), every pair
-  oriented forward in time.
+  oriented forward in time. A `<grace>` imports as a grace — `slash="yes"`
+  as `unacc`, except in a beamed group (slashed groups import as `acc`) — with
+  no ties, trills, tremolos or tuplet role; source grace-beam breaks become
+  `@hkl-beam-break` markers, and graces are transparent to the regular beam
+  diff.
 - **MusicXML export** (`exportMusicXml`): one `<part>` per instrument, voices
   separated by `<backup>`, divisions 16 or its LCM with tuplet numbers,
   colour on noteheads, every tempo written into every part (`<sound tempo>`
   always, `<metronome>` where shown), directions interleaved into the note
   stream, slur numbers assigned in document order, pickups `implicit`, ottava
-  pitches written as sounding, breaks as `<print>`. Not exported: section
+  pitches written as sounding, breaks as `<print>`, graces as `<grace/>` /
+  `<grace slash="yes"/>` with no `<duration>` (a grace beam keeps its own beam
+  roles inside the regular beam that spans it). Not exported: section
   titles, HEJI commas, parenthesized accidentals; `<space>` comes back as a
   hidden rest. Parity census and probes: decisions.md "MusicXML export
   parity: the sonata census".

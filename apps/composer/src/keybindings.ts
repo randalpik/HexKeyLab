@@ -141,6 +141,17 @@ export const KEYBINDINGS: KeySection[] = [
       {
         keys: "/",
         desc: "Toggle a beam break at the cursor. Splits a beam mid-beat, or joins one across beats.",
+        note: "Between grace notes it splits their beam.",
+      },
+      {
+        keys: "G",
+        desc: "Toggle the current note or chord between grace note and normal note.",
+        note: "A grace keeps its written value but takes no time in the bar; the next note you enter is its main note (new notes are always normal). Consecutive graces beam together. Turning a grace back into a normal note re-inserts its value, which may push later notes into the next bar.",
+      },
+      {
+        keys: "Shift+G",
+        desc: "Toggle the slash on a grace note (acciaccatura ↔ appoggiatura); on a normal note, make it a slashed grace.",
+        note: "A slashed grace is never beamed: slashing one in a beamed group takes it out of the beam. In playback a slashed grace sounds before the beat, an unslashed one on it.",
       },
       {
         keys: "S  /  A  /  T  /  F  /  B",

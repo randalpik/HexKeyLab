@@ -100,6 +100,16 @@ A new document is a grand staff (treble + bass) with two voices per staff, four 
 
 ---
 
+## Grace notes
+
+**`G`** turns the note (or chord) at the cursor into a grace note, and back. To enter one, play the grace note at the value you want it written, press `G`, then play its main note: a new note is always a normal note, and the note you enter right after a grace is the one it leads into. A grace keeps its written value but takes no time in the bar, so the notes after it close up. Turning a grace back into a normal note gives it its time again, as if you had just entered it there — later notes may move into the next bar, and if there is no room it stays a grace and the status line says why.
+
+**`Shift+G`** adds or removes the slash: a slashed grace is an **acciaccatura**, an unslashed one an **appoggiatura**. On a normal note, `Shift+G` makes it a slashed grace in one step. Consecutive unslashed graces of an eighth or shorter are beamed together; `/` between two of them splits that beam, and slashing one takes it out of its beam. A grace between two beamed notes doesn't interrupt their beam. Stems point wherever the engraver puts them; `L` flips them (a beamed group together).
+
+On a grace, `.` dots it, overwrite (`Insert`, then a duration) replaces it with another grace, and ties, trills and harmonics are refused. An accidental on a grace counts for the rest of the bar like any earlier note.
+
+**Playback**: each grace sounds as its own note, in order, before its main note. An appoggiatura sounds **on the beat** for its written value — at most half its main note, which starts that much later. An acciaccatura sounds **before the beat** for its written value — at most half the way back to the previous note. Starting playback at a note with an acciaccatura before it plays that grace first. In **performance mode** you play every grace as its own note, before its main note.
+
 ## Dynamics, hairpins, slurs & articulations
 
 **Dynamics & hairpins** live in their own layer (reach it with `↑`/`↓`, or place them straight from voice mode):
@@ -126,6 +136,7 @@ Dynamics and hairpins affect playback loudness. **Above/below placement**: `Ctrl
 | `H` | hide a rest |
 | `/` | split / join the beam |
 | `L` | flip stem direction |
+| `G` / `Shift+G` | grace note / its slash — see [Grace notes](#grace-notes) |
 | `Shift+L` | flip slur direction |
 
 Staccato, accent, and tenuto shape playback (shorter, louder, fuller).
@@ -246,7 +257,7 @@ The **Setup…** button opens a dialog for the whole-document settings:
 |---|---|---|
 | Save / Load | **`.hkc`** | Composer's native format: MEI XML carrying the lattice coordinates and colors. The canonical, lossless round-trip. |
 | Export | **MusicXML** | One part per instrument; opens in MuseScore / Finale / Sibelius. Everything the editor can write carries over: notes, chords, rests, ties, tuplets, beams, stems, slurs, articulations, fermatas, trills, tremolos, dynamics, hairpins, expressive text, pedal, ottavas, tempo markings (in every part, as Finale writes them), key/meter/clef changes including mid-piece (cut and common time keep their ¢ / C symbol), pickups, repeat barlines, double bars and voltas, your manual page and system breaks, instrument abbreviations, and lattice colors. Not carried: a movement's **title** text and HEJI comma accidentals. Movement breaks themselves survive (as a final barline), and a re-import re-numbers the movements I, II, III… — so an auto-numbered title comes back unchanged and only a title you typed yourself is replaced by its numeral. `.hkc` remains the lossless format. |
-| Import | **MusicXML** | Loads a `.musicxml` score authored in Finale / MuseScore / Sibelius (notes, chords, multiple voices and instruments, tuplets, ties, slurs, articulations including breath marks, dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's hidden playback tempi), key/meter/clef changes). The document is set to **Equal tuning, HEJI off, colors ignored** — the imported score is a starting point you then retune toward just intonation. Each note keeps its original spelling (a G♭ stays a G♭). UTF-8, UTF-16 and other declared encodings all open. Parts containing **unpitched (percussion) notes** are left out — Composer cannot write them — and the status line names each part it skipped. Invisible playback-only notes (such as a roll a notation program writes out under a tremolo) are ignored. Compressed `.mxl` files are not supported; the source file's own line and page breaks are not kept (Composer lays the score out itself). |
+| Import | **MusicXML** | Loads a `.musicxml` score authored in Finale / MuseScore / Sibelius (notes, chords, grace notes, multiple voices and instruments, tuplets, ties, slurs, articulations including breath marks, dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's hidden playback tempi), key/meter/clef changes). The document is set to **Equal tuning, HEJI off, colors ignored** — the imported score is a starting point you then retune toward just intonation. Each note keeps its original spelling (a G♭ stays a G♭). UTF-8, UTF-16 and other declared encodings all open. Parts containing **unpitched (percussion) notes** are left out — Composer cannot write them — and the status line names each part it skipped. Invisible playback-only notes (such as a roll a notation program writes out under a tremolo) are ignored. Compressed `.mxl` files are not supported; the source file's own line and page breaks are not kept (Composer lays the score out itself). |
 | Export | **PDF** | Vector, and exactly the page view as shown on screen, page for page — HEJI accidentals, colors, headers, footers, section titles — honoring the current single-part view. From scroll view it exports the page layout (switching to page view for the moment of the export). Always US Letter; **Page size** changes how much score sits on each sheet, not the sheet. |
 
 ### Where files are saved

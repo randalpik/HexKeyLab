@@ -149,6 +149,8 @@ export const ASSERTION_LIB = `
     const layerTicks = (layer) => {
       let t = 0;
       for (const c of Array.from(layer.children)) {
+        /* A grace note's @dur is its written value; it takes no bar time. */
+        if (c.hasAttribute('grace')) continue;
         const dur = c.getAttribute('dur');
         const dots = parseInt(c.getAttribute('dots') || '0', 10);
         if (dur) t += ticksOf(dur, dots);
@@ -492,9 +494,10 @@ export const ASSERTION_LIB = `
         }
         const ov = document.getElementById('cursorOverlay');
         if (ov) {
-          const ow = parseFloat(ov.getAttribute('width') || '0');
+          /* Sized by CSS (100% of the content frame), so read the box. */
+          const ow = toContentX(ov.getBoundingClientRect());
           if (ow + 1 < contentRightPx) {
-            fails.push('cursor overlay width ' + ow.toFixed(1) + ' does not cover content right ' +
+            fails.push('cursor overlay right edge ' + ow.toFixed(1) + ' does not cover content right ' +
               contentRightPx.toFixed(1) + ' px (cursor undrawable past it)');
           }
         }

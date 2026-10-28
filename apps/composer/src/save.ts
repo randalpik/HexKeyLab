@@ -171,6 +171,9 @@ interface XmlNoteEvent {
   /** Beam role inside its `<beam>` wrapper (secondary beams are left to the
    *  reader — only beam number 1 is written). */
   beam?: 'begin' | 'continue' | 'end';
+  /** A grace note: `<grace/>` (acc) or `<grace slash="yes"/>` (unacc), with no
+   *  `<duration>` — it takes no time (durTicks 0). */
+  grace?: 'acc' | 'unacc';
   /** Tremolo role from a `<bTrem>` (single) / `<fTrem>` (start + stop) wrapper. */
   tremolo?: { type: 'single' | 'start' | 'stop'; beams: number };
   /** An INVISIBLE time advance (`<space>`, `<rest visible="false">`): exported
@@ -237,8 +240,12 @@ function collectSlots(container: Element, keepTuplets: boolean): Slot[] {
         const before = out.length;
         walk(c);
         /* Beam roles are positional within the wrapper; rests inside a beam
-           carry none, and a wrapper holding one member needs no beam at all. */
-        const members = out.slice(before).filter((sl) => sl.elem.localName !== 'rest');
+           carry none, and a wrapper holding one member needs no beam at all.
+           A grace beam nests inside the regular beam spanning it and keeps its
+           own roles: a regular beam's members are its non-grace slots. */
+        const graceBeam = Array.from(c.children).every((k) => k.hasAttribute('grace'));
+        const members = out.slice(before)
+          .filter((sl) => sl.elem.localName !== 'rest' && (graceBeam || !sl.elem.hasAttribute('grace')));
         if (members.length >= 2) {
           members.forEach((sl, i) => {
             sl.beam = i === 0 ? 'begin' : i === members.length - 1 ? 'end' : 'continue';
@@ -348,10 +355,13 @@ function eventFromSlot(
       hidden: ln === 'space' || elem.getAttribute('visible') === 'false',
     };
   }
-  if (ln === 'note') return { ...base, notes: [readNote(elem, mapping)], durTicks, durName };
+  /* A grace keeps its written type but takes no time. */
+  const g = elem.getAttribute('grace');
+  const grace = g === 'acc' || g === 'unacc' ? { grace: g as 'acc' | 'unacc', durTicks: 0 } : {};
+  if (ln === 'note') return { ...base, notes: [readNote(elem, mapping)], durTicks, durName, ...grace };
   if (ln === 'chord') {
     const noteEls = Array.from(elem.children).filter((c) => c.localName === 'note');
-    return { ...base, notes: noteEls.map((n) => readNote(n, mapping)), durTicks, durName };
+    return { ...base, notes: noteEls.map((n) => readNote(n, mapping)), durTicks, durName, ...grace };
   }
   return null;
 }
@@ -1246,11 +1256,13 @@ function emitEventXml(
   for (let i = 0; i < ev.notes.length; i++) {
     const n = ev.notes[i];
     s += `    <note>`;
+    /* DTD order: grace, chord, pitch — and a grace has no <duration>. */
+    if (ev.grace) s += ev.grace === 'unacc' ? `<grace slash="yes"/>` : `<grace/>`;
     if (i > 0) s += `<chord/>`;
     s += `<pitch><step>${n.step}</step>`;
     if (n.alter !== 0) s += `<alter>${n.alter}</alter>`;
     s += `<octave>${n.octave}</octave></pitch>`;
-    s += `<duration>${ev.durTicks}</duration>`;
+    if (!ev.grace) s += `<duration>${ev.durTicks}</duration>`;
     /* Sound-layer ties. */
     if (n.tieStart) s += `<tie type="start"/>`;
     if (n.tieStop) s += `<tie type="stop"/>`;

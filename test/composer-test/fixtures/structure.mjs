@@ -334,8 +334,9 @@ export const ASSERTIONS = {
         const sr = score.getBoundingClientRect();
         const p1 = pages[0].querySelector('svg').getBoundingClientRect();
         const p1bottom = p1.bottom - sr.top + score.scrollTop;
-        const ovH = parseFloat(ov.getAttribute('height'));
-        return ovH > p1bottom + 1 ? { ok: true } : { ok: false, detail: 'ovH=' + ovH + ' p1bottom=' + p1bottom };
+        /* Sized by CSS (100% of the content frame), so read the box. */
+        const ovBottom = ov.getBoundingClientRect().bottom - sr.top + score.scrollTop;
+        return ovBottom > p1bottom + 1 ? { ok: true } : { ok: false, detail: 'ovBottom=' + ovBottom + ' p1bottom=' + p1bottom };
       })()` },
   ],
 };

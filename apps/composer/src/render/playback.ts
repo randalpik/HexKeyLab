@@ -22,7 +22,7 @@ import { collectPedals } from '../pedal.js';
 import { collectOctaves } from '../expressions.js';
 import { collectSlurs } from '../slurs.js';
 import { articulationsOn, type ArticKind } from '../articulations.js';
-import { realTicks } from '../model/ticks.js';
+import { realTicks, writtenTicks } from '../model/ticks.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { vecFromEuler, type Mapping } from '@hkl/shared/mapping.js';
 
@@ -456,7 +456,7 @@ export interface PlayedMeasure { measureIdx: number; pass: number; }
 /** A canonical (pre-repeat-expansion) event, tagged with the document index
  *  of its measure so repeat expansion can re-stamp its `atMs` per played
  *  occurrence. `_mi` is internal and never crosses the bridge. */
-type CanonEvent = PlaybackEvent & { _mi: number; _tick?: number };
+type CanonEvent = PlaybackEvent & { _mi: number; _tick?: number; _grace?: boolean };
 
 /** True if the score has any repeat barline or ending (volta). When false,
  *  buildPlayback keeps its original linear path unchanged. */
@@ -526,12 +526,31 @@ export function expandPlayOrder(mei: Document, startIdx = 0): PlayedMeasure[] {
  *  dropped and the remaining events are shifted left by `startMs` — i.e.
  *  the playhead starts at that offset; notes that were already sounding
  *  at the cursor do NOT get re-attacked (DAW-standard non-retrigger
- *  semantics; matches Pro Tools / FL Studio). */
+ *  semantics; matches Pro Tools / FL Studio). A before-the-beat grace whose
+ *  main note is at or after the start is kept and opens a lead-in (everything
+ *  shifts later by it) — at the start of the score too. */
 export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[] {
+  return buildPlaybackCore(model, startMs).events;
+}
+
+/** One playback run from `startMs`: the note events and the pedal timeline,
+ *  shifted by the SAME lead-in (a before-the-beat grace at the start point
+ *  sounds before it — see buildPlaybackCore). What the transport sends. */
+export function playbackRun(
+  model: ComposerModel, startMs = 0,
+): { events: PlaybackEvent[]; pedalEvents: PedalEvent[] } {
+  const { events, leadInMs } = buildPlaybackCore(model, startMs);
+  return { events, pedalEvents: buildPedalEvents(model, startMs, leadInMs) };
+}
+
+function buildPlaybackCore(model: ComposerModel, startMs: number): { events: PlaybackEvent[]; leadInMs: number } {
   const events: CanonEvent[] = [];
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const isMultiInstrument = model.instruments().length > 1;
   const tempo = buildTempoTimeline(mei);
+  /* atMsAt clamps at 0; a before-the-beat grace on the first note sits at a
+     negative tick, extrapolated at the opening tempo (the lead-in). */
+  const msAt = (t: number): number => (t >= 0 ? tempo.atMsAt(t) : t * tempo.tickMsAt(0));
   const velocity = buildVelocityLookup(mei);
   const articCueAt = buildArticCueLookup(mei);
   const noteById = buildNoteIdIndex(mei);
@@ -653,12 +672,78 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
        next attack is slur-joined, we back-patch slurredToNext onto those. */
     let prevAttack: { streamIdx: number; eventIdxs: number[] } | null = null;
 
+    /* Grace timing (docs/architecture/composer.md → Grace timing). A grace takes no
+       bar time (realTicks 0), so each run of graces sits at its main note's
+       tick T; `scheduleGraces` gives every grace its own slice, in order:
+         - the run splits at its last slashed (unacc) grace — those up to it
+           play BEFORE the beat, the rest ON it (any other split would reorder
+           the run in time);
+         - on the beat (acc): the written values, capped together at half the
+           main note, which starts that much later (its end unchanged);
+         - before the beat: the written values, capped together at half the
+           way back to the previous attack in this voice, if there is one; this
+           voice's notes still sounding there are cut (HKL keys voices by
+           pitch, so an overlapping same-pitch release would end the grace).
+       Ticks stay fractional; msAt integrates them. */
+    const graceAt = new Map<number, { on: number; dur: number }>();
+    const delayAt = new Map<number, number>();
+    let prevAttackOnset: number | null = null;
+    const slotAdvance = (k: number): number => {
+      const el = stream[k];
+      return el.localName === 'mRest' || el.localName === 'mSpace'
+        ? model.measureTicksAt(streamMi[k]) : elementDurationTicks(el);
+    };
+    const scheduleGraces = (first: number, T: number): void => {
+      let end = first;
+      while (end < stream.length && stream[end].hasAttribute('grace')) end++;
+      const main = end < stream.length ? end : -1;
+      let lastUnacc = first - 1;
+      for (let k = first; k < end; k++) if (stream[k].getAttribute('grace') === 'unacc') lastUnacc = k;
+      const place = (lo: number, hi: number, start: number, total: number): void => {
+        let w = 0;
+        for (let k = lo; k < hi; k++) w += writtenTicks(stream[k]);
+        let on = start;
+        for (let k = lo; k < hi; k++) {
+          const d = w > 0 ? writtenTicks(stream[k]) * total / w : 0;
+          graceAt.set(k, { on, dur: d });
+          on += d;
+        }
+      };
+      const wOf = (lo: number, hi: number): number => {
+        let w = 0;
+        for (let k = lo; k < hi; k++) w += writtenTicks(stream[k]);
+        return w;
+      };
+      /* On the beat. */
+      const wPost = wOf(lastUnacc + 1, end);
+      const sPost = main >= 0 ? Math.min(wPost, slotAdvance(main) / 2) : wPost;
+      place(lastUnacc + 1, end, T, sPost);
+      if (main >= 0 && sPost > 0) delayAt.set(main, sPost);
+      /* Before the beat. */
+      if (lastUnacc >= first) {
+        const wPre = wOf(first, lastUnacc + 1);
+        const sPre = prevAttackOnset !== null ? Math.min(wPre, (T - prevAttackOnset) / 2) : wPre;
+        place(first, lastUnacc + 1, T - sPre, sPre);
+        const cutMs = msAt(T - sPre);
+        for (let e = voiceEventStart; e < events.length; e++) {
+          const ev = events[e];
+          if (ev.notes.length > 0 && ev.atMs < cutMs - 1e-6 && ev.atMs + ev.durationMs > cutMs)
+            ev.durationMs = cutMs - ev.atMs;
+        }
+      }
+    };
+
     let tTicks = 0;
     let i = 0;
     while (i < stream.length) {
       const child = stream[i];
       const local = child.localName;
       const ticks = elementDurationTicks(child);
+      if (child.hasAttribute('grace') && (i === 0 || !stream[i - 1].hasAttribute('grace'))) {
+        scheduleGraces(i, tTicks);
+      }
+      /* A main note after on-the-beat graces attacks late; its end stays. */
+      const delay = delayAt.get(i) ?? 0;
 
       if (local === 'space') {
         /* (placeholder) spaces advance the voice clock silently. Including
@@ -726,9 +811,10 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         const groups = Array.from(child.children)
           .filter((n) => n.localName === 'note' || n.localName === 'chord')
           .map((slot) => slotCoords(slot, qShift));
-        emitAlternation(groups, tTicks, ticks, child.getAttribute('xml:id') ?? undefined,
+        emitAlternation(groups, tTicks + delay, ticks - delay, child.getAttribute('xml:id') ?? undefined,
           velocity.at(tTicks), voice, streamMi[i]);
         prevAttack = null; /* a tremolo is its own legato unit */
+        prevAttackOnset = tTicks + delay;
         tTicks += ticks;
         i++;
         continue;
@@ -743,8 +829,9 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
         const base = slotCoords(child, qShift);
         const alt = trillAlt.get(slotId);
         const groups = alt ? [base, [{ q: alt.q + qShift, r: alt.r }]] : [base];
-        emitAlternation(groups, tTicks, ticks, slotId, velocity.at(tTicks), voice, streamMi[i]);
+        emitAlternation(groups, tTicks + delay, ticks - delay, slotId, velocity.at(tTicks), voice, streamMi[i]);
         prevAttack = null;
+        prevAttackOnset = tTicks + delay;
         tTicks += ticks;
         i++;
         continue;
@@ -797,7 +884,12 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
       if (byDuration.size > 0) {
         const meiId = child.getAttribute('xml:id') ?? undefined;
         const baseVel = velocity.at(tTicks);
-        const atMs = tempo.atMsAt(tTicks);
+        /* A grace sounds over its scheduled slice; a main note after on-the-beat
+           graces starts `delay` late. Context (velocity, 8va, pizz.) stays at
+           the written tick tTicks — the main note's, for a grace. */
+        const grace = graceAt.get(i);
+        const onTick = grace ? grace.on : tTicks + delay;
+        const atMs = msAt(onTick);
         const articKinds = articulationsOnSlot(child);
         const shape = shapeForArticulations(baseVel, articKinds);
         const emittedIdxs: number[] = [];
@@ -805,7 +897,9 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
           emittedIdxs.push(events.length);
           /* Real elapsed ms over the note's tick span — correct even if a
              tempo change falls inside the note. Articulation factor scales it. */
-          const writtenMs = tempo.atMsAt(tTicks + durTicks) - tempo.atMsAt(tTicks);
+          const writtenMs = grace
+            ? msAt(grace.on + grace.dur) - atMs
+            : msAt(tTicks + durTicks) - atMs;
           events.push({
             atMs,
             durationMs: writtenMs * shape.durationFactor,
@@ -815,6 +909,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
             voice,
             _mi: streamMi[i],
             _tick: tTicks,
+            ...(grace ? { _grace: true } : {}),
           });
         }
         /* If this attack is slur-joined to the previous one in this voice,
@@ -823,6 +918,7 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
           for (const ei of prevAttack.eventIdxs) events[ei].slurredToNext = true;
         }
         prevAttack = { streamIdx: i, eventIdxs: emittedIdxs };
+        prevAttackOnset = onTick;
       }
 
       /* Always advance one slot. tie-terminal notes in later slots will
@@ -885,23 +981,33 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     }
   }
 
-  /* Strip the internal `_mi`/`_tick` tags when handing PlaybackEvents back. */
+  /* Strip the internal `_mi`/`_tick`/`_grace` tags when handing PlaybackEvents back. */
   const strip = (e: CanonEvent): PlaybackEvent => {
-    const { _mi, _tick, ...rest } = e;
-    void _mi; void _tick;
+    const { _mi, _tick, _grace, ...rest } = e;
+    void _mi; void _tick; void _grace;
     return rest;
+  };
+
+  /* The playback window from `from` ms: events at or after it, plus every
+     grace whose main note is (`nominal` = the main note's written onset — a
+     before-the-beat grace sounds earlier), shifted so the earliest kept event
+     starts at 0. When such a grace precedes `from`, that shift is a lead-in. */
+  const windowFrom = (
+    list: Array<{ ev: PlaybackEvent; nominal: number }>, from: number,
+  ): { events: PlaybackEvent[]; leadInMs: number } => {
+    const kept = list.filter(({ ev, nominal }) => ev.atMs >= from - 1e-6 || nominal >= from - 1e-6);
+    let first = from;
+    for (const { ev } of kept) if (ev.atMs < first) first = ev.atMs;
+    return { events: kept.map(({ ev }) => ({ ...ev, atMs: ev.atMs - first })), leadInMs: from - first };
   };
 
   if (!hasRepeatStructure(mei)) {
     /* Original linear path: atMs is a pure function of tick. */
     events.sort((a, b) => a.atMs - b.atMs);
-    const out = events.map(strip);
-    if (startMs > 0) {
-      return out
-        .filter((e) => e.atMs >= startMs - 1e-6)
-        .map((e) => ({ ...e, atMs: e.atMs - startMs }));
-    }
-    return out;
+    return windowFrom(
+      events.map((e) => ({ ev: strip(e), nominal: e._grace ? msAt(e._tick ?? 0) : e.atMs })),
+      Math.max(0, startMs),
+    );
   }
 
   /* Repeat path: atMs accumulates over the PLAYED measure order, while every
@@ -929,40 +1035,41 @@ export function buildPlayback(model: ComposerModel, startMs = 0): PlaybackEvent[
     if (list) list.push(ev); else byMeasure.set(ev._mi, [ev]);
   }
 
-  const remapped: PlaybackEvent[] = [];
+  const remapped: Array<{ ev: PlaybackEvent; nominal: number }> = [];
   let playedMs = 0;
   for (const occ of playOrder) {
     const mi = occ.measureIdx;
     const mStart = canonStart(mi);
     const mDur = canonStart(mi + 1) - mStart;
     for (const ev of byMeasure.get(mi) ?? []) {
-      remapped.push({ ...strip(ev), atMs: playedMs + (ev.atMs - mStart) });
+      /* A before-the-beat grace lands before its measure's played start. */
+      const atMs = playedMs + (ev.atMs - mStart);
+      remapped.push({
+        ev: { ...strip(ev), atMs },
+        nominal: ev._grace ? playedMs + (msAt(ev._tick ?? 0) - mStart) : atMs,
+      });
     }
     playedMs += mDur;
   }
-  remapped.sort((a, b) => a.atMs - b.atMs);
+  remapped.sort((a, b) => a.ev.atMs - b.ev.atMs);
 
   /* `playedMs` is measured from the start of `startMi`; shift to startMs. */
   const withinOffset = startMs > 0 ? startMs - canonStart(startMi) : 0;
-  if (withinOffset > 1e-6) {
-    return remapped
-      .filter((e) => e.atMs >= withinOffset - 1e-6)
-      .map((e) => ({ ...e, atMs: e.atMs - withinOffset }));
-  }
-  return remapped;
+  return windowFrom(remapped, Math.max(0, withinOffset));
 }
 
 /** Parallel sustain-pedal timeline for a playback run. Maps each <pedal>
  *  event's absolute tick to ms via the same tempo as buildPlayback, then
  *  applies the same `startMs` window (drop events before the playhead, shift
- *  the rest left). HKL consumes these to drive its damper engine + CC 64.
+ *  the rest left) and the note events' grace lead-in (`leadInMs`, from
+ *  playbackRun). HKL consumes these to drive its damper engine + CC 64.
  *
  *  Inherited pedal state: when playback starts mid-piece (startMs > 0) at a
  *  point where the pedal is already DOWN (a pedal-down before the playhead with
  *  no up before it), the down event itself is dropped by the window — so we
  *  seed a synthetic down at t=0 so playback behaves as if the pedal were held
  *  from the start. */
-export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[] {
+export function buildPedalEvents(model: ComposerModel, startMs = 0, leadInMs = 0): PedalEvent[] {
   const mei = new DOMParser().parseFromString(model.serialize(), 'application/xml');
   const tempo = buildTempoTimeline(mei);
   /* staff @n → owning instrument's NAME, so each pedal mark routes to its grand-
@@ -989,12 +1096,13 @@ export function buildPedalEvents(model: ComposerModel, startMs = 0): PedalEvent[
     }
     const shifted = evs
       .filter((e) => e.atMs >= startMs - 1e-6)
-      .map((e) => ({ ...e, atMs: e.atMs - startMs }));
+      .map((e) => ({ ...e, atMs: e.atMs - startMs + leadInMs }));
     for (const [name, down] of inheritedDown)
       if (down) shifted.unshift({ atMs: 0, dir: 'down', instrumentName: name });
     return shifted;
   }
-  return evs;
+  /* The note events' lead-in (playbackRun) shifts the pedal timeline too. */
+  return leadInMs > 0 ? evs.map((e) => ({ ...e, atMs: e.atMs + leadInMs })) : evs;
 }
 
 function pushContentChildren(layer: Element, out: Element[]): void {
@@ -1008,11 +1116,9 @@ function pushContentChildren(layer: Element, out: Element[]): void {
          advances them by the whole measure budget so the voice stays in sync. */
       out.push(c);
     } else if (ln === 'beam') {
-      /* Descend into beam wrappers. */
-      for (const cc of Array.from(c.children)) {
-        const ln2 = cc.localName;
-        if (ln2 === 'chord' || ln2 === 'note' || ln2 === 'rest' || ln2 === 'space') out.push(cc);
-      }
+      /* Descend into beam wrappers — recursively: a grace beam nests inside
+         the regular beam that spans it (notation/beams.ts). */
+      pushContentChildren(c, out);
     } else if (ln === 'tuplet') {
       /* Descend into tuplet wrappers. realTicks() automatically scales
          child durations by numbase/num based on closest('tuplet'), so the

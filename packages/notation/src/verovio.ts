@@ -41,7 +41,8 @@ const ADDITIONAL_ATTRS = ['note@data-q', 'note@data-r', 'note@color', 'note@data
   'staff@n', 'dynam@staff', 'dynam@place', 'dir@staff', 'dir@place', 'hairpin@staff', 'hairpin@place',
   'tempo@staff', 'tempo@place', 'dynam@tstamp', 'dir@tstamp',
   'tie@startid', 'fermata@startid', 'trill@startid', 'lv@startid', 'octave@staff',
-  'slur@curvedir', 'slur@startid', 'slur@endid', 'slur@hkl-stems', 'layer@n'];
+  'slur@curvedir', 'slur@startid', 'slur@endid', 'slur@hkl-stems', 'layer@n',
+  'note@grace', 'chord@grace'];
 
 const INSET_OPTIONS = {
   svgAdditionalAttribute: ADDITIONAL_ATTRS,

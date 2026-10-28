@@ -14,7 +14,7 @@
  * also removed. */
 
 import { readTimeSig, measureTimeSigs } from '../notation/beams.js';
-import { realTicks } from './ticks.js';
+import { realTicks, isGrace } from './ticks.js';
 import { decomposeBeatAlignedRests } from './restfill.js';
 import { normalizeTies } from './ties.js';
 import { isPlaceholder } from './placeholders.js';
@@ -57,15 +57,17 @@ export function clearBeatRange(
     const clearsWholeMeasure = tLoIn <= 1e-6 && tHiIn >= cap - 1e-6;
     /* Walk content children; collect those fully inside [tLoIn, tHiIn). */
     let cursor = 0;
-    const toRemove: Element[] = [];
-    for (const c of model.contentChildren(layer)) {
+    const kids = model.contentChildren(layer);
+    const take = kids.map((c) => {
       const dur = realTicks(c);
       const cEnd = cursor + dur;
-      if (cursor >= tLoIn - 1e-6 && cEnd <= tHiIn + 1e-6) {
-        toRemove.push(c);
-      }
+      const inside = cursor >= tLoIn - 1e-6 && cEnd <= tHiIn + 1e-6 && (dur > 0 || cursor < tHiIn - 1e-6);
       cursor = cEnd;
-    }
+      return inside;
+    });
+    /* A grace goes with its main note (the next non-grace child). */
+    for (let i = kids.length - 2; i >= 0; i--) if (isGrace(kids[i])) take[i] = take[i + 1];
+    const toRemove = kids.filter((_, i) => take[i]);
     if (toRemove.length === 0) continue;
     const firstToRemove = toRemove[0];
     const cc = model.contentChildren(layer);

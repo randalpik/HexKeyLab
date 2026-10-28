@@ -53,7 +53,7 @@ import { coordToMidi, anchorOf, type TuningMode } from '@hkl/shared/freq.js';
 import type { Mapping } from '@hkl/shared/mapping.js';
 import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
 import { sanctionedLightForInk } from '@hkl/shared/colors.js';
-import { realTicks, writtenTicks, decomposeTicks } from './ticks.js';
+import { realTicks, writtenTicks, decomposeTicks, isGrace } from './ticks.js';
 export { decomposeTicks };
 import {
   buildChordElement,
@@ -81,7 +81,7 @@ import {
   type CursorLocation,
 } from './cursor-location.js';
 import { buildVoiceIndex, type VoiceIndex } from './voice-index.js';
-import { normalizeTies, setTieFlag, clearTieFlag } from './ties.js';
+import { normalizeTies, setTieFlag, clearTieFlag, clearTieState } from './ties.js';
 import {
   isCursorInTuplet as isCursorInTupletImpl,
   cursorTupletRemainingWrittenTicks as cursorTupletRemainingWrittenTicksImpl,
@@ -1392,6 +1392,7 @@ export class ComposerModel {
         const info = this.getFlatStopInfoUncached(voice, c);
         if (!info) continue;
         if (info.inTuplet) continue;
+        if (isGrace(flat[c])) continue; /* never land just past a grace */
         t = this.getTickPositionAtUncached(voice, c);
       }
       const mi = this.measureIdxAtTick(t);
@@ -1486,7 +1487,9 @@ export class ComposerModel {
     let best = 0;
     for (let c = 0; c <= flat.length; c++) {
       const ct = this.getTickPositionAt(voice, c);
-      if (ct <= targetTime + 1e-6) best = c;
+      /* Never land just past a grace: a tick resolves to the position BEFORE
+         a grace run, so graces travel with their main note in every range. */
+      if (ct <= targetTime + 1e-6) { if (c === flat.length || !isGrace(flat[c])) best = c; }
       else break;
     }
     return best;
@@ -3352,6 +3355,7 @@ export class ComposerModel {
     if (isPlaceholder(ref.elem)) return null;
     const ln = ref.elem.localName;
     if (ln !== 'note' && ln !== 'chord') return null;
+    if (ref.elem.hasAttribute('grace')) return null; /* no ornament on a grace */
     const on = toggleTrill(ref.elem);
     return { id: ref.id, on };
   }
@@ -3376,6 +3380,8 @@ export class ComposerModel {
       const onset = this.getTickPositionAt(voice, c) - realTicks(el2);
       if (onset >= tLo - 1e-6 && onset < tHi - 1e-6) slots.push(el2);
     }
+    /* A grace in the range would be stranded by the collapse/wrap — no-op. */
+    if (slots.some((e) => e.hasAttribute('grace'))) return null;
     if (slots.length !== 2) return null;
     const [a, b] = slots;
 
@@ -3527,6 +3533,93 @@ export class ComposerModel {
    *  pitch shift) and `@head.shape="diamond"` on the slot's highest written
    *  note (the touched/sounding node; for a single note, the note itself).
    *  No-op on rests/placeholders. */
+  /** `G`: toggle the current note/chord between grace and normal
+   *  (docs/architecture/composer.md → Grace notes).
+   *  Normal → grace: `@grace="acc"`; the note keeps its written value but
+   *  frees its bar time (realTicks 0), so the placeholder grows; a grace is no
+   *  tie event, so its tie state goes.
+   *  Grace → normal: an insertion of its written value at its slot through
+   *  the planner — the element itself is placed when it lands in one piece
+   *  (id, articulations, slurs survive), a tied chain otherwise (the
+   *  dot-overflow precedent); a refusal leaves the grace untouched. */
+  toggleGraceOnCurrent(
+    mode: "insert" | "overwrite",
+  ): { ok: true; id: string; grace: boolean } | { ok: false; reason: string } {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    const el = ref?.elem ?? null;
+    if (!ref || !el || (el.localName !== "note" && el.localName !== "chord") || isPlaceholder(el)) {
+      return {
+        ok: false,
+        reason: el?.localName === "rest" ? "A rest can't be a grace note." : "Place the cursor on a note to make it a grace note.",
+      };
+    }
+    if (el.parentElement?.localName === "tuplet") return { ok: false, reason: "A tuplet note can't be a grace note." };
+    const trilled = Array.from(this.doc.querySelectorAll("trill"))
+      .some((t) => t.getAttribute("startid") === "#" + ref.id);
+    if (trilled || el.getAttribute("data-hkl-harmonic") === "true") {
+      return { ok: false, reason: "A trilled or harmonic note can't be a grace note." };
+    }
+    const mi = Math.max(0, this.cursorMeasureIdx(v));
+
+    if (!el.hasAttribute("grace")) {
+      el.setAttribute("grace", "acc");
+      for (const n of extractNoteElements(el)) clearTieState(n);
+      normalizeTies(this, { lo: mi, hi: mi });
+      this.normalizePlaceholdersAll();
+      this.markEditAround(mi);
+      return { ok: true, id: ref.id, grace: true };
+    }
+
+    /* Grace → normal: lift it out, then insert its written value at the slot
+       it occupied (cursor just before it — `ref.index - 1`, as for the
+       dot-overflow re-insert), placing the element itself. */
+    const graceVal = el.getAttribute("grace") ?? "acc";
+    const dur = (el.getAttribute("dur") ?? "4") as Duration;
+    const dots = parseInt(el.getAttribute("dots") ?? "0", 10) as Dots;
+    const notes = extractResolvedFromElement(el, this.getLayoutReq().mapping);
+    const parent = el.parentElement!;
+    const next = el.nextSibling;
+    el.removeAttribute("grace");
+    parent.removeChild(el);
+    this.cursors[v] = Math.max(0, ref.index - 1);
+    const loc = locateCursor(this, v, this.cursors[v]);
+    const plan = loc && !loc.inTuplet ? planInsert(this, loc, ticksOf(dur, dots)) : null;
+    if (!plan || !plan.ok) {
+      el.setAttribute("grace", graceVal);
+      parent.insertBefore(el, next);
+      this.cursors[v] = ref.index;
+      return { ok: false, reason: plan && !plan.ok ? plan.reason : "Doesn't fit." };
+    }
+    const id = insertWithSplit(this, { notes, duration: dur, dots }, false, el);
+    normalizeTies(this, { lo: mi, hi: mi + 1 });   // a split chain may reach M+1; prunes slurs on a dropped element
+    this.normalizePlaceholdersAll();
+    this.cursors[v] = Math.min(this.cursors[v], this.getVoiceLength(v));
+    this.markEditAround(mi);
+    return { ok: true, id: id ?? ref.id, grace: false };
+  }
+
+  /** `Shift+G`: toggle the slash on the current grace (acc ↔ unacc). A slashed
+   *  grace never beams, so slashing a beamed member takes it out of its beam
+   *  (graceBeamRuns). On a normal note it is `G` plus the slash: a slashed
+   *  grace in one step, refused where `G` is. */
+  toggleGraceSlashOnCurrent(
+    mode: "insert" | "overwrite",
+  ): { ok: true; id: string; slashed: boolean } | { ok: false; reason: string } {
+    const v = this.currentVoice;
+    const ref = this.getCurrentElement(v, mode);
+    if (!ref || !ref.elem.hasAttribute("grace")) {
+      const r = this.toggleGraceOnCurrent(mode);
+      if (!r.ok) return r;
+      ref!.elem.setAttribute("grace", "unacc");
+      return { ok: true, id: r.id, slashed: true };
+    }
+    const slashed = ref.elem.getAttribute("grace") !== "unacc";
+    ref.elem.setAttribute("grace", slashed ? "unacc" : "acc");
+    this.markEditAround(Math.max(0, this.cursorMeasureIdx(v)));
+    return { ok: true, id: ref.id, slashed };
+  }
+
   toggleHarmonicAtCursor(
     mode: "insert" | "overwrite",
   ): { id: string; on: boolean } | null {
@@ -3535,6 +3628,7 @@ export class ComposerModel {
     if (!ref) return null;
     const slot = ref.elem;
     if (slot.localName !== "note" && slot.localName !== "chord") return null;
+    if (slot.hasAttribute("grace")) return null; /* no harmonic on a grace */
     if (isPlaceholder(slot)) return null;
     const notes = slot.localName === "note"
       ? [slot]
@@ -4697,6 +4791,17 @@ export class ComposerModel {
       this.normalizePlaceholdersAll();
         return id;
     }
+    /* Overwriting a grace edits it: the replacement stays a grace with the
+       same slash and, taking no bar time, always fits in place. */
+    if (target.hasAttribute('grace')) {
+      this.orphanTiePartners(target);
+      const replaced = buildChordElement(this.doc, input);
+      replaced.setAttribute('grace', target.getAttribute('grace') ?? 'acc');
+      layer.replaceChild(replaced, target);
+      this.resolvePendingTies(cursorAtCall);
+      this.normalizePlaceholdersAll();
+      return replaced.getAttribute("xml:id");
+    }
     /* Simple in-place replace WITHIN current measure if it fits — checked
        against the post-cursor content too, since the replaced element's
        successors keep their position in the layer's child list and would
@@ -5041,13 +5146,19 @@ export class ComposerModel {
       const layer = this.layerInMeasure(measures[mi], voice);
       if (!layer) continue;
       let cursor = mStart;
-      const toRemove: Element[] = [];
-      for (const c of this.contentChildren(layer)) {
+      const kids = this.contentChildren(layer);
+      const take = kids.map((c) => {
         const dur = realTicks(c);
         const cEnd = cursor + dur;
-        if (cEnd > effectiveLo && cursor < effectiveHi) toRemove.push(c);
+        const hit = dur > 0
+          ? cEnd > effectiveLo && cursor < effectiveHi
+          : cursor >= effectiveLo - 1e-6 && cursor < effectiveHi - 1e-6;
         cursor = cEnd;
-      }
+        return hit;
+      });
+      /* A grace goes with its main note (the next non-grace child). */
+      for (let i = kids.length - 2; i >= 0; i--) if (isGrace(kids[i])) take[i] = take[i + 1];
+      const toRemove = kids.filter((_, i) => take[i]);
       for (const r of toRemove) {
         this.orphanTiePartners(r);
         r.parentNode?.removeChild(r);
@@ -5129,6 +5240,33 @@ export class ComposerModel {
    *  placement. */
   private insertClonedAtCursor(src: Element): boolean {
     const ln = src.localName;
+    if ((ln === 'note' || ln === 'chord') && src.hasAttribute('grace')) {
+      /* A grace takes no time: place it at the insertion point directly. The
+         stop at the end of a FULL measure is read as the head of the next one
+         (the tuplet-placement rule), so it lands with the main note that the
+         planner will put there. */
+      const v = this.currentVoice;
+      const loc = locateCursor(this, v, this.cursors[v]);
+      if (!loc || loc.inTuplet) return false;
+      const notes = extractResolvedFromElement(src, this.getLayoutReq().mapping);
+      if (notes.length === 0) return false;
+      const g = buildChordElement(this.doc, {
+        notes,
+        duration: (src.getAttribute('dur') ?? '8') as Duration,
+        dots: (parseInt(src.getAttribute('dots') ?? '0', 10) || 0) as Dots,
+      });
+      g.setAttribute('grace', src.getAttribute('grace') ?? 'acc');
+      let layer = loc.layer, at = loc.withinIdx;
+      if (at >= this.contentChildren(layer).length && layerIsFull(this, layer)) {
+        while (this.allMeasures().length <= loc.measureIdx + 1) this.appendMeasure();
+        layer = this.allLayers(v)[loc.measureIdx + 1];
+        at = 0;
+      }
+      insertAt(this, layer, g, at);
+      this.normalizePlaceholdersAll();
+      this.cursors[v] = Math.max(0, this.flatChildren(v).indexOf(g));
+      return true;
+    }
     if (ln === 'note' || ln === 'chord') {
       const notes = extractResolvedFromElement(src, this.getLayoutReq().mapping);
       const dur = (src.getAttribute('dur') ?? '4') as Duration;
@@ -5331,6 +5469,15 @@ export class ComposerModel {
     const elem = ref.elem;
     if (elem.localName === "tuplet") return null; /* whole-tuplet dotting NYI */
     if (elem.localName === "measure") return null; /* wrapper stops aren't dottable */
+    /* A grace takes no bar time: its dots change only its written value. */
+    if (elem.hasAttribute("grace")) {
+      const cur = parseInt(elem.getAttribute("dots") ?? "0", 10);
+      const nd = ((cur + 1) % 3) as Dots;
+      if (nd > 0) elem.setAttribute("dots", String(nd));
+      else elem.removeAttribute("dots");
+      this.markEditAround(Math.max(0, this.cursorMeasureIdx(v)));
+      return { id: ref.id, newDots: nd };
+    }
     const isRest = elem.localName === "rest";
     const curDots = parseInt(elem.getAttribute("dots") ?? "0", 10) as Dots;
     const nextDots = ((curDots + 1) % 3) as Dots;
@@ -5430,6 +5577,7 @@ export class ComposerModel {
     const ref = this.getCurrentElement(v, mode);
     if (!ref) return null;
     if (ref.elem.localName === "rest") return null;
+    if (ref.elem.hasAttribute("grace")) return null; /* a grace is no tie event */
     if (ref.elem.localName === "measure") return null; /* wrapper stops aren't tieable */
     if (ref.elem.localName === "tuplet") return null; /* whole-tuplet tie NYI */
     if (isPlaceholder(ref.elem)) return null; /* placeholders aren't tieable */
@@ -5526,9 +5674,18 @@ export class ComposerModel {
     if (truncateAt < 0) return; /* fully fits — nothing to do */
     const overflowEl = kids[truncateAt];
     const remaining = cap - running;
+    /* A grace run goes wherever its main note goes: when the overflowing
+       element is dropped whole, its graces go with it. */
+    const dropGracesBefore = (): void => {
+      for (let i = truncateAt - 1; i >= 0 && isGrace(kids[i]); i--) {
+        this.orphanTiePartners(kids[i]);
+        layer.removeChild(kids[i]);
+      }
+    };
     /* Tuplets are atomic — never split. If a tuplet overflows the new
        budget, drop it whole (and everything after). */
     if (overflowEl.localName === "tuplet") {
+      dropGracesBefore();
       this.orphanTiePartners(overflowEl);
       layer.removeChild(overflowEl);
     } else if (remaining > 0) {
@@ -5538,6 +5695,7 @@ export class ComposerModel {
          Pitches, ties, color, data-q/r, etc. are preserved. */
       const pieces = decomposeTicks(remaining);
       if (pieces.length === 0) {
+        dropGracesBefore();
         this.orphanTiePartners(overflowEl);
         layer.removeChild(overflowEl);
       } else {
@@ -5548,6 +5706,7 @@ export class ComposerModel {
       }
     } else {
       /* Previous element exactly filled the measure — drop overflowEl. */
+      dropGracesBefore();
       this.orphanTiePartners(overflowEl);
       layer.removeChild(overflowEl);
     }

@@ -212,7 +212,10 @@ const BASE_OPTIONS = {
     'slur@hkl-stems',
     /* …and `layer@n` (`data-n` on g.layer) for the covered notes of a slur
        segment broken at a system break. */
-    'layer@n'],
+    'layer@n',
+    /* `data-grace` scales the cursor's offset past a grace (CursorRectQuery.
+       isGrace in @hkl/shared/cursor-geom). */
+    'note@grace', 'chord@grace'],
   footer: 'none',
   /* Multimeasure rests (model/multirest.ts): Finale's thick bar + count. */
   multiRestStyle: 'block',
@@ -269,7 +272,14 @@ class Renderer {
    *  so reusing `tk` would pollute the live score's toolkit — see the chunk-era
    *  lesson (dedicated chunkTk). Kept entirely separate. */
   private spliceTk: VerovioToolkit | null = null;
+  /** The content frame (`div.score-content`, made by attach() inside #score):
+   *  every rendered page card / scroll SVG and the cursor overlay live in it,
+   *  and rectForId measures against it. Page view centres THIS element, so a
+   *  change of #score's width moves cards and overlay together. */
   private container: HTMLElement | null = null;
+  /** #score: the scrolling viewport — scroll offsets, viewport rects, the
+   *  mount observer's root, and the theme tags the CSS keys on. */
+  private scroller: HTMLElement | null = null;
   private viewMode: ViewMode = 'page';
   private zoom: ZoomLevel = 100;
   /** Document page-size factor (ratio; 1 = default US Letter). Scales the page
@@ -828,7 +838,7 @@ class Renderer {
        browser to lay the new system out at that moment, then once more for the
        snap passes — 115 extra full layouts on the sonata (7 ms each in
        Chromium, far more in Gecko), 2026-10-08. */
-    const w = this.container?.clientWidth ?? 0;
+    const w = this.scroller?.clientWidth ?? 0;
     const holder = pageEl as HTMLElement & { __hklPhaseX?: { w: number; v: number | undefined } };
     if (holder.__hklPhaseX && holder.__hklPhaseX.w === w) return holder.__hklPhaseX.v;
     const margin = pageEl.querySelector('svg g.page-margin') as SVGGraphicsElement | null;
@@ -880,15 +890,35 @@ class Renderer {
     return this.tk ? this.tk.getVersion() : 'not-loaded';
   }
 
-  attach(container: HTMLElement): void {
-    if (this.container && this.scrollSampler) this.container.removeEventListener('scroll', this.scrollSampler);
-    this.container = container;
+  attach(scroller: HTMLElement): void {
+    if (this.scroller && this.scrollSampler) this.scroller.removeEventListener('scroll', this.scrollSampler);
+    this.scroller = scroller;
+    let content = scroller.querySelector(':scope > .score-content') as HTMLElement | null;
+    if (!content) {
+      content = scroller.ownerDocument.createElement('div');
+      content.className = 'score-content';
+      scroller.replaceChildren(content);
+    }
+    this.container = content;
     this.scrollSamples = [];
     this.scrollSampler = () => {
-      this.scrollSamples.push({ top: container.scrollTop, t: performance.now() });
+      this.scrollSamples.push({ top: scroller.scrollTop, t: performance.now() });
       if (this.scrollSamples.length > 64) this.scrollSamples.splice(0, 32);
     };
-    container.addEventListener('scroll', this.scrollSampler, { passive: true });
+    scroller.addEventListener('scroll', this.scrollSampler, { passive: true });
+  }
+
+  /** The content frame (see `container`): where the cursor overlay attaches. */
+  contentElement(): HTMLElement | null {
+    return this.container;
+  }
+
+  /** The content frame's origin in #score's scroll coordinates — add it to a
+   *  rectForId rect before comparing with scrollLeft/scrollTop. */
+  contentOrigin(): { x: number; y: number } {
+    if (!this.container || !this.scroller) return { x: 0, y: 0 };
+    const c = this.container.getBoundingClientRect(), s = this.scroller.getBoundingClientRect();
+    return { x: c.left - s.left + this.scroller.scrollLeft, y: c.top - s.top + this.scroller.scrollTop };
   }
 
   /** Is the page view being scrolled fast right now (a scrollbar drag, a
@@ -993,20 +1023,20 @@ class Renderer {
    *  re-engraving: applyNotationTheme is fully reversible (dark tags +
    *  inline-paints noteheads; light removes both). No-op before attach(). */
   applyThemeToRendered(): void {
-    if (!this.container) return;
+    if (!this.scroller) return;
     const theme = this.theme === 'light' ? 'light' : 'dark';
-    applyNotationTheme(this.container, theme);
+    applyNotationTheme(this.scroller, theme);
     /* Every mounted page wrapper (and every spliced-in system) carries its OWN
        `data-notation-theme` tag from postProcessRendered — the theme CSS keys
        on any tagged ancestor. Retag them too: a page left tagged dark after a
        switch to light kept the dark ink rules live, and with the inline
        notehead paint just removed those rules clobbered the noteheads white
        until the next re-render re-tagged the page (backlog, 2026-09-05). */
-    for (const el of Array.from(this.container.querySelectorAll('[data-notation-theme]'))) {
+    for (const el of Array.from(this.scroller.querySelectorAll('[data-notation-theme]'))) {
       if (theme === 'light') delete (el as HTMLElement).dataset.notationTheme;
       else (el as HTMLElement).dataset.notationTheme = 'dark';
     }
-    this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
+    this.scroller.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
   getTheme(): ScoreTheme {
@@ -1231,8 +1261,8 @@ class Renderer {
    *  path entirely. */
   private updateMountWindow(cursorMeasure: number): void {
     const as = this.assembler;
-    if (this.viewMode !== 'page' || !as || !this.container) return;
-    const view = this.container.getBoundingClientRect();
+    if (this.viewMode !== 'page' || !as || !this.container || !this.scroller) return;
+    const view = this.scroller.getBoundingClientRect();
     const vh = view.height || 1;
     const pages = Array.from(this.container.querySelectorAll('.score-page')) as HTMLElement[];
     const rect = new Map<number, DOMRect>();
@@ -1324,7 +1354,7 @@ class Renderer {
         this.pumpWanted.add(Number((e.target as HTMLElement).dataset.page));
       }
       if (this.pumpWanted.size) this.requestPump();
-    }, { root: this.container, rootMargin: '100% 0px 100% 0px' });
+    }, { root: this.scroller, rootMargin: '100% 0px 100% 0px' });
     for (const div of Array.from(this.container.querySelectorAll('.score-page-pending'))) {
       this.pageIo.observe(div);
     }
@@ -1356,8 +1386,8 @@ class Renderer {
    *  / 2.75 s before the landing page was drawn to one mount of ~150 ms. */
   private pumpMounts(): void {
     const as = this.assembler;
-    if (this.viewMode !== 'page' || !as || !this.container) { this.pumpWanted.clear(); return; }
-    const view = this.container.getBoundingClientRect();
+    if (this.viewMode !== 'page' || !as || !this.container || !this.scroller) { this.pumpWanted.clear(); return; }
+    const view = this.scroller.getBoundingClientRect();
     const vh = view.height || 1;
     const moving = this.viewportMoving(vh);
     let best: { p: number; d: number } | null = null;
@@ -1396,10 +1426,10 @@ class Renderer {
    *  CSS keys on #score, not on the per-page wrappers that postProcessRendered
    *  tags in the virtualized path. */
   private setContainerThemeTags(): void {
-    if (!this.container) return;
-    if (this.theme === 'light') delete this.container.dataset.notationTheme;
-    else this.container.dataset.notationTheme = 'dark';
-    this.container.classList.toggle('theme-transparent', this.theme === 'transparent');
+    if (!this.scroller) return;
+    if (this.theme === 'light') delete this.scroller.dataset.notationTheme;
+    else this.scroller.dataset.notationTheme = 'dark';
+    this.scroller.classList.toggle('theme-transparent', this.theme === 'transparent');
   }
 
   /* ── scroll-mode single-system render ────────────────────────────────────── */
@@ -2423,6 +2453,7 @@ class Renderer {
   private assemblyHost(): AssemblyHost {
     return {
       container: this.container!,
+      scroller: this.scroller!,
       model: () => this.lastModel!,
       measureIds: () => this.measureIds,
       lineRenderCtx: () => this.lineRenderCtx(),
@@ -2478,8 +2509,8 @@ class Renderer {
    *  the viewport (restore time: what the user looks at is never blank). */
   private mountVisible(): void {
     const as = this.assembler;
-    if (!as || !this.container) return;
-    const view = this.container.getBoundingClientRect();
+    if (!as || !this.container || !this.scroller) return;
+    const view = this.scroller.getBoundingClientRect();
     const pad = as.pageH || view.height;
     for (const div of Array.from(this.container.querySelectorAll('.score-page-pending')) as HTMLElement[]) {
       const r = div.getBoundingClientRect();
@@ -2557,25 +2588,22 @@ class Renderer {
     return null;
   }
 
-  /** Bounding rect of a rendered MEI element by xml:id, relative to the
-   *  container. Returns null if not found in the current SVG. */
+  /** Bounding rect of a rendered MEI element by xml:id, in the content frame
+   *  (the cursor overlay's). Returns null if not found in the current SVG. */
   rectForId(meiId: string): DOMRect | null {
     if (!this.container) return null;
     const node = this.container.querySelector('#' + CSS.escape(meiId));
     return node ? this.rectForElement(node) : null;
   }
 
-  /** Bounding rect of a rendered element, relative to the container (the
-   *  frame rectForId reports). */
+  /** Bounding rect of a rendered element in the content frame (the frame
+   *  rectForId reports). The frame scrolls and re-centres with the content,
+   *  so no scroll offset enters. */
   rectForElement(el: Element): DOMRect | null {
     if (!this.container) return null;
     const containerRect = this.container.getBoundingClientRect();
     const r = el.getBoundingClientRect();
-    return new DOMRect(
-      r.left - containerRect.left + this.container.scrollLeft,
-      r.top - containerRect.top + this.container.scrollTop,
-      r.width, r.height,
-    );
+    return new DOMRect(r.left - containerRect.left, r.top - containerRect.top, r.width, r.height);
   }
 
   /** Rendered elements matching `selector` (in document order). */
@@ -2636,7 +2664,7 @@ class Renderer {
       if (r.right > rightmost) rightmost = r.right;
     }
     if (rightmost === -Infinity) return null;
-    return rightmost - containerRect.left + this.container.scrollLeft;
+    return rightmost - containerRect.left;
   }
 }
 

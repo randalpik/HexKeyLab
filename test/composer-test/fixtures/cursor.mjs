@@ -20,6 +20,14 @@ export const FIXTURES = {
     m.setCursor(0, 1);
     m.insertRestAtCursor({ duration: "4", dots: 0 });
   ` },
+  /* The overlay shares the page cards' frame: widening #score past the page
+     re-centres the card with no re-render, and the bar must move with it
+     (it used to stay at the pixel it was drawn at — every page-view baseline
+     showed the cursor ~12 px left of its note). */
+  cursorFollowsRecentre: { setup: `
+    m.setCursor(0, 1);
+    m.insertRestAtCursor({ duration: "4", dots: 0 });
+  ` },
   m1Full: { setup: `
     m.setCursor(0, 1);
     for (let i = 0; i < 4; i++) m.insertRestAtCursor({ duration: "4", dots: 0 });
@@ -370,6 +378,30 @@ export const FIXTURES = {
 };
 
 export const ASSERTIONS = {
+  cursorFollowsRecentre: [
+    { name: 'bar keeps its offset from its note when the card re-centres',
+      expr: `(async () => {
+        const doc = window.__hkl_composer.model.getDoc();
+        const score = document.getElementById('score');
+        const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const bar = () => [...document.querySelectorAll('rect[data-cursor-role="voice"]')].find((b) => b.isConnected);
+        const restG = () => document.getElementById(doc.querySelector('layer rest').getAttribute('xml:id'));
+        const card = () => document.querySelector('#score .score-page').getBoundingClientRect();
+        const rel = () => bar().getBoundingClientRect().left - restG().getBoundingClientRect().right;
+        const before = rel(), cardBefore = card().left;
+        const saved = score.getAttribute('style');
+        score.style.flex = 'none';
+        score.style.width = (card().width + 600) + 'px';
+        await frames();
+        const after = rel(), cardAfter = card().left;
+        if (saved === null) score.removeAttribute('style'); else score.setAttribute('style', saved);
+        await frames();
+        if (Math.abs(cardAfter - cardBefore) < 50) return { ok: false, detail: 'card did not re-centre (' + cardBefore + ' → ' + cardAfter + ')' };
+        return Math.abs(after - before) < 0.5 ? { ok: true }
+          : { ok: false, detail: 'bar moved relative to its note: ' + before.toFixed(1) + ' → ' + after.toFixed(1)
+              + ' (card ' + cardBefore.toFixed(1) + ' → ' + cardAfter.toFixed(1) + ')' };
+      })()` },
+  ],
   /* Cursor-convention probes. */
   pastEnd_fullLast: [
     { name: 'past-end excluded when last layer full',

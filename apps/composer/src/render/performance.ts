@@ -117,6 +117,26 @@ interface Step {
   /** A collapsed trill/tremolo: satisfied by ANY one constituent, and its note
    *  set is the absorbing set P for the step that follows. */
   ornament: boolean;
+  /** Grace steps only — see GRACE NOTES above `listens`. The occurrence the
+   *  grace SOUNDS in (a before-the-beat grace sounds in the previous bar's
+   *  time); `occ` is its own measure's. Undefined for every other step. */
+  occLo?: number;
+  /** Grace steps only, while the occurrence walk runs: the grace's own
+   *  measure index, resolved to `occ` once every occurrence is known. */
+  graceMi?: number;
+}
+
+/* GRACE NOTES (2026-10-27). A before-the-beat grace belongs to its main note's
+   bar but sounds during the previous one, possibly before another voice has
+   finished that bar. Counting it in either bar alone halts a correct
+   performance: in its own bar, a grace struck while another voice still owes
+   the previous bar is not listened to; in the previous bar, it holds the
+   current measure back and another voice's simultaneous downbeat is not
+   listened to. So a pending grace is listened to from the occurrence it sounds
+   in through its own (`occLo`..`occ`), and counts as its own for the current
+   measure (`currentOcc` reads `occ`). */
+function listens(step: Step, cur: number): boolean {
+  return step.occLo !== undefined ? cur >= step.occLo && cur <= step.occ : step.occ === cur;
 }
 
 /** A deferred bar advance — see the ORNAMENT AMBIGUITY note. A shadowed voice
@@ -215,8 +235,8 @@ function stepComplete(step: Step): boolean {
  *  cached voice index (O(1)) rather than getMeasureIdxForId's per-call scan. */
 function elementInfo(
   model: ComposerModel, meiId: string,
-): { colorOf: (q: number, r: number) => string | null; mi: number } {
-  const miss = { colorOf: () => null, mi: -1 };
+): { colorOf: (q: number, r: number) => string | null; mi: number; grace: boolean } {
+  const miss = { colorOf: () => null, mi: -1, grace: false };
   const loc = model.findElement(meiId);
   if (!loc) return miss;
   const el = model.flatChildren(loc.voice)[loc.index];
@@ -228,6 +248,7 @@ function elementInfo(
   return {
     colorOf: (q, r) => byClass.get(octClass(q, r, mapping)) ?? null,
     mi: info ? info.measureIdx : -1,
+    grace: el.hasAttribute('grace'),
   };
 }
 
@@ -277,14 +298,19 @@ export class PerformanceMatcher {
     const byVoice = new Map<Voice, { atMs: number; step: Step }[]>();
     for (const e of events) {
       const v = e.voice as Voice;
-      const { colorOf, mi } = elementInfo(model, e.meiId!);
-      if (mi !== prevMi) {
+      const { colorOf, mi, grace } = elementInfo(model, e.meiId!);
+      /* A grace never opens an occurrence (it may sound in the previous bar's
+         time — see GRACE NOTES); its window is resolved after the walk. */
+      if (!grace && mi !== prevMi) {
         occ++;
         occMeasure.push(mi);
         this.occAnchor.push(anchored ? model.anchorAt(mi, this.mapping) : 0);
         prevMi = mi;
       }
-      const anchor = this.occAnchor[this.occAnchor.length - 1];
+      /* A grace's pitch identity is its own measure's, wherever it sounds. */
+      const anchor = grace
+        ? (anchored ? model.anchorAt(mi, this.mapping) : 0)
+        : this.occAnchor[this.occAnchor.length - 1];
       const notes: ExpectedNote[] = e.notes.map((c) => ({
         pitchKey: pitchKeyFor(c.q, c.r, this.mapping),
         color: colorOf(c.q, c.r),
@@ -312,8 +338,21 @@ export class PerformanceMatcher {
       } else {
         list.push({
           atMs: e.atMs,
-          step: { meiId: e.meiId!, notes, occ, atMs: e.atMs, ornament: ornaments.has(e.meiId!) },
+          step: { meiId: e.meiId!, notes, occ, atMs: e.atMs, ornament: ornaments.has(e.meiId!), ...(grace ? { graceMi: mi } : {}) },
         });
+      }
+    }
+    /* Grace windows: from the occurrence the grace sounds in (`occ` as the walk
+       left it; -1 before the first) to its own measure's next occurrence. */
+    for (const list of byVoice.values()) {
+      for (const { step } of list) {
+        if (step.graceMi === undefined) continue;
+        const lo = Math.max(0, step.occ);
+        let own = lo;
+        for (let o = lo; o < occMeasure.length; o++) if (occMeasure[o] === step.graceMi) { own = o; break; }
+        step.occLo = lo;
+        step.occ = own;
+        delete step.graceMi;
       }
     }
     for (const [v, list] of byVoice) {
@@ -353,7 +392,7 @@ export class PerformanceMatcher {
     const out: Voice[] = [];
     for (const [voice, vs] of this.voices) {
       const step = vs.steps[vs.stepIdx];
-      if (step && step.occ === cur) out.push(voice);
+      if (step && listens(step, cur)) out.push(voice);
     }
     return out;
   }
@@ -367,7 +406,7 @@ export class PerformanceMatcher {
     const out: PerfAdvance[] = [];
     for (const [voice, vs] of this.voices) {
       const step = vs.steps[vs.stepIdx];
-      const show = !!step && step.occ === cur;
+      const show = !!step && listens(step, cur);
       if (show) this.shown.add(voice);
       out.push({ voice, meiId: show ? step!.meiId : null, edge: 'left' });
     }
@@ -415,7 +454,7 @@ export class PerformanceMatcher {
     for (const [, vs] of this.voices) {
       const step = vs.steps[vs.stepIdx];
       /* Not expected here: this voice's next note is in a later measure. */
-      if (!step || step.occ !== cur) continue;
+      if (!step || !listens(step, cur)) continue;
       const en = step.notes.find((n) => !n.satisfied && hits(n));
       if (!en) continue;
       const prev = vs.stepIdx > 0 ? vs.steps[vs.stepIdx - 1] : null;

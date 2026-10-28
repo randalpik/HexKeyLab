@@ -10,7 +10,7 @@
 import { type ComposerModel, type Voice, MEI_NS } from '../model/index.js';
 import type { SelectionState, Staff } from './selection.js';
 import { beatBoundariesInVoice } from './selection.js';
-import { realTicks } from '../model/ticks.js';
+import { realTicks, isGrace } from '../model/ticks.js';
 import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
 
 const HKL_NS = 'https://hexkeylab.com/ns/mei';
@@ -99,16 +99,20 @@ function collectBeatContent(
     );
     if (!layer) continue;
     let cursor = measureStart;
-    for (const child of Array.from(layer.children)) {
-      const ln = child.localName;
-      if (ln !== 'chord' && ln !== 'note' && ln !== 'rest' && ln !== 'tuplet') continue;
+    const kids = Array.from(layer.children).filter((c) => {
+      const ln = c.localName;
+      return ln === 'chord' || ln === 'note' || ln === 'rest' || ln === 'tuplet';
+    });
+    const take = kids.map((child) => {
       const dur = realTicks(child);
       const cEnd = cursor + dur;
-      if (cursor >= tLo - 1e-6 && cEnd <= tHi + 1e-6) {
-        out.push(child.cloneNode(true) as Element);
-      }
+      const inside = cursor >= tLo - 1e-6 && cEnd <= tHi + 1e-6 && (dur > 0 || cursor < tHi - 1e-6);
       cursor = cEnd;
-    }
+      return inside;
+    });
+    /* A grace goes with its main note (the next non-grace child). */
+    for (let i = kids.length - 2; i >= 0; i--) if (isGrace(kids[i])) take[i] = take[i + 1];
+    kids.forEach((child, i) => { if (take[i]) out.push(child.cloneNode(true) as Element); });
   }
   for (const el of out) stripIds(el);
   return out;

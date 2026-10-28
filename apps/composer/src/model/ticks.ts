@@ -45,6 +45,14 @@ export function writtenTicks(el: Element): number {
   return base;
 }
 
+/** A grace note/chord: `@grace` on the slot, or a member of a grace chord
+ *  (members carry none — the chord wrapper holds it, like `@dur`). */
+export function isGrace(el: Element): boolean {
+  if (el.hasAttribute('grace')) return true;
+  const p = el.parentElement;
+  return el.localName === 'note' && p !== null && p.localName === 'chord' && p.hasAttribute('grace');
+}
+
 /** Find the enclosing <tuplet> if `el` is one of its (possibly beam-wrapped)
  *  descendants. Returns null when `el` is not inside a tuplet. Does NOT match
  *  on `el` itself even if it is a tuplet — this asks "what tuplet scales my
@@ -88,6 +96,9 @@ export function realTicks(el: Element): number {
   /* An inline <clef> (mid-measure clef change) is a zero-duration layer child —
      like <measure>, it must not hit writtenTicks's 16-tick fallback. */
   if (ln === 'clef') return 0;
+  /* A grace note/chord sits at its main note's tick and takes no bar time;
+     its @dur is the written value (writtenTicks), which playback reads. */
+  if (el.hasAttribute('grace')) return 0;
   if (ln === 'tuplet') {
     const { num, numbase } = tupletRatio(el);
     let totalWritten = 0;

@@ -10,7 +10,7 @@
  * applies the plan from `planInsert`. */
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
-import { realTicks, writtenTicks } from './ticks.js';
+import { realTicks, writtenTicks, isGrace } from './ticks.js';
 import { locateCursor } from './cursor-location.js';
 import {
   buildChordElement,
@@ -143,8 +143,17 @@ export function planInsert(
      Tuplets are atomic — either fit in the current target measure or bump
      to M_1; bump beyond M_1 is the block condition. */
   const displaced = [...postCursorM0, ...postM1];
-  for (const el of displaced) {
+  for (let i = 0; i < displaced.length; i++) {
+    const el = displaced[i];
     const t = realTicks(el);
+    /* A grace takes no time but lands with its main note (the next non-grace
+       element): it bumps to M_1 exactly when that note would. */
+    let fitTicks = t;
+    if (isGrace(el)) {
+      let j = i + 1;
+      while (j < displaced.length && isGrace(displaced[j])) j++;
+      fitTicks = j < displaced.length ? realTicks(displaced[j]) : 0;
+    }
     if (t > Math.max(capM0, capM1)) {
       return {
         ok: false,
@@ -154,7 +163,7 @@ export function planInsert(
             : "Doesn't fit.",
       };
     }
-    if (mOff + t > capAt(mIdx)) {
+    if (mOff + fitTicks > capAt(mIdx)) {
       if (mIdx >= M1) {
         return { ok: false, reason: "Doesn't fit in next measure." };
       }
@@ -187,6 +196,11 @@ export function insertWithSplit(
     notes: ReadonlyArray<ResolvedNote>;
   },
   isRest: boolean,
+  /** Place THIS element (its value set from the plan) instead of building
+   *  one, when the plan lands the insert in a single piece — a grace turning
+   *  normal keeps its id, articulations and slur anchors. Layer level only; a
+   *  split plan builds the tied chain as usual. */
+  reuse?: Element,
 ): string | null {
   const v = model.getCurrentVoice();
   const cursor = model.getCursor(v);
@@ -261,6 +275,8 @@ export function insertWithSplit(
   }
 
   /* Walk the plan, building/reusing elements at their target positions. */
+  const reuseWhole = reuse !== undefined
+    && plan.actions.filter((a) => a.kind === 'inserted').length === 1 ? reuse : null;
   const withinByMeasure = new Map<number, number>();
   const insertedElements: Element[] = [];
   let firstInsertedElement: Element | null = null;
@@ -278,7 +294,14 @@ export function insertWithSplit(
       (action.targetMIdx === loc.measureIdx ? loc.withinIdx : 0);
 
     let placed: Element;
-    if (action.kind === 'inserted') {
+    if (action.kind === 'inserted' && reuseWhole) {
+      placed = reuseWhole;
+      placed.setAttribute('dur', action.dur);
+      if (action.dots > 0) placed.setAttribute('dots', String(action.dots));
+      else placed.removeAttribute('dots');
+      insertedElements.push(placed);
+      if (firstInsertedElement === null) firstInsertedElement = placed;
+    } else if (action.kind === 'inserted') {
       placed = isRest
         ? buildRestElement(doc, { duration: action.dur, dots: action.dots })
         : buildChordElement(doc, {
