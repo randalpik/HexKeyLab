@@ -16,7 +16,7 @@
     "overlay:host": "pnpm --filter @hkl/overlay-host start",
     "typecheck": "tsc --noEmit",
     "check:boundaries": "node test/check-boundaries.mjs",
-    "publish:engine": "pnpm --filter @hkl/engine build && npm publish packages/engine/dist",
+    "publish:engine": "pnpm --filter @hkl/engine build && cd packages/engine/dist && pnpm publish --no-git-checks",
     "analyze": "node --max-old-space-size=8192 --expose-gc apps/analyzer/cli/generate-samples.js",
     "test:composer": "node test/composer-test/run.mjs full",
     "test:composer:fast": "node test/composer-test/run.mjs fast",
