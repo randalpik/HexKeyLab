@@ -354,7 +354,7 @@ export const KEYBINDINGS: KeySection[] = [
       },
       {
         keys: "Ctrl+Shift+C",
-        desc: "Clef change for the cursor's staff at the cursor position (mid-measure allowed). Treble / bass / alto / tenor / octave (treble±8, bass −8). Re-open at the same spot to edit. In selection mode (beat selection), applies over the selected beats and restores the prior clef after.",
+        desc: "Clef change for the cursor's staff at the cursor position (mid-measure allowed). Treble / bass / alto / tenor / octave (treble±8, bass −8) / French violin. Re-open at the same spot to edit. In selection mode (beat selection), applies over the selected beats and restores the prior clef after.",
       },
       {
         keys: "Ctrl+Shift+A",

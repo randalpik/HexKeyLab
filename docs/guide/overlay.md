@@ -1,87 +1,54 @@
 # OBS Overlay Guide
 
-The OBS overlay puts HexKeyLab's live hex lattice (and, optionally, its Composer-view score) **on top of a performance video in OBS, with a transparent background**. As you play, the overlay mirrors exactly what's on your HKL screen, so a stream or recording can show the keyboard lighting up over a camera shot of your hands.
+The OBS overlay puts HexKeyLab's live keyboard, and optionally its Composer-view score, **over a performance video in OBS, with a transparent background**. It mirrors your HKL screen as you play, so a stream or recording shows the keyboard lighting up over a camera shot of your hands.
 
-It works by running a tiny local server that serves a stripped-down, read-only copy of HKL and relays your performing instance's screen state to it. OBS loads that copy as a Browser Source.
+A small local server, the overlay host, serves a read-only copy of HKL to OBS and relays your HKL screen to it.
 
 ---
 
 ## What you need
 
-- **OBS** (or any tool that can add a Browser Source).
+- **OBS**, or any tool that can add a Browser Source.
 - **[Node](https://nodejs.org)** and **[pnpm](https://pnpm.io)**, with a clone of this repository and `pnpm install` run once at its root: the overlay host is built from source.
-- An internet connection while streaming (the notation font for the Composer view is local, but the music-engraving engine loads from a CDN).
+- An internet connection while you stream: the Composer view's engraving engine loads from the web.
 
 ---
 
 ## Setup
 
-1. **Build and start the overlay host** from the repository root (one time to build, then run whenever you stream):
+1. **Build and start the overlay host** from the repository root. Build once, then start it whenever you stream:
 
    ```bash
-   pnpm overlay:dist     # build the lean overlay + bundle it into the host
-   pnpm overlay:host     # start the local server (listens on 127.0.0.1:5190)
+   pnpm overlay:dist     # build the overlay
+   pnpm overlay:host     # start the overlay host on 127.0.0.1:5190
    ```
 
-2. **Add a Browser Source in OBS** pointing at:
+2. **Add a Browser Source in OBS** pointing at `http://127.0.0.1:5190/?overlay`, sized to your keyboard.
 
-   ```
-   http://127.0.0.1:5190/?overlay
-   ```
+3. **Open, or reload, HKL in Firefox.** It finds the host and starts sending to it automatically. **Start the host first**: HKL looks for it only for about a second and a half after the page loads, so a tab opened before the host started has to be reloaded.
 
-   Size it to your lattice.
+   In a Chromium browser, grant the one-time "access other apps and services on your network" prompt. A copy of HKL served from your own address must first be added to the host's allow-list (`HKL_FS_ORIGINS`, comma-separated).
 
-3. **Now open (or reload) the normal HKL page in Firefox.** The official site and a local dev server both work; a copy of HKL served from any other address has to be added to the host's allow-list first (`HKL_FS_ORIGINS`, comma-separated). Publishing to the overlay starts **automatically**; there's no checkbox.
+4. **In HKL, turn Extend pattern off** (Layout tab), so the area around the keyboard's outline is transparent.
 
-   **The order of steps 1 and 3 matters.** HKL looks for the overlay host for about a second and a half after the page loads, and if nothing answers it stops looking for the rest of that page's life. Starting the host afterwards won't wake it up — only reloading the HKL tab will. So: **host first, then HKL.** If your HKL tab was already open, just reload it.
+The overlay then shows the keyboard as on your screen (colors, keys you play, movement) and, with **Composer view** on in HKL, the scrolling score. A Browser Source opened mid-performance catches up at once.
 
-4. **In the performing HKL, turn Extend pattern off** (Layout tab), so only the keyboard inside its outline is drawn and everything around it stays transparent. With Extend pattern on, the lattice outside the outline is painted too (dimmed), and with Outline set to None there is no outline to cut out.
+### Score size
 
-That's the whole setup. The overlay mirrors lattice colors, selections, panning/animation, and (if you have **Composer view** on in HKL) the scrolling score.
+The overlay draws the score at **Composer's zoom** (`Shift+=` / `Shift+-` in Composer: 50, 75 or 100 %), so zoom Composer in if the staff is too small to read; the line breaks stay the same. HKL's own Composer-view strip stays at 50 %.
 
----
+### Trimming a recording into a loop
 
-## Browser notes
-
-- **Perform in Firefox.** Firefox allows a web page to talk to a local server without a permission prompt, so publishing just works.
-- **On Chromium browsers** you'll get a one-time "access other apps and services on your network" prompt the first time the overlay host is running. Grant it. (If the host isn't running, nothing prompts.)
-- The OBS Browser Source itself is its own embedded Chromium; it's read-only (no audio, MIDI, or input), so it can't disturb your performing instance, and opening it never changes your real HKL's settings.
-
----
-
-## What it shows
-
-- The **hex lattice**, transparent outside the keyboard outline (with Extend pattern off), identical to your performing screen.
-- The **Composer view** score (bars following each sounding voice), if you have Composer view enabled in HKL.
-
-### Score size on the overlay
-
-The overlay draws the score at **Composer's current zoom** (`Shift`+`=` / `Shift`+`-` in Composer:
-50 %, 75 %, 100 %) — so if the staff is too small to read in a tall portrait capture, zoom Composer in and
-the overlay follows immediately. HKL's own Composer-view strip stays at 50 % regardless; there's no
-room for more in the bar under the lattice, so the two sizes are independent by design. Zooming only
-magnifies — the score keeps exactly the same bar layout and line breaks at every level.
-
-If you open the Browser Source mid-performance, it reconstructs the current state immediately: the relay remembers the latest of each kind of update.
-
-## Trimming a recording into a loop
-
-If you record your performances in OBS, `tools/obs-trim/` in your clone of the repository cuts a take out
-of a session recording into a video, vertical or horizontal, that loops seamlessly on the beat. Its
-`README.md` covers what it needs and how to use it.
+If you record your performances in OBS, `tools/obs-trim/` in your clone of the repository cuts a take out of a session recording into a video, vertical or horizontal, that loops seamlessly on the beat. Its `README.md` covers what it needs and how to use it.
 
 ---
 
 ## If the overlay stays empty
 
-**Reload the performing HKL tab first.** This is nearly always it. HKL only tries to reach the overlay host briefly at page load, so any HKL tab that was open *before* you started the host has quietly given up; the Browser Source will keep showing nothing no matter what you play. Reloading HKL — with the host already running — fixes it.
+**Reload the HKL tab.** That is nearly always the fix: an HKL tab opened before the host started has stopped looking for it. If that doesn't do it:
 
-This is easy to misread, because the two halves fail differently. The Browser Source keeps retrying forever and reconnects on its own, so once it has worked it stays working, and a host restart alone looks harmless. The performing tab is the fragile side, and the tab most likely to have been open for hours is a **development** one (`localhost:5170`) — which is why it can look like the overlay "only works with the published version" when in fact both are treated identically. It's the page load, not the address, that matters.
-
-Everything else worth checking, if a reload didn't do it:
-
-- The host is actually running (`pnpm overlay:host`) and on the expected port, `127.0.0.1:5190` by default. To use another port, start the host with `HKL_OVERLAY_PORT=<port>` (or the port as its first argument) **and** point the performing HKL tab at it, with `?obsrelay=<port>` in its address or `localStorage.hklOverlayPort` set to it.
-- The lattice shows up but the area around the keyboard is opaque: turn **Extend pattern** off in the performing HKL tab.
-- Your Browser Source URL ends in **`?overlay`**. Without it you'll get the full HKL app, not the transparent mirror.
-- On a Chromium-based browser, you granted the one-time "access other apps and services on your network" prompt.
-- **Composer view** is toggled on in HKL, if the score is the part that's missing (the lattice and the score are independent).
+- Check that the host is running (`pnpm overlay:host`) on the expected port, `127.0.0.1:5190` by default. To use another port, start the host with `HKL_OVERLAY_PORT=<port>` (or the port as its first argument) **and** open HKL with `?obsrelay=<port>` in its address (or set `localStorage.hklOverlayPort`).
+- The Browser Source URL must end in **`?overlay`**; without it you get the full HKL app.
+- In a Chromium browser, the network-access prompt must have been granted.
+- If only the score is missing, turn on **Composer view** in HKL.
+- If the area around the keyboard is opaque, turn **Extend pattern** off in HKL.
