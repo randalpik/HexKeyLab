@@ -49,21 +49,20 @@ import {
   buildSetVelocityIntervalConfig,
 } from './protocol.js';
 import { velocityCal, DEFAULT_INPUT_CURVE, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
-import { baseKeys } from '../layout/baseKeys.js';
+import type { LumatoneKeyId } from '../types.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs, loadPrefs } from '../state/persistence.js';
 import { SampleEngine } from '../audio/samples.js';
 import { syncLumatoneColors } from './sync.js';
 
-/* Build (q,r-string) → board_group lookup once. Used by the per-key stats
-   scatter to color dots by board. */
-const STATS_KEY_TO_BOARD: Map<string, number> = (() => {
-  const m = new Map<string, number>();
-  for (let i = 0; i < baseKeys.length; i++) {
-    m.set(baseKeys[i][0] + ',' + baseKeys[i][1], Math.floor(i / 56));
-  }
-  return m;
-})();
+/* Per-key stats are keyed by physical key, "ch,note": in the fixed layout the
+   channel is the board (group + 1) and the note the key's index on it. */
+function statsBoard(key: LumatoneKeyId): number {
+  return +key.slice(0, key.indexOf(','));
+}
+function statsKeyLabel(key: LumatoneKeyId): string {
+  return 'brd ' + statsBoard(key) + ' key ' + key.slice(key.indexOf(',') + 1);
+}
 
 /* Per-board palette for the scatter. Five visually distinct hues. */
 const STATS_BOARD_COLORS = ['#5af', '#9c5', '#fc5', '#f95', '#c5f'];
@@ -1219,8 +1218,7 @@ function drawScatter(): void {
   for (const { key, stats } of velocityCal.getAllStats()) {
     if (stats.n < STATS_MIN_N) continue;
     const [x, y] = scatterXY(stats.p5, stats.p95);
-    const board = STATS_KEY_TO_BOARD.get(key) ?? 0;
-    const color = STATS_BOARD_COLORS[board];
+    const color = STATS_BOARD_COLORS[statsBoard(key) - 1];
     if (key === statsInspectorKey) {
       selectedDot = { x, y, color };
       continue;
@@ -1253,14 +1251,13 @@ function refreshInspector(): void {
   }
   const stats = velocityCal.getKeyStats(statsInspectorKey);
   if (!stats) {
-    inspector.textContent = statsInspectorKey + ': no data';
+    inspector.textContent = statsKeyLabel(statsInspectorKey) + ': no data';
     return;
   }
-  const board = (STATS_KEY_TO_BOARD.get(statsInspectorKey) ?? 0) + 1;
   const range = stats.p95 - stats.p5;
   /* Two lines: primary range info, then variance/cv as a secondary indicator. */
   const line1 = document.createElement('div');
-  line1.textContent = '(' + statsInspectorKey + ')  brd ' + board
+  line1.textContent = statsKeyLabel(statsInspectorKey)
     + '  n=' + stats.n
     + '  p5=' + stats.p5.toFixed(0)
     + '  p95=' + stats.p95.toFixed(0)
@@ -1362,11 +1359,10 @@ function drawOutlierLists(): void {
     statsUi.highCvList.appendChild(mkEmpty('  (none)'));
   } else {
     for (const { key, stats } of floorHits) {
-      const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
       const flagged = stats.p5 >= 50;
       statsUi.highCvList.appendChild(mkRow(key,
         flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-        '  (' + key + ')  brd ' + board
+        '  ' + statsKeyLabel(key)
         + '  p5=' + stats.p5.toFixed(0)
         + '  p95=' + stats.p95.toFixed(0)
         + '  n=' + stats.n));
@@ -1381,12 +1377,11 @@ function drawOutlierLists(): void {
     statsUi.highCvList.appendChild(mkEmpty('  (none)'));
   } else {
     for (const { key, stats } of rangeHits) {
-      const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
       const r = stats.p95 - stats.p5;
       const flagged = r < 40;
       statsUi.highCvList.appendChild(mkRow(key,
         flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-        '  (' + key + ')  brd ' + board
+        '  ' + statsKeyLabel(key)
         + '  range=' + r.toFixed(0)
         + '  [' + stats.p5.toFixed(0) + '..' + stats.p95.toFixed(0) + ']'
         + '  n=' + stats.n));
@@ -1403,11 +1398,10 @@ function drawOutlierLists(): void {
     statsUi.meanDriftList.appendChild(mkEmpty('  (none)'));
   } else {
     for (const { key, stats } of ceilHits) {
-      const board = (STATS_KEY_TO_BOARD.get(key) ?? 0) + 1;
       const flagged = stats.p95 < 80;
       statsUi.meanDriftList.appendChild(mkRow(key,
         flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-        '  (' + key + ')  brd ' + board
+        '  ' + statsKeyLabel(key)
         + '  p5=' + stats.p5.toFixed(0)
         + '  p95=' + stats.p95.toFixed(0)
         + '  n=' + stats.n));

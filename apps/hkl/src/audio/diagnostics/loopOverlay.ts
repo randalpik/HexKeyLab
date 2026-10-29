@@ -346,10 +346,10 @@ function tick(): void {
     const ctxTime = audioCtx.currentTime - (N / audioCtx.sampleRate) * 0.5;
     envelopeBuf.push({ ctxTime, rms });
     if (envelopeBuf.length > ENV_CAP) envelopeBuf.shift();
-    /* Max across held keys keeps the trace meaningful for chord input;
-       single-key debugging shows that key's value directly. */
+    /* Max strike velocity across sounding voices (live and playback) keeps
+       the trace meaningful for chords; a single key shows its value directly. */
     let vMax = 0, pMax = 0, pSmoothMax = 0;
-    for (const k in audio.keyVelocity) { const v = audio.keyVelocity[k]; if (v > vMax) vMax = v; }
+    for (const k in audio.activeOscs) { const v = audio.activeOscs[k].vel; if (v > vMax) vMax = v; }
     for (const k in audio.aftertouchSnapshot) { const p = audio.aftertouchSnapshot[k]; if (p > pMax) pMax = p; }
     for (const k in audio.paFilter) { const f = audio.paFilter[k]; if (f.v > pSmoothMax) pSmoothMax = f.v; }
     inputBuf.push({ ctxTime, vel: vMax, pa: pMax, paSmooth: pSmoothMax });

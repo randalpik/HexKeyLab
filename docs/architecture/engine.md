@@ -149,6 +149,8 @@ Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash
 2. **House curve** (audio time, device-independent): the injected `velocityToGain` (HKL's `velocityCal.curveGain` / `velocityBaseVol`, gentle — floor 0.05 / ceiling 1.0 / **γ 1.5**). No per-key prepass.
 3. **External output**: `piano-out` sends `keyVelocity` unchanged so an external synth applies only its own curve — velocity round-trips.
 
+**Owners.** `audio.keyVelocity` belongs to live input alone (Lumatone / QWERTY / piano): written at strike, cleared on release, and what a selected key strikes with when `syncAudio` (re)starts it — a mouse click has none and gets `mf`. Playback — Composer (`ev.velocity ?? mf`) and `.hkr` (`ev.v`) — passes its velocity straight to `noteOn` and never writes or reads it. Every voice carries the velocity it was struck at (`Voice.vel`): aftertouch anchors on it and loopdiag traces it. The Lumatone's per-key gain, auto-capture and stats are keyed by the **physical key** (`"ch,note"`, `LumatoneKeyId`), not the lattice cell under it, so a ref change leaves each correction on its key (`velocityCal` v4; v3 data migrates under the capture-time anchor its saved cells prove, or is dropped when no single anchor explains them). → decisions.md "Velocity has one owner per store".
+
 → see decisions.md "velocity-domain split" — covers why decompression moved to per-device input, the SP-250 round-trip fix, the `DEFAULT_DYNAMIC_MAP` remap, and `velocityCal version: 3` migration. `.hkr` is **not** migrated (pre-refactor recordings replay with shifted dynamics).
 
 ## `.hki` sample bundles

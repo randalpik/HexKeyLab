@@ -191,7 +191,7 @@ function routeChannelMessage(data: Uint8Array): void {
        scatter must reflect the firmware's natural output, not whatever the
        input curve has been tuned to, so we can keep diagnosing the
        underlying hardware envelope. Single boolean check when disabled. */
-    velocityCal.recordForStats(key, d2);
+    velocityCal.recordForStats(physId, d2);
     /* Distinct-velocity tracker — feeds the lumadiag counter and lets
        loopdiag flag velocities outside the predicted-reachable-bin set. */
     velocityCal.recordObservedVelocity(d2);
@@ -203,10 +203,11 @@ function routeChannelMessage(data: Uint8Array): void {
        correction) then the decompression input curve, both at input time.
        keyVelocity now holds musical velocity (the house curve maps it to gain at
        audio time). */
-    const velocity = velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(key, d2));
+    const velocity = velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(physId, d2));
     /* Per-key gain auto-capture samples RAW d2 — per-key gain corrects the raw
-       firmware velocity before the curve. Out of capture mode, a boolean check. */
-    velocityCal.recordSample(key, d2);
+       firmware velocity before the curve. Keyed by the physical key, like the
+       gain and the stats. Out of capture mode, a boolean check. */
+    velocityCal.recordSample(physId, d2);
     /* Forward the strike to Composer for Performance mode. No-op unless that
        mode is active; fires on every note-on (incl. re-articulations) in the
        MIDI handler's synchronous call stack (low-latency, tab-throttle-proof). */

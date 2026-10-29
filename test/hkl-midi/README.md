@@ -56,6 +56,24 @@ harness as `departure.mjs` (live modules resolved through their importers).
 **Run it before declaring any change to `input/held.ts`, the Lumatone / QWERTY /
 piano note paths, or `effects/onRefChanged.ts` done.**
 
+## Velocity ownership
+
+```sh
+node test/hkl-midi/velocity-owners.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Gate for who owns each velocity store (docs/architecture/engine.md → Velocity
+architecture, Owners): Composer and `.hkr` playback never leave or read
+`audio.keyVelocity`, so a click on a cell after playback strikes at the default
+dynamic, not the score's (P, R); the Lumatone's per-key gain and stats follow
+the physical key across an anchor change, and the key that slides onto a
+calibrated key's old cell is not calibrated (K); v3 prefs keyed by lattice cell
+migrate to physical keys under the capture anchor the saved cells prove — A3,
+or a whole keyboard saved under a shifted ref — and data no single anchor
+explains is dropped (M, each round a reload with seeded prefs). Voices are oscillators; a voice's `vol` is the velocity probe. **Run it
+before declaring any change to `velocityCal`, the playback note-on paths,
+`keyVelocity`, or `Voice.vel` done.**
+
 ## Mapping switch with keys held
 
 ```sh
@@ -144,5 +162,7 @@ handler registered, and the departure checks would test the wrong object.
 ## Adding cases
 
 `check(name, got, want)` inside the in-page script; scenarios are grouped by
-letter with a comment banner. Timing-sensitive heartbeat cases derive their
+letter with a comment banner. End with `await chrome.stop()` before
+`process.exit`: without it the headless Chromium and its /tmp profile outlive
+the run (docs/lessons.md, 2026-10-28). Timing-sensitive heartbeat cases derive their
 waits from the exported `HEARTBEAT_*` constants rather than hardcoding them.

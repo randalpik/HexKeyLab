@@ -43,7 +43,18 @@ export async function newTabWsUrl(port) {
   return (await r.json()).webSocketDebuggerUrl;
 }
 
+/* Removes the profile at once and again once Chromium is down: it writes a few
+   profile files while shutting down, some from child processes (the network
+   service) that outlive the main one by a moment. /tmp is tmpfs here, so a
+   leaked profile (≈300 MB once a page has run) is RAM. Await the result before
+   process.exit, or the later removals never run. */
 function stop(proc, profileDir) {
+  const rm = () => { try { rmSync(profileDir, { recursive: true, force: true }); } catch {} };
+  const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+  const exited = proc.exitCode !== null || proc.signalCode !== null
+    ? Promise.resolve()
+    : Promise.race([new Promise((res) => proc.once('exit', res)), wait(5000)]);
   try { proc.kill('SIGTERM'); } catch {}
-  try { rmSync(profileDir, { recursive: true, force: true }); } catch {}
+  rm();
+  return exited.then(rm).then(() => wait(500)).then(rm);
 }

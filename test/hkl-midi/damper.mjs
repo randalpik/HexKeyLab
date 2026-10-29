@@ -204,5 +204,5 @@ if (!out || !out.results) {
   if (!out.pass) exit = 1;
 }
 if (errors.length) console.log('\nCONSOLE ERRORS:\n  ' + errors.join('\n  '));
-try { chrome.kill?.(); } catch {}
+await chrome.stop();
 process.exit(exit);

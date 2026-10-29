@@ -99,7 +99,8 @@ function dispatch(ev: HkrEvent): void {
            under — a re-anchor retunes the lattice exactly as it did live. */
         const snap = curSession?.snapshot;
         if (snap && (snap.tuning === 'S' || snap.tuning === 'Y')) setAnchorOverride(ev.a ?? snap.anchor);
-        audio.keyVelocity[key] = ev.v;
+        /* The voice carries ev.v (replayed aftertouch anchors on it); live
+           input's audio.keyVelocity is not ours to write. */
         noteOn(key, ev.v);
         if (audio.activeOscs[key]) playbackKeys.add(key);
       }

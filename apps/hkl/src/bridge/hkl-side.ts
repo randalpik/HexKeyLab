@@ -575,7 +575,7 @@ function scheduleAudioForEvent(
     audio.sustainedKeys.delete(newVid);
     pb.pedalSustained.delete(newVid);
     /* Audio handoff on the audio clock. glideVoices rekeys audio.activeOscs
-       and audio.keyVelocity synchronously here, so a same-tick successor's
+       (the voice carries its velocity) synchronously here, so a same-tick successor's
        canGlide check sees the post-glide state. */
     glideVoices([{ oldKey: oldVid, newKey: newVid }], step.rampMs ?? SLUR_GLIDE_MS, audioOnSec);
     /* Mirror the audio rekey in pb-state. voiceSeq is the claim ledger
@@ -602,11 +602,11 @@ function scheduleAudioForEvent(
     audio.sustainedKeys.delete(vid);
     /* Re-attacked while pedal-sustained → no longer a deferred voice. */
     pb.pedalSustained.delete(vid);
-    /* Seed audio.keyVelocity (keyed by coord) so this attack shows up in
-       loopdiag's vel trace like the live input paths do. */
-    const v = ev.velocity ?? audio.keyVelocity[k] ?? DEFAULT_DYNAMIC_MAP.mf;
-    audio.keyVelocity[k] = v;
-    noteOn(k, v, audioOnSec, ev.instrumentKey);
+    /* The event's own velocity, else the house default. Never audio.keyVelocity:
+       that is live input's (cleared on release), and playback writing it left a
+       later click on this cell striking at the score's dynamic. The voice keeps
+       its velocity (`vel`), which is what loopdiag traces. */
+    noteOn(k, ev.velocity ?? DEFAULT_DYNAMIC_MAP.mf, audioOnSec, ev.instrumentKey);
     const seq = ++pb.nextSeq;
     pb.voiceSeq.set(vid, seq);
     pb.heldKeys.add(vid);

@@ -75,9 +75,9 @@ export interface PlaybackEvent {
   notes: ReadonlyArray<CoordRef>;
   /** Optional MEI id so HKL can echo a playback-position back keyed to it. */
   meiId?: string;
-  /** Optional MIDI velocity (0..127). When set, HKL uses this for noteOn
-   *  instead of the falling-back per-key value. Composer's playback walker
-   *  computes this from the document's dynamics + hairpin interpolation. */
+  /** Optional MIDI velocity (0..127); absent ⇒ HKL plays the house default
+   *  (mf). Composer's playback walker computes this from the document's
+   *  dynamics + hairpin interpolation. */
   velocity?: number;
   /** Composer voice (1..4) that emitted this attack. Lets HKL group a voice's
    *  attacks into a sequence so slurs can connect consecutive notes. */

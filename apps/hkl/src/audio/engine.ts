@@ -174,7 +174,7 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
        engine tags the voice with it, so noteOff/aftertouch/damper resolve correctly
        even with other instruments sounding simultaneously. */
     SampleEngine.noteOn(vid, freq, adjVel, wf, startAt);
-    audio.activeOscs[vid] = { type: 'sample', freq, instr: wf, q, r };
+    audio.activeOscs[vid] = { type: 'sample', freq, instr: wf, q, r, vel: adjVel };
   } else if (isOscType(wf)) {
     const type = wf;
     const osc = audio.audioCtx.createOscillator();
@@ -220,7 +220,7 @@ export function noteOn(key: KeyId, velocity?: number, startAt?: number, instrume
     const pressureGain = audio.audioCtx.createGain(); pressureGain.gain.value = 1.0;
     osc.connect(gain); gain.connect(damperGain); damperGain.connect(pressureGain); pressureGain.connect(dest);
     osc.start(now);
-    audio.activeOscs[vid] = { type: 'osc', q, r, osc, gain, damperGain, pressureGain, vol, startTime: now };
+    audio.activeOscs[vid] = { type: 'osc', q, r, osc, gain, damperGain, pressureGain, vol, vel: adjVel, startTime: now };
   }
   /* Seed PA from the held filter state when a voice is recreated under a
      still-pressed key — e.g. instrument switch via changeWaveform, or any
@@ -287,8 +287,9 @@ export function stopAllNotes(): void { for (const k in audio.activeOscs) noteOff
  *  branch): osc voices ramp `frequency`; sample voices crossfade via
  *  `slideAndFadeOut` → `noteOnFaded`. Two-pass for samples so every old voice
  *  is told to fade before any new voice starts (avoids key collisions when a
- *  pair's newKey equals another pair's oldKey). Re-keys `activeOscs` and
- *  `keyVelocity` old→new. Pairs whose oldKey isn't sounding are skipped.
+ *  pair's newKey equals another pair's oldKey). Re-keys `activeOscs` old→new;
+ *  the voice carries its strike velocity (`vel`) along. Pairs whose oldKey
+ *  isn't sounding are skipped.
  *
  *  Only the audio voice is migrated here; callers own any higher-level
  *  per-key bookkeeping (selection highlight, playback voice tags). */
@@ -312,7 +313,7 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
      the new pitch in lockstep with sSlideAndFadeOut's ramp on the old
      voice. Two pitch-matched sources, equal-power crossfade — no chord
      artifact at fast trill tempos. */
-  const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; fromFreq: number; instr: string; vol?: number }[] = [];
+  const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; fromFreq: number; instr: string; vel: number; vol?: number }[] = [];
   for (const p of pairs) {
     if (p.oldKey === p.newKey) continue;
     const e = audio.activeOscs[p.oldKey];
@@ -335,13 +336,7 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
          have just been faded-in by an earlier glide step in this same
          tick, e.freq is already the post-ramp pitch — the right "from"
          value for the next glide. */
-      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq, fromFreq: e.freq, instr: e.instr });
-    }
-    /* keyVelocity is keyed by lattice coord (not VoiceId) — migrate by coord. */
-    const oldCoord = coordOf(p.oldKey), newCoord = coordOf(p.newKey);
-    if (audio.keyVelocity[oldCoord] !== undefined) {
-      audio.keyVelocity[newCoord] = audio.keyVelocity[oldCoord];
-      delete audio.keyVelocity[oldCoord];
+      sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq, fromFreq: e.freq, instr: e.instr, vel: e.vel });
     }
   }
   /* `atTime` propagates to both halves so the predecessor's fade-out and the
@@ -355,7 +350,7 @@ export function glideVoices(pairs: ReadonlyArray<{ oldKey: KeyId; newKey: KeyId 
   for (const mv of sampleMoves) mv.vol = SampleEngine.slideAndFadeOut(mv.oldKey, mv.newFreq, rampDur, atTime);
   for (const mv of sampleMoves) {
     SampleEngine.noteOnFaded(mv.newKey, mv.newFreq, mv.vol!, rampDur, mv.instr, atTime, mv.fromFreq);
-    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq, instr: mv.instr, q: mv.nq, r: mv.nr };
+    audio.activeOscs[mv.newKey] = { type: 'sample', freq: mv.newFreq, instr: mv.instr, q: mv.nq, r: mv.nr, vel: mv.vel };
     delete audio.activeOscs[mv.oldKey];
   }
 }
@@ -367,10 +362,9 @@ export function handleAftertouch(key: KeyId, pressure: number): void {
      THIS voice's instrument, not a global active one, so a decay voice sounding
      alongside a sustained one doesn't suppress the sustained voice's aftertouch. */
   if (e.type === 'sample' && instrDecays(e.instr)) return;
-  /* Strike anchor = the musical velocity used at noteOn (per-key gain already
-     applied at input, not here). */
-  const strikeVel = audio.keyVelocity[key] !== undefined ? audio.keyVelocity[key] : DEFAULT_DYNAMIC_MAP.f;
-  const target = aftertouchTargetGain(pressure, strikeVel);
+  /* Strike anchor = the musical velocity the voice was struck at (per-key gain
+     already applied at input, not here). */
+  const target = aftertouchTargetGain(pressure, e.vel);
   const now = audio.audioCtx.currentTime;
   /* Uniform short ramp on every PA message — the handover-duration scaling
      was producing a long pre-scheduled climb that didn't track input ("ramps

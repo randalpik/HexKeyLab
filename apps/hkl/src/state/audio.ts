@@ -4,8 +4,12 @@ import { DEFAULT_PREFS } from './persistence.js';
 // Audio engine state. Mutate `audio.x` directly from any module.
 //
 // activeOscs maps "q,r" → { type: 'sample' | 'osc', ... } for currently sounding
-// voices. keyVelocity is the most recent strike velocity per key (used by the
-// aftertouch handover logic to anchor pressureGain on initial volume).
+// voices; each voice carries the velocity it was struck at (`vel`), which
+// aftertouch anchors on. keyVelocity belongs to LIVE input alone: the velocity
+// a held or sustained Lumatone / QWERTY / piano key strikes with, written at
+// strike and cleared on release. Playback (Composer, .hkr) passes its velocity
+// to noteOn and never writes or reads it — an entry it left behind became the
+// velocity of the next mouse click on that cell.
 // sustainedKeys is the subset of keys held by either pedal — released when the
 // damper depth falls below the damper-contact threshold (DAMPER_RELEASE_FLOOR
 // in audio/engine.ts) AND the key isn't sostenuto-locked. Note that threshold

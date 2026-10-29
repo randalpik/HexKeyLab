@@ -1,16 +1,19 @@
 // Velocity calibration: global curve + per-key gain + auto-capture + per-key
 // velocity statistics + Lumatone input-velocity curve.
 //
-// Two audio-stage transforms applied at audio-engine entry (noteOn) so MIDI
-// input, QWERTY, mouse, and recording playback all benefit:
-//   1. Per-key gain — multiplicative scalar on incoming velocity (default 1.0).
-//      Smooths out per-key mechanical variance on the physical Lumatone, since
-//      the firmware has no per-key threshold commands.
-//   2. Audio-stage curve — replaces the prior hardcoded `0.10 + 0.90·(v/127)²`
+// One audio-stage transform applied at audio-engine entry, so every source
+// (MIDI input, QWERTY, mouse, playback) benefits:
+//   1. Audio-stage curve — replaces the prior hardcoded `0.10 + 0.90·(v/127)²`
 //      in velocityBaseVol with `floor + (ceiling - floor) · (v/127)^gamma`.
 //
-// Plus one MIDI-input-stage transform applied at midi/handler.ts before raw
-// velocity lands in audio.keyVelocity[key]:
+// Plus two Lumatone-input-stage transforms applied at midi/handler.ts before
+// the velocity lands in audio.keyVelocity[key]:
+//   2. Per-key gain — multiplicative scalar on incoming velocity (default 1.0).
+//      Smooths out per-key mechanical variance on the physical Lumatone, since
+//      the firmware has no per-key threshold commands. Keyed by the PHYSICAL
+//      key ("ch,note"), not the lattice cell under it, so a ref change that
+//      slides the lattice leaves each correction on its key; auto-capture and
+//      the per-key stats key the same way.
 //   3. Input curve — `floor + (ceiling - floor) · (v/127)^gamma` in velocity
 //      space (0..127 → 0..127, integer-snapped). Applied ONLY to Lumatone-
 //      source MIDI velocity; QWERTY/mouse paths are untouched. Compensates
@@ -22,9 +25,8 @@
 //      shaped value. Lumadiag stats keep sampling RAW velocity so they remain
 //      diagnostic of the firmware's natural output.
 //
-// Raw velocity is preserved in audio.keyVelocity[key] for the audio-stage
-// transforms — recording captures the post-input-curve value so playback can
-// re-apply per-key gain + audio curve at playback time.
+// Recording captures the velocity noteOn received (both input stages already
+// applied), so playback reproduces it and only the audio-stage curve re-runs.
 //
 // Auto-capture: while capturing, every note-on velocity is appended to a
 // per-key list. On stop, per-key gain = clamp(target / median(samples), 0.3..3.0)
@@ -39,7 +41,8 @@
 
 import { savePrefs, loadPrefs, type VelocityCalPrefs, type KeyStatsSnapshot } from '../state/persistence.js';
 import { HOUSE_VELOCITY_CURVE } from '@hkl/shared/velocity.js';
-import type { KeyId } from '../types.js';
+import { baseKeys } from '../layout/baseKeys.js';
+import type { LumatoneKeyId } from '../types.js';
 
 export interface VelocityCalState {
   /** Audio gain at velocity = 1 (smallest non-zero). 0..1. */
@@ -54,7 +57,7 @@ export interface VelocityCalState {
    *  lives in the per-device input curve below, NOT here.) */
   gamma: number;
   /** Multiplicative velocity gain per key. Absent entries default to 1.0. */
-  perKey: Record<KeyId, number>;
+  perKey: Record<LumatoneKeyId, number>;
 }
 
 /** Lumatone TARGET-GAIN curve — floor/ceiling/gamma in audio-gain space (0..1),
@@ -137,7 +140,7 @@ const observedVelocities: Set<number> = new Set();
 
 /* Capture session state — lives in-module, not persisted. */
 let capturing = false;
-const captures: Map<KeyId, number[]> = new Map();
+const captures: Map<LumatoneKeyId, number[]> = new Map();
 
 const PER_KEY_GAIN_MIN = 0.3;
 const PER_KEY_GAIN_MAX = 3.0;
@@ -154,8 +157,8 @@ export const STATS_MIN_N = 5;
 export const STATS_HIGH_CV = 0.3;
 
 let statsEnabled = false;
-let snapshots: Record<KeyId, KeyStatsSnapshot> = {};
-const samples: Map<KeyId, number[]> = new Map();
+let snapshots: Record<LumatoneKeyId, KeyStatsSnapshot> = {};
+const samples: Map<LumatoneKeyId, number[]> = new Map();
 let statsDirty = false;
 
 export interface KeyStats {
@@ -206,7 +209,7 @@ function clampVel(v: number): number {
 
 function persist(): void {
   savePrefs({ velocityCal: {
-    version: 3,
+    version: 4,
     floor: state.floor,
     ceiling: state.ceiling,
     gamma: state.gamma,
@@ -256,7 +259,8 @@ function loadFromPrefs(): void {
          power-law with gamma ≈ oldAudioGamma / 1.5; recover oldAudioGamma =
          inputCurve.gamma × 1.5; floor/ceiling were lost, use the legacy default.
      One-time; persist. The user then tunes in gain space in lumadiag. */
-  if (v.version !== 3) {
+  const migrateCurve = (v.version ?? 0) < 3;
+  if (migrateCurve) {
     if (v.version === 2) {
       inputCurve.gamma = Math.min(20, Math.max(0.5, inputCurve.gamma * DEFAULT_CAL.gamma));
       inputCurve.floor = DEFAULT_INPUT_CURVE.floor;
@@ -269,8 +273,48 @@ function loadFromPrefs(): void {
     state.floor = DEFAULT_CAL.floor;
     state.ceiling = DEFAULT_CAL.ceiling;
     state.gamma = DEFAULT_CAL.gamma;
-    persist();
   }
+
+  /* Migration to v4: per-key gains and stats keyed by physical key
+     ("ch,note"). Before v4 they were keyed by the lattice cell the key struck,
+     baseKeys[i] + the kbAnchor at capture time, which was not stored. Each map
+     is read back under the anchor its cells prove (rekeyByAnchor). One-time. */
+  const migrateKeys = (v.version ?? 0) < 4;
+  if (migrateKeys) {
+    state.perKey = rekeyByAnchor(state.perKey, 'per-key gains');
+    snapshots = rekeyByAnchor(snapshots, 'per-key stats');
+  }
+  if (migrateCurve || migrateKeys) persist();
+}
+
+/* Pre-v4 per-key data → physical keys. Saved cells are baseKeys[i] + one
+   capture-time anchor: A3's (0,0) when every cell lands on a key there, else
+   the one shift that lands them all (a large capture has the keyboard's shape,
+   so only its own anchor fits). A map no single anchor explains — captures
+   under different refs, or too few cells to tell — is dropped with a warning
+   rather than handed to the wrong keys. */
+function rekeyByAnchor<T>(rec: Record<string, T>, what: string): Record<LumatoneKeyId, T> {
+  const cells = Object.keys(rec).map((k) => k.split(',').map(Number));
+  if (cells.length === 0) return {};
+  const index = new Map<string, number>();
+  baseKeys.forEach(([q, r], i) => { index.set(q + ',' + r, i); });
+  const fits = ([aq, ar]: readonly number[]): boolean =>
+    cells.every(([q, r]) => index.has((q - aq) + ',' + (r - ar)));
+  const [q0, r0] = cells[0];
+  const found = fits([0, 0]) ? [[0, 0]] : baseKeys.map(([q, r]) => [q0 - q, r0 - r]).filter(fits);
+  if (found.length !== 1) {
+    console.warn('[velocityCal] v4 migration dropped ' + cells.length + ' ' + what + ': '
+      + (found.length === 0 ? 'no single ref anchor puts them all on Lumatone keys'
+                            : found.length + ' ref anchors fit them'));
+    return {};
+  }
+  const anchor = found[0];
+  const out: Record<LumatoneKeyId, T> = {};
+  Object.keys(rec).forEach((k, n) => {
+    const i = index.get((cells[n][0] - anchor[0]) + ',' + (cells[n][1] - anchor[1]))!;
+    out[(Math.floor(i / 56) + 1) + ',' + (i % 56)] = rec[k];
+  });
+  return out;
 }
 
 export const velocityCal = {
@@ -278,7 +322,7 @@ export const velocityCal = {
   get floor(): number { return state.floor; },
   get ceiling(): number { return state.ceiling; },
   get gamma(): number { return state.gamma; },
-  get perKey(): Readonly<Record<KeyId, number>> { return state.perKey; },
+  get perKey(): Readonly<Record<LumatoneKeyId, number>> { return state.perKey; },
   get capturing(): boolean { return capturing; },
   get capturedKeyCount(): number { return captures.size; },
   get calibratedKeyCount(): number { return Object.keys(state.perKey).length; },
@@ -416,7 +460,7 @@ export const velocityCal = {
   clearObservedVelocities(): void { observedVelocities.clear(); },
 
   /* Stage 1: per-key gain. Returns adjusted velocity (clamped 0..127). */
-  applyPerKeyGain(key: KeyId, v: number): number {
+  applyPerKeyGain(key: LumatoneKeyId, v: number): number {
     if (v <= 0) return 0;
     const g = state.perKey[key];
     if (g === undefined || g === 1.0) return clampVel(v);
@@ -442,7 +486,7 @@ export const velocityCal = {
   },
 
   /* Called from MIDI note-on path while capturing. No-op otherwise. */
-  recordSample(key: KeyId, rawVelocity: number): void {
+  recordSample(key: LumatoneKeyId, rawVelocity: number): void {
     if (!capturing) return;
     if (rawVelocity <= 0) return;
     let arr = captures.get(key);
@@ -484,7 +528,7 @@ export const velocityCal = {
 
   /* Called from MIDI note-on path alongside `recordSample`. No-op unless
      statsEnabled. Ring-buffer per key capped at KEY_HISTORY_CAP. */
-  recordForStats(key: KeyId, rawVelocity: number): void {
+  recordForStats(key: LumatoneKeyId, rawVelocity: number): void {
     if (!statsEnabled) return;
     if (rawVelocity <= 0) return;
     let arr = samples.get(key);
@@ -497,7 +541,7 @@ export const velocityCal = {
   /* Live stats for one key. Prefers session samples; falls back to persisted
      snapshot when the key hasn't been played this session. Returns undefined
      if no data anywhere. */
-  getKeyStats(key: KeyId): KeyStats | undefined {
+  getKeyStats(key: LumatoneKeyId): KeyStats | undefined {
     const arr = samples.get(key);
     if (arr && arr.length > 0) return computeStats(arr);
     const snap = snapshots[key];
@@ -510,7 +554,7 @@ export const velocityCal = {
 
   /* Per-key histogram, `bins`-wide over 0..127. Returns live samples only —
      snapshots don't preserve sample arrays. */
-  getKeyHistogram(key: KeyId, bins: number = 32): Int32Array {
+  getKeyHistogram(key: LumatoneKeyId, bins: number = 32): Int32Array {
     const out = new Int32Array(bins);
     const arr = samples.get(key);
     if (!arr) return out;
@@ -523,9 +567,9 @@ export const velocityCal = {
   },
 
   /* Snapshot of all known keys' stats, live or persisted. Live shadows snapshot. */
-  getAllStats(): { key: KeyId; stats: KeyStats }[] {
-    const out: { key: KeyId; stats: KeyStats }[] = [];
-    const seen = new Set<KeyId>();
+  getAllStats(): { key: LumatoneKeyId; stats: KeyStats }[] {
+    const out: { key: LumatoneKeyId; stats: KeyStats }[] = [];
+    const seen = new Set<LumatoneKeyId>();
     for (const [k, arr] of samples) {
       seen.add(k);
       out.push({ key: k, stats: computeStats(arr) });
@@ -601,7 +645,7 @@ export const velocityCal = {
   syncStatsSnapshot(): void {
     if (!statsDirty) return;
     statsDirty = false;
-    const next: Record<KeyId, KeyStatsSnapshot> = {};
+    const next: Record<LumatoneKeyId, KeyStatsSnapshot> = {};
     for (const [k, arr] of samples) {
       if (arr.length < STATS_MIN_N) continue;
       const s = computeStats(arr);

@@ -205,7 +205,7 @@ export function transposeSelection(dq: number, dr: number): void {
     } else {
       /* sustained instrument: smooth ramp */
       const newOscs: Record<KeyId, Voice> = {};
-      const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vol?: number }[] = [];
+      const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vel: number; vol?: number }[] = [];
       const now = audio.audioCtx.currentTime;
       for (const k of liveKeys) {
         const p = k.split(','), nq = +p[0] + dq, nr = +p[1] + dr;
@@ -216,14 +216,14 @@ export function transposeSelection(dq: number, dr: number): void {
           e.q = nq; e.r = nr;
           newOscs[nq + ',' + nr] = e;
         } else if (e.type === 'sample') {
-          sampleMoves.push({ oldKey: k, newKey: nq + ',' + nr, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr });
+          sampleMoves.push({ oldKey: k, newKey: nq + ',' + nr, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr, vel: e.vel });
         }
         delete audio.activeOscs[k];
       }
       sampleMoves.forEach(function (m) { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, 0.1); });
       sampleMoves.forEach(function (m) {
         SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, 0.1, m.instr);
-        newOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr };
+        newOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr, vel: m.vel };
       });
       Object.assign(audio.activeOscs, newOscs);
     }

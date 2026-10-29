@@ -49,8 +49,9 @@ export interface ToolbarVisibility {
    Absent = defaults. */
 export interface VelocityCalPrefs {
   /** Schema version. v3 = canonical-musical-velocity architecture (gentle house
-   *  curve + Lumatone gain-space target curve in inputCurve). Absent/!=3 triggers
-   *  a one-time migration in velocityCal.ts. */
+   *  curve + Lumatone gain-space target curve in inputCurve); v4 = `perKey` and
+   *  `stats` keyed by physical Lumatone key ("ch,note") instead of lattice cell.
+   *  Older versions get a one-time migration in velocityCal.ts. */
   version?: number;
   floor: number;
   ceiling: number;

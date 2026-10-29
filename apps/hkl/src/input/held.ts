@@ -173,7 +173,7 @@ export function moveVoices(pairs: { oldKey: KeyId; newKey: KeyId }[]): void {
       const rampDur = animation.duration / 1000;
       const entries = moving.map((p) => audio.activeOscs[p.oldKey]);
       moving.forEach((p) => { delete audio.activeOscs[p.oldKey]; });
-      const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vol?: number }[] = [];
+      const sampleMoves: { oldKey: KeyId; newKey: KeyId; nq: number; nr: number; newFreq: number; instr: string; vel: number; vol?: number }[] = [];
       moving.forEach((p, i) => {
         const e = entries[i];
         const np = p.newKey.split(','), nq = +np[0], nr = +np[1];
@@ -183,13 +183,13 @@ export function moveVoices(pairs: { oldKey: KeyId; newKey: KeyId }[]): void {
           e.q = nq; e.r = nr;
           audio.activeOscs[p.newKey] = e;
         } else if (e.type === 'sample') {
-          sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr });
+          sampleMoves.push({ oldKey: p.oldKey, newKey: p.newKey, nq, nr, newFreq: keyFreq(nq, nr), instr: e.instr, vel: e.vel });
         }
       });
       sampleMoves.forEach((m) => { m.vol = SampleEngine.slideAndFadeOut(m.oldKey, m.newFreq, rampDur); });
       sampleMoves.forEach((m) => {
         SampleEngine.noteOnFaded(m.newKey, m.newFreq, m.vol!, rampDur, m.instr);
-        audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr };
+        audio.activeOscs[m.newKey] = { type: 'sample', freq: m.newFreq, instr: m.instr, q: m.nq, r: m.nr, vel: m.vel };
       });
     }
   }
