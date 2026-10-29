@@ -62,6 +62,7 @@ function buildSnapshot(): OverlaySnapshot {
     refR: referenceNote.r,
     outline: selVal('selOutline', 'lumatone'),
     rotation: selVal('selRotation', '0'),
+    alignment: selVal('selAlignment', 'vertical'),
     hexSize: selVal('selHexSize', 'm'),
     showNotes: cbOn('cbNotes'),
     showBands: cbOn('cbBands'),
@@ -99,7 +100,7 @@ function sendFullState(): void {
 
 function structSigOf(s: OverlaySnapshot): string {
   return [
-    s.tuning, s.mapping, s.anchor, s.heji, s.refQ, s.refR, s.outline, s.rotation, s.hexSize,
+    s.tuning, s.mapping, s.anchor, s.heji, s.refQ, s.refR, s.outline, s.rotation, s.alignment, s.hexSize,
     s.showNotes, s.showBands, s.extendPattern, s.composerView, s.staffDark,
     s.kbAnchorQ, s.kbAnchorR,
   ].join('|');

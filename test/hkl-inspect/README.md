@@ -72,7 +72,10 @@ python3 test/hkl-inspect/compare-shots.py <dirA> <dirB> [<heatmapDir>]
 through the toolbar's own change events and the Composer bridge: every outline
 × rotation × Extend pattern at the default reference, the physical outlines
 (and None) under a shifted score-ref (kbAnchor off (0, 0)), and Vertical Freq
-under Wicki-Hayden and chromatic — 28 shots, with a `manifest.json`. One
+under Wicki-Hayden and chromatic (shots 0–27, which never touch Alignment),
+then the Lumatone and QWERTY outlines under every rotation with Alignment Left
+and Right, and the Piano / None outlines with Right — 42 shots, with a
+`manifest.json`. One
 headless Chromium on a private overlay relay, stopped at the end.
 
 `compare-shots.py` reports per shot the pixels that differ at all and exits 1 if
@@ -80,4 +83,6 @@ any shot differs; with a heatmap dir, each differing pair gets a full-page
 `test/composer-test/heatmap.py` heatmap. Capture the baseline **before** the
 change, twice — two runs on the same code must be identical, or the comparison
 can't gate anything — then capture again after it. A refactor that must not
-move a pixel passes at 28/28 identical.
+move a pixel passes with every shot identical (the comparison covers the
+shots in the first directory's manifest, so a 28-shot run from before Alignment
+still compares shot for shot).

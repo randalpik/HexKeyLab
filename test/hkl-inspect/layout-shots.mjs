@@ -11,8 +11,11 @@
 // Matrix: every outline × rotation × Extend pattern at the default reference
 // (A3), then the physical outlines (and None) under a shifted score-ref, which
 // moves the keyboard anchor off (0, 0), then Vertical Freq under the other two
-// mappings. Order matters: the score-ref and mapping steps change state that
-// later shots inherit.
+// mappings, then the Alignment views: the Lumatone and QWERTY outlines under
+// every rotation with Left and Right, and the Piano / None outlines with Right
+// (which must look as at Vertical). Order matters: the score-ref, mapping and
+// alignment steps change state that later shots inherit; shots 0-27 never set
+// an alignment, so they compare against a run from before Alignment existed.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -39,6 +42,12 @@ for (const outline of ['lumatone', 'qwerty', 'none'])
     shots.push({ outline, rotation: 'lumatone', extend, scoreRef: [6, -3] });
 shots.push({ outline: 'lumatone', rotation: 'verticalFreq', extend: true, scoreRef: [6, -3], mapping: 'wickiHayden' });
 shots.push({ outline: 'lumatone', rotation: 'verticalFreq', extend: true, scoreRef: [6, -3], mapping: 'chromatic' });
+for (const outline of ['lumatone', 'qwerty'])
+  for (const rotation of ROTATIONS)
+    for (const alignment of ['left', 'right'])
+      shots.push({ outline, rotation, extend: true, alignment, mapping: 'euler', clearRef: true });
+for (const outline of ['piano', 'none'])
+  shots.push({ outline, rotation: 'lumatone', extend: true, alignment: 'right' });
 
 const chrome = await launchChromium();
 const cdp = new CDP(await newTabWsUrl(chrome.port));
@@ -61,6 +70,12 @@ const apply = (s) => `(async () => {
   const sel = (id, v) => { const e = document.getElementById(id); if (e.value !== v) { e.value = v; e.dispatchEvent(new Event('change')); } };
   const tick = (id, on) => { const c = document.getElementById(id); if (c.checked !== on) { c.checked = on; c.dispatchEvent(new Event('change')); } };
   if (s.mapping) sel('selMapping', s.mapping);
+  if (s.clearRef) {
+    const ch = new BroadcastChannel('hkl-composer-bridge');
+    ch.postMessage({ type: 'composer-bye' });
+    ch.close();
+  }
+  if (s.alignment) sel('selAlignment', s.alignment);
   sel('selOutline', s.outline);
   sel('selRotation', s.rotation);
   tick('cbExtend', s.extend);
@@ -79,7 +94,8 @@ for (let i = 0; i < shots.length; i++) {
   const s = shots[i];
   await cdp.evalJSON(apply(s));
   const name = String(i).padStart(2, '0') + '-' + s.outline + '-' + s.rotation + '-' + (s.extend ? 'ext' : 'noext')
-    + (s.scoreRef ? '-ref' + s.scoreRef.join('_') : '-a3') + (s.mapping ? '-' + s.mapping : '') + '.png';
+    + (s.scoreRef ? '-ref' + s.scoreRef.join('_') : '-a3') + (s.mapping ? '-' + s.mapping : '')
+    + (s.alignment ? '-al_' + s.alignment : '') + '.png';
   const m = await cdp.send('Page.getLayoutMetrics');
   const { width, height } = m.cssContentSize;
   const shot = await cdp.send('Page.captureScreenshot', {

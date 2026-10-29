@@ -240,7 +240,9 @@ note is the ref when it is newer than the Ctrl+click (elsewhere the cursor note 
 displaces a Ctrl+click). The keyboard anchor `kbAnchor` = `refSpine(home ref)` — where the
 Lumatone/QWERTY layout sits and where every non-piano view centers — and the S/Y `tuning.anchor` are
 derived there and nowhere else (the overlay mirror alone copies the publisher's). A physical key
-(Lumatone key, QWERTY code) plays its fixed lattice offset + `kbAnchor`; that map lives in one place,
+(Lumatone key, QWERTY code) plays its lattice offset + `kbAnchor` — the offset is its physical
+position posed by the Layout toolbar's Alignment, a 60° lattice rotation about the anchor; that map
+lives in one place,
 `apps/hkl/src/layout/physical.ts` (`lumatoneCells` / `qwertyCells`, `lumatoneCell(i)` /
 `qwertyCell(code)`), which MIDI input, QWERTY input, Lumatone colors and the outline footprint all
 read. Every tier change

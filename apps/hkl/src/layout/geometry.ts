@@ -4,14 +4,20 @@
 //                  (q-axis: log(2)·COLUMN_STEP/12 per step — log(2)/3 Euler,
 //                  /6 Wicki-Hayden, /12 chromatic; r-axis: midpoint of 5-limit
 //                  log(3/2) and 7-limit log(3/2)-log(81/80)/6)
-//   lumatone     — (+7q, -2r) direction is screen-horizontal (Lumatone case row)
+//   lumatone     — the Lumatone case row (the (+7, −2) board step, posed by the
+//                  alignment) is screen-horizontal
 //   piano        — q-axis is screen-horizontal (octaves tile left-to-right)
+//
+// Vertical Freq and Piano are properties of the lattice, so they pin it: under
+// a non-vertical alignment the outline turns instead. Lumatone is a property of
+// the instrument, so it pins the outline and the lattice turns.
 //
 // tiltAngle/cosT/sinT are `let` exports; ES module live bindings propagate
 // updates to every importer without re-importing.
 
-import type { HexSize, Mapping, RotationMode } from '../state/persistence.js';
+import type { Alignment, HexSize, Mapping, RotationMode } from '../state/persistence.js';
 import { COLUMN_STEP } from '@hkl/shared/mapping.js';
+import { poseOffset } from './physical.js';
 
 /* Hex inradius (px) and derived axis pitches. `let` exports: setHexSize()
    reassigns them and ES module live bindings propagate to every importer.
@@ -46,7 +52,15 @@ function verticalFreqTilt(qStep: number): number {
   return Math.PI / 2 - Math.atan2(gy, gx);
 }
 const TILT_VERTICAL_FREQ = verticalFreqTilt(Math.log(2) / 3);
-const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
+/* The tilt that levels the Lumatone case row — the (+7, −2) board step as the
+   alignment poses it — computed from that vector's own pixel direction, so it
+   is exact although dxH:dyH is not a regular hexagon's 2:√3. x > 0 in every
+   pose, so atan(y/x) is the angle (and reproduces atan(dyH / 3dxH) bit for bit
+   in the vertical pose). */
+function caseLevelTilt(pose: Alignment): number {
+  const [q, r] = poseOffset(pose, 7, -2);
+  return -Math.atan((r * dyH) / ((q + r * 0.5) * dxH));
+}
 const TILT_PIANO = 0;
 
 export let tiltAngle = TILT_VERTICAL_FREQ;
@@ -57,10 +71,12 @@ export let sinT = Math.sin(tiltAngle);
  *  share a tilt value) read the canonical name. */
 export let currentRotationMode: RotationMode = 'verticalFreq';
 
-export function setRotation(mode: RotationMode, mapping: Mapping): void {
+/** `pose`: the visible outline's pose (layout/physical.ts outlinePose), read
+ *  only by the Lumatone rotation. */
+export function setRotation(mode: RotationMode, mapping: Mapping, pose: Alignment): void {
   currentRotationMode = mode;
   switch (mode) {
-    case 'lumatone': tiltAngle = TILT_LUMATONE; break;
+    case 'lumatone': tiltAngle = caseLevelTilt(pose); break;
     case 'piano': tiltAngle = TILT_PIANO; break;
     default: tiltAngle = verticalFreqTilt(Math.log(2) * COLUMN_STEP[mapping] / 12);
   }

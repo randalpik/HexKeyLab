@@ -11,7 +11,7 @@
 // call from the current view + layout shift; the click hit-test reads it as
 // the screen-space lookup table.
 
-import { lumatoneCells, qwertyCells } from '../layout/physical.js';
+import { lumatoneCells, qwertyCells, outlineCells, outlinePose, type Cell } from '../layout/physical.js';
 import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
 import { coordToMidi, anchorOf, TUNING_MODES } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
@@ -54,7 +54,7 @@ export const cv = document.getElementById('cv') as HTMLCanvasElement;
 sizeCanvas();
 cv.style.width = view.CW + 'px';
 cv.style.height = view.CH + 'px';
-(cv.parentElement as HTMLElement).style.minWidth = '424px'; /* 400px canvas + 24px wrap padding */
+(cv.closest('.wrap') as HTMLElement).style.minWidth = '424px'; /* 400px canvas + 24px wrap padding */
 export let ctx: CanvasRenderingContext2D = cv.getContext('2d')!;
 
 /** OBS-overlay transparent render. The lattice still renders fully opaque
@@ -220,6 +220,13 @@ function getOutlineMode(): OutlineMode {
   return 'lumatone';
 }
 
+/* The Lumatone cells the keyboard backing and the always-drawn key set use,
+   under every outline: in the visible outline's pose (layout/physical.ts), so
+   the Piano and None outlines keep the vertical pose whatever the alignment. */
+function kbCells(): ReadonlyArray<Cell> {
+  return outlineCells('lumatone', outlinePose(getOutlineMode()));
+}
+
 /* ── piano outline (dynamic, refNote-anchored) ─────────────────────────────
    The 88 cells that an A0..C8 MIDI piano resolves to under the current
    reference note. Unlike Lumatone/QWERTY (static cell sets pre-shifted to
@@ -268,12 +275,20 @@ let validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
  *  load initializers above. */
 export function rebuildScaleGeometry(): void {
   outR = hexR + 1;
+  rebuildFootprintGeometry();
+  validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
+  invalidatePianoOutline();
+}
+
+/** Rebuild what derives from the Lumatone / QWERTY cell sets as posed
+ *  (layout/physical.ts): outline polygons, seam-snap indices, Extend-off
+ *  extents. Run after an alignment change; the scale rebuild runs it too. */
+export function rebuildFootprintGeometry(): void {
   lumatoneOutlinePaths = computeOutlinePaths(lumatoneCells);
   qwertyOutlinePaths = computeOutlinePaths(qwertyCells);
   lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
   qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
-  validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
-  invalidatePianoOutline();
+  computeKbExtents();
 }
 
 function activeValidRefSet(): Set<KeyId> {
@@ -737,16 +752,14 @@ let gridRefQ = 0, gridRefR = 0, gridPadX = 0, gridPadY = 0, gridW = 0, gridH = 0
 
 interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
 
-/* keyboard extent across all layouts for tight bounds when Extend is off.
-   QWERTY bounds also span the full QWERTY-transpose range (-3..+3) so the
-   precomputed union covers every reachable QWERTY position. */
-/* Baseline extents of the lumatoneCells / qwertyCells cell sets, BEFORE applying
-   any layout shift or transpose. The runtime shift (refSpine for Lumatone +
-   QWERTY-transpose for QWERTY) is added at gridRange-time, so the clamp
-   tracks the lattice as it slides underneath the static outline. */
+/* Keyboard extents for tight bounds when Extend is off: the lumatoneCells /
+   qwertyCells cell sets as posed (layout/physical.ts), BEFORE the anchor
+   shift. The runtime shift (kbAnchor) is added at gridRange-time, so the
+   clamp tracks the lattice as it slides underneath the static outline.
+   Recomputed by rebuildFootprintGeometry when the alignment changes. */
 let kbBaseQMin: number, kbBaseQMax: number, kbBaseRMin: number, kbBaseRMax: number;
 let qwertyBaseQMin: number, qwertyBaseQMax: number, qwertyBaseRMin: number, qwertyBaseRMax: number;
-(function () {
+function computeKbExtents(): void {
   kbBaseQMin = 1e9; kbBaseQMax = -1e9; kbBaseRMin = 1e9; kbBaseRMax = -1e9;
   qwertyBaseQMin = 1e9; qwertyBaseQMax = -1e9; qwertyBaseRMin = 1e9; qwertyBaseRMax = -1e9;
   lumatoneCells.forEach((k) => {
@@ -759,7 +772,8 @@ let qwertyBaseQMin: number, qwertyBaseQMax: number, qwertyBaseRMin: number, qwer
   });
   kbBaseQMin -= 2; kbBaseQMax += 2; kbBaseRMin -= 2; kbBaseRMax += 2;
   qwertyBaseQMin -= 2; qwertyBaseQMax += 2; qwertyBaseRMin -= 2; qwertyBaseRMax += 2;
-})();
+}
+computeKbExtents();
 
 function sizeGridCanvases(): void {
   /* The offscreen hex layer is anchored at gridRef and padded to cover the
@@ -865,7 +879,7 @@ function gridRange(extended: boolean): GridRange {
 
 function buildGridKeys(range: GridRange): DrawnKey[] {
   const gcx = gridW / 2, gcy = gridH / 2 + view.kbOffY;
-  const kbSet = new Set<string>(); lumatoneCells.forEach((k) => { kbSet.add(k[0] + ',' + k[1]); });
+  const kbSet = new Set<string>(); kbCells().forEach((k) => { kbSet.add(k[0] + ',' + k[1]); });
   const gKeys: DrawnKey[] = [];
   for (let r = range.rMax; r >= range.rMin; r--) for (let q = range.qMin; q <= range.qMax; q++) {
     const isKb = kbSet.has(q + ',' + r);
@@ -996,7 +1010,7 @@ export function draw(): void {
   const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : view.kbAnchorQ;
   const kbShR = animation.isAnimating ? Math.round(view.viewR) : view.kbAnchorR;
   const kbSet = new Set<string>();
-  lumatoneCells.forEach((k) => {
+  kbCells().forEach((k) => {
     kbSet.add(k[0] + kbShQ + "," + (k[1] + kbShR));
   });
   const vis = getVisibleRange(view.viewQ, view.viewR);

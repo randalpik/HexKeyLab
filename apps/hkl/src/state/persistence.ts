@@ -30,6 +30,11 @@ export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 export type { Mapping };
 export type PedalMode = 'sustain' | 'sostenuto';
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
+/* How the physical layout (Lumatone, QWERTY) sits on the lattice: the fifths
+   axis up its 60° diagonal (vertical), or the layout turned 60° so the fifths
+   run up the other diagonal (left) or along the key rows (right). See
+   layout/physical.ts. */
+export type Alignment = 'vertical' | 'left' | 'right';
 /* Hex-size preset. Scales hex geometry, text, and stroke widths uniformly;
    display-only (does not affect recordings, audio, or Composer footprint).
    Maps to inradius px in layout/geometry.ts (small 12 · medium 16 · large 24). */
@@ -99,6 +104,8 @@ export interface PrefsV1 {
   shortIvl: boolean;
   outline: OutlineMode;
   rotation: RotationMode;
+  /** Physical-layout alignment (toolbar "Alignment:"). Default 'vertical'. */
+  alignment: Alignment;
   tuning: TuningMode;
   /** Note-name mapping (toolbar "Mapping:"). Default 'euler'. */
   mapping: Mapping;
@@ -174,6 +181,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   shortIvl: false,
   outline: "lumatone",
   rotation: "verticalFreq",
+  alignment: "vertical",
   tuning: "5",
   mapping: "euler",
   hexSize: "medium",
@@ -218,6 +226,9 @@ function isOutlineMode(s: unknown): s is OutlineMode {
 }
 function isRotationMode(s: unknown): s is RotationMode {
   return s === 'verticalFreq' || s === 'lumatone' || s === 'piano';
+}
+export function isAlignment(s: unknown): s is Alignment {
+  return s === 'vertical' || s === 'left' || s === 'right';
 }
 function isHexSize(s: unknown): s is HexSize {
   return s === 'small' || s === 'medium' || s === 'large';
@@ -297,6 +308,7 @@ export function loadPrefs(): PrefsV1 {
       typeof o.shortIvl === "boolean" ? o.shortIvl : DEFAULT_PREFS.shortIvl,
     outline: isOutlineMode(o.outline) ? o.outline : DEFAULT_PREFS.outline,
     rotation: isRotationMode(o.rotation) ? o.rotation : DEFAULT_PREFS.rotation,
+    alignment: isAlignment(o.alignment) ? o.alignment : DEFAULT_PREFS.alignment,
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
     mapping: isMapping(o.mapping) ? o.mapping : DEFAULT_PREFS.mapping,
     hexSize: isHexSize(o.hexSize) ? o.hexSize : DEFAULT_PREFS.hexSize,

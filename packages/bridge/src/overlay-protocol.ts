@@ -40,6 +40,8 @@ export interface OverlaySnapshot {
   outline: string;
   /** RotationMode. */
   rotation: string;
+  /** Alignment ('vertical' | 'left' | 'right'); absent from an older publisher ⇒ 'vertical'. */
+  alignment?: string;
   /** HexSize preset. */
   hexSize: string;
   showNotes: boolean;

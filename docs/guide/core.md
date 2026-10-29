@@ -31,6 +31,8 @@ In the Euler mapping the keyboard is divided into **bands** three keys wide, and
 - **Extend pattern**: color the whole canvas rather than only the area inside the outline.
 - **Outline**: the keyboard footprint drawn in white: **Lumatone** (280 keys), **QWERTY**, **Piano** (88 keys around the reference note), or **None**.
 - **Rotation**: **Vertical Freq** (pitch rises straight up), **Lumatone** (the instrument's tilt) or **Piano**. Only the picture turns.
+- When the lattice is taller than the space above the analysis box (the Lumatone outline under Vertical Freq or Piano with Left or Right, some None-outline mappings), it scrolls: mouse wheel or scrollbar. Touch never scrolls it, so taps always play keys.
+- **Alignment**: how the Lumatone and QWERTY layouts sit on the lattice. **Vertical** is the usual layout; **Left** and **Right** turn it 60°, so the fifths run up the other diagonal (Left) or along the key rows (Right, where every row is a chain of fifths and the keyboard spans far more range). This changes which note each key plays, under every outline, and keys you're holding move with it. With the **Lumatone** rotation the lattice turns under a still outline; with **Vertical Freq** or **Piano** the outline turns instead.
 
 ---
 

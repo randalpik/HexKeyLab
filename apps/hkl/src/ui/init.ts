@@ -30,7 +30,7 @@ import {
   clearSelection as clearRefSelection, setAnchorListener, setRefListener,
 } from '../state/reference.js';
 import { onAnchorChanged } from '../effects/onAnchorChanged.js';
-import { sizeCanvas } from '../render/canvas.js';
+import { refitCanvasWidth } from '../render/controls-core.js';
 import { cv, draw, hexAtPoint, activeFootprintSet, validateRefNoteCandidate } from '../render/draw.js';
 import { updateInfo } from '../render/info.js';
 import { renderStaffInset } from '../render/staff-inset.js';
@@ -46,6 +46,7 @@ import { initPianoOut } from '../midi/piano-out.js';
 import {
   setTuning, setMapping, setOutline, clearSelection,
   applyRotation, setRotationFromDom,
+  applyAlignment, setAlignmentFromDom,
   applyHexSize, setHexSizeFromDom,
 } from './controls.js';
 import './keyboard.js';
@@ -102,6 +103,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   document.body.classList.toggle('composer-view', p.composerView);
   $<HTMLSelectElement>('selOutline').value = p.outline;
   $<HTMLSelectElement>('selRotation').value = p.rotation;
+  $<HTMLSelectElement>('selAlignment').value = p.alignment;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
   $<HTMLSelectElement>('selMapping').value = p.mapping;
   $<HTMLSelectElement>('selHexSize').value = p.hexSize;
@@ -130,8 +132,10 @@ applyPrefsToDom(prefs);
    (manualRef) was saved in: set it directly — no frame conversion — before
    anything reads coordinates (the verticalFreq tilt below included). */
 tuning.mapping = prefs.mapping;
-/* Apply persisted rotation before first paint — resets geometry tilt,
-   canvas bounds, and cv.style.height to match the saved mode. */
+/* Apply the persisted alignment, then rotation, before first paint — poses
+   the physical layout, then resets geometry tilt, canvas bounds, and
+   cv.style.height to match the saved mode. */
+applyAlignment(prefs.alignment);
 applyRotation(prefs.rotation);
 /* Apply persisted hex size before first paint — rescales geometry, rebuilds
    scale-dependent outline/snap caches, and recomputes bounds at the saved
@@ -387,6 +391,7 @@ $<HTMLSelectElement>('selMapping').addEventListener('change', setMapping);
 
 $<HTMLSelectElement>('selOutline').addEventListener('change', () => setOutline());
 $<HTMLSelectElement>('selRotation').addEventListener('change', setRotationFromDom);
+$<HTMLSelectElement>('selAlignment').addEventListener('change', setAlignmentFromDom);
 $<HTMLSelectElement>('selHexSize').addEventListener('change', setHexSizeFromDom);
 $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
 
@@ -454,6 +459,7 @@ function resetToDefaults(): void {
   setTuning();
   setMapping();  /* back to Euler: a real switch, so held notes convert */
   setOutline();  /* user-initiated path; tween view to new home position */
+  setAlignmentFromDom();  /* held keys follow, LEDs resync, if it changed */
   applyRotation(p.rotation);
   applyHexSize(p.hexSize);
 
@@ -527,12 +533,10 @@ setAnchorListener(onAnchorChanged);
 
 function onResize(): void {
   const oldCW = view.CW;
-  sizeCanvas();
-  if (view.CW !== oldCW) {
-    cv.style.width = view.CW + 'px';
-    view.hexDirty = true;
-    view.textDirty = true;
-    draw();
-  }
+  refitCanvasWidth();
+  if (view.CW !== oldCW) draw();
 }
 window.addEventListener('resize', onResize);
+/* The lattice's scroll box changes size without a window resize when toolbars
+   open or close; a classic scrollbar appearing or going narrows or widens it. */
+new ResizeObserver(onResize).observe($<HTMLElement>('cvScroll'));

@@ -14,7 +14,7 @@ import {
   convertReferenceFrame, manualSelection,
 } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
-import type { HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
+import type { Alignment, HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { eulerOf, fromEuler, vecFromEuler } from '@hkl/shared/mapping.js';
 import { dxH, dyH, cosT, sinT, currentRotationMode } from '../layout/geometry.js';
 import { view } from '../state/view.js';
@@ -25,7 +25,9 @@ import {
   instrReplaysOnTranspose,
 } from '../audio/engine.js';
 import { draw, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
-import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender } from '../render/controls-core.js';
+import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender, applyAlignment } from '../render/controls-core.js';
+import { alignment } from '../layout/physical.js';
+import { remapPhysicalInputs } from '../effects/onRefChanged.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { broadcastFootprint } from '../bridge/hkl-side.js';
@@ -36,7 +38,7 @@ import type { KeyId, Voice } from '../types.js';
 /* Render-only primitives now live in render/controls-core.ts (engine-free, so
    the OBS-overlay subscriber can reuse them). Re-exported here so existing
    importers (ui/init.ts, bridge/hkl-side.ts) keep their import path unchanged. */
-export { syncViewToOutline, applyRotation, applyHexSize };
+export { syncViewToOutline, applyRotation, applyHexSize, applyAlignment };
 
 export function setTuning(): void {
   const val = (document.getElementById('selTuning') as HTMLSelectElement).value as TuningMode;
@@ -141,6 +143,24 @@ export function setRotationFromDom(): void {
   draw();
   sel.blur();
   savePrefs({ rotation: mode });
+}
+
+export function setAlignmentFromDom(): void {
+  const sel = document.getElementById('selAlignment') as HTMLSelectElement;
+  const a = sel.value as Alignment;
+  sel.blur();
+  if (a === alignment) return;
+  /* Re-pose the layout: outline, tilt, bounds, view (render/controls-core). */
+  applyAlignment(a);
+  /* A different cell now sits under each physical key: held Lumatone / QWERTY
+     keys move with their key, and the Lumatone LEDs follow the cells. Under
+     every outline — the Piano and None outlines have no pose, but the device
+     still plays through the map. */
+  remapPhysicalInputs();
+  draw();
+  savePrefs({ alignment: a });
+  /* The Lumatone / QWERTY footprint Composer constrains entry to moved. */
+  broadcastFootprint();
 }
 
 export function setHexSizeFromDom(): void {

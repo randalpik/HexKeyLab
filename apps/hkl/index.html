@@ -46,6 +46,10 @@ html,body{background:#111;height:100%;overflow:hidden}
 .lsel .lbtn:hover{border-color:#888 !important}
 .lsel .lbtn.active{border-color:#fff !important;background:#fff !important;color:#000 !important}
 canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
+/* The lattice's scroll box: as tall as the canvas while it fits; otherwise the
+   column caps it at what the toolbars and the analysis row's minimum leave, and
+   it scrolls — wheel, scrollbar or keys, never touch, so taps stay key presses. */
+#cvScroll{flex:0 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;touch-action:none;overscroll-behavior:contain}
 .info-line{
   margin:0;padding:8px 12px;min-height:36px;
   background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;
@@ -92,7 +96,8 @@ canvas{display:block;background:#111;margin:0 auto;flex:0 0 auto}
    staff-notation inset to its right. Flex row so both share the same height —
    the inset is always exactly as tall as the analysis box, maximizing vertical
    room for ledger lines. */
-.info-row{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin:8px 0 0;flex:1 1 0;min-height:0}
+/* min-height: room for a staff (staff inset / Composer view) however tall the lattice. */
+.info-row{display:flex;flex-direction:row;align-items:stretch;gap:8px;margin:8px 0 0;flex:1 1 0;min-height:180px}
 /* Live staff inset: a Verovio-rendered grand-staff chord of the held notes.
    Hidden until "Show staff notation" is enabled (body.staff-on). The flex box
    vertically centers and left-aligns the (native-size) SVG; tall ledger-heavy
@@ -137,6 +142,9 @@ html.overlay canvas, html.overlay #composerFrame, html.overlay #staffInset{
   background:transparent !important;border-color:transparent !important;box-shadow:none !important;
 }
 html.overlay .wrap{padding:0}
+/* The overlay renders the whole canvas at the OBS source size: no scroll box, no reserved analysis row. */
+html.overlay #cvScroll{flex:0 0 auto;overflow:visible}
+html.overlay .info-row{min-height:0}
 html.overlay .title-bar, html.overlay .ctrls,
 html.overlay .info-line, html.overlay #staffInset,
 html.overlay .composer-frame-hint{display:none !important}
@@ -348,6 +356,14 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <option value="piano">Piano</option>
 </select>
 </div>
+<div class="lsel">
+<span>Alignment:</span>
+<select id="selAlignment" autocomplete="off">
+<option value="vertical" selected>Vertical</option>
+<option value="left">Left</option>
+<option value="right">Right</option>
+</select>
+</div>
 </div>
 </div>
 <div class="toolbar-group" id="tb-group-playback">
@@ -486,7 +502,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 </div>
 </div>
 </div>
-<canvas id="cv"></canvas>
+<div id="cvScroll"><canvas id="cv"></canvas></div>
 <div class="calib-panel" id="calibPanel">
 <span class="calib-title">Pedal Calibration</span>
 <span class="calib-instruction">Sweep pedal full range repeatedly</span>

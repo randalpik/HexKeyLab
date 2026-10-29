@@ -74,6 +74,34 @@ explains is dropped (M, each round a reload with seeded prefs). Voices are oscil
 before declaring any change to `velocityCal`, the playback note-on paths,
 `keyVelocity`, or `Voice.vel` done.**
 
+## Alignment
+
+```sh
+node test/hkl-midi/alignment.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for the Layout toolbar's Alignment select, driven through its change
+event: the options and default, the saved pref; every Lumatone key and a QWERTY key play
+their Right-posed cell, also under the Piano outline; held Lumatone and QWERTY keys move
+with their key and release cleanly; the Lumatone rotation levels the posed outline while
+Vertical Freq, Piano and the Piano outline keep the lattice; the footprint is the posed
+cells. The pose math is `test/alignment/gate.mjs`. **Run both before declaring any change
+to `layout/physical.ts`, `setRotation`, or the alignment fan-out done.**
+
+## Lattice scroll box
+
+```sh
+node test/hkl-midi/lattice-scroll.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Gate for the canvas's scroll box (`#cvScroll`, docs/architecture/hkl.md → Display): a
+lattice that fits doesn't scroll; one that doesn't (Lumatone outline, Vertical Freq, Right)
+scrolls while the analysis row keeps its 180 px and stays on the page (Composer view too); a
+height change centers the scroll and a same-height redraw keeps it; mousedown clicks at the
+top and bottom of a scrolled lattice select the key under the pointer; the canvas fits the
+box width; touch never scrolls; and the OBS overlay page (its own private relay) keeps the
+pre-scroll layout.
+
 ## Mapping switch with keys held
 
 ```sh

@@ -3,12 +3,13 @@
 import assert from 'node:assert/strict';
 import { baseKeys } from '../../apps/hkl/src/layout/baseKeys.ts';
 import { hexToScreen, setRotation } from '../../apps/hkl/src/layout/geometry.ts';
+import { setAlignment } from '../../apps/hkl/src/layout/physical.ts';
 import { orderColorSync } from '../../apps/hkl/src/lumatone/sync-order.ts';
 import { buildColorSysEx, setBoards34Swapped, sysexBoardFor } from '../../apps/hkl/src/lumatone/protocol.ts';
 
 const all = Array.from({ length: 280 }, (_, i) => i);
 const board = i => sysexBoardFor(Math.floor(i / 56));
-setRotation('lumatone');
+setRotation('lumatone', 'euler', 'vertical');
 const positions = baseKeys.map(([q, r]) => hexToScreen(q, r));
 
 function check(indices, previous) {
@@ -62,10 +63,13 @@ for (const swap of [false, true]) {
       cases++;
     }
   }
-  for (const rotation of ['piano', 'verticalFreq', 'lumatone']) {
-    setRotation(rotation);
-    assert.deepEqual(orderColorSync(all), full, 'canvas rotation cannot change physical sweep');
-  }
+  for (const rotation of ['piano', 'verticalFreq', 'lumatone'])
+    for (const alignment of ['vertical', 'left', 'right']) {
+      setAlignment(alignment);
+      setRotation(rotation, 'euler', alignment);
+      assert.deepEqual(orderColorSync(all), full, 'canvas rotation and alignment cannot change physical sweep');
+    }
+  setAlignment('vertical');
 }
 setBoards34Swapped(false);
 console.log(`PASS: ${cases} full/sparse/in-flight ordering cases; both board maps; physical geometry and rotation independence`);

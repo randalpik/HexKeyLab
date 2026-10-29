@@ -32,17 +32,21 @@ export function withRefSlide<T>(mutate: () => T): T {
   try { return mutate(); } finally { slide = false; }
 }
 
+/** A different lattice cell now sits under each physical key — the anchor
+ *  moved, or the alignment re-posed the layout (layout/physical.ts). Each held
+ *  Lumatone / QWERTY input re-resolves through the current map and its voice
+ *  follows the key (input/held.ts migrateHeld), one selection sync for both
+ *  sources; then a Lumatone color diff so the LEDs follow the cells (self-gates
+ *  on autoSyncEnabled + midiOut). */
+export function remapPhysicalInputs(): void {
+  const moved = migrateHeldQwertyVoices() + migrateHeldLumatoneVoices();
+  if (moved) onSelectionChanged();
+  syncLumatoneColors();
+}
+
 export function onRefChanged(dq: number, dr: number): void {
-  if (dq !== 0 || dr !== 0) {
-    /* kbAnchor is already advanced; each held physical input re-resolves under
-       it (input/held.ts migrateHeld). One selection sync for both sources. */
-    const moved = migrateHeldQwertyVoices() + migrateHeldLumatoneVoices();
-    if (moved) onSelectionChanged();
-    /* Different lattice cells now sit under each physical Lumatone key —
-       push a color diff so the device LEDs follow. Self-gates on
-       autoSyncEnabled + midiOut, so this is a no-op when irrelevant. */
-    syncLumatoneColors();
-  }
+  /* kbAnchor is already advanced. */
+  if (dq !== 0 || dr !== 0) remapPhysicalInputs();
   /* The piano footprint tracks the ref; the view centers on the ref (piano)
      or the keyboard anchor (every other outline). */
   invalidatePianoOutline();

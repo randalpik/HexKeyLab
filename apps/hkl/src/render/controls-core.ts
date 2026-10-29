@@ -11,14 +11,42 @@
 import { view } from '../state/view.js';
 import { tuning } from '../state/tuning.js';
 import { referenceNote } from '../state/reference.js';
-import { setRotation, setHexSize } from '../layout/geometry.js';
-import { recomputeCanvasBounds, computePianoViewCenter } from './canvas.js';
+import { setRotation, setHexSize, currentRotationMode } from '../layout/geometry.js';
+import { setAlignment, outlinePose } from '../layout/physical.js';
+import { recomputeCanvasBounds, computePianoViewCenter, sizeCanvas } from './canvas.js';
 import {
   cv, draw, startLayoutAnim, currentMidi64Cell, buildHexLayerForTween,
-  snapViewForOutline, invalidatePianoOutline, rebuildScaleGeometry,
+  snapViewForOutline, invalidatePianoOutline, rebuildScaleGeometry, rebuildFootprintGeometry,
 } from './draw.js';
 import { animation } from './animation.js';
-import type { HexSize, OutlineMode, RotationMode } from '../state/persistence.js';
+import type { Alignment, HexSize, OutlineMode, RotationMode } from '../state/persistence.js';
+
+/* The canvas element's height (view.CH) inside its scroll box (#cvScroll,
+   index.html), which the page's flex column caps at the space the toolbars and
+   the analysis row's minimum leave. When the height changes the scroll centers
+   on the canvas middle — the outline center (kbAnchor) or the piano view
+   center — and the width re-fits the box, which may have gained or lost a
+   classic scrollbar. An unchanged height keeps the user's scroll. */
+let centeredCH = -1;
+export function applyCanvasHeight(): void {
+  cv.style.height = view.CH + 'px';
+  if (view.CH === centeredCH) return;
+  centeredCH = view.CH;
+  const box = cv.parentElement as HTMLElement;
+  box.scrollTop = (box.scrollHeight - box.clientHeight) / 2;
+  refitCanvasWidth();
+}
+
+/** Re-derive view.CW (sizeCanvas) and resize the canvas element if it moved:
+ *  window resizes, and the scroll box gaining or losing a classic scrollbar. */
+export function refitCanvasWidth(): void {
+  const oldCW = view.CW;
+  sizeCanvas();
+  if (view.CW === oldCW) return;
+  cv.style.width = view.CW + 'px';
+  view.hexDirty = true;
+  view.textDirty = true;
+}
 
 export function outlineFromDom(): OutlineMode {
   const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
@@ -71,13 +99,29 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
 }
 
 export function applyRotation(mode: RotationMode): void {
-  setRotation(mode, tuning.mapping);
+  setRotation(mode, tuning.mapping, outlinePose(outlineFromDom()));
   recomputeCanvasBounds();
-  cv.style.height = view.CH + 'px';
+  applyCanvasHeight();
   /* Re-snap unconditionally — piano viewport solves a tilt-dependent system,
      so a stale viewQ/viewR drifts the cells + dark-overlay rect off-center
      after a rotation change. No-op for non-piano beyond setting the
      layout-shift center. */
+  snapViewForOutline(outlineFromDom());
+  view.hexDirty = true;
+  view.textDirty = true;
+}
+
+/* Pose the physical layout (layout/physical.ts) and redo what derives from
+   it: the outline polygons + extents, the tilt (the Lumatone rotation levels
+   the posed outline; Vertical Freq and Piano keep the lattice, so the outline
+   turns), canvas bounds and the view snap. Caller redraws. The full app layers
+   the physical-input side on top (ui/controls.ts setAlignmentFromDom). */
+export function applyAlignment(a: Alignment): void {
+  setAlignment(a);
+  rebuildFootprintGeometry();
+  setRotation(currentRotationMode, tuning.mapping, outlinePose(outlineFromDom()));
+  recomputeCanvasBounds();
+  applyCanvasHeight();
   snapViewForOutline(outlineFromDom());
   view.hexDirty = true;
   view.textDirty = true;
@@ -90,7 +134,7 @@ export function applyHexSize(size: HexSize): void {
   setHexSize(size);
   rebuildScaleGeometry();
   recomputeCanvasBounds();
-  cv.style.height = view.CH + 'px';
+  applyCanvasHeight();
   snapViewForOutline(outlineFromDom());
   view.hexDirty = true;
   view.textDirty = true;
@@ -106,7 +150,7 @@ export function applyTuningRender(): void {
   view.textDirty = true;
   invalidatePianoOutline();
   recomputeCanvasBounds();
-  cv.style.height = view.CH + 'px';
+  applyCanvasHeight();
   snapViewForOutline(outlineFromDom());
   draw();
 }
@@ -117,8 +161,11 @@ export function applyTuningRender(): void {
    ref-recompute + onRefChanged migration + footprint broadcast live in
    ui/controls.ts setOutline (full app only). */
 export function applyOutlineRender(outline: OutlineMode): void {
+  /* Under the Lumatone rotation the tilt levels the visible outline in its
+     pose, which differs between outlines once the alignment isn't vertical. */
+  setRotation(currentRotationMode, tuning.mapping, outlinePose(outline));
   recomputeCanvasBounds(outline);
-  cv.style.height = view.CH + 'px';
+  applyCanvasHeight();
   view.hexDirty = true;
   view.textDirty = true;
   syncViewToOutline(outline, true);

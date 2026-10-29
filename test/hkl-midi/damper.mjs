@@ -35,13 +35,28 @@ const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SCRIPT = `(async () => {
+  /* Every module by the URL the running app imports it by, walking the app's
+     own import edges from init.ts: after a hot reload a bare import is a second
+     instance the app never reads (docs/lessons.md, 2026-10-26). A missing edge
+     throws instead of falling back. */
+  const depUrl = async (fromPath, depPath) => {
+    const src = await (await fetch(fromPath)).text();
+    const i = src.indexOf(depPath);
+    if (i < 0) throw new Error(depPath + ' is not imported by ' + fromPath);
+    let j = i + depPath.length;
+    while (j < src.length && src[j] !== '"' && src[j] !== "'") j++;
+    return src.slice(i, j);
+  };
+  const refUrl = await depUrl('/src/ui/init.ts', '/src/effects/onRefChanged.ts');
+  const handlerUrl = await depUrl(refUrl, '/src/midi/handler.ts');
+  const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
   const [handler, midiState, sel, audioState, pedalState, engine] = await Promise.all([
-    import('/src/midi/handler.ts'),
-    import('/src/state/midi.ts'),
-    import('/src/state/selection.ts'),
-    import('/src/state/audio.ts'),
-    import('/src/state/pedal.ts'),
-    import('/src/audio/engine.ts'),
+    import(handlerUrl),
+    depUrl(engineUrl, '/src/state/midi.ts').then((u) => import(u)),
+    depUrl(handlerUrl, '/src/input/held.ts').then((u) => depUrl(u, '/src/state/selection.ts')).then((u) => import(u)),
+    depUrl(handlerUrl, '/src/state/audio.ts').then((u) => import(u)),
+    depUrl(handlerUrl, '/src/state/pedal.ts').then((u) => import(u)),
+    depUrl(handlerUrl, '/src/audio/engine.ts').then((u) => import(u)),
   ]);
   const { midi } = midiState, { selection } = sel, { audio } = audioState, { pedal } = pedalState;
 

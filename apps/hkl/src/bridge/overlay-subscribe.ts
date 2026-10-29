@@ -12,14 +12,14 @@
 
 import { OverlayChannel } from '@hkl/bridge/overlay-ws.js';
 import type { OverlayMsg, OverlaySnapshot } from '@hkl/bridge/overlay-protocol.js';
-import type { RotationMode, HexSize, OutlineMode, TuningMode, Mapping } from '../state/persistence.js';
+import type { Alignment, RotationMode, HexSize, OutlineMode, TuningMode, Mapping } from '../state/persistence.js';
 import { isMapping } from '@hkl/shared/mapping.js';
 import { view } from '../state/view.js';
 import { selection } from '../state/selection.js';
 import { tuning } from '../state/tuning.js';
 import { setSelectionFromManual, setAnchorOverride } from '../state/reference.js';
 import {
-  applyRotation, applyHexSize, applyTuningRender, applyOutlineRender,
+  applyRotation, applyHexSize, applyTuningRender, applyOutlineRender, applyAlignment,
 } from '../render/controls-core.js';
 import { cv, draw, requestDraw, setTransparentBg } from '../render/draw.js';
 import { applyKeyFlash } from '../render/key-flash.js';
@@ -45,6 +45,8 @@ function applySnapshot(s: OverlaySnapshot): void {
   $<HTMLSelectElement>('selMapping').value = mapping;
   $<HTMLSelectElement>('selOutline').value = s.outline;
   $<HTMLSelectElement>('selRotation').value = s.rotation;
+  const alignment: Alignment = s.alignment === 'left' || s.alignment === 'right' ? s.alignment : 'vertical';
+  $<HTMLSelectElement>('selAlignment').value = alignment;
   $<HTMLSelectElement>('selHexSize').value = s.hexSize;
   document.body.classList.toggle('composer-view', s.composerView);
   document.body.classList.toggle('staff-dark', s.staffDark);
@@ -65,6 +67,7 @@ function applySnapshot(s: OverlaySnapshot): void {
   /* the publisher's anchor, not one derived from its effective ref (that may
      be a composer-source selection, which never moves the anchor) */
   setAnchorOverride(s.anchor ?? 0);
+  applyAlignment(alignment);
   applyRotation(s.rotation as RotationMode);
   applyHexSize(s.hexSize as HexSize);
   applyTuningRender();

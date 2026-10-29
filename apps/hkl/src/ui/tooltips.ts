@@ -27,6 +27,7 @@ export const TOOLTIPS: Record<string, string> = {
   cbBands: 'Draw the octave-band seams (every key is one octave above the key three positions to its left along the q-axis).',
   cbExtend: 'Extend the repeating key pattern beyond the physical outline to fill the canvas.',
   selRotation: 'Lattice orientation: Vertical Freq (pitch rises straight up), Lumatone (physical board tilt), or Piano.',
+  selAlignment: 'How the Lumatone and QWERTY layouts sit on the lattice: Vertical (fifths up the diagonal), or turned 60° — Left (fifths up the other diagonal) or Right (fifths along the key rows). Changes which notes the keys play.',
   selOutline: 'Which key outline to overlay on the lattice: Lumatone, QWERTY, Piano, or none.',
   selHexSize: 'Hex size: rescale the whole lattice — keys, labels, and outlines — to Small, Medium, or Large.',
 

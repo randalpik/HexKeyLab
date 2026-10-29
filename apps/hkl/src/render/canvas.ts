@@ -18,7 +18,7 @@
 // kbOffY is forced to 0 — content is symmetric about the canvas vertical
 // midline; CH grows to fit the larger of |minY| / |maxY|.
 
-import { lumatoneCells, qwertyCells } from '../layout/physical.js';
+import { outlineCells, outlinePose } from '../layout/physical.js';
 import { hexR, dxH, dyH, hexScale, cosT, sinT, hexToScreen, currentRotationMode } from '../layout/geometry.js';
 import type { Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { tuning } from '../state/tuning.js';
@@ -167,9 +167,11 @@ const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode
 /* Lumatone / QWERTY are static cell sets (no tuning dependence). Project
    live each time — it's fast and avoids the hardcoding-staleness risk for
    sets that aren't expensive. */
-function staticOutlineCells(outline: 'lumatone' | 'qwerty'): ReadonlyArray<readonly [number, number]> {
-  if (outline === 'lumatone') return lumatoneCells;
-  return qwertyCells;
+function staticOutlineCells(device: 'lumatone' | 'qwerty', outline: OutlineMode): ReadonlyArray<readonly [number, number]> {
+  /* A physical outline is bounded as posed (layout/physical.ts); None's union
+     uses the vertical pose (outlinePose('none')), so its canvas never changes
+     with the alignment. */
+  return outlineCells(device, outlinePose(outline));
 }
 
 interface ScreenBounds { minX: number; maxX: number; minY: number; maxY: number; }
@@ -205,8 +207,8 @@ export function recomputeCanvasBounds(outlineOverride?: OutlineMode): void {
 
   if (outline === 'lumatone' || outline === 'qwerty' || outline === 'none') {
     const b: ScreenBounds = { minX: 1e9, maxX: -1e9, minY: 1e9, maxY: -1e9 };
-    if (outline === 'lumatone' || outline === 'none') projectStatic(staticOutlineCells('lumatone'), b);
-    if (outline === 'qwerty' || outline === 'none') projectStatic(staticOutlineCells('qwerty'), b);
+    if (outline === 'lumatone' || outline === 'none') projectStatic(staticOutlineCells('lumatone', outline), b);
+    if (outline === 'qwerty' || outline === 'none') projectStatic(staticOutlineCells('qwerty', outline), b);
     kbMinW = Math.ceil((Math.max(-b.minX, b.maxX) + padX) * 2);
     CH = Math.ceil(2 * Math.max(Math.abs(b.minY), Math.abs(b.maxY)) + 2 * padY);
   }
@@ -228,7 +230,11 @@ recomputeCanvasBounds();
 
 export function sizeCanvas(): void {
   const wrapPad = 24; /* 12px padding each side of .wrap */
-  view.CW = Math.max(400, window.innerWidth - wrapPad);
+  /* Less a classic (non-overlay) scrollbar while the lattice's scroll box
+     scrolls (#cvScroll, index.html); 0 otherwise, and in the OBS overlay. */
+  const box = document.getElementById('cvScroll');
+  const bar = box ? box.offsetWidth - box.clientWidth : 0;
+  view.CW = Math.max(400, window.innerWidth - wrapPad - bar);
 }
 
 export interface VisibleRange {
