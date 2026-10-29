@@ -37,12 +37,12 @@ export function accToMei(acc: string): string {
 /** Resolve (q, r) to its spelled note + color. Velocity-free; callers that need
  *  velocity (the bridge) layer it on top. */
 export function resolveNoteSpec(q: number, r: number): NoteSpec {
-  const parsed = parseNote(noteName(q, r, tuning.mapping));
+  const parsed = parseNote(noteName(q, r, tuning.mapping, tuning.anchor, tuning.banded));
   return {
     q, r,
     pname: parsed.letter.toLowerCase(),
     accid: accToMei(parsed.acc),
-    oct: keyOctave(q, r, tuning.mapping),
+    oct: keyOctave(q, r, tuning.mapping, tuning.anchor, tuning.banded),
     midi: coordToMidi(q, r, tuning.mapping),
     colorHex: darkColorHex(q, r),
     lightColorHex: lightSourceHex(q, r),

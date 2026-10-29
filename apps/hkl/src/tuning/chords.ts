@@ -92,7 +92,7 @@ export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): Cho
   /* keys already sorted by freq; each has q, r, name, col */
   let notes: ChordNote[] = keys.map(k => {
     const midi = coordToMidi(k.q, k.r, state.mapping);
-    const nn = noteName(k.q, k.r, state.mapping);
+    const nn = noteName(k.q, k.r, state.mapping, state.anchor, state.banded);
     const li = letterIdx[parseNote(nn).letter];
     return { pc: ((midi % 12) + 12) % 12, midi, name: k.name, col: k.col, rawName: nn, li, q: k.q, r: k.r };
   });

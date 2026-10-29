@@ -49,7 +49,7 @@ import {
 import { ensureExpressionDefaults, getLayoutReq, setLayoutReq, getHejiEnabled, setHejiEnabled, getIgnoreColor, setIgnoreColor, getPageScale, setPageScale, HKL_NS, type LayoutReq, type Moment } from '../expressions.js';
 import { toggleArticulation, toggleTrill, type ArticKind } from '../articulations.js';
 import { transformDocForHeji } from '@hkl/notation/heji-render.js';
-import { coordToMidi, anchorOf, type TuningMode } from '@hkl/shared/freq.js';
+import { coordToMidi, anchorOf, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
 import type { Mapping } from '@hkl/shared/mapping.js';
 import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
 import { sanctionedLightForInk } from '@hkl/shared/colors.js';
@@ -898,12 +898,12 @@ export class ComposerModel {
        placeholder transform (reads the visible @accid the prior pass set),
        then beams (wraps them). */
     const clone = this.doc.cloneNode(true) as Document;
-    const { tuningMode: mode, mapping } = this.getLayoutReq();
+    const { tuningMode: mode, mapping, banded } = this.getLayoutReq();
     if (forRender) this.stampAnchors(clone, 0);
-    computeAccidentalDisplay(clone, this.getKeySig(), mapping,
+    computeAccidentalDisplay(clone, this.getKeySig(), mapping, banded,
       forRender ? { mode, enabled: forRender.hejiEnabled } : undefined);
     if (forRender) {
-      transformDocForHeji(clone, mode, mapping, forRender.hejiEnabled);
+      transformDocForHeji(clone, mode, mapping, banded, forRender.hejiEnabled);
       /* Ignore-color (render-only): drop the lattice @color so noteheads draw
          plain black. Stays on the render clone — the saved doc keeps (q, r) +
          color truth. Export (save.ts) blacks output via forceNonNoteheadBlack. */
@@ -959,10 +959,10 @@ export class ComposerModel {
     const headSd = clone.querySelector('scoreDef');
     if (headSd) stampRunningCtx(headSd, ctx);
     /* identical passes to serialize(), now over only the kept measures */
-    const { tuningMode: mode, mapping } = this.getLayoutReq();
+    const { tuningMode: mode, mapping, banded } = this.getLayoutReq();
     this.stampAnchors(clone, loIdx);
-    computeAccidentalDisplay(clone, ctx.keySig ?? this.getKeySig(), mapping, { mode, enabled: forRender.hejiEnabled });
-    transformDocForHeji(clone, mode, mapping, forRender.hejiEnabled);
+    computeAccidentalDisplay(clone, ctx.keySig ?? this.getKeySig(), mapping, banded, { mode, enabled: forRender.hejiEnabled });
+    transformDocForHeji(clone, mode, mapping, banded, forRender.hejiEnabled);
     if (getIgnoreColor(clone)) {
       for (const n of Array.from(clone.querySelectorAll('note'))) n.removeAttribute('color');
     }
@@ -2005,12 +2005,13 @@ export class ComposerModel {
 
   /** Render-only: stamp every note of a render clone with its measure's anchor
    *  (`data-anchor`, read by the HEJI and accidental passes via noteAnchor).
-   *  Syntonic / Polysyntonic only — every other mode ignores the anchor. `lo` is
-   *  the document index of the clone's first measure (the clone holds measures
-   *  lo, lo+1, … in document order). Never runs on the save path. */
+   *  Only where the layout reads the anchor (readsAnchor) — banded, every mode
+   *  but Syntonic / Polysyntonic ignores it. `lo` is the document index of the
+   *  clone's first measure (the clone holds measures lo, lo+1, … in document
+   *  order). Never runs on the save path. */
   private stampAnchors(clone: Document, lo: number): void {
-    const { tuningMode, mapping } = this.getLayoutReq();
-    if (tuningMode !== 'S' && tuningMode !== 'Y') return;
+    const { tuningMode, mapping, banded } = this.getLayoutReq();
+    if (!readsAnchor(tuningMode, banded)) return;
     Array.from(clone.querySelectorAll('measure')).forEach((m, i) => {
       const a = String(this.anchorAt(lo + i, mapping));
       for (const n of Array.from(m.querySelectorAll('note'))) n.setAttribute('data-anchor', a);
@@ -2024,8 +2025,8 @@ export class ComposerModel {
    *  re-entering it: a retune, a key edit in a Syntonic / Polysyntonic score.
    *  A note whose @color isn't a lattice ink (an import's plain black) keeps it. */
   recolorNotes(): void {
-    const { tuningMode: mode, mapping } = this.getLayoutReq();
-    const anchored = mode === 'S' || mode === 'Y';
+    const { tuningMode: mode, mapping, banded } = this.getLayoutReq();
+    const anchored = readsAnchor(mode, banded);
     this.allMeasures().forEach((measure, mi) => {
       const anchor = anchored ? this.anchorAt(mi, mapping) : 0;
       for (const n of Array.from(measure.querySelectorAll('note'))) {
@@ -2034,8 +2035,8 @@ export class ComposerModel {
         const q = parseInt(n.getAttribute('data-q') ?? '', 10);
         const r = parseInt(n.getAttribute('data-r') ?? '', 10);
         if (!Number.isFinite(q) || !Number.isFinite(r)) continue;
-        const ink = inkColorHex(q, r, mode, mapping, anchor);
-        const light = lightSourceHex(q, r, mode, mapping, anchor);
+        const ink = inkColorHex(q, r, mode, mapping, anchor, banded);
+        const light = lightSourceHex(q, r, mode, mapping, anchor, banded);
         if (color !== ink) n.setAttribute('color', ink);
         if (n.getAttribute('data-light-color') !== light) n.setAttribute('data-light-color', light);
       }
@@ -2525,11 +2526,12 @@ export class ComposerModel {
    *  sectionRestart keys on `key.sig` so no spurious restart appears. */
   setKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {
     this.applyKeySigAt(mi, sig, mode);
-    /* Syntonic / Polysyntonic: the key decides each measure's anchor, so a key
-       edit re-pitches (and recolors) the notes it governs (anchorAt). The meter
-       invalidation above already widened the render dirty range to 'all'. */
-    const m = this.getLayoutReq().tuningMode;
-    if (m === 'S' || m === 'Y') this.recolorNotes();
+    /* Syntonic / Polysyntonic (any mode unbanded): the key decides each
+       measure's anchor, so a key edit re-pitches (and recolors) the notes it
+       governs (anchorAt). The meter invalidation above already widened the
+       render dirty range to 'all'. */
+    const { tuningMode, banded } = this.getLayoutReq();
+    if (readsAnchor(tuningMode, banded)) this.recolorNotes();
   }
 
   private applyKeySigAt(mi: number, sig: string, mode: 'major' | 'minor'): void {

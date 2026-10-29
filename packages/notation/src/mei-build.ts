@@ -161,9 +161,10 @@ export interface ScoreSkeletonSetup {
   tempoText?: string;
   /* Required layout for this score. Tuning mode only — the reference note is
      derived from the key signature, not stored. Default Ptolemaic. */
-  /** `mapping` is written only when it is not the default 'euler', so
-   *  Euler scores serialize exactly as before mappings existed. */
-  layoutReq?: { tuningMode: string; mapping?: string };
+  /** `mapping` is written only when it is not the default 'euler', and
+   *  `banded` only when false, so Euler / banded scores serialize exactly as
+   *  before either existed. */
+  layoutReq?: { tuningMode: string; mapping?: string; banded?: boolean };
 }
 
 /** Build a complete empty `.hkc` document as an XML string: meiHead with the
@@ -187,7 +188,8 @@ export function buildScoreSkeletonXml(setup: ScoreSkeletonSetup = {}): string {
   const tempoDotsAttr = tempoDots > 0 ? ` mm.dots="${tempoDots}"` : '';
   const lr = setup.layoutReq ?? { tuningMode: '5' };
   const mappingAttr = lr.mapping && lr.mapping !== 'euler' ? ` mapping="${lr.mapping}"` : '';
-  const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}"${mappingAttr}/>`;
+  const bandedAttr = lr.banded === false ? ' banded="false"' : '';
+  const layoutReqBlock = `<hkl:layoutReq tuningMode="${lr.tuningMode}"${mappingAttr}${bandedAttr}/>`;
   /* Dynamic→velocity defaults are sourced from @hkl/shared so they track the
      house curve; hardcoding them here let them go stale once already. */
   const dynamicLevelsBlock = DYNAMIC_NAMES

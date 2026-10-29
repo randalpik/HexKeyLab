@@ -64,17 +64,18 @@ export function gesturalTokenFromAlter(alter: number): string | null {
 }
 
 /** True alteration for a note, derived from its lattice coordinate (q, r) —
- *  in the score's `mapping` frame — so any magnitude is represented (the
- *  @accid token caps at ±3). Falls back to the @accid token when no coordinate
- *  is present (e.g. MusicXML-imported notes). */
-export function noteAlter(note: Element, mapping: Mapping): number {
+ *  in the score's `mapping` frame, spelled under `anchor` / `banded` (see
+ *  noteName) — so any magnitude is represented (the @accid token caps at ±3).
+ *  Falls back to the @accid token when no coordinate is present (e.g.
+ *  MusicXML-imported notes). */
+export function noteAlter(note: Element, mapping: Mapping, anchor: number, banded: boolean): number {
   const qs = note.getAttribute('data-q');
   const rs = note.getAttribute('data-r');
   if (qs !== null && rs !== null) {
     const q = parseInt(qs, 10);
     const r = parseInt(rs, 10);
     if (Number.isFinite(q) && Number.isFinite(r)) {
-      return accToVal(parseNote(noteName(q, r, mapping)).acc);
+      return accToVal(parseNote(noteName(q, r, mapping, anchor, banded)).acc);
     }
   }
   return getNoteAlter(note);

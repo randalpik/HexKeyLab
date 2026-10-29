@@ -32,10 +32,13 @@ function parseSnapshot(o: unknown): LayoutSnapshot {
   if (s.mapping !== undefined && !isMapping(s.mapping)) throw new HkrParseError('snapshot.mapping invalid');
   /* absent in recordings made before Syntonic / Polysyntonic → 0 (ignored by the older modes) */
   if (s.anchor !== undefined && !Number.isInteger(s.anchor)) throw new HkrParseError('snapshot.anchor invalid');
+  /* absent in recordings made before the unbanded layout → banded */
+  if (s.banded !== undefined && typeof s.banded !== 'boolean') throw new HkrParseError('snapshot.banded invalid');
   return {
     tuning: s.tuning,
     mapping: s.mapping ?? 'euler',
     anchor: typeof s.anchor === 'number' ? s.anchor : 0,
+    banded: s.banded ?? true,
     septimalEnabled: s.septimalEnabled,
     equalEnabled: s.equalEnabled,
     septimalW: s.septimalW,

@@ -113,7 +113,7 @@ Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vect
 - **Exponent collapse** (`COLLAPSE_THRESHOLD = 4`): when |AD| or |SD| > 4, `hejiLabel()` emits a `collapse` spec — one accidental-form glyph + sans-serif superscript count:
   - **Case A** (both |AD|>4 AND |SD|>4): glyph = accidental + 1 arrow, exponent `k = min(|AD|,|SD|)`, position `before`. Leftover (excess of larger count) distributed by chain code.
   - **Case B** (|AD−SD|>4, greedy): `k = ||AD|−|SD||` absorbs the excess. |SD|>|AD| → natural+1 arrow, `before`; |AD|>|SD| → bare accidental, `after`. Leftover has equal residual AD/SD.
-- Septimal hook always sits at the very end regardless of collapse position. Composer's ±3 entry gate is unaffected — collapse is lattice-only.
+- Septimal hooks always sit at the very end regardless of collapse position: one or two as glyphs (single U+E2DE/E2DF, two-hook U+E2E0/E2E1), more than two (`HOOK_COLLAPSE_THRESHOLD = 2`; only the unbanded Septimal layout stacks them) as one hook carrying a superscript `hookCount`. Composer's ±3 entry gate is unaffected — collapse is lattice-only (Composer draws the full chain).
 
 ### Info panel
 
@@ -164,7 +164,7 @@ Uses HTML entities for lesser/greater glyphs.
 Every 5/7-limit interval is named `<base interval> ± commas`, where the **base comes from the diatonic spelling of the endpoints**, never from ratio shopping. Enharmonic-equivalent ratios are named by how they're written (F#→D is always a 6th); V-mode band-crossings surface their schisma additively. → rationale in `decisions.md`.
 
 **Algorithm** (`apps/hkl/src/tuning/intervals.ts`):
-1. `classifyDiatonic(q1,r1,q2,r2)` → `{ord, qual, extraOct}` from `noteName`+`keyOctave` letter distance + 12-TET semitones (same logic as `equalIntervalName`).
+1. `classifyDiatonic(q1,r1,q2,r2, layout)` → `{ord, qual, extraOct}` from `noteName`+`keyOctave` letter distance + 12-TET semitones (same logic as `equalIntervalName`). `layout` is the spelling's `{mapping, anchor, banded}` (a `TuningStateLike` serves), since the unbanded spelling depends on the anchor.
 2. `pythagRefExp(ord, qual)` → closed-form Pythagorean prime-exponent vector (no table; from natural fifths-position + apotome stacks).
 3. `jiRatioWithState` → actual exponent vector, as the difference of the two endpoints' `coordExps` (the canonical per-cell exp vector in `@hkl/shared/freq.js`, which also backs `freqAt`); mode shifts + V-mode schisma stacking live there, so frequency and ratio can't drift.
 4. Difference vector → `solveCommas` → `(s, z, h)` syntonic/septimal/schisma counts.
@@ -342,7 +342,7 @@ HKL records every performance (Lumatone, QWERTY, mouse) as a stream of lattice-c
 
 ### Architecture
 
-- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning, mapping, anchor, septimalW, instrument, pedal mode, A3 ref) + flat event list `[{t, k, q, r, …}]`. In Syntonic/Polysyntonic a note-on recorded after a mid-take re-anchor carries its own `a` (anchor); absent → the snapshot's (absent in older files → 0, which no older mode reads). Playback pins the live anchor per note-on (`setAnchorOverride`) and releases it on stop; MPE export reads the same field. Version-stamped (`format:"hkr", version:1`); event kinds `on/off/pa/cc4/cc64/warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the engine's ramp-schedule clock). No back-compat with pre-legacy-purge files.
+- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning, mapping, anchor, banded, septimalW, instrument, pedal mode, A3 ref) + flat event list `[{t, k, q, r, …}]`. `banded` absent in older files → true. Wherever the layout reads the anchor (Syntonic/Polysyntonic, any mode unbanded: `readsAnchor`) a note-on recorded after a mid-take re-anchor carries its own `a` (anchor); absent → the snapshot's (absent in older files → 0, which no older mode reads). Playback pins the live anchor per note-on (`setAnchorOverride`) and releases it on stop; MPE export reads the same field. Version-stamped (`format:"hkr", version:1`); event kinds `on/off/pa/cc4/cc64/warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the engine's ramp-schedule clock). No back-compat with pre-legacy-purge files.
 - **`.mid` (binary, derived)**: exported/re-imported deterministically against the same snapshot. The two files travel **separately** — not bundled.
 - **MPE export**: single-track format-0. Channel 1 = manager (CC4/CC64 + MPE Configuration Message); channels 2–16 = members (one voice each). Per-member pitch-bend range ±48 semitones via RPN 0. Tempo fixed 120 BPM, PPQ 960.
 - **MIDI → `.hkr` inverse**: requires the originating snapshot (UI prompts "Load matching .hkr first"). Builds a frequency index over the lattice under the snapshot's tuning; each noteOn's `(note, channel-bend)` → frequency → nearest-match. 25-cent sanity gate; farther emits a `warn` event.

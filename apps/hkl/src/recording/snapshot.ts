@@ -17,6 +17,7 @@ export function captureSnapshot(): LayoutSnapshot {
     tuning: t,
     mapping: tuning.mapping,
     anchor: tuning.anchor,
+    banded: tuning.banded,
     septimalEnabled: tuning.septimalEnabled,
     equalEnabled: tuning.equalEnabled,
     septimalW: tuning.septimalW,
@@ -31,6 +32,7 @@ export function snapshotMatchesLive(s: LayoutSnapshot): boolean {
   return (
     s.tuning === tuning.mode &&
     s.mapping === tuning.mapping &&
+    s.banded === tuning.banded &&
     s.instrument === audio.activeWaveform &&
     s.pedalMode === pedal.mode
   );

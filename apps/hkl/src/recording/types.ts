@@ -18,6 +18,9 @@ export interface LayoutSnapshot {
    *  older files → 0, which every mode before S/Y ignores. A note-on recorded
    *  after a mid-take re-anchor carries its own `a`. */
   anchor: number;
+  /** Banded layout (tuning.banded). Absent in files recorded before the
+   *  unbanded layout existed → true. */
+  banded: boolean;
   septimalEnabled: boolean;
   equalEnabled: boolean;
   septimalW: number;

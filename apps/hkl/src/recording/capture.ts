@@ -9,6 +9,7 @@
 import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
 import { tuning } from '../state/tuning.js';
+import { readsAnchor } from '@hkl/shared/freq.js';
 import { nowSec } from './clock.js';
 import { captureSnapshot, snapshotMatchesLive } from './snapshot.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
@@ -60,10 +61,11 @@ function checkDivergence(): void {
   }
 }
 
-/* A note-on's own anchor, when a Syntonic / Polysyntonic re-anchor has moved it
-   off the snapshot's — playback and export then sound it under that anchor. */
+/* A note-on's own anchor, when a re-anchor (Syntonic / Polysyntonic, or any
+   mode unbanded) has moved it off the snapshot's — playback and export then
+   sound it under that anchor. */
 function eventAnchor(): { a?: number } {
-  if (!snapshot || (tuning.mode !== 'S' && tuning.mode !== 'Y')) return {};
+  if (!snapshot || !readsAnchor(tuning.mode, tuning.banded)) return {};
   return tuning.anchor === snapshot.anchor ? {} : { a: tuning.anchor };
 }
 

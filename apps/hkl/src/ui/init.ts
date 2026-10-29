@@ -132,6 +132,7 @@ applyPrefsToDom(prefs);
    (manualRef) was saved in: set it directly — no frame conversion — before
    anything reads coordinates (the verticalFreq tilt below included). */
 tuning.mapping = prefs.mapping;
+tuning.banded = prefs.banded;
 /* Apply the persisted alignment, then rotation, before first paint — poses
    the physical layout, then resets geometry tilt, canvas bounds, and
    cv.style.height to match the saved mode. */

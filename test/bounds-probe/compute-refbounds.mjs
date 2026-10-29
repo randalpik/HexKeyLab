@@ -46,7 +46,7 @@ const colStep = (mapping) => COLUMN_STEP[mapping];
    as a Ctrl+click would make it — validateRefNoteCandidate does the same. */
 function pianoCells(refQ, refR, mode, mapping) {
   return pianoFootprint(refQ, refR, {
-    mode, mapping, anchor: anchorOf(refQ, mapping),
+    mode, mapping, anchor: anchorOf(refQ, mapping), banded: true,
     equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
   });
 }
@@ -65,7 +65,7 @@ function validRef(q, r, mode, mapping) {
   if (midi < 21 || midi > 108) return false;
   const cells = pianoCells(q, r, mode, mapping);
   for (const [cq, cr] of cells) {
-    if (Math.abs(accToVal(parseNote(noteName(cq, cr, mapping)).acc)) > 3) return false;
+    if (Math.abs(accToVal(parseNote(noteName(cq, cr, mapping, anchorOf(q, mapping), true)).acc)) > 3) return false;
   }
   return true;
 }

@@ -1659,7 +1659,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
   applyBeamMarkers(doc);
 
   /* Forced import settings. */
-  setLayoutReq(doc, { tuningMode: 'E', mapping: 'euler' });
+  setLayoutReq(doc, { tuningMode: 'E', mapping: 'euler', banded: true });
   setHejiEnabled(doc, false);
   setIgnoreColor(doc, true);
 

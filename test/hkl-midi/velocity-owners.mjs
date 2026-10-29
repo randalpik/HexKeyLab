@@ -153,7 +153,7 @@ const SCRIPT = `(async () => {
     hkrPlay.startPlayback({
       format: 'hkr', version: 1, createdAt: '', durationSec: 0.05,
       timing: { unit: 'audioCtxSec', epoch: 0 },
-      snapshot: { tuning: tuning.mode, mapping: tuning.mapping, anchor: tuning.anchor, septimalEnabled: false,
+      snapshot: { tuning: tuning.mode, mapping: tuning.mapping, anchor: tuning.anchor, banded: tuning.banded, septimalEnabled: false,
         equalEnabled: false, septimalW: 0, instrument: 'sine', pedalMode: 'sustain', refHz: 220 },
       events: [{ t: 0, k: 'on', q: q3, r: r3, v: 25 }, { t: 0.05, k: 'off', q: q3, r: r3 }],
     }, resolve);

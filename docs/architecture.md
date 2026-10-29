@@ -78,7 +78,8 @@ The lattice, tuning modes, and frequency math are shared by HKL and Composer (vi
 - **Banded JI**: the board is 3-key-wide **bands** along q; within a band intervals are pure
   5-limit JI, with **seams** between bands. Every key is exactly 2:1 above the key 3 positions left
   on q. 5-limit constrains the prime-5 exponent to ±2 (`posInBand ∈ {0,1,2}`), so the diesis
-  (128:125) is unreachable in 5-limit but reachable in 7-limit.
+  (128:125) is unreachable in 5-limit but reachable in 7-limit. The unbanded layout removes the
+  bands (*Unbanded layout* below).
 
 ### Coordinate summary
 
@@ -165,10 +166,12 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
   moves it (it can sit in another band, and one entered note must not retune the layout and the
   score). Ctrl+clicking an altered key makes its band home, so that key's own pitch changes by its
   comma count — no comma drift. Moving the anchor re-anchors: pitch, HEJI arrows and color
-  change; MIDI, spelling and band boundaries never do. Polysyntonic re-anchoring is a global
+  change; MIDI, spelling and band boundaries never do (while banded: unbanded, spelling follows
+  the anchor too). Polysyntonic re-anchoring is a global
   −n·SC shift (every interval preserved); Syntonic depends only on `anchor mod 4`.
 - **Live**: `state/reference.ts` derives `tuning.anchor` and `kbAnchor` from the same home ref
-  (below, Ref-driven layout shift); an anchor change in S/Y runs `onAnchorChanged` (=
+  (below, Ref-driven layout shift); an anchor change in S/Y (any mode unbanded:
+  `readsAnchor`) runs `onAnchorChanged` (=
   `onTuningChanged`: held voices ramp in place, re-render, Lumatone color diff, Composer
   rebroadcast) in a microtask, after the synchronous ref fan-out (`onRefChanged`) has run. The
   anchor is part of the
@@ -176,8 +179,8 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
   Recording playback and the overlay mirror pin it (`setAnchorOverride`). Piano input follows the
   one 88-cell picker rule (below) under S/Y's own ratios, so it plays 5-limit wherever the bands
   offer it.
-- **Other modes**: the band offset is constant in E/5/P/D/7, so the anchor drops out
-  (`tuning.anchor` exists; nothing reads it). Schismatic is the one other band-indexed mode — one
+- **Other modes**: while banded, the band offset is constant in E/5/P/D/7, so the anchor drops
+  out (`tuning.anchor` exists; nothing reads it). Schismatic is the one other band-indexed mode — one
   schisma per band counted from A3's band, a fixed-anchor stacking.
 - Gates: `test/syntonic/oracle.mjs` (pitch, k, band steps, re-anchoring, color, HEJI),
   `test/hkl-midi/anchor.mjs` (live tiers, re-anchor fan-out, piano input, `.hkr`), the Composer
@@ -186,6 +189,61 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
 Persistence has no back-compat shims: any unrecognized `tuning` value reverts to `'5'`. `tuning.mode`
 is canonical; `tuning.equalEnabled` / `tuning.septimalEnabled` are derived booleans kept in lockstep
 by `setTuning()` (`apps/hkl/src/ui/controls.ts`) and still carried in the `.hkr` snapshot.
+
+### Unbanded layout
+
+**Status (2026-10-29)**: the model and its state are in place: `banded` threads through every pitch,
+spelling, color and HEJI primitive, and rides prefs, the `.hkr` snapshot and `<hkl:layoutReq
+banded="false">`. Nothing sets it yet: HKL's *Banded layout* toggle and Composer's Setup control
+are the next phases. Rulings: decisions.md 2026-10-29.
+
+With `banded` false the octave bands no longer exist. Every seam is retuned to one of the mode's own
+in-band q-steps, so no interval occurs only at a seam, and each band is respelled 12 fifths from its
+neighbor. Bands count from the **anchor**, the reference's band (`anchorOf`, as in S/Y), so the
+ref's band is exactly the banded layout and a ref far from A3 starts with no arrows.
+
+- **Pitch** (`coordExps(…, anchor, false)`; the `UNBANDED` table in `@hkl/shared/freq.js`):
+  `base + (band − anchor)·comma`, the band being `pitchBandOf` (a chromatic borrowed column stays an
+  exact octave above its source), except Schismatic's spatial band.
+
+  | mode | Euler q-steps | seam | comma per band | 3-column step |
+  |---|---|---|---|---|
+  | P, S, Y | 81:64 ×3 | 8192:6561 → 81:64 | Pythagorean comma | 1223.46¢ |
+  | 5 | 5:4 ×3 | 32:25 → 5:4 | 125/128 | 1158.94¢ |
+  | D | 81:64, 5:4, 5:4 | 512:405 → 5:4 | 2025/2048 | 1180.45¢ |
+  | 7 | 9:7, 5:4, 5:4 | 56:45 → 5:4 | 225/224 | 1207.71¢ |
+  | V | 81:64, 5:4, 81:64 | kept (already 81:64) | schisma, spatial band | 1201.95¢ |
+  | E | 12-TET | — | — | 1200¢ |
+
+  - Syntonic and Polysyntonic become Pythagorean: their definition is the seam.
+  - Schismatic keeps its tuning per key and is only respelled; its schisma now counts from the
+    anchor, so unbanded V = banded V × schisma^−anchor over the whole board.
+- **Spelling** (`noteName` / `keyOctave(…, anchor, banded)`): the banded spelling plus 12 fifths
+  per pitch band from the anchor's, one rule for every mode, Equal included.
+  - A band step `(W, 0)` is spelled as an augmented seventh (A → G𝄪).
+  - The octave number follows the respelled letter (C4 → B#3).
+  - Nominal MIDI never changes, so light/dark, the picker's MIDI range and Piano output are
+    unaffected.
+- **Re-anchoring** shifts the whole board by one comma per band and respells it 12 fifths per band.
+  So unbanded, the anchor matters in every mode: `readsAnchor(mode, banded)` gates the anchor
+  fan-out, per-note `.hkr` anchors, playback pinning and Composer's per-measure `data-anchor`.
+- **Properties** (`test/unbanded/oracle.mjs` pins each):
+  - Wicki-Hayden Pythagorean is isomorphic and unimodular, with every 3-limit pitch on exactly one
+    key; `(−1, 2)` is a spelled, exact octave.
+  - Chromatic Pythagorean is Polysyntonic × schisma^(pitch band − anchor): leading-tone
+    respellings and no 2¢ drift across bands. Even-Δq vectors are isomorphic and odd-Δq vectors
+    alternate by a Pythagorean comma; `(−2, 2)` is a spelled, exact octave.
+  - Septimal keeps a closed 4:5:6:7 from every root right of a 9:7 step (one shape per column
+    class), with 1207.71¢ near-octaves.
+  - Euler has no spelled octave vector. Euler and Wicki-Hayden spell each (note, octave) once;
+    chromatic has spelled twins.
+- **HEJI** compares against Pythagorean unbanded with the same anchor, whose Pythagorean comma per
+  band matches the respelling. Per band to the right, `(syn5, sept7)` steps by 5 (+3, 0),
+  D (+2, 0), 7 (+2, −1), V (+1, 0), P/S/Y (0, 0). Hooks stack (`hejiChain`: a single hook, then
+  two-hook glyphs U+E2E0/E2E1); HKL labels collapse more than two hooks into one hook with an
+  exponent (hkl.md → Note naming).
+- **Color**: Pythagorean hues are unchanged (a Pythagorean comma is 7 ≡ 0 hue steps). Septimal
+  factors stack half-step hue rotations (*Color scheme*).
 
 ### Adding a tuning mode
 
@@ -199,6 +257,8 @@ by `setTuning()` (`apps/hkl/src/ui/controls.ts`) and still carried in the `.hkr`
   `apps/hkl/src/bridge/hkl-side.ts`.
 - Re-run both `test/bounds-probe/` probes (they run the real picker over `TUNING_MODES`) so
   `PIANO_BOUNDS_TABLE` and `VALID_REF_TABLE` get the new mode's bucket under every mapping.
+- Its unbanded seam: an entry in `UNBANDED` (`@hkl/shared/freq.js`, a `Record<TuningMode, …>` the
+  compiler flags) and in `test/unbanded/oracle.mjs`.
 - Nothing per mode for color (one pitch function, `@hkl/shared/keycolor.js`) or HEJI (derived from
   `coordExps`).
 
@@ -212,8 +272,9 @@ Equal:    freq(q,r) = 220 · 2^((4q + 7r)/12)
 
 Modes `'P'/'D'/'7'/'V'` use the 5-limit base times the column shifts above (`'V'` adds
 `SCHISMA^band`; `'S'`/`'Y'` are `'P'` times `(81/80)^bandOffset(mode, band − anchor)`). The
-canonical quantity is `coordExps(q, r, mode, mapping, anchor)` (`@hkl/shared/freq.js`; `anchor` is
-read only by S/Y but required, so every caller decides): a cell's
+canonical quantity is `coordExps(q, r, mode, mapping, anchor, banded)` (`@hkl/shared/freq.js`;
+`anchor` is read only by S/Y while banded, and by every mode unbanded, but both are required, so
+every caller decides): a cell's
 prime-exponent vector `[e2,e3,e5,e7]` relative to 220 Hz, with the per-mode region/schisma shifts
 baked in. `freqAt` multiplies it into Hz once (`220·2^e2·3^e3·5^e5·7^e7`); the **JI ratio** between
 two keys is just the difference of their `coordExps` vectors (base layout: `e5=Δp`, `e3=Δr`,
@@ -226,7 +287,8 @@ multiplied into integers/Hz for *display* is the analysis box. Implemented in `@
 Pythagorean exactly under `'P'`, so a cell's arrows and hooks are the syntonic / septimal commas
 between its pitch and its `'P'` pitch (`solveCommas` on the exponent difference; `syn5 > 0` → down
 arrows, `sept7 > 0` → down hooks). A schisma (Schismatic's band stacking) is not notated — it
-re-spells, and color carries it. No per-mode table: S/Y get `syn5 = −k` for free.
+re-spells, and color carries it. No per-mode table: S/Y get `syn5 = −k` for free. Unbanded, the
+reference is unbanded `'P'` with the same anchor (*Unbanded layout*).
 
 ### Ref-driven layout shift
 
@@ -528,7 +590,12 @@ Composer recolors notes with the same functions.
   Wicki-Hayden copy's "its column's color", a chromatic borrowed column's "its source band's
   hue" under S/Y, and Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised,
   teal → yellow … lowered) are all this one function.
-- **Septimal variant**: a cell with `e7 ≠ 0` takes `.sl`/`.sd`, a 50% lerp toward the next hue.
+- **Septimal half steps**: each septimal factor turns the hue half a step warm (`hueCycleOrder`
+  index − e7/2 on top of the formula above, signed), so an odd `e7` takes `.sl`/`.sd` (a 50% lerp
+  toward the next hue: `keyColor.half`) and `e7 = ±2` is a whole step. Banded layouts only reach
+  `e7 ∈ {0, 1}`; the unbanded Septimal layout stacks them, which is consistent with Schismatic's
+  near-octave changing color on the same spelling. `keyColor.isSept` (`e7 ≠ 0`) is the info
+  panel's "7" tag.
 - **Equal — 3 hues**: `[BL,PU,PK][floor(midi/12) % 3]` by sounding octave, rotated so A3 = purple —
   the one genuinely separate rule.
 - **Light vs dark**: by the cell's own MIDI pitch class — light if ∈ {0,2,4,5,7,9,11}, else dark.

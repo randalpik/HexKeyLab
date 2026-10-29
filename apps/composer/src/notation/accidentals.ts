@@ -212,7 +212,7 @@ function identityEq(a: AccidIdentity, b: AccidIdentity): boolean {
  *  3); `ambiguous`: set by a same-tick clash of different pitches (rule 5). */
 interface CarryEntry { id: AccidIdentity; tick: number; shown: boolean; tiedIn?: boolean; ambiguous?: boolean; }
 
-export function computeAccidentalDisplay(doc: Document, headKeySig: string, mapping: Mapping, heji?: HejiDisplayCtx): void {
+export function computeAccidentalDisplay(doc: Document, headKeySig: string, mapping: Mapping, banded: boolean, heji?: HejiDisplayCtx): void {
   /* Per-measure key signature: walk the section's in-order <scoreDef>/<measure>
      nodes, seeded by the head key, so an in-section <scoreDef key.sig="…">
      resets the accidental carry-state to the NEW key from that measure forward
@@ -266,7 +266,7 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, mapp
         if (qs === null || rs === null) return { syn5: 0, sept7: 0 };
         const q = parseInt(qs, 10), r = parseInt(rs, 10);
         if (!Number.isFinite(q) || !Number.isFinite(r)) return { syn5: 0, sept7: 0 };
-        return hejiCommasFor(heji.mode, q, r, mapping, noteAnchor(note));
+        return hejiCommasFor(heji.mode, q, r, mapping, noteAnchor(note), banded);
       };
 
       const events: Array<{ note: Element; startTick: number; pname: string; key: string; alter: number; id: AccidIdentity }> = [];
@@ -274,7 +274,7 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, mapp
         const pname = note.getAttribute('pname');
         const oct = note.getAttribute('oct');
         if (!pname || !oct) continue;
-        const alter = heji ? noteAlter(note, mapping) : getNoteAlter(note);
+        const alter = heji ? noteAlter(note, mapping, noteAnchor(note), banded) : getNoteAlter(note);
         events.push({ note, startTick, pname, key: pname + ':' + oct, alter, id: { alter, ...commasOf(note) } });
       }
 
@@ -311,7 +311,7 @@ export function computeAccidentalDisplay(doc: Document, headKeySig: string, mapp
              this override the second round of computeAccidentalDisplay
              would write `accid="n"` (natural) instead of the original
              sharp/flat, breaking serialize→load→serialize equality. */
-          const parenAlter = noteAlter(note, mapping);
+          const parenAlter = noteAlter(note, mapping, noteAnchor(note), banded);
           showAlterAsParenChild(note, parenAlter);
           local[key] = { id, tick: startTick, shown: true, ambiguous: clash };
           continue;

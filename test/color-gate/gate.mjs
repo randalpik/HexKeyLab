@@ -34,7 +34,7 @@ function setLayout(mode, mapping) {
 
 /* code = hue index (hueCycle) · 4 + white · 2 + septimal → one char from '0' */
 function codeOf(v) {
-  return String.fromCharCode(48 + hueCycle.indexOf(v.hue) * 4 + (v.isW ? 2 : 0) + (v.isB ? 1 : 0));
+  return String.fromCharCode(48 + hueCycle.indexOf(v.hue) * 4 + (v.isW ? 2 : 0) + (v.half ? 1 : 0));
 }
 
 function capture() {

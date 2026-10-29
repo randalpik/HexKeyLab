@@ -55,7 +55,7 @@ async function doRender(container: HTMLElement): Promise<void> {
      the 'dark' theme repaints noteheads from the latter (the ink variant is
      unreadable on dark). */
   const dark = cbChecked('cbStaffDark');
-  const mei = buildChordMei(notes, tuning.mode, tuning.mapping, tuning.anchor, cbChecked('cbHeji'));
+  const mei = buildChordMei(notes, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded, cbChecked('cbHeji'));
   await renderMeiToContainer(mei, container, { theme: dark ? 'dark' : 'light' });
   /* A newer render was requested while Verovio was loading — let it own the
      final DOM write so we don't clobber it with stale content. */

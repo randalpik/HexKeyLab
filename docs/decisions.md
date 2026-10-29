@@ -10218,3 +10218,40 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 **Problem**: a canvas taller than the page (the Lumatone outline under Vertical Freq or Piano with Alignment Left / Right; the None outline in some mappings) pushed the analysis row to zero height inside `.wrap`'s 100vh flex column (`overflow-y: hidden`) and clipped its own bottom, with no way to reach it.
 
 **Picked**: the canvas sits in a scroll box, `#cvScroll` (`flex: 0 1 auto; overflow-y: auto; touch-action: none`), and `.info-row` gets `min-height: 180px` — Max's figure, so a staff (staff inset, Composer view) fits; it leaves plenty for the lattice. The cap needs no JS: the flex column gives the box what the open toolbars and that minimum leave. A height change re-centers the scroll on the canvas middle; the width subtracts a classic scrollbar while one shows. Touch never scrolls (taps stay key presses); wheel, scrollbar and keys do — no HKL hotkey uses Space, PageUp/Down or the arrows. The OBS overlay keeps the whole canvas. Gate: `test/hkl-midi/lattice-scroll.mjs`; layout shots: the 38 views that fit are pixel-identical, the four overflowing ones changed.
+
+## Unbanded layout: the Banded layout toggle's model (2026-10-29, Max)
+
+**Picked**: a `banded` flag (default true) beside the tuning mode and mapping. Off, the octave bands no longer exist: every seam is retuned to one of the mode's own in-band q-steps, so no interval occurs only at a seam, and each band is respelled 12 fifths from its neighbor (docs/architecture.md → Unbanded layout). Max's rulings:
+- **Seams per mode.**
+  - Pythagorean takes +PC per band.
+  - Syntonic and Polysyntonic are identical to it, since their definition is the seam.
+  - Ptolemaic takes 125/128.
+  - Semiditonal's seam is a 5:4 (steps 81:64, 5:4, 5:4).
+  - Septimal's seam goes from 56:45 to 5:4, a septimal kleisma per band (steps 9:7, 5:4, 5:4). That gives 1207.71¢ near-octaves and keeps closed 4:5:6:7s from every root right of a 9:7 step.
+  - Schismatic keeps its tuning per key, since its seam d4 already sounds as a PM3; it is only respelled and recolored.
+  - Equal keeps 12-TET.
+- **Spelling** follows one rule per mapping for every mode, Equal included: +12 fifths per pitch band. Chromatic uses carry (`pitchBandOf`).
+- **Bands count from the reference's band**, the anchor as in S/Y, and that does respell. Otherwise a ref like D#, whose nearest 4th-octave instance is laterally far from A3, would start with several arrows in most modes. Schismatic's schisma therefore counts from the anchor too.
+- **Target layout**: Chromatic + Pythagorean, i.e. Polysyntonic with leading-tone respellings and no 2¢ discrepancy across bands. Its diatonic steps are isomorphic; its chromatic steps are not.
+- **Color**: each septimal comma continues stacking half-step hue rotations. This is consistent with Schismatic's near-octave changing color on the same spelling. Making the rotation signed (warm for +e7) was my call; banded layouts only reach e7 ∈ {0, 1}, so no existing color changes.
+- **Hooks** on a key label collapse to one hook + exponent above two.
+- Composer keeps rejecting the notes it already rejects (the ±3 entry gate).
+- The old Schismatic M3-chain respelling (`noteNameV`, removed in 06650e8) is not revived. Spelling was frozen deliberately, Mapping broke that, and the unbanded layout now changes spelling anyway.
+- Band-step sites: P8 transpose uses (−1, 2) in Wicki-Hayden and (−2, 2) in chromatic, and is disabled in Euler (no spelled octave). SC transpose is disabled unbanded (each spelled note occurs once). Composer harmonics take their sounding pitch from frequency. Composer Setup gets a Banded checkbox.
+
+**Rejected** (my proposals):
+- Septimal kept per key. That misapplied the Schismatic rule, because 56:45 exists only at a seam.
+- Retuning Septimal by a septimal comma every two columns, which was Max's first sketch; he withdrew it for the kleisma seam.
+- An 80 → 65 "barbershop loss" I reported. It was an artifact of counting chords anywhere on the board, which favors banded duplicates; a fixed-shape count shows identical coverage.
+
+**Where**:
+- `@hkl/shared/freq.ts`: the `UNBANDED` table in `coordExps`, and `readsAnchor`.
+- `notes.ts`: `noteName` / `keyOctave`, which gain `anchor` and `banded`.
+- `keycolor.ts`: `half` / `isSept` replace `isB`.
+- `heji.ts`: unbanded P reference, stacked hooks.
+- HKL `tuning.heji.ts`: `hookCount`.
+- State: `tuning.banded`, prefs, `.hkr` `banded`, `<hkl:layoutReq banded>`.
+
+**Gates**: `test/unbanded/oracle.mjs` (202,806 checks). The existing color, Wicki-Hayden, chromatic, Syntonic, alignment, HEJI, interval-name and octave-consistency gates are byte-identical to before.
+
+**Status**: the model and state have landed. HKL's toggle (with the Show bands rename) and Composer's Setup control and respelling follow.

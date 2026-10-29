@@ -19,18 +19,18 @@ import {
 export type { Hue, HueColors, KeyColor };
 export { hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle };
 
-/** Hue, white/black and septimal flag for a cell under the current layout. */
+/** Hue, white/black and septimal flags for a cell under the current layout. */
 export function keyColorVariant(q: number, r: number): KeyColor {
-  return keyColor(q, r, tuning.mode, tuning.mapping, tuning.anchor);
+  return keyColor(q, r, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded);
 }
 
 /* returns hex color string for key at lattice (q,r) under current tuning state */
 export function keyColorHex(q: number, r: number): string {
-  return sharedKeyColorHex(q, r, tuning.mode, tuning.mapping, tuning.anchor);
+  return sharedKeyColorHex(q, r, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded);
 }
 
 /* Bright "light source" hue for a key — the notehead color on a DARK notation
    surface (see @hkl/shared/keycolor.js). */
 export function lightSourceHex(q: number, r: number): string {
-  return sharedLightSourceHex(q, r, tuning.mode, tuning.mapping, tuning.anchor);
+  return sharedLightSourceHex(q, r, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded);
 }

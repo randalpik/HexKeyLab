@@ -85,7 +85,7 @@ for (const row of qwertyRows) {
 /* Each probed ref is ranked as its own home band (Syntonic / Polysyntonic). */
 function pianoCells(refQ, refR, mode = '5', mapping = 'euler') {
   return pianoFootprint(refQ, refR, {
-    mode, mapping, anchor: anchorOf(refQ, mapping),
+    mode, mapping, anchor: anchorOf(refQ, mapping), banded: true,
     equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
   });
 }

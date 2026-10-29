@@ -56,26 +56,26 @@ for (const mapping of MAPPINGS) {
           const tag = `${mode} ${mapping} a=${anchor} (${q},${r})`;
           const d = pitchBandOf(q, mapping) - anchor;
           const k = bandOffset(mode, d);
-          const e = coordExps(q, r, mode, mapping, anchor);
-          const p = coordExps(q, r, 'P', mapping, anchor);
+          const e = coordExps(q, r, mode, mapping, anchor, true);
+          const p = coordExps(q, r, 'P', mapping, anchor, true);
           /* A + B */
           check(`A ${tag} = P·SC^k`, eq(e, addK(p, k)), true);
           if (d === 0) check(`A ${tag} home band unaltered`, eq(e, p), true);
           check(`B ${tag} k`, k, mode === 'Y' ? d : [0, 1, 0, -1][mod(d, 4)]);
           /* D */
           if (mode === 'Y') {
-            check(`D ${tag} global shift`, eq(coordExps(q, r, mode, mapping, anchor + 3), addK(e, -3)), true);
+            check(`D ${tag} global shift`, eq(coordExps(q, r, mode, mapping, anchor + 3, true), addK(e, -3)), true);
           } else {
-            check(`D ${tag} period 4`, eq(coordExps(q, r, mode, mapping, anchor + 4), e), true);
+            check(`D ${tag} period 4`, eq(coordExps(q, r, mode, mapping, anchor + 4, true), e), true);
           }
           /* E */
-          const c = keyColor(q, r, mode, mapping, anchor);
-          const cp = keyColor(q, r, 'P', mapping, anchor);
+          const c = keyColor(q, r, mode, mapping, anchor, true);
+          const cp = keyColor(q, r, 'P', mapping, anchor, true);
           check(`E ${tag} hue +2k`, c.hue, hueCycleOrder[mod(hueIdx[cp.hue] + 2 * k, 7)]);
-          check(`E ${tag} not septimal`, c.isB, false);
+          check(`E ${tag} not septimal`, c.isSept, false);
           check(`E ${tag} white/black`, c.isW, [0, 2, 4, 5, 7, 9, 11].includes(mod(coordToMidi(q, r, mapping), 12)));
           /* F */
-          const h = hejiCommasFor(mode, q, r, mapping, anchor);
+          const h = hejiCommasFor(mode, q, r, mapping, anchor, true);
           check(`F ${tag} syn5`, h.syn5, -k);
           check(`F ${tag} sept7`, h.sept7, 0);
         }
@@ -83,9 +83,9 @@ for (const mapping of MAPPINGS) {
       /* C: the band step (+W, 0) across each transition */
       for (let b = anchor - 6; b <= anchor + 6; b++) {
         const q0 = b * W - W / 3;                                /* first column of band b */
-        const step = sub(coordExps(q0 + W, 0, mode, mapping, anchor), coordExps(q0, 0, mode, mapping, anchor));
+        const step = sub(coordExps(q0 + W, 0, mode, mapping, anchor, true), coordExps(q0, 0, mode, mapping, anchor, true));
         const kStep = bandOffset(mode, b + 1 - anchor) - bandOffset(mode, b - anchor);
-        const pStep = sub(coordExps(q0 + W, 0, 'P', mapping, anchor), coordExps(q0, 0, 'P', mapping, anchor));
+        const pStep = sub(coordExps(q0 + W, 0, 'P', mapping, anchor, true), coordExps(q0, 0, 'P', mapping, anchor, true));
         check(`C ${mode} ${mapping} a=${anchor} band ${b}→${b + 1}`, ratio(step), ratio(addK(pStep, kStep)));
         if (mapping !== 'euler') {
           const want = kStep === 1 ? '81/40' : kStep === -1 ? '160/81' : '2/1';

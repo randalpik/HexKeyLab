@@ -7,5 +7,5 @@ import { tuning } from '../state/tuning.js';
 
 /** Lattice color, remapped per-hue for ink-on-white-paper readability. */
 export function darkColorHex(q: number, r: number): string {
-  return inkColorHex(q, r, tuning.mode, tuning.mapping, tuning.anchor);
+  return inkColorHex(q, r, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded);
 }

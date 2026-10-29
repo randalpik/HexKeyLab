@@ -77,7 +77,7 @@ import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { buildPlayback } from './playback.js';
 import { extractResolvedFromElement } from '../model/note-elements.js';
 import { noteName, keyOctave } from '@hkl/shared/notes.js';
-import { freqAt, type TuningMode } from '@hkl/shared/freq.js';
+import { freqAt, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
 import { eulerOf, type Mapping } from '@hkl/shared/mapping.js';
 import type { PlaybackBarEdge } from '@hkl/shared/cursor-geom.js';
 
@@ -180,8 +180,8 @@ export interface PerfAdvance {
  *  @hkl/shared so the form is identical. Color is matched separately (from
  *  @color for expected notes, from ResolvedNote.colorHex for played notes —
  *  both are darkColorHex(q,r), so equal for the same note). */
-function pitchKeyFor(q: number, r: number, mapping: Mapping): string {
-  return noteName(q, r, mapping) + '|' + keyOctave(q, r, mapping);
+function pitchKeyFor(q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): string {
+  return noteName(q, r, mapping, anchor, banded) + '|' + keyOctave(q, r, mapping, anchor, banded);
 }
 
 /** Octave-invariant lattice class. An Euler octave is q ± 3 at the same r, and
@@ -262,17 +262,20 @@ export class PerformanceMatcher {
   private shown = new Set<Voice>();
   private mode: TuningMode;
   private mapping: Mapping;
+  private banded: boolean;
   private dupMode: boolean;
-  /** Per measure occurrence, the Syntonic / Polysyntonic anchor of its key
-   *  (model.anchorAt) — 0 in every other mode. */
+  /** Per measure occurrence, the anchor of its key (model.anchorAt) where the
+   *  layout reads it (readsAnchor) — 0 otherwise. */
   private occAnchor: number[] = [];
 
   constructor(model: ComposerModel) {
     this.mode = model.getLayoutReq().tuningMode as TuningMode;
     this.mapping = model.getLayoutReq().mapping;
-    const anchored = this.mode === 'S' || this.mode === 'Y';
+    this.banded = model.getLayoutReq().banded;
+    const anchored = readsAnchor(this.mode, this.banded);
     /* Duplicate-key layouts: P/D's comma siblings, and S/Y's equally-shifted
-       bands (Syntonic's return bands), hold the same pitch on two keys. */
+       bands (Syntonic's return bands), hold the same pitch on two keys.
+       Unbanded layouts take it too: matching an identical pitch is always safe. */
     this.dupMode = this.mode === 'P' || this.mode === 'D' || anchored;
 
     const ornaments = ornamentIds(model);
@@ -312,9 +315,9 @@ export class PerformanceMatcher {
         ? (anchored ? model.anchorAt(mi, this.mapping) : 0)
         : this.occAnchor[this.occAnchor.length - 1];
       const notes: ExpectedNote[] = e.notes.map((c) => ({
-        pitchKey: pitchKeyFor(c.q, c.r, this.mapping),
+        pitchKey: pitchKeyFor(c.q, c.r, this.mapping, anchor, this.banded),
         color: colorOf(c.q, c.r),
-        hz: freqAt(c.q, c.r, this.mode, this.mapping, anchor),
+        hz: freqAt(c.q, c.r, this.mode, this.mapping, anchor, this.banded),
         satisfied: false,
         fromP: false,
       }));
@@ -430,11 +433,11 @@ export class PerformanceMatcher {
    *  content; at the end of the score every bar stays put. A strike that
    *  matches no expected voice returns []. */
   onStrike(note: ResolvedNote): PerfAdvance[] {
-    const pid = pitchKeyFor(note.q, note.r, this.mapping);
     const cur = this.currentOcc();
-    /* HKL sounded the strike under its anchor, which the layout-match gate
-       holds equal to the current measure's */
-    const phz = freqAt(note.q, note.r, this.mode, this.mapping, this.occAnchor[cur] ?? 0);
+    /* HKL sounded (and spelled) the strike under its anchor, which the
+       layout-match gate holds equal to the current measure's */
+    const pid = pitchKeyFor(note.q, note.r, this.mapping, this.occAnchor[cur] ?? 0, this.banded);
+    const phz = freqAt(note.q, note.r, this.mode, this.mapping, this.occAnchor[cur] ?? 0, this.banded);
     const advanced: PerfAdvance[] = [];
     const hits = (en: ExpectedNote): boolean => this.matches(en, pid, phz, note.colorHex);
 

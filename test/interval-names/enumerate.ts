@@ -74,7 +74,7 @@ function parseArgs(): Args {
 }
 
 function makeState(mode: Mode): TuningStateLike {
-  return { mode, mapping: 'euler', anchor: 0, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
+  return { mode, mapping: 'euler', anchor: 0, banded: true, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
 }
 
 const log3 = Math.log2(3), log5 = Math.log2(5), log7 = Math.log2(7);
@@ -116,7 +116,7 @@ for (let i = 0; i < N; i++) {
     const name = intervalNameFromCoords(q1, r1, q2, r2, state);
     if (args.commasOnly && !commaPattern(name)) continue;
     if (args.include && !args.include.test(name)) continue;
-    const cls = classifyDiatonic(q1, r1, q2, r2);
+    const cls = classifyDiatonic(q1, r1, q2, r2, state);
     const pRef = pythagRefExp(cls.ord, cls.qual);
     const { e, num, den } = jiRatioWithState(q1, r1, q2, r2, state);
     const neg: [number, number, number, number] = [-e[0], -e[1], -e[2], -e[3]];

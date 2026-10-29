@@ -44,8 +44,8 @@ export interface RetuneNoteEntry {
   drop: boolean;
 }
 
-/** The two layout fields a retune relocates across. */
-export interface RetuneLayout { tuningMode: TuningMode; mapping: Mapping }
+/** The layout fields a retune relocates across. */
+export interface RetuneLayout { tuningMode: TuningMode; mapping: Mapping; banded: boolean }
 
 export interface RetunePlan {
   from: RetuneLayout;
@@ -66,9 +66,9 @@ const CENTS_EPS = 0.001;
 const SEARCH_RADIUS = 15;
 
 /** Compute the retune plan for changing this document's layout. Pure
- *  inspection — does not mutate the doc. `anchorOf` gives a note's Syntonic /
- *  Polysyntonic anchor under a mapping (the model's anchorOfNote — derived from
- *  its measure's key); every other mode ignores it. */
+ *  inspection — does not mutate the doc. `anchorOf` gives a note's anchor
+ *  under a mapping (the model's anchorOfNote — derived from its measure's key);
+ *  banded, every mode but Syntonic / Polysyntonic ignores it. */
 export function planRetune(
   doc: Document, from: RetuneLayout, to: RetuneLayout,
   anchorOf: (note: Element, mapping: Mapping) => number,
@@ -85,7 +85,7 @@ export function planRetune(
     const oldQ = parseInt(qStr, 10);
     const oldR = parseInt(rStr, 10);
     if (!Number.isFinite(oldQ) || !Number.isFinite(oldR)) continue;
-    const oldFreq = freqAt(oldQ, oldR, from.tuningMode, from.mapping, anchorOf(noteEl, from.mapping));
+    const oldFreq = freqAt(oldQ, oldR, from.tuningMode, from.mapping, anchorOf(noteEl, from.mapping), from.banded);
     const [seedQ, seedR] = convertCell(oldQ, oldR, from.mapping, to.mapping);
     const best = findBestCell(seedQ, seedR, oldFreq, to, anchorOf(noteEl, to.mapping));
     if (best.cents <= CENTS_EPS) exactCount++;
@@ -140,7 +140,7 @@ function findBestCell(origQ: number, origR: number, origFreq: number, to: Retune
       const r = origR + dr;
       const midi = coordToMidi(q, r, to.mapping);
       if (midi < MIDI_LOW || midi > MIDI_HIGH) continue;
-      const f = freqAt(q, r, to.tuningMode, to.mapping, anchor);
+      const f = freqAt(q, r, to.tuningMode, to.mapping, anchor, to.banded);
       const cents = Math.abs(1200 * Math.log2(f / origFreq));
       const taxi = Math.abs(dq) + Math.abs(dr);
       const delta = best.cents - cents;
@@ -207,7 +207,7 @@ export function applyRetune(model: ComposerModel, plan: RetunePlan): void {
     if (e.drop) continue;
     const parent = e.noteEl.parentElement;
     if (parent && parent.localName === 'chord') affectedChords.add(parent);
-    rewriteNoteCoord(e.noteEl, e.newQ, e.newR, mapping);
+    rewriteNoteCoord(e.noteEl, e.newQ, e.newR, mapping, model.anchorOfNote(e.noteEl, mapping), plan.to.banded);
   }
 
   /* Pass 2: remove dropped notes + clean up tie references that pointed at
@@ -233,13 +233,13 @@ export function applyRetune(model: ComposerModel, plan: RetunePlan): void {
   pruneDanglingSlurs(doc);
 }
 
-function rewriteNoteCoord(note: Element, q: number, r: number, mapping: Mapping): void {
+function rewriteNoteCoord(note: Element, q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): void {
   note.setAttribute('data-q', String(q));
   note.setAttribute('data-r', String(r));
-  const name = noteName(q, r, mapping);
+  const name = noteName(q, r, mapping, anchor, banded);
   const parsed = parseNote(name);
   const alter = accToVal(parsed.acc);
-  const oct = keyOctave(q, r, mapping);
+  const oct = keyOctave(q, r, mapping, anchor, banded);
   note.setAttribute('pname', parsed.letter.toLowerCase());
   note.setAttribute('oct', String(oct));
   note.removeAttribute('accid.ges');

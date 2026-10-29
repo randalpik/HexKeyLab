@@ -18,8 +18,12 @@ export const tuning = {
      the band of the anchor reference (manual selection ?? score-ref ??
      default A3 — never the composer-source selection). Recomputed by
      state/reference.ts; read by every pitch function, ignored by the other
-     modes. */
+     modes while banded. */
   anchor: 0,
+  /* Banded layout (default). false = unbanded: every seam retuned to one of
+     the mode's own in-band steps and each band respelled 12 fifths from the
+     anchor's (coordExps / noteName in @hkl/shared). Persisted in PrefsV1. */
+  banded: true,
   septimalEnabled: false,
   equalEnabled: false,
   /* band width: alternating A/B regions along lattice r axis (constant) */

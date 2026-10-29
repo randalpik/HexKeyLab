@@ -5,12 +5,12 @@
 // src/shared/ contract.
 //
 // Two responsibilities:
-//   1. hejiCommasFor(mode, q, r, mapping, anchor) — the signed syntonic/septimal
+//   1. hejiCommasFor(mode, q, r, mapping, anchor, banded) — the signed syntonic/septimal
 //      comma counts for a lattice cell, derived from coordExps (the one place
 //      the per-mode tuning lives).
 //   2. hejiChain(accVal, syn5, sept7) — the ordered SMuFL glyph chain that
 //      follows the letter: stacked accidentals carrying syntonic-comma arrows,
-//      then an optional standalone septimal hook. This is hejiLabel() steps
+//      then standalone septimal hooks. This is hejiLabel() steps
 //      1-4 with the readability "collapse" step removed (Composer always draws
 //      the full chain).
 //
@@ -33,10 +33,13 @@ const CODES_SHARP     = [0xE262, 0xE2C3, 0xE2C8, 0xE2CD, 0xE2D2] as const;
 const CODES_DBL_SHARP = [0xE263, 0xE2C4, 0xE2C9, 0xE2CE, 0xE2D3] as const;
 const CODES_DBL_FLAT  = [0xE264, 0xE2C0, 0xE2C5, 0xE2CA, 0xE2CF] as const;
 
-/* Standalone septimal hooks (no Pythagorean carrier). Current HKL layouts
- * only produce |sept7| ≤ 1, so only the single-hook codes are used. */
+/* Standalone septimal hooks (no Pythagorean carrier). Banded layouts only
+ * produce |sept7| ≤ 1; the unbanded Septimal layout stacks one per band. The
+ * two-comma glyphs were confirmed by rendering BravuraText.otf (2026-10-29). */
 export const SEPT_DOWN_1 = 0xE2DE; // accidentalLowerOneSeptimalComma
 export const SEPT_UP_1   = 0xE2DF; // accidentalRaiseOneSeptimalComma
+export const SEPT_DOWN_2 = 0xE2E0; // two septimal commas down
+export const SEPT_UP_2   = 0xE2E1; // two septimal commas up
 
 export type HejiGlyphFamily =
   | 'flat' | 'natural' | 'sharp' | 'doubleSharp' | 'doubleFlat' | 'septimal';
@@ -79,15 +82,17 @@ export interface HejiCommas {
   sept7: number;
 }
 
-/** HEJI comma counts for cell (q, r) under `mode` (and, for S/Y, `anchor`).
- *  Every cell's lattice spelling is Pythagorean exactly under mode 'P', so the
- *  arrows and hooks are the syntonic / septimal commas between the cell's
- *  pitch and its 'P' pitch. A schisma (Schismatic's band stacking) isn't
- *  notated — it re-spells, and color carries it. Equal returns {0, 0}. */
-export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping, anchor: number): HejiCommas {
+/** HEJI comma counts for cell (q, r) under `mode` / `anchor` / `banded`.
+ *  Every cell's lattice spelling is Pythagorean exactly under mode 'P' with the
+ *  same anchor and banding (unbanded, P's +Pythagorean comma per band matches
+ *  the 12-fifth respelling), so the arrows and hooks are the syntonic /
+ *  septimal commas between the cell's pitch and its 'P' pitch. A schisma
+ *  (Schismatic's band stacking) isn't notated — it re-spells, and color
+ *  carries it. Equal returns {0, 0}. */
+export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): HejiCommas {
   if (mode === 'E') return { syn5: 0, sept7: 0 };
-  const e = coordExps(q, r, mode, mapping, anchor);
-  const p = coordExps(q, r, 'P', mapping, anchor);
+  const e = coordExps(q, r, mode, mapping, anchor, banded);
+  const p = coordExps(q, r, 'P', mapping, anchor, banded);
   /* every mode's cells differ from 'P' by whole commas, so this always solves */
   const [s, z] = solveCommas(e.map((x, i) => x - p[i]))!;
   return { syn5: 0 - s, sept7: 0 - z };
@@ -106,7 +111,8 @@ export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: M
  *   2. Distribute syntonic commas across the chain, ≤2 per glyph, balanced
  *      (one pass of singles left-to-right, then a second pass).
  *   3. Overflow spills onto natural-sign carriers (≤2 arrows each).
- *   4. A septimal hook (sept7 ≠ 0) appends one standalone glyph at the end. */
+ *   4. Septimal hooks append at the end, stacked like step 1: a single hook
+ *      first if |sept7| is odd, then two-hook glyphs. */
 export function hejiChain(accVal: number, syn5: number, sept7: number): HejiGlyphInfo[] {
   type ChainItem = { kind: AccKind; arrows: number };
   const chain: ChainItem[] = [];
@@ -140,9 +146,10 @@ export function hejiChain(accVal: number, syn5: number, sept7: number): HejiGlyp
     family: c.kind,
   }));
 
-  if (sept7 !== 0) {
-    const code = sept7 > 0 ? SEPT_DOWN_1 : SEPT_UP_1;
-    glyphs.push({ ch: String.fromCodePoint(code), family: 'septimal' });
+  const hooks = Math.abs(sept7);
+  if (hooks % 2 === 1) glyphs.push({ ch: String.fromCodePoint(sept7 > 0 ? SEPT_DOWN_1 : SEPT_UP_1), family: 'septimal' });
+  for (let i = 0; i < Math.floor(hooks / 2); i++) {
+    glyphs.push({ ch: String.fromCodePoint(sept7 > 0 ? SEPT_DOWN_2 : SEPT_UP_2), family: 'septimal' });
   }
 
   return glyphs;

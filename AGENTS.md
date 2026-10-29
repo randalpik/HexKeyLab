@@ -79,7 +79,7 @@ Non-negotiable constraints. Protocol detail (commands, LED throughput, pedal cal
 ## Critical tuning context
 
 - **Coordinate axes**: q = major thirds (5:4), r = **fifths** (3:2). The r axis is fifths, NOT minor thirds — minor thirds are the derived direction (-1, +1). Easy to misremember.
-- **Band structure**: 3 keys wide along the q-axis; every key is exactly 2:1 above the key 3 positions to its left. Band index = `floor((q+1)/3)`, position-in-band = `((q+1) % 3 + 3) % 3`.
+- **Band structure**: 3 keys wide along the q-axis; in the (default) banded layout every key is exactly 2:1 above the key 3 positions to its left. Band index = `floor((q+1)/3)`, position-in-band = `((q+1) % 3 + 3) % 3`. The unbanded layout (`banded` false) retunes every seam and respells each band 12 fifths from the ref's: docs/architecture.md → Unbanded layout.
 - **Origin**: A3 sits at (q=0, r=0) with bandOf=0, posInBand=1.
 - **Modes**: `TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y'` = Equal · Ptolemaic · Pythagorean · Semiditonal · Septimal · Schismatic · Syntonic · Polysyntonic (the persisted codes predate the labels; `'V'` is Schismatic). The per-mode tuning lives in exactly one place, `coordExps(q, r, mode, mapping, anchor)` (`@hkl/shared/freq.js`); frequency, ratios, HEJI and color all derive from it. `TuningMode` is declared twice — adding a mode follows the checklist in docs/architecture.md → Tuning system → Adding a tuning mode.
 - **Color is one function of the pitch** for every JI mode (Equal's octave cycle is the one separate rule) — never add a per-mode color branch; `test/color-gate/` pins it.

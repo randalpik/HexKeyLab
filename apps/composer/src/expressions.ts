@@ -976,15 +976,16 @@ function seedDefaults(cfg: Element, doc: Document): void {
   }
 }
 
-/** What the score pins about HKL's layout: tuning mode and note-name
- *  mapping (the coordinate frame of every note's data-q/data-r). The reference
- *  note is DERIVED from the key signature at the current position (see
- *  cursor/refNote.ts), never stored. Legacy files carry `refQ`/`refR` here;
- *  those attributes are simply never read, so no migration is needed. Files
- *  without a `mapping` attribute are Euler. */
+/** What the score pins about HKL's layout: tuning mode, note-name mapping
+ *  (the coordinate frame of every note's data-q/data-r) and banding. The
+ *  reference note is DERIVED from the key signature at the current position
+ *  (see cursor/refNote.ts), never stored. Legacy files carry `refQ`/`refR`
+ *  here; those attributes are simply never read, so no migration is needed.
+ *  Files without a `mapping` attribute are Euler; without `banded`, banded. */
 export interface LayoutReq {
   tuningMode: TuningMode;
   mapping: Mapping;
+  banded: boolean;
 }
 
 function isTuningMode(s: string): s is TuningMode {
@@ -1001,10 +1002,14 @@ export function getLayoutReq(doc: Document): LayoutReq {
     if (lr) {
       const m = lr.getAttribute('tuningMode') ?? '5';
       const map = lr.getAttribute('mapping');
-      return { tuningMode: isTuningMode(m) ? m : '5', mapping: isMapping(map) ? map : 'euler' };
+      return {
+        tuningMode: isTuningMode(m) ? m : '5',
+        mapping: isMapping(map) ? map : 'euler',
+        banded: lr.getAttribute('banded') !== 'false',
+      };
     }
   }
-  return { tuningMode: '5', mapping: 'euler' };
+  return { tuningMode: '5', mapping: 'euler', banded: true };
 }
 
 /** Write the score's required layout. Creates the block via ensureExtMetaConfig
@@ -1021,6 +1026,9 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
      as they did before mappings existed. */
   if (isMapping(req.mapping) && req.mapping !== 'euler') lr.setAttribute('mapping', req.mapping);
   else lr.removeAttribute('mapping'); /* also guards untyped callers that omit it */
+  /* likewise banded: only an unbanded score carries the attribute */
+  if (req.banded === false) lr.setAttribute('banded', 'false');
+  else lr.removeAttribute('banded');
   /* Legacy ref attributes are dead weight — drop them as documents are saved. */
   lr.removeAttribute('refQ');
   lr.removeAttribute('refR');

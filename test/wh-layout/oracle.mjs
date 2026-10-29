@@ -48,7 +48,7 @@ function ratio(e) {
   e.forEach((x, i) => { const p = BigInt(PR[i]); if (x > 0) n *= p ** BigInt(x); else if (x < 0) d *= p ** BigInt(-x); });
   return `${n}/${d}`;
 }
-const iv = (A, B, m) => ratio(sub(coordExps(B[0], B[1], m, WH), coordExps(A[0], A[1], m, WH)));
+const iv = (A, B, m) => ratio(sub(coordExps(B[0], B[1], m, WH, 0, true), coordExps(A[0], A[1], m, WH, 0, true)));
 const NINE_EIGHTHS = [-3, 2, 0, 0], HALF = [-1, 0, 0, 0], OCT = [1, 0, 0, 0], SCHISMA = [-15, 8, 1, 0];
 
 /* ── A: interval invariants ─────────────────────────────────────────────────────── */
@@ -56,14 +56,14 @@ for (const m of JI) {
   for (let k = -20; k <= 20; k++) {
     for (let R = -12; R <= 12; R++) {
       const Q = 2 * k;                                   /* original column */
-      const eO = coordExps(Q, R, m, WH);
-      check(`A ${m} (${Q},${R}) +1,0 = 9/8`, same(sub(coordExps(Q + 1, R, m, WH), eO), NINE_EIGHTHS), true);
-      check(`A ${m} (${Q},${R}) +1,-2 = 1/2`, same(sub(coordExps(Q + 1, R - 2, m, WH), eO), HALF), true);
-      const qStep = sub(coordExps(k + 1, R, m, 'euler'), coordExps(k, R, m, 'euler'));
+      const eO = coordExps(Q, R, m, WH, 0, true);
+      check(`A ${m} (${Q},${R}) +1,0 = 9/8`, same(sub(coordExps(Q + 1, R, m, WH, 0, true), eO), NINE_EIGHTHS), true);
+      check(`A ${m} (${Q},${R}) +1,-2 = 1/2`, same(sub(coordExps(Q + 1, R - 2, m, WH, 0, true), eO), HALF), true);
+      const qStep = sub(coordExps(k + 1, R, m, 'euler', 0, true), coordExps(k, R, m, 'euler', 0, true));
       check(`A ${m} (${Q + 1},${R}) copy→next = q-step ÷ 9/8`,
-        same(sub(coordExps(Q + 2, R, m, WH), coordExps(Q + 1, R, m, WH)), sub(qStep, NINE_EIGHTHS)), true);
+        same(sub(coordExps(Q + 2, R, m, WH, 0, true), coordExps(Q + 1, R, m, WH, 0, true)), sub(qStep, NINE_EIGHTHS)), true);
       for (const Qc of [Q, Q + 1]) {
-        const band = sub(coordExps(Qc + 6, R, m, WH), coordExps(Qc, R, m, WH));
+        const band = sub(coordExps(Qc + 6, R, m, WH, 0, true), coordExps(Qc, R, m, WH, 0, true));
         check(`A ${m} (${Qc},${R}) +6,0 = band octave`, same(band, m === 'V' ? add(OCT, SCHISMA) : OCT), true);
       }
     }
@@ -99,8 +99,8 @@ check('B E shape (semitones)', SHAPE_OFFSETS.map(([a, b]) => coordToMidi(a, b, W
 for (let Q = -41; Q <= 41; Q += 2) {          /* odd columns: copies */
   for (let R = -10; R <= 10; R++) {
     const k = fd(Q);
-    check(`C (${Q},${R}) name = column cell's`, noteName(Q, R, WH), noteName(k, R + 2, 'euler'));
-    check(`C (${Q},${R}) octave = column cell's − 1`, keyOctave(Q, R, WH), keyOctave(k, R + 2, 'euler') - 1);
+    check(`C (${Q},${R}) name = column cell's`, noteName(Q, R, WH, 0, true), noteName(k, R + 2, 'euler', 0, true));
+    check(`C (${Q},${R}) octave = column cell's − 1`, keyOctave(Q, R, WH, 0, true), keyOctave(k, R + 2, 'euler', 0, true) - 1);
     check(`C (${Q},${R}) nominal MIDI`, coordToMidi(Q, R, WH), 57 + 2 * Q + 7 * R);
   }
 }
@@ -138,21 +138,21 @@ for (const m of JI) {
   for (let q = -15; q <= 15; q++) {
     for (let r = -10; r <= 10; r++) {
       const [Q, R] = convertCell(q, r, 'euler', WH);
-      check(`E ${m} euler(${q},${r}) → WH pitch-exact`, same(coordExps(Q, R, m, WH), coordExps(q, r, m, 'euler')), true);
+      check(`E ${m} euler(${q},${r}) → WH pitch-exact`, same(coordExps(Q, R, m, WH, 0, true), coordExps(q, r, m, 'euler', 0, true)), true);
       check(`E ${m} euler(${q},${r}) → WH → euler identity`, convertCell(Q, R, WH, 'euler').join(), [q, r].join());
     }
   }
   for (let Q = -30; Q <= 30; Q++) {
     for (let R = -10; R <= 10; R++) {
       const [q, r] = convertCell(Q, R, WH, 'euler');
-      const d = sub(coordExps(Q, R, m, WH), coordExps(q, r, m, 'euler'));
+      const d = sub(coordExps(Q, R, m, WH, 0, true), coordExps(q, r, m, 'euler', 0, true));
       const copy = Q !== 2 * fd(Q);
       check(`E ${m} WH(${Q},${R}) → euler`, d.join(), (m === 'V' && copy ? SCHISMA : [0, 0, 0, 0]).join());
     }
   }
 }
 check('E Equal frame conversion keeps pitch',
-  freqAt(7, -2, 'E', WH).toFixed(9), freqAt(...convertCell(7, -2, WH, 'euler'), 'E', 'euler').toFixed(9));
+  freqAt(7, -2, 'E', WH, 0, true).toFixed(9), freqAt(...convertCell(7, -2, WH, 'euler'), 'E', 'euler', 0, true).toFixed(9));
 
 /* ── G: reference spine ───────────────────────────────────────────────────
    The qm0 ORIGINAL column of the ref's own 6-band, same row: (Q+2) mod 6 = 2,

@@ -28,7 +28,7 @@ export type { HejiCommas, HejiGlyphFamily, HejiGlyphInfo };
 /** HEJI comma counts for the cell (q, r) under the given tuning state.
  *  Delegates to the pure shared implementation, keyed on the state's mode. */
 export function hejiCommas(q: number, r: number, state: TuningStateLike): HejiCommas {
-  return hejiCommasFor(state.mode, q, r, state.mapping, state.anchor);
+  return hejiCommasFor(state.mode, q, r, state.mapping, state.anchor, state.banded);
 }
 
 type AccKind = Exclude<HejiGlyphFamily, 'septimal'>;
@@ -40,12 +40,16 @@ type AccKind = Exclude<HejiGlyphFamily, 'septimal'>;
  *  rendering. */
 export const COLLAPSE_THRESHOLD = 4;
 
+/** Septimal hooks (|sept7|, stacked only by the unbanded Septimal layout)
+ *  collapse to one hook with an exponent above this count. */
+export const HOOK_COLLAPSE_THRESHOLD = 2;
+
 /** When a cell's accidental degree (AD) and/or syntonic degree (SD) is large
  *  enough to trigger collapse, the renderer draws a single accidental-form
  *  glyph carrying a small superscript count, with the remaining unabsorbed
  *  glyphs rendered as a normal chain on the side specified by `position`. The
- *  septimal hook, when present, is always part of the chain (last slot) and is
- *  never collapsed. */
+ *  septimal hooks are always the chain's last slots and collapse separately
+ *  (`HejiLabel.hookCount`). */
 export interface CollapseSpec {
   glyph: HejiGlyphInfo;
   count: number;
@@ -61,6 +65,9 @@ export interface HejiLabel {
   letter: string;
   glyphs: HejiGlyphInfo[];
   collapse?: CollapseSpec;
+  /** |sept7| when above HOOK_COLLAPSE_THRESHOLD: `glyphs` then ends in a
+   *  single hook, which the renderer draws with this count as its exponent. */
+  hookCount?: number;
 }
 
 /** Build the HEJI label for a cell given its conventional spelling and JI
@@ -115,8 +122,14 @@ export function hejiLabel(noteNameStr: string, commas: HejiCommas): HejiLabel {
     }
   }
 
-  /* Steps 1-4: residual chain + septimal hook (shared, no collapse). */
-  const glyphs = hejiChain(accValRem, syn5Rem, sept7);
+  /* Septimal hooks above the threshold reduce to one hook + exponent. */
+  const hookCount = Math.abs(sept7) > HOOK_COLLAPSE_THRESHOLD ? Math.abs(sept7) : undefined;
 
-  return collapse ? { letter: p.letter, glyphs, collapse } : { letter: p.letter, glyphs };
+  /* Steps 1-4: residual chain + septimal hooks (shared, no collapse). */
+  const glyphs = hejiChain(accValRem, syn5Rem, hookCount ? Math.sign(sept7) : sept7);
+
+  const label: HejiLabel = { letter: p.letter, glyphs };
+  if (collapse) label.collapse = collapse;
+  if (hookCount) label.hookCount = hookCount;
+  return label;
 }

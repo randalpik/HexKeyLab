@@ -65,9 +65,9 @@ export function pianoFootprint(refQ: number, refR: number, state: TuningStateLik
     a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
   /* letter steps above the ref, 0..6 (3 = a fourth) */
   const LETTERS = 'ABCDEFG';
-  const refLetter = LETTERS.indexOf(noteName(refQ, refR, mapping)[0]);
+  const refLetter = LETTERS.indexOf(noteName(refQ, refR, mapping, state.anchor, state.banded)[0]);
   const letterStep = (q: number, r: number): number =>
-    (LETTERS.indexOf(noteName(q, r, mapping)[0]) - refLetter + 7) % 7;
+    (LETTERS.indexOf(noteName(q, r, mapping, state.anchor, state.banded)[0]) - refLetter + 7) % 7;
   for (let midi = 21; midi <= 108; midi++) {
     const N = midi - 57;
     /* q ≡ inv·N (mod 7); start there. */

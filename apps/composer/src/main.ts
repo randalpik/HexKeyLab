@@ -13,7 +13,7 @@
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
 import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
-import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
+import { TUNING_MODES, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
@@ -348,7 +348,7 @@ bridge.on((msg: HklEvent) => {
         autoAdoptedHklLayout = true;
         const isMode = (s: string): s is TuningMode => (TUNING_MODES as ReadonlyArray<string>).includes(s);
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
-        model.setLayoutReq({ tuningMode, mapping: hklMapping });
+        model.setLayoutReq({ tuningMode, mapping: hklMapping, banded: model.getLayoutReq().banded });
         broadcastLayoutReq();
       }
       refreshLayoutMatchIndicator();
@@ -511,7 +511,7 @@ function refreshLayoutMatchIndicator(): void {
     return;
   }
   const lr = model.getLayoutReq();
-  const anchored = lr.tuningMode === 'S' || lr.tuningMode === 'Y';
+  const anchored = readsAnchor(lr.tuningMode, lr.banded);
   const match = hklTuningMode === lr.tuningMode && (hklMapping ?? 'euler') === lr.mapping
     && (!anchored || hklAnchor === null || hklAnchor === model.anchorAt(refSourceMeasure()));
   el.textContent = match ? '✓' : '⚠ mismatch';

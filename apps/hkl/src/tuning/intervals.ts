@@ -19,7 +19,6 @@ import { jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
 import { noteName, parseNote, keyOctave } from '@hkl/shared/notes.js';
 import { coordToMidi, solveCommas } from '@hkl/shared/freq.js';
-import type { Mapping } from '@hkl/shared/mapping.js';
 
 type PrimeExp = [number, number, number, number];
 type CommaItem = [number, string]; /* [sign, name] */
@@ -104,13 +103,17 @@ export interface DiatonicClass {
 
 export const letterIdx: Record<string, number> = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
 
-/* Classify the diatonic interval implied by (q1,r1)→(q2,r2) in `mapping`'s
-   frame. Normalizes to ascending. Mirrors the equalIntervalName logic. */
-export function classifyDiatonic(q1: number, r1: number, q2: number, r2: number, mapping: Mapping): DiatonicClass {
+/** The layout fields the spelling depends on (noteName / keyOctave). */
+export type SpellingLayout = Pick<TuningStateLike, 'mapping' | 'anchor' | 'banded'>;
+
+/* Classify the diatonic interval implied by (q1,r1)→(q2,r2) as spelled under
+   `layout`. Normalizes to ascending. Mirrors the equalIntervalName logic. */
+export function classifyDiatonic(q1: number, r1: number, q2: number, r2: number, layout: SpellingLayout): DiatonicClass {
+  const { mapping, anchor, banded } = layout;
   let semis = coordToMidi(q2, r2, mapping) - coordToMidi(q1, r1, mapping);
-  const nn1 = noteName(q1, r1, mapping), nn2 = noteName(q2, r2, mapping);
+  const nn1 = noteName(q1, r1, mapping, anchor, banded), nn2 = noteName(q2, r2, mapping, anchor, banded);
   const li1 = letterIdx[parseNote(nn1).letter], li2 = letterIdx[parseNote(nn2).letter];
-  const o1 = keyOctave(q1, r1, mapping), o2 = keyOctave(q2, r2, mapping);
+  const o1 = keyOctave(q1, r1, mapping, anchor, banded), o2 = keyOctave(q2, r2, mapping, anchor, banded);
   let p1 = li1 + 7 * o1, p2 = li2 + 7 * o2;
   if (p2 < p1) { const tmp = p1; p1 = p2; p2 = tmp; semis = -semis; }
   if (semis < 0) semis = -semis;
@@ -393,7 +396,7 @@ function findBaseName(ord: number, qual: string, s: number, z: number):
    decomposes the residual against the Pythagorean reference into (syntonic,
    septimal, schisma) counts. */
 export function intervalNameFromCoords(q1: number, r1: number, q2: number, r2: number, state: TuningStateLike): string {
-  const cls = classifyDiatonic(q1, r1, q2, r2, state.mapping);
+  const cls = classifyDiatonic(q1, r1, q2, r2, state);
   /* Use lookup ord ∈ {1..8} for overrides; multi-step quals (AA, dd, AAA, …)
      always fall through to defaultPythagName. */
   const pRef = pythagRefExp(cls.ord, cls.qual);
@@ -441,8 +444,8 @@ export function intervalNameFromCoords(q1: number, r1: number, q2: number, r2: n
 
 /* ───── Equal-mode naming (unchanged) ───── */
 
-export function equalIntervalName(q1: number, r1: number, q2: number, r2: number, mapping: Mapping): string {
-  const cls = classifyDiatonic(q1, r1, q2, r2, mapping);
+export function equalIntervalName(q1: number, r1: number, q2: number, r2: number, layout: SpellingLayout): string {
+  const cls = classifyDiatonic(q1, r1, q2, r2, layout);
   if (cls.ord === 1 && cls.qual === 'P' && cls.extraOct === 0) return 'perfect unison';
   const ordinal = cls.ord + 7 * cls.extraOct;
   const ord = ordSuffix(ordinal);

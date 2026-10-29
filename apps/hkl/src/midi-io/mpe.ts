@@ -15,6 +15,7 @@ export function snapshotToTuningState(s: LayoutSnapshot, anchor: number = s.anch
     mode: s.tuning,
     mapping: s.mapping,
     anchor,
+    banded: s.banded,
     equalEnabled: s.equalEnabled,
     septimalEnabled: s.septimalEnabled,
     septimalW: s.septimalW,

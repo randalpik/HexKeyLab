@@ -60,7 +60,7 @@ function ratio(e) {
   e.forEach((x, i) => { const p = BigInt(PR[i]); if (x > 0) n *= p ** BigInt(x); else if (x < 0) d *= p ** BigInt(-x); });
   return `${n}/${d}`;
 }
-const ex = (Q, R, m, a = 0) => coordExps(Q, R, m, CH, a);
+const ex = (Q, R, m, a = 0) => coordExps(Q, R, m, CH, a, true);
 const anchorsFor = (m) => (m === 'S' || m === 'Y' ? [-2, -1, 0, 1, 2] : [0]);
 
 /* ── A: construction ─────────────────────────────────────────────────────── */
@@ -78,7 +78,7 @@ for (let Q = -41; Q <= 41; Q++) {
           check(`A ${m} a${a} (${Q},${R}) new column = (Q−5,R−1) × 2${borrowed ? ' × schisma' : ''}`,
             sub(e0, ex(Q - 5, R - 1, m, a)).join(), (borrowed ? add(OCT, SCHISMA) : OCT).join());
         } else {
-          check(`A ${m} a${a} (${Q},${R}) = Wicki-Hayden (Q/2, R)`, e0.join(), coordExps(Q / 2, R, m, 'wickiHayden', a).join());
+          check(`A ${m} a${a} (${Q},${R}) = Wicki-Hayden (Q/2, R)`, e0.join(), coordExps(Q / 2, R, m, 'wickiHayden', a, true).join());
         }
         /* band (+12, 0) */
         let want;
@@ -92,7 +92,7 @@ for (let Q = -41; Q <= 41; Q++) {
     }
     for (const m of UNIFORM) {
       const c = eulerOf(Q, R, CH);
-      const step = sub(coordExps(c.q + 1, c.r, m, 'euler', 0), coordExps(c.q, c.r, m, 'euler', 0));
+      const step = sub(coordExps(c.q + 1, c.r, m, 'euler', 0, true), coordExps(c.q, c.r, m, 'euler', 0, true));
       check(`A ${m} (${Q},${R}) +4,0 = Euler (1,0) step`, sub(ex(Q + 4, R, m), ex(Q, R, m)).join(), step.join());
     }
   }
@@ -124,8 +124,8 @@ for (const m of Object.keys(HOME)) check(`B ${m} home band from the ref`, range(
 check('B E row (semitones)', range(-4, 7).map((Q) => coordToMidi(Q + 1, 0, CH) - coordToMidi(Q, 0, CH)).join(' '), '1 1 1 1 1 1 1 1 1 1 1 1');
 
 /* ── C: spelling ─────────────────────────────────────────────────────────── */
-check('C ref row names', range(-4, 7).map((Q) => noteName(Q, 0, CH)).join(' '), 'F F# G G# A Bb B C C# D D# E');
-check('C ref row octaves', range(-4, 7).map((Q) => keyOctave(Q, 0, CH)).join(' '), '3 3 3 3 3 3 3 4 4 4 4 4');
+check('C ref row names', range(-4, 7).map((Q) => noteName(Q, 0, CH, 0, true)).join(' '), 'F F# G G# A Bb B C C# D D# E');
+check('C ref row octaves', range(-4, 7).map((Q) => keyOctave(Q, 0, CH, 0, true)).join(' '), '3 3 3 3 3 3 3 4 4 4 4 4');
 for (let Q = -41; Q <= 41; Q++) {
   for (let R = -10; R <= 10; R++) {
     check(`C (${Q},${R}) nominal MIDI`, coordToMidi(Q, R, CH), 57 + Q + 7 * R);
@@ -139,10 +139,10 @@ for (const m of JI) {
   for (let q = -12; q <= 12; q++) {
     for (let r = -10; r <= 10; r++) {
       const [Q, R] = convertCell(q, r, 'euler', CH);
-      check(`E ${m} euler(${q},${r}) → chromatic pitch-exact`, ex(Q, R, m).join(), coordExps(q, r, m, 'euler', 0).join());
+      check(`E ${m} euler(${q},${r}) → chromatic pitch-exact`, ex(Q, R, m).join(), coordExps(q, r, m, 'euler', 0, true).join());
       check(`E euler(${q},${r}) → chromatic → euler`, convertCell(Q, R, CH, 'euler').join(), [q, r].join());
       const [Qw, Rw] = convertCell(q, r, 'wickiHayden', CH);
-      check(`E ${m} WH(${q},${r}) → chromatic pitch-exact`, ex(Qw, Rw, m).join(), coordExps(q, r, m, 'wickiHayden', 0).join());
+      check(`E ${m} WH(${q},${r}) → chromatic pitch-exact`, ex(Qw, Rw, m).join(), coordExps(q, r, m, 'wickiHayden', 0, true).join());
     }
   }
 }
@@ -157,7 +157,7 @@ for (const m of UNIFORM) {
   for (let Q = -41; Q <= 41; Q += 2) {
     for (let R = -12; R <= 12; R++) {
       const [q, r] = convertCell(Q, R, CH, 'euler');
-      check(`E ${m} chromatic(${Q},${R}) → euler pitch-exact`, ex(Q, R, m).join(), coordExps(q, r, m, 'euler', 0).join());
+      check(`E ${m} chromatic(${Q},${R}) → euler pitch-exact`, ex(Q, R, m).join(), coordExps(q, r, m, 'euler', 0, true).join());
     }
   }
 }
@@ -198,7 +198,7 @@ for (const m of ['S', 'Y']) {
 for (const map of MAPPINGS) {
   for (let q = -40; q <= 40; q++) {
     for (let r = -15; r <= 15; r++) {
-      check(`J ${map} (${q},${r})`, coordExps(q, r, 'V', map, 0).join(), add(coordExps(q, r, 'D', map, 0), SCHISMA, bandOfCell(q, map)).join());
+      check(`J ${map} (${q},${r})`, coordExps(q, r, 'V', map, 0, true).join(), add(coordExps(q, r, 'D', map, 0, true), SCHISMA, bandOfCell(q, map)).join());
     }
   }
 }
@@ -225,7 +225,7 @@ for (const m of ['P', 'S', 'Y']) {
           const dk = m === 'P' ? 0 : bandOffset(m, pitchBandOf(Q + 2, CH) - a) - bandOffset(m, pitchBandOf(Q, CH) - a);
           want = add(add(OCT, PC), SC, -dk);
           if (m === 'Y') check(`K Y a${a} (${Q},${R}) = 2/1·schisma`, iv.join(), add(OCT, SCHISMA).join());
-          check(`K (${Q},${R}) spelled as an enharmonic pair`, noteName(Q, R, CH)[0] !== noteName(Q + 2, R - 2, CH)[0], true);
+          check(`K (${Q},${R}) spelled as an enharmonic pair`, noteName(Q, R, CH, 0, true)[0] !== noteName(Q + 2, R - 2, CH, 0, true)[0], true);
         }
         check(`K ${m} a${a} (${Q},${R}) tritone-axis octave`, iv.join(), want.join());
       }

@@ -150,7 +150,7 @@ export function scTransposeChordNote(
     hooks.setStatus?.('Note missing lattice coordinates.', 'error');
     return FAILED_SC;
   }
-  const mapping = model.getLayoutReq().mapping;
+  const { mapping, banded } = model.getLayoutReq();
   const [dq, dr] = vecFromEuler(7 * dir, -4 * dir, mapping);
   const newQ = oldCoord.q + dq;
   const newR = oldCoord.r + dr;
@@ -162,10 +162,11 @@ export function scTransposeChordNote(
     hooks.setStatus?.('SC blocked — target (' + newQ + ',' + newR + ') outside HKL layout outline.', 'error');
     return FAILED_SC;
   }
-  const newName = noteName(newQ, newR, mapping);
+  const anchor = model.anchorOfNote(note, mapping);
+  const newName = noteName(newQ, newR, mapping, anchor, banded);
   const parsed = parseNote(newName);
   const alter = accToVal(parsed.acc);
-  const oct = keyOctave(newQ, newR, mapping);
+  const oct = keyOctave(newQ, newR, mapping, anchor, banded);
   /* @accid is a display cache only (clamped to a valid MEI token); (newQ, newR)
      is the source of truth and the render pipeline stacks accidentals beyond
      ±3 from it (heji-render.ts). */

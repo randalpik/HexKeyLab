@@ -5581,3 +5581,11 @@ Page view centered the cards with `margin: auto` while `#cursorOverlay` kept the
 ## Headless-Chromium gates leak the browser and its profile unless they await `stop()` (2026-10-28)
 
 `launchChromium()` (`test/composer-test/lib/chromium.mjs`) returns `{ port, profileDir, proc, stop }`. The `test/hkl-midi` gates ended with `try { chrome.kill?.(); } catch {}`: there is no `kill`, so the optional call did nothing, and Node does not kill a spawned child when it exits. Every run left a headless Chromium (≈0.5 GiB with HKL loaded) and its `--user-data-dir` profile (≈300 MB once a page has run). Where /tmp is tmpfs, that profile is RAM: 120 of them (10 GB) had piled up over five days, and seven gate runs in a row then tipped the machine into an OOM kill that took VS Code and pipewire with it (and anything started from a VS Code terminal, such as a dev server). `stop()` now removes the profile again once Chromium and its network-service child are down, and returns a promise; a gate must `await chrome.stop()` before `process.exit`, or the later removals never run. After a run, `pgrep chromium` and `ls /tmp/hkl-composer-test-*` should both come back empty.
+
+## An omitted boolean argument reads as false in an untyped caller (2026-10-29)
+
+Adding the required `banded` to `coordExps` / `noteName` / `keyColor` / `hejiCommasFor` let `tsc` find every TypeScript caller (52), but the `.mjs` oracles under `test/` get no arity check. An omitted trailing argument arrives as `undefined`, which is falsy, and `false` is the *new* branch (unbanded), so a missed call would have tested a different layout and still passed its own checks.
+
+- Sweep `test/` and `tools/` with grep and pass the new argument explicitly at every call.
+- Diff every gate's full output against a pre-change baseline. Here all eight were byte-identical apart from Node's PID.
+- Found on the way: `test/wh-layout/oracle.mjs` had called `coordExps` without `anchor` since Syntonic landed. That was harmless only because it tests band-uniform modes.

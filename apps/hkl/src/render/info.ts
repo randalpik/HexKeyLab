@@ -62,7 +62,7 @@ export function updateInfo(): void {
     /* note card always picks the light variant (text-on-dark legibility),
        including the warm-shifted .sl for septimal cells. */
     const col = lightSourceHex(q, r);
-    keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r, tuning.mapping)), oct: keyOctave(q, r, tuning.mapping), col, inB: v.isB });
+    keys.push({ q, r, freq: f, name: fmtNote(noteName(q, r, tuning.mapping, tuning.anchor, tuning.banded)), oct: keyOctave(q, r, tuning.mapping, tuning.anchor, tuning.banded), col, inB: v.isSept });
   });
   keys.sort(function (a, b) { return a.freq - b.freq; });
 
@@ -94,10 +94,10 @@ export function updateInfo(): void {
     const ivls: IntervalCell[] = [];
     for (let i = 0; i < keys.length; i++) {
       for (let j = i + 1; j < keys.length; j++) {
-        const m = tuning.mapping;
-        const nn1 = noteName(keys[i].q, keys[i].r, m), nn2 = noteName(keys[j].q, keys[j].r, m);
+        const m = tuning.mapping, a = tuning.anchor, b = tuning.banded;
+        const nn1 = noteName(keys[i].q, keys[i].r, m, a, b), nn2 = noteName(keys[j].q, keys[j].r, m, a, b);
         const li1 = letterIdx[parseNote(nn1).letter], li2 = letterIdx[parseNote(nn2).letter];
-        const o1 = keyOctave(keys[i].q, keys[i].r, m), o2 = keyOctave(keys[j].q, keys[j].r, m);
+        const o1 = keyOctave(keys[i].q, keys[i].r, m, a, b), o2 = keyOctave(keys[j].q, keys[j].r, m, a, b);
         let p1 = li1 + 7 * o1, p2 = li2 + 7 * o2;
         if (p2 < p1) { const tmp = p1; p1 = p2; p2 = tmp; }
         const intNum = p2 - p1 + 1;
@@ -120,7 +120,7 @@ export function updateInfo(): void {
       if (tuning.equalEnabled) {
         const eqIv = iv as IntervalCellEqual;
         const cStr = (eqIv.semis * 100).toFixed(1) + '¢';
-        const iname = shortenInterval(equalIntervalName(keys[iv.i].q, keys[iv.i].r, keys[iv.j].q, keys[iv.j].r, tuning.mapping), shortIvl);
+        const iname = shortenInterval(equalIntervalName(keys[iv.i].q, keys[iv.i].r, keys[iv.j].q, keys[iv.j].r, tuning), shortIvl);
         /* rational interval (= octave multiple, incl. enharmonics like d2, A7) → green */
         const pureOct = eqIv.semis % 12 === 0;
         html += '<span class="ratio-tag tier-' + (pureOct ? 'green' : 'red') + '">';

@@ -26,7 +26,7 @@ export function jiRatioWithState(
   /* Interval exps = vector difference of the two cells' canonical exponent
      vectors. coordExps (in @hkl/shared) owns the per-mode region/schisma math,
      so the frequency and interval paths can't drift. */
-  const a = coordExps(q1, r1, state.mode, state.mapping, state.anchor), c = coordExps(q2, r2, state.mode, state.mapping, state.anchor);
+  const a = coordExps(q1, r1, state.mode, state.mapping, state.anchor, state.banded), c = coordExps(q2, r2, state.mode, state.mapping, state.anchor, state.banded);
   let e2 = c[0] - a[0], e3 = c[1] - a[1], e5 = c[2] - a[2], e7 = c[3] - a[3];
   let num = 1, den = 1;
   const apply = (base: number, exp: number): void => {

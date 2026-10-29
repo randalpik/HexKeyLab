@@ -14,7 +14,7 @@ import type { TuningStateLike } from '../../apps/hkl/src/tuning/regions.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 
 function st(mode: TuningStateLike['mode']): TuningStateLike {
-  return { mode, mapping: 'euler', anchor: 0, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
+  return { mode, mapping: 'euler', anchor: 0, banded: true, equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 1 };
 }
 
 interface Case { label: string; q1: number; r1: number; q2: number; r2: number; }
@@ -45,9 +45,9 @@ console.log('mode | label | spelling | exp | name | ratio');
 console.log('---|---|---|---|---|---');
 for (const m of modes) {
   for (const c of cases) {
-    const cls = classifyDiatonic(c.q1, c.r1, c.q2, c.r2, 'euler');
-    const nn1 = noteName(c.q1, c.r1, 'euler'), o1 = keyOctave(c.q1, c.r1, 'euler');
-    const nn2 = noteName(c.q2, c.r2, 'euler'), o2 = keyOctave(c.q2, c.r2, 'euler');
+    const cls = classifyDiatonic(c.q1, c.r1, c.q2, c.r2, st(m));
+    const nn1 = noteName(c.q1, c.r1, 'euler', 0, true), o1 = keyOctave(c.q1, c.r1, 'euler', 0, true);
+    const nn2 = noteName(c.q2, c.r2, 'euler', 0, true), o2 = keyOctave(c.q2, c.r2, 'euler', 0, true);
     const { num, den, e } = jiRatioWithState(c.q1, c.r1, c.q2, c.r2, st(m));
     const name = intervalNameFromCoords(c.q1, c.r1, c.q2, c.r2, st(m));
     const sigBand = `[${nn1}${o1} ${nn2}${o2}]`;

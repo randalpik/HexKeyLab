@@ -41,12 +41,12 @@ import { isCtrlHeld } from '../ui/keyboard.js';
 import { overlayPublishTick } from '../bridge/overlay-publish.js';
 import type { KeyId } from '../types.js';
 
-/** Resolve the displayed note name for a cell. All tuning modes now use the
- *  standard octave-invariant `noteName(q, r)` — V mode's old M3-chain
- *  respelling is gone (the schisma is signaled by color + band seam instead
- *  of by accumulating accidentals across bands). */
+/** Resolve the displayed note name for a cell. Banded, every tuning mode uses
+ *  the octave-invariant spelling — V mode's old M3-chain respelling is gone
+ *  (the schisma is signaled by color + band seam instead of by accumulating
+ *  accidentals across bands); unbanded, noteName respells each band. */
 function displayedNoteName(q: number, r: number): string {
-  return noteName(q, r, tuning.mapping);
+  return noteName(q, r, tuning.mapping, tuning.anchor, tuning.banded);
 }
 
 // ── canvas setup ───────────────────────────────────────────────────────────
@@ -380,9 +380,10 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
      gate sets exist only to draw the dotted boundary; they're not the
      authoritative validator. Ranked with the candidate as its own home band
      (Syntonic / Polysyntonic), as a Ctrl+click would make it. */
-  const cells = compute88PianoCoords(q, r, anchorOf(q, tuning.mapping));
+  const anchor = anchorOf(q, tuning.mapping);
+  const cells = compute88PianoCoords(q, r, anchor);
   for (const [cq, cr] of cells) {
-    const name = noteName(cq, cr, tuning.mapping);
+    const name = noteName(cq, cr, tuning.mapping, anchor, tuning.banded);
     const acc = Math.abs(accToVal(parseNote(name).acc));
     if (acc > 3) return 'Reference would require ' + acc + '× accidentals (' + name + ')';
   }
@@ -622,8 +623,9 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
        collapse (if position === 'before')
        chain (all non-septimal glyphs)
        collapse (if position === 'after')
-       septimal hook (if present) — always last so it visually trails the
-         collapse exponent in case-B-a-heavy + Septimal-mode cells.
+       septimal hooks (if present) — always last so they visually trail the
+         collapse exponent in case-B-a-heavy + Septimal-mode cells; above
+         HOOK_COLLAPSE_THRESHOLD one hook carrying `hookCount` as exponent.
      Slot widths are computed against the bare-accidental advance so attached
      arrows extend past their slot's right edge without affecting layout. */
   const chainGs: HejiGlyphInfo[] = [];
@@ -638,10 +640,9 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   if (label.collapse) totalW += slotAdvance(label.collapse.glyph) + 0.5;
   for (const g of chainGs) totalW += slotAdvance(g) + 0.5;
   for (const g of septimalGs) totalW += slotAdvance(g) + 0.5;
-  if (label.collapse) {
-    ctx.font = '500 ' + Math.round(baseFontSize * hejiScale * EXP_SCALE) + 'px sans-serif';
-    totalW += ctx.measureText(String(label.collapse.count)).width;
-  }
+  ctx.font = '500 ' + Math.round(baseFontSize * hejiScale * EXP_SCALE) + 'px sans-serif';
+  if (label.collapse) totalW += ctx.measureText(String(label.collapse.count)).width;
+  if (label.hookCount) totalW += ctx.measureText(String(label.hookCount)).width;
   /* shrink to fit hex */
   const maxW = hexR * 1.3;
   const scale = Math.min(1, maxW / totalW);
@@ -666,12 +667,17 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
     const m = ctx.measureText(bare);
     collapseAscent = m.actualBoundingBoxAscent || hejiFontSize * 0.6;
   }
+  const hookAscent = label.hookCount
+    ? ctx.measureText(septimalGs[septimalGs.length - 1].ch).actualBoundingBoxAscent || hejiFontSize * 0.6
+    : 0;
   ctx.font = '500 ' + expFontSize + 'px sans-serif';
   const expW = label.collapse ? ctx.measureText(String(label.collapse.count)).width : 0;
+  const hookExpW = label.hookCount ? ctx.measureText(String(label.hookCount)).width : 0;
   let tw = flw;
   if (label.collapse) tw += collapseSlotW + 0.5 + expW;
   for (const w of chainSlotWs) tw += w + 0.5;
   for (const w of septimalSlotWs) tw += w + 0.5;
+  tw += hookExpW;
   /* Render with textAlign='left' so each glyph's LEFT EDGE anchors at the
      slot start. Combined accidental+arrow glyphs have the accidental at
      the left of their advance box, so this keeps the accidental portion
@@ -711,6 +717,12 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
     const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
     ctx.fillText(g.ch, x, cy + yOff);
     x += septimalSlotWs[i] + 0.5;
+  }
+  if (label.hookCount) {
+    /* same placement as drawCollapse's exponent, off the trailing hook */
+    const yOff = HEJI_FAMILY_Y_OFFSET.septimal * hejiFontSize;
+    ctx.font = '500 ' + expFontSize + 'px sans-serif';
+    ctx.fillText(String(label.hookCount), x - 0.5, cy + yOff - hookAscent + hookAscent * EXP_ASCENT_FRAC);
   }
   /* restore for next caller — drawNoteName sets it on entry, but defensive */
   ctx.textAlign = 'center';
@@ -910,7 +922,7 @@ function buildHexLayer(): void {
   ctx.fillStyle = '#111'; gKeys.forEach((k) => { if (k.isKb) { drawHexPath(k.ux, k.uy, hexR + 0.5); ctx.fill(); } });
   gKeys.forEach((k) => {
     const v = keyColorVariant(k.q, k.r);
-    const col = v.isB ? (v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!) : (v.isW ? hueC[v.hue].l : hueC[v.hue].d);
+    const col = v.half ? (v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!) : (v.isW ? hueC[v.hue].l : hueC[v.hue].d);
     drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
   });
   ctx.restore();
@@ -1071,7 +1083,7 @@ export function draw(): void {
     const hk = posMap[selection.hoverKey];
     if (hk) {
       const hv = keyColorVariant(hk.q, hk.r);
-      const hCol = hv.isB
+      const hCol = hv.half
         ? hv.isW
           ? hueC[hv.hue].sl!
           : hueC[hv.hue].sd!
@@ -1096,7 +1108,7 @@ export function draw(): void {
     const k = posMap[key];
     if (!k) return;
     const v = keyColorVariant(k.q, k.r);
-    let col = v.isB
+    let col = v.half
       ? v.isW
         ? hueC[v.hue].sl!
         : hueC[v.hue].sd!

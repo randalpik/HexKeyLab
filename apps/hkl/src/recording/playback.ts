@@ -18,6 +18,7 @@ import {
 } from '../audio/engine.js';
 import { draw } from '../render/draw.js';
 import { setAnchorOverride } from '../state/reference.js';
+import { readsAnchor } from '@hkl/shared/freq.js';
 import type { HkrEvent, HkrSession } from './types.js';
 import type { KeyId } from '../types.js';
 
@@ -95,10 +96,11 @@ function dispatch(ev: HkrEvent): void {
          exists for this coordinate, leave it alone so our 'off' doesn't kill
          their key. The audio engine's noteOn is a no-op in that case anyway. */
       if (!audio.activeOscs[key]) {
-        /* Syntonic / Polysyntonic: sound under the anchor the note was played
-           under — a re-anchor retunes the lattice exactly as it did live. */
+        /* Syntonic / Polysyntonic, or any mode unbanded: sound under the anchor
+           the note was played under — a re-anchor retunes the lattice exactly
+           as it did live. */
         const snap = curSession?.snapshot;
-        if (snap && (snap.tuning === 'S' || snap.tuning === 'Y')) setAnchorOverride(ev.a ?? snap.anchor);
+        if (snap && readsAnchor(snap.tuning, snap.banded)) setAnchorOverride(ev.a ?? snap.anchor);
         /* The voice carries ev.v (replayed aftertouch anchors on it); live
            input's audio.keyVelocity is not ours to write. */
         noteOn(key, ev.v);

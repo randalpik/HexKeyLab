@@ -38,13 +38,14 @@ for (const mapping of MAPPINGS) {
     for (let refQ = 0; refQ < bandWidth(mapping); refQ++) {
       for (let refR = -3; refR <= 3; refR++) {
         const cells = pianoFootprint(refQ, refR, {
-          mode, mapping, anchor: anchorOf(refQ, mapping),
+          mode, mapping, anchor: anchorOf(refQ, mapping), banded: true,
           equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
         });
         for (let i = 0; i + 12 < cells.length; i++) {
           const [q1, r1] = cells[i], [q2, r2] = cells[i + 12];
-          const n1 = noteName(q1, r1, mapping), n2 = noteName(q2, r2, mapping);
-          const o1 = keyOctave(q1, r1, mapping), o2 = keyOctave(q2, r2, mapping);
+          const a = anchorOf(refQ, mapping);
+          const n1 = noteName(q1, r1, mapping, a, true), n2 = noteName(q2, r2, mapping, a, true);
+          const o1 = keyOctave(q1, r1, mapping, a, true), o2 = keyOctave(q2, r2, mapping, a, true);
           modeTotal++;
           if (n1 !== n2 || o2 !== o1 + 1) {
             modeBad++;

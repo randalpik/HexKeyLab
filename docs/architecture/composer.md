@@ -986,6 +986,12 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   SC shifts and the performance matcher all read it; MusicXML import makes
   Euler scores. The clipboard records its source mapping and a paste into a
   score of another mapping converts coordinates (`selection/clipboard.ts`).
+- **Banding**: `<hkl:layoutReq banded="false">` (absent = banded, so banded
+  scores serialize exactly as before) selects the unbanded layout
+  (architecture.md → Unbanded layout). Spelling, pitch, HEJI and color read it,
+  each note under its measure's anchor (`anchorOfNote`); render clones stamp
+  `data-anchor` wherever `readsAnchor(mode, banded)`. Setup has no control for
+  it yet: a score keeps its own value.
 
 ## Playback and performance
 

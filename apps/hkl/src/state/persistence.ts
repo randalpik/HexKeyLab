@@ -109,6 +109,8 @@ export interface PrefsV1 {
   tuning: TuningMode;
   /** Note-name mapping (toolbar "Mapping:"). Default 'euler'. */
   mapping: Mapping;
+  /** Banded layout. Default true; false = unbanded (tuning.banded). */
+  banded: boolean;
   /** Hex-size preset (display-only). Default 'medium' (the historical fixed
    *  size). 'small'/'large' rescale the whole lattice + text + strokes. */
   hexSize: HexSize;
@@ -184,6 +186,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   alignment: "vertical",
   tuning: "5",
   mapping: "euler",
+  banded: true,
   hexSize: "medium",
   /* audio defaults to ON to match the long-standing "load piano + play on
      first reload" behavior of pre-persistence HKL */
@@ -311,6 +314,7 @@ export function loadPrefs(): PrefsV1 {
     alignment: isAlignment(o.alignment) ? o.alignment : DEFAULT_PREFS.alignment,
     tuning: isTuningMode(o.tuning) ? o.tuning : DEFAULT_PREFS.tuning,
     mapping: isMapping(o.mapping) ? o.mapping : DEFAULT_PREFS.mapping,
+    banded: typeof o.banded === "boolean" ? o.banded : DEFAULT_PREFS.banded,
     hexSize: isHexSize(o.hexSize) ? o.hexSize : DEFAULT_PREFS.hexSize,
     audioEnabled:
       typeof o.audioEnabled === "boolean"

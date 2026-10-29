@@ -62,15 +62,15 @@ export function coordForSpelling(
   const q0 = (((2 * M) % 7) + 7) % 7;
   const r0 = (M - 4 * q0) / 7;
 
-  const center = coordExps(centerQ, centerR, RANK_MODE, 'euler', 0);
+  const center = coordExps(centerQ, centerR, RANK_MODE, 'euler', 0, true);
 
   let bestQ = 0, bestR = 0, bestTh = Infinity, found = false;
   for (let k = -K_WINDOW; k <= K_WINDOW; k++) {
     const q = q0 + 7 * k;
     const r = r0 - 4 * k;
-    if (noteName(q, r, 'euler') !== targetName) continue;
-    if (keyOctave(q, r, 'euler') !== octave) continue;
-    const e = coordExps(q, r, RANK_MODE, 'euler', 0);
+    if (noteName(q, r, 'euler', 0, true) !== targetName) continue;
+    if (keyOctave(q, r, 'euler', 0, true) !== octave) continue;
+    const e = coordExps(q, r, RANK_MODE, 'euler', 0, true);
     const th = tenneyHeightFromExps([
       e[0] - center[0], e[1] - center[1], e[2] - center[2], e[3] - center[3],
     ]);

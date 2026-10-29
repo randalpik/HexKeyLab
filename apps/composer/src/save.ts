@@ -13,7 +13,6 @@ import { cellHasFlag } from './model/empty-flags.js';
 import type { Voice, Duration, Dots, InstrumentEntry } from './model/index.js';
 import { collectTempi, dirIsItalic, dirText, parseTstamp2, type TempoRecord } from './expressions.js';
 import { noteAlter } from '@hkl/notation/accidentals.js';
-import type { Mapping } from '@hkl/shared/mapping.js';
 import { applyNotationTheme } from '@hkl/notation/verovio.js';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -83,13 +82,10 @@ const PNAME_TO_STEP: Record<string, string> = {
   a: 'A', b: 'B', c: 'C', d: 'D', e: 'E', f: 'F', g: 'G',
 };
 
-/** Net alteration for a MusicXML <alter> element. Derives from (q, r) via
- *  noteAlter so any magnitude (incl. >±3 stacks) exports correctly; falls back
- *  to the @accid token for coordinate-less notes. HEJI commas are not
- *  representable in MusicXML (W3C #263 open) and are intentionally dropped. */
-function totalAlter(node: Element, mapping: Mapping): number {
-  return noteAlter(node, mapping);
-}
+/** Net alteration for a MusicXML <alter> element (see gatherEventsFromDoc's
+ *  alterOf). HEJI commas are not representable in MusicXML (W3C #263 open)
+ *  and are intentionally dropped. */
+type AlterOf = (note: Element) => number;
 
 /* divisions per quarter — base 16 covers 32nd notes (= 2) and dotted 16ths
  * (= 6). For tuplet support we multiply by the LCM of all tuplet `num`
@@ -279,13 +275,13 @@ function collectSlots(container: Element, keepTuplets: boolean): Slot[] {
   return out;
 }
 
-function readNote(node: Element, mapping: Mapping): XmlNoteSpec {
+function readNote(node: Element, alterOf: AlterOf): XmlNoteSpec {
   const pname = node.getAttribute('pname') ?? 'c';
   const oct = parseInt(node.getAttribute('oct') ?? '4', 10);
   /* Sum the net alteration from whichever encoding the note carries
      (@accid, @accid.ges, or <accid> children). MusicXML's <alter> needs
      the actual pitch as a signed integer. */
-  const alter = totalAlter(node, mapping);
+  const alter = alterOf(node);
   const color = node.getAttribute('color') ?? undefined;
   const qStr = node.getAttribute('data-q');
   const rStr = node.getAttribute('data-r');
@@ -321,7 +317,7 @@ function readArtics(slot: Element): string[] | undefined {
  *  (a pickup's is reduced), needed for the meter-agnostic `<mRest>`. */
 function eventFromSlot(
   slot: Slot, staff: number, voice: number, mi: number,
-  divisions: number, budgetTicks: number, mapping: Mapping,
+  divisions: number, budgetTicks: number, alterOf: AlterOf,
   tuplet?: XmlNoteEvent['tuplet'],
 ): XmlNoteEvent | null {
   const elem = slot.elem;
@@ -358,16 +354,20 @@ function eventFromSlot(
   /* A grace keeps its written type but takes no time. */
   const g = elem.getAttribute('grace');
   const grace = g === 'acc' || g === 'unacc' ? { grace: g as 'acc' | 'unacc', durTicks: 0 } : {};
-  if (ln === 'note') return { ...base, notes: [readNote(elem, mapping)], durTicks, durName, ...grace };
+  if (ln === 'note') return { ...base, notes: [readNote(elem, alterOf)], durTicks, durName, ...grace };
   if (ln === 'chord') {
     const noteEls = Array.from(elem.children).filter((c) => c.localName === 'note');
-    return { ...base, notes: noteEls.map((n) => readNote(n, mapping)), durTicks, durName, ...grace };
+    return { ...base, notes: noteEls.map((n) => readNote(n, alterOf)), durTicks, durName, ...grace };
   }
   return null;
 }
 
 function gatherEventsFromDoc(doc: Document, divisions: number, model: ComposerModel): XmlNoteEvent[] {
-  const mapping = model.getLayoutReq().mapping;
+  /* Derives from (q, r) via noteAlter, spelled under the note's measure anchor,
+     so any magnitude (incl. >±3 stacks) exports correctly; falls back to the
+     @accid token for coordinate-less notes. */
+  const { mapping, banded } = model.getLayoutReq();
+  const alterOf: AlterOf = (n) => noteAlter(n, mapping, model.anchorOfNote(n, mapping), banded);
   const out: XmlNoteEvent[] = [];
   const measures = Array.from(doc.querySelectorAll('measure'));
   const totalVoices = model.totalVoices();
@@ -396,14 +396,14 @@ function gatherEventsFromDoc(doc: Document, divisions: number, model: ComposerMo
               filled.length === 1 ? 'solo' :
               i === 0 ? 'start' :
               i === filled.length - 1 ? 'stop' : 'middle';
-            const ev = eventFromSlot(member, staff, voice, mi, divisions, budgetTicks, mapping,
+            const ev = eventFromSlot(member, staff, voice, mi, divisions, budgetTicks, alterOf,
               { actualNotes: num, normalNotes: numbase, position });
             if (ev) out.push(ev);
           });
           continue;
         }
         if (isTupletPlaceholderEl(slot.elem)) continue;
-        const ev = eventFromSlot(slot, staff, voice, mi, divisions, budgetTicks, mapping);
+        const ev = eventFromSlot(slot, staff, voice, mi, divisions, budgetTicks, alterOf);
         if (ev) out.push(ev);
       }
       if (voice === totalVoices) break;

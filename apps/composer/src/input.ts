@@ -1,7 +1,7 @@
 // Keyboard input handler. Keybindings: see ./keybindings.ts (also displayed by the Help modal).
 
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
-import { coordToMidi } from '@hkl/shared/freq.js';
+import { coordToMidi, readsAnchor } from '@hkl/shared/freq.js';
 import { MAPPING_LABELS, type Mapping } from '@hkl/shared/mapping.js';
 import type {
   ComposerModel, Duration, Dots, ChordInput, RestInput, Voice,
@@ -82,7 +82,7 @@ function hklLayoutMismatch(model: ComposerModel, hooks: InputHooks): { hkl: stri
   if (hklMode !== req.tuningMode || hklMapping !== req.mapping) {
     return { hkl: layoutLabel(hklMode, hklMapping), score: layoutLabel(req.tuningMode, req.mapping) };
   }
-  if (req.tuningMode !== 'S' && req.tuningMode !== 'Y') return null;
+  if (!readsAnchor(req.tuningMode, req.banded)) return null;
   const hklAnchor = hooks.getHklAnchor?.() ?? null;
   const scoreAnchor = model.anchorAt(model.getCursorMeasureIdx());
   if (hklAnchor === null || hklAnchor === scoreAnchor) return null;

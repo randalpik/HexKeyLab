@@ -63,7 +63,7 @@ function setupSelects(model: ComposerModel): void {
   if (ignoreColorChk) ignoreColorChk.checked = model.getIgnoreColor();
 }
 
-function readForm(): {
+function readForm(model: ComposerModel): {
   title: string; subtitle: string; composer: string; footer: string;
   gradual: GradualPercents;
   layoutReq: LayoutReq; hejiEnabled: boolean; ignoreColor: boolean;
@@ -89,7 +89,8 @@ function readForm(): {
   const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
   const mappingRaw = $<HTMLSelectElement>('setupMapping')?.value ?? 'euler';
   const mapping: Mapping = isMapping(mappingRaw) ? mappingRaw : 'euler';
-  const layoutReq: LayoutReq = { tuningMode, mapping };
+  /* Setup has no banding control: a score keeps its own. */
+  const layoutReq: LayoutReq = { tuningMode, mapping, banded: model.getLayoutReq().banded };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? true;
   const ignoreColor = $<HTMLInputElement>('setupIgnoreColor')?.checked ?? false;
   const pageScaleRaw = parseInt($<HTMLInputElement>('setupPageScale')?.value ?? '', 10);
@@ -190,7 +191,7 @@ export function openSetupDialog(
     const action = submitter?.value ?? '';
     if (action !== 'ok') return;
 
-    const values = readForm();
+    const values = readForm(model);
     if (!values) return;
 
     /* Time / key signature are no longer Setup fields — they live in the
@@ -209,7 +210,8 @@ export function openSetupDialog(
        mapping change relocates by the exact frame conversion). */
     const prevLayout = model.getLayoutReq();
     const layoutChanged = prevLayout.tuningMode !== values.layoutReq.tuningMode
-      || prevLayout.mapping !== values.layoutReq.mapping;
+      || prevLayout.mapping !== values.layoutReq.mapping
+      || prevLayout.banded !== values.layoutReq.banded;
     let proceedWithLayout = true;
     if (layoutChanged && model.hasNotes()) {
       const plan = planRetune(model.getDoc(), prevLayout, values.layoutReq, (n, m) => model.anchorOfNote(n, m));

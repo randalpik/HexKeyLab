@@ -1,8 +1,10 @@
 // Algorithmic note naming — handles any r value with no lookup table.
 // Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden and chromatic
-// cells take their Euler-equivalent's spelling and octave.
+// cells take their Euler-equivalent's spelling and octave. Unbanded (Banded
+// layout off) respells each pitch band 12 fifths from the anchor's — the same
+// rule in every tuning mode, Equal included.
 
-import { eulerOf, type Mapping } from './mapping.js';
+import { eulerOf, pitchBandOf, type Mapping } from './mapping.js';
 
 export const letterSemi: Record<string, number> = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
 
@@ -70,9 +72,21 @@ export function fifthName(r: number): string {
   }
 }
 
-export function noteName(q: number, r: number, mapping: Mapping): string {
+/** Position of a spelled note on the line of fifths, A = 0 (fifthName's r). */
+function fifthIndex(name: string): number {
+  const p = parseNote(name);
+  return 'FCGDAEB'.indexOf(p.letter) - 4 + 7 * accToVal(p.acc);
+}
+
+/** Spelling of (q, r). Banded, the Euler-equivalent's, independent of
+ *  `anchor`. Unbanded, a band step is no longer an octave but a 12-fifth step
+ *  (A → G𝄪 one band to the right): the cell's pitch band (`pitchBandOf`, so a
+ *  chromatic borrowed column keeps its source's spelling) lies 12 fifths per
+ *  band from the anchor's. */
+export function noteName(q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): string {
   const c = eulerOf(q, r, mapping);
-  return eulerNoteName(c.q, c.r);
+  const name = eulerNoteName(c.q, c.r);
+  return banded ? name : fifthName(fifthIndex(name) + 12 * (pitchBandOf(q, mapping) - anchor));
 }
 
 function eulerNoteName(q: number, r: number): string {
@@ -103,12 +117,13 @@ export function fmtNote(name: string): string {
 }
 
 /* octave boundary is determined by letter name only, ignoring accidentals:
-   Cb4 is octave 4 (C-letter), B#3 is octave 3 (B-letter) */
-export function keyOctave(q: number, r: number, mapping: Mapping): number {
-  ({ q, r } = eulerOf(q, r, mapping));
-  const name = eulerNoteName(q, r);
-  const v = accToVal(parseNote(name).acc);
-  const natMidi = 57 + 4 * q + 7 * r - v; /* strip accidental to get natural-letter MIDI */
+   Cb4 is octave 4 (C-letter), B#3 is octave 3 (B-letter). The nominal MIDI
+   never changes with the spelling, so the unbanded respelling only moves the
+   octave through its accidental (C4 → B#3). */
+export function keyOctave(q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): number {
+  const v = accToVal(parseNote(noteName(q, r, mapping, anchor, banded)).acc);
+  const c = eulerOf(q, r, mapping);
+  const natMidi = 57 + 4 * c.q + 7 * c.r - v; /* strip accidental to get natural-letter MIDI */
   return Math.floor(natMidi / 12) - 1;
 }
 

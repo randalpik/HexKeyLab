@@ -10,9 +10,9 @@ import { tuning } from '../state/tuning.js';
  *  layer to resolve coordinates against a stored snapshot without mutating
  *  live `tuning`. The zero-arg `keyFreq` is a wrapper that passes live state. */
 export function keyFreqWithState(q: number, r: number, s: TuningStateLike): number {
-  return freqAt(q, r, s.mode, s.mapping, s.anchor);
+  return freqAt(q, r, s.mode, s.mapping, s.anchor, s.banded);
 }
 
 export function keyFreq(q: number, r: number): number {
-  return freqAt(q, r, tuning.mode, tuning.mapping, tuning.anchor);
+  return freqAt(q, r, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded);
 }

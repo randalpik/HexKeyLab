@@ -100,8 +100,8 @@ for (const mode of ['5', 'P', 'D', '7', 'V', 'S', 'Y'])
   for (const m of MAPPINGS)
     for (const [u, v] of baseKeys) {
       if (!has.has((u + 1) + ',' + v)) continue;
-      const a = coordExps(...poseOffset('right', u, v), mode, m, 0);
-      const b = coordExps(...poseOffset('right', u + 1, v), mode, m, 0);
+      const a = coordExps(...poseOffset('right', u, v), mode, m, 0, true);
+      const b = coordExps(...poseOffset('right', u + 1, v), mode, m, 0, true);
       const d = b.map((x, i) => x - a[i]).join(',');
       pairs++;
       if (d !== '-1,1,0,0') bad++;
