@@ -192,10 +192,11 @@ by `setTuning()` (`apps/hkl/src/ui/controls.ts`) and still carried in the `.hkr`
 
 ### Unbanded layout
 
-**Status (2026-10-29)**: the model and its state are in place: `banded` threads through every pitch,
-spelling, color and HEJI primitive, and rides prefs, the `.hkr` snapshot and `<hkl:layoutReq
-banded="false">`. Nothing sets it yet: HKL's *Banded layout* toggle and Composer's Setup control
-are the next phases. Rulings: decisions.md 2026-10-29.
+**Status (2026-10-29)**: `banded` threads through every pitch, spelling, color and HEJI primitive,
+and rides prefs, the `.hkr` snapshot, the bridge and overlay messages and `<hkl:layoutReq
+banded="false">`. HKL's *Banded layout* checkbox sets it (hkl.md → toolbar); Composer has no Setup
+control yet and doesn't yet respell on key changes or pastes. Rulings: decisions.md 2026-10-29
+(the model, then HKL's toggle).
 
 With `banded` false the octave bands no longer exist. Every seam is retuned to one of the mode's own
 in-band q-steps, so no interval occurs only at a seam, and each band is respelled 12 fifths from its
@@ -218,6 +219,13 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
   - Syntonic and Polysyntonic become Pythagorean: their definition is the seam.
   - Schismatic keeps its tuning per key and is only respelled; its schisma now counts from the
     anchor, so unbanded V = banded V × schisma^−anchor over the whole board.
+  - Equal sounds 12-TET in both layouts. Its JI reading (ratios, the piano picker) is
+    Ptolemaic's in both, so unbanded it takes 125/128 per band; without it, unbanded Equal's
+    picker ranked banded ratios against unbanded spelling and no ref was valid.
+- **Piano picker**: every mode ranks under its own unbanded ratios. Schismatic's banded-only
+  exception (ranking as Semiditonal, decisions.md 2026-05-25) answered its banded spelling
+  disagreeing with its schisma-stacked pitch; unbanded spelling agrees, and ranking unbanded V as
+  banded D left no valid ref. `VALID_REF_TABLE` / `PIANO_BOUNDS_TABLE` carry both bandings.
 - **Spelling** (`noteName` / `keyOctave(…, anchor, banded)`): the banded spelling plus 12 fifths
   per pitch band from the anchor's, one rule for every mode, Equal included.
   - A band step `(W, 0)` is spelled as an augmented seventh (A → G𝄪).

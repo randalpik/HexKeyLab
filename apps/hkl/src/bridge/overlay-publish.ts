@@ -57,6 +57,7 @@ function buildSnapshot(): OverlaySnapshot {
     tuning: tuning.mode,
     mapping: tuning.mapping,
     anchor: tuning.anchor,
+    banded: tuning.banded,
     heji: tuning.hejiEnabled,
     refQ: referenceNote.q,
     refR: referenceNote.r,
@@ -100,7 +101,7 @@ function sendFullState(): void {
 
 function structSigOf(s: OverlaySnapshot): string {
   return [
-    s.tuning, s.mapping, s.anchor, s.heji, s.refQ, s.refR, s.outline, s.rotation, s.alignment, s.hexSize,
+    s.tuning, s.mapping, s.anchor, s.banded, s.heji, s.refQ, s.refR, s.outline, s.rotation, s.alignment, s.hexSize,
     s.showNotes, s.showBands, s.extendPattern, s.composerView, s.staffDark,
     s.kbAnchorQ, s.kbAnchorR,
   ].join('|');

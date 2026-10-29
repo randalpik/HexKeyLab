@@ -30,12 +30,14 @@
 // sensible enharmonic excursion. At the ref's MIDI the ref itself wins (TH 0,
 // distance 0), so the ref never falls outside its own footprint.
 //
-// Schismatic ('V') ranks under Semiditonal ('D') ratios — same column shifts,
+// Banded Schismatic ('V') ranks under Semiditonal ('D') ratios — same column shifts,
 // no schisma exponent. V's per-band schisma inflates the TH of every cell an
 // octave-band away (TH grows linearly with the band distance), and the picker
 // would prefer diaschisma spellings (e.g. Euler MIDI 69 → (−4, 4) over
 // (3, 0)). Playback still uses V's pitches; this only decides which cell each
-// MIDI resolves to.
+// MIDI resolves to. Banded only: the conflict is banded V's spelling (the same
+// letter in every band) against its schisma-stacked pitch. Unbanded V respells
+// each band to match its pitch, so it ranks under its own ratios like any mode.
 
 import { coordToMidi, tenneyHeightFromExps } from '@hkl/shared/freq.js';
 import { COLUMN_STEP } from '@hkl/shared/mapping.js';
@@ -55,7 +57,7 @@ export function pianoFootprint(refQ: number, refR: number, state: TuningStateLik
   const K = 80 / c;
   const PROJ_PER_OCT = 7 * (12 / c);
   const refMidi = coordToMidi(refQ, refR, mapping);
-  const pickerState: TuningStateLike = state.mode === 'V' ? { ...state, mode: 'D' } : state;
+  const pickerState: TuningStateLike = state.mode === 'V' && state.banded ? { ...state, mode: 'D' } : state;
   /* key steps on the hex grid (axial: x = q + r/2) */
   const steps = (q: number, r: number): number => {
     const dq = q - refQ, dr = r - refR;

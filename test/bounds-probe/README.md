@@ -6,7 +6,7 @@ Node scripts that derive HKL's precomputed piano-footprint tables and check the 
 node --max-old-space-size=1024 --import ./test/orchestrator-smoke/register-ts.mjs test/bounds-probe/<script>.mjs
 ```
 
-Run them **one at a time** (`compute-refbounds.mjs` scans ~27 000 candidate refs; ~1¼ min here). Every probe covers every `TUNING_MODES` value under both **note-name mappings** (`euler`, `wickiHayden`); Syntonic / Polysyntonic rank each probed ref as its own home band (the anchor a Ctrl+click would give it).
+Run them **one at a time** (`compute-refbounds.mjs` scans ~7 900 candidate refs per mode and banding; ~12 min here, 2026-10-29). Every probe covers every `TUNING_MODES` value under every **note-name mapping** (`euler`, `wickiHayden`, `chromatic`) and both **bandings** (banded, unbanded: docs/architecture.md → Unbanded layout); each probed ref is ranked as its own home band (the anchor a Ctrl+click would give it), which Syntonic / Polysyntonic and every unbanded mode read. `octave-consistency.mjs` gates the banded layout and reports the unbanded one (Euler has no spelled octave there).
 
 **The piano-outline bounds in `apps/hkl/src/render/canvas.ts` are HARDCODED from this probe's output.** The picker iteration is too expensive to run at every rotation/tuning change, so the canvas reads a precomputed `PIANO_BOUNDS_TABLE[mapping][rotation][mode]`. `compute-refbounds.mjs` writes `apps/hkl/src/render/refbounds-table.ts` (`VALID_REF_TABLE[mapping][mode]`, the dotted valid-ref boundary) directly; `compute-bounds.mjs` prints the `PIANO_BOUNDS_TABLE` block to paste.
 

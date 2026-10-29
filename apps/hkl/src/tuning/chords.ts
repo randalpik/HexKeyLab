@@ -81,14 +81,18 @@ interface ChordNote {
 }
 
 export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): ChordResult | null {
-  /* In V mode, chord-ratio math runs through a D-mode substitution so the
-     schisma stack doesn't contaminate prime-content classification (each
+  /* In banded V mode, chord-ratio math runs through a D-mode substitution so
+     the schisma stack doesn't contaminate prime-content classification (each
      band-crossing schisma contributes e5+=1, which would otherwise trip
      hasFive and block the Pythagorean classification on intrinsically
      Pythagorean chords). The schismatic flag is layered on top via
-     band-crossing detection, independent of the ratio math. */
+     band-crossing detection, independent of the ratio math. Unbanded V
+     needs neither: the respelling absorbs the schisma (its seam is the PM3 it
+     sounds, and every other band step carries its arrow), so its own ratios
+     match its spelling. */
   const mode = state.mode;
-  const ratState: TuningStateLike = mode === 'V' ? { ...state, mode: 'D' } : state;
+  const schismatic = mode === 'V' && state.banded;
+  const ratState: TuningStateLike = schismatic ? { ...state, mode: 'D' } : state;
   /* keys already sorted by freq; each has q, r, name, col */
   let notes: ChordNote[] = keys.map(k => {
     const midi = coordToMidi(k.q, k.r, state.mapping);
@@ -101,7 +105,7 @@ export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): Cho
      notes so cross-band doublings (which get dedup'd later) still flag the
      voicing. */
   let isSchismatic = false;
-  if (mode === 'V') {
+  if (schismatic) {
     outer: for (let i = 0; i < notes.length; i++) {
       for (let j = i + 1; j < notes.length; j++) {
         if (bandOfCell(notes[i].q, state.mapping) !== bandOfCell(notes[j].q, state.mapping)) { isSchismatic = true; break outer; }

@@ -109,6 +109,22 @@ export function pitchBandOf(q: number, mapping: Mapping): number {
   return bandOfCell(mapping === 'chromatic' && q % 2 !== 0 ? q - 5 : q, mapping);
 }
 
+/** Unbanded, a band step is a 12-fifth respelling, not an octave: the spelled
+ *  octave is (−1, 2) in Wicki-Hayden, (−2, 2) in chromatic, and Euler has none
+ *  (docs/architecture.md → Unbanded layout). */
+const UNBANDED_OCTAVE: Readonly<Record<Mapping, readonly [number, number] | null>> = {
+  euler: null,
+  wickiHayden: [-1, 2],
+  chromatic: [-2, 2],
+};
+
+/** The spelled-octave vector of `mapping`'s frame — the step to the same
+ *  spelled note one octave up: the band step (W, 0) banded, UNBANDED_OCTAVE
+ *  unbanded (null: the frame has none). */
+export function octaveVector(mapping: Mapping, banded: boolean): readonly [number, number] | null {
+  return banded ? [bandWidth(mapping), 0] : UNBANDED_OCTAVE[mapping];
+}
+
 /** Euler lattice vector (dq, dr) expressed in `mapping`: the q component
  *  scales by 4/COLUMN_STEP. That preserves the column's class (q mod 2 under
  *  Wicki-Hayden, q mod 4 under chromatic), so the offset means the same Euler

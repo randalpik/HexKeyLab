@@ -21,6 +21,10 @@
 // pitch in one octave's band and not the next). Ties can't cause breaks (the
 // tritone always takes the A4), so every S/Y break is availability.
 //
+// The unbanded layout (docs/architecture.md → Unbanded layout) is REPORTED too:
+// a band step there is a 12-fifth respelling, so Euler has no spelled octave at
+// all and the other mappings have one only where the picker takes it.
+//
 // History: an earlier tenneyHeightFromExps did NOT octave- and complement-
 // reduce, so |e₂| asymmetry across octaves flipped 5/76 pairs in 5-limit (more
 // in 7-limit). Exits non-zero on any inconsistency outside S/Y.
@@ -31,21 +35,21 @@ import { MAPPINGS, bandWidth } from '../../packages/shared/src/mapping.ts';
 import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
 
 let total = 0, bad = 0;
-for (const mapping of MAPPINGS) {
+for (const banded of [true, false]) for (const mapping of MAPPINGS) {
   for (const mode of TUNING_MODES) {
     let modeBad = 0, modeTotal = 0;
     const examples = [];
     for (let refQ = 0; refQ < bandWidth(mapping); refQ++) {
       for (let refR = -3; refR <= 3; refR++) {
         const cells = pianoFootprint(refQ, refR, {
-          mode, mapping, anchor: anchorOf(refQ, mapping), banded: true,
+          mode, mapping, anchor: anchorOf(refQ, mapping), banded,
           equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
         });
         for (let i = 0; i + 12 < cells.length; i++) {
           const [q1, r1] = cells[i], [q2, r2] = cells[i + 12];
           const a = anchorOf(refQ, mapping);
-          const n1 = noteName(q1, r1, mapping, a, true), n2 = noteName(q2, r2, mapping, a, true);
-          const o1 = keyOctave(q1, r1, mapping, a, true), o2 = keyOctave(q2, r2, mapping, a, true);
+          const n1 = noteName(q1, r1, mapping, a, banded), n2 = noteName(q2, r2, mapping, a, banded);
+          const o1 = keyOctave(q1, r1, mapping, a, banded), o2 = keyOctave(q2, r2, mapping, a, banded);
           modeTotal++;
           if (n1 !== n2 || o2 !== o1 + 1) {
             modeBad++;
@@ -56,14 +60,14 @@ for (const mapping of MAPPINGS) {
         }
       }
     }
-    const reportOnly = mode === 'S' || mode === 'Y';
+    const reportOnly = !banded || mode === 'S' || mode === 'Y';
     if (!reportOnly) { total += modeTotal; bad += modeBad; }
-    console.log(`${mapping.padEnd(11)} ${mode}: ${modeBad}/${modeTotal} octave pairs inconsistent`
-      + (reportOnly ? '  (report only: availability)' : ''));
+    console.log(`${banded ? 'banded  ' : 'unbanded'} ${mapping.padEnd(11)} ${mode}: ${modeBad}/${modeTotal} octave pairs inconsistent`
+      + (!banded ? '  (report only: unbanded)' : reportOnly ? '  (report only: availability)' : ''));
     for (const e of examples) console.log('    ' + e);
   }
 }
 console.log(bad === 0
-  ? `\n✓ spelling is octave-consistent outside S/Y (${total} pairs)`
-  : `\n✗ ${bad}/${total} octave pairs inconsistent outside S/Y`);
+  ? `\n✓ banded spelling is octave-consistent outside S/Y (${total} pairs)`
+  : `\n✗ ${bad}/${total} banded octave pairs inconsistent outside S/Y`);
 process.exit(bad === 0 ? 0 : 1);

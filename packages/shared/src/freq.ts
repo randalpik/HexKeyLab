@@ -64,10 +64,11 @@ type Exps = [number, number, number, number];
  *  - V keeps its tuning per key (its seam d4 already sounds as a PM3):
  *    Semiditonal × schisma per spatial band, counted from the anchor.
  *  Every other mode carries the comma by `pitchBandOf`, so a chromatic borrowed
- *  column stays an exact octave above its source. Equal is 12-TET either way
- *  (its entry is never read for pitch); the spelling side is notes.ts. */
+ *  column stays an exact octave above its source. Equal sounds 12-TET either
+ *  way; its exps are its JI reading (ratios, the piano picker), Ptolemaic's,
+ *  banded and unbanded alike. The spelling side is notes.ts. */
 const UNBANDED: Readonly<Record<TuningMode, { base: TuningMode; comma: Readonly<Exps>; spatial: boolean }>> = {
-  E: { base: 'E', comma: [0, 0, 0, 0], spatial: false },
+  E: { base: 'E', comma: [-7, 0, 3, 0], spatial: false },
   '5': { base: '5', comma: [-7, 0, 3, 0], spatial: false },
   P: { base: 'P', comma: [-19, 12, 0, 0], spatial: false },
   D: { base: 'D', comma: [-11, 4, 2, 0], spatial: false },

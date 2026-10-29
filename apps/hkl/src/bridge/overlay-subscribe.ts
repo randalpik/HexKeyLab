@@ -37,6 +37,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 function applySnapshot(s: OverlaySnapshot): void {
   /* 1. Prime the DOM controls the apply functions read from. */
   $<HTMLInputElement>('cbNotes').checked = s.showNotes;
+  $<HTMLInputElement>('cbBanded').checked = s.banded ?? true;
   $<HTMLInputElement>('cbBands').checked = s.showBands;
   $<HTMLInputElement>('cbExtend').checked = s.extendPattern;
   $<HTMLInputElement>('cbHeji').checked = s.heji;
@@ -60,6 +61,7 @@ function applySnapshot(s: OverlaySnapshot): void {
   /* the frame of every coordinate below — set directly, no conversion: the
      publisher already sent them in it */
   tuning.mapping = mapping;
+  tuning.banded = s.banded ?? true;
   tuning.equalEnabled = s.tuning === 'E';
   tuning.septimalEnabled = s.tuning === '7';
   tuning.hejiEnabled = s.heji;

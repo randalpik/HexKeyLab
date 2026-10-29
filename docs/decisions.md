@@ -10255,3 +10255,22 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 **Gates**: `test/unbanded/oracle.mjs` (202,806 checks). The existing color, Wicki-Hayden, chromatic, Syntonic, alignment, HEJI, interval-name and octave-consistency gates are byte-identical to before.
 
 **Status**: the model and state have landed. HKL's toggle (with the Show bands rename) and Composer's Setup control and respelling follow.
+
+## Unbanded layout in HKL: the toggle (2026-10-29, Max)
+
+**Picked** (Max):
+- **The lattice stays static on a toggle.** Every cell keeps its (q, r), and only pitch, spelling, color and HEJI change, as on a tuning change; held voices retune in place. The anchor stays `anchorOf`. A ref on a chromatic borrowed column (F#/G#) therefore just becomes Gb/Ab with no special handling. **Rejected**: my proposal to anchor unbanded bands on `pitchBandOf(ref)` so the ref keeps its banded label. Max never asked for that invariant.
+- **Unbanded centers the ref exactly.** The keyboard anchor is the ref, not `refSpine`: a layout without bands shows no band-derived offset.
+  - Cost, accepted: a toggle slides the Lumatone/QWERTY map by `W/3 − posInBand` columns (Euler −1…+1, Wicki-Hayden −3…+2, chromatic −7…+4; zero on the band's spine), and held physical keys follow their key.
+  - **Rejected**: keeping `refSpine` unbanded, which leaves keyboard jumps at invisible band boundaries. Also rejected: keeping the window until the next ref change, because history-dependent state breaks one-authority.
+
+**My calls**, each forced by a measurement:
+- **Equal's JI reading** (ratios, the piano picker) is Ptolemaic's in both layouts, so unbanded it takes 125/128 per band. With no unbanded comma, Equal's picker ranked banded ratios against unbanded spelling, and no ref in any mapping stayed within ±3 accidentals.
+- **Schismatic** ranks as Semiditonal in the picker, and chord analysis uses the V→D substitution plus the schismatic flag, only while banded. Those answer banded V's spelling disagreeing with its pitch (decisions 2026-05-25); unbanded respelling agrees. My first version ranked unbanded V as banded D, which left no valid ref.
+- **Transpose**: the P8 and SC buttons carry `data-kind`. Unbanded, P8 steps by `octaveVector` (Wicki-Hayden (−1, 2), chromatic (−2, 2), off in Euler), and SC is off.
+- `VALID_REF_TABLE` and `PIANO_BOUNDS_TABLE` are keyed by banding. Their banded halves are byte-identical to before; the unbanded valid-ref counts are in the probe log. `octave-consistency.mjs` reports the unbanded layout and does not gate it, since Euler has no spelled octave there.
+
+**Census** (2026-10-29, all 48 tuning × mapping × banding configurations):
+- Isomorphic in pitch, spelling and HEJI: unbanded Pythagorean (= Syntonic = Polysyntonic) and Equal, in Euler and Wicki-Hayden, plus unbanded Euler Ptolemaic (one arrow per column, unbounded).
+- Pure (no commas): Pythagorean only.
+- No configuration has a constant hue step per vector: hue is the floor of a 12-TET octave count, so a fifth moves it 7/12 of a step.

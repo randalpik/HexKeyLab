@@ -15,7 +15,7 @@ import { lumatoneCells, qwertyCells, outlineCells, outlinePose, type Cell } from
 import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
 import { coordToMidi, anchorOf, TUNING_MODES } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
-import { tuning } from '../state/tuning.js';
+import { tuning, BANDINGS, bandingOf, type Banding } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
@@ -253,14 +253,17 @@ export function invalidatePianoOutline(): void {
      V7-uniform — used in 7-limit (septimalEnabled=true; qm=2 all B-d1-upper).
    Both are pure functions of the picker logic + accidental rule, so they're
    precomputed offline by test/bounds-probe/compute-refbounds.mjs and stored
-   in VALID_REF_TABLE, per mapping × tuning mode (each mapping's cells are in
-   its own frame). The outline polygons are cheap to derive (edge tracing
-   over the cell set); built once at module load. */
-function byMappingAndMode<T>(f: (cells: ReadonlyArray<readonly [number, number]>) => T): Record<Mapping, Record<TuningMode, T>> {
-  const out = {} as Record<Mapping, Record<TuningMode, T>>;
-  for (const m of MAPPINGS) {
-    out[m] = {} as Record<TuningMode, T>;
-    for (const t of TUNING_MODES) out[m][t] = f(VALID_REF_TABLE[m][t]);
+   in VALID_REF_TABLE, per banding × mapping × tuning mode (each mapping's
+   cells are in its own frame). The outline polygons are cheap to derive (edge
+   tracing over the cell set); built once at module load. */
+function byMappingAndMode<T>(f: (cells: ReadonlyArray<readonly [number, number]>) => T): Record<Banding, Record<Mapping, Record<TuningMode, T>>> {
+  const out = {} as Record<Banding, Record<Mapping, Record<TuningMode, T>>>;
+  for (const b of BANDINGS) {
+    out[b] = {} as Record<Mapping, Record<TuningMode, T>>;
+    for (const m of MAPPINGS) {
+      out[b][m] = {} as Record<TuningMode, T>;
+      for (const t of TUNING_MODES) out[b][m][t] = f(VALID_REF_TABLE[b][m][t]);
+    }
   }
   return out;
 }
@@ -292,11 +295,11 @@ export function rebuildFootprintGeometry(): void {
 }
 
 function activeValidRefSet(): Set<KeyId> {
-  return validRefSetByMode[tuning.mapping][tuning.mode];
+  return validRefSetByMode[bandingOf(tuning.banded)][tuning.mapping][tuning.mode];
 }
 
 function activeValidRefPaths(): Point[][] {
-  return validRefPathsByMode[tuning.mapping][tuning.mode];
+  return validRefPathsByMode[bandingOf(tuning.banded)][tuning.mapping][tuning.mode];
 }
 
 /* The 88-cell piano footprint for a ref under the live tuning: one ranking
@@ -404,7 +407,7 @@ let pendingTweenEnd: [number, number] | null = null;
 function ensurePianoOutline(): void {
   const refQ = referenceNote.q, refR = referenceNote.r;
   const tMode = tuning.mode;
-  const key = refQ + ',' + refR + ',' + tMode + ',' + tuning.mapping + ',' + tuning.anchor;
+  const key = refQ + ',' + refR + ',' + tMode + ',' + tuning.mapping + ',' + tuning.anchor + ',' + tuning.banded;
   if (key === pianoOutlineCacheKey) return;
   pianoOutlineCacheKey = key;
   const cells = compute88PianoCoords(refQ, refR);
@@ -1132,7 +1135,8 @@ export function draw(): void {
     ctx.stroke();
   });
 
-  /* lattice seams — drawn at every band boundary (5, P, D, 7, V). Equal
+  /* lattice seams — drawn at every band boundary (5, P, D, 7, V), banded
+     only (unbanded, every seam is one of the mode's own steps). Equal
      mode is the only mode without a band concept; everything else has the
      three-cells-per-band Q-axis structure where the band crossing carries
      a spelled enharmonic change (a d4 in V, a varying spelling in the
@@ -1140,7 +1144,7 @@ export function draw(): void {
      A↔B region seam — hue/HEJI hook/leftmost-of-band position already
      flag the B region clearly enough that an additional seam would just
      be visual noise. */
-  if (showB && !tuning.equalEnabled) {
+  if (showB && !tuning.equalEnabled && tuning.banded) {
     const eHL = hexR * 0.55;
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2 * hexScale;

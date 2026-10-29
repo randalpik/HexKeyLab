@@ -74,6 +74,10 @@ function resolveKey(q: number, r: number): ResolvedNote {
 }
 
 function tuningDescription(): string {
+  return modeDescription() + (tuning.banded ? '' : ', unbanded');
+}
+
+function modeDescription(): string {
   switch (tuning.mode) {
     case 'E': return 'Equal (12-TET)';
     case '5': return 'Ptolemaic JI';
@@ -185,9 +189,10 @@ export function broadcastPlayerNote(q: number, r: number): void {
  *  follow-up held-keys re-broadcast by invalidating its signature. */
 export function broadcastTuning(): void {
   const mode = tuningMode();
-  if (mode + '|' + tuning.mapping !== lastTuningMode) {
-    lastTuningMode = mode + '|' + tuning.mapping;
-    bridge.send({ type: 'tuning-changed', mode, mapping: tuning.mapping, description: tuningDescription() });
+  const sig = mode + '|' + tuning.mapping + '|' + tuning.banded;
+  if (sig !== lastTuningMode) {
+    lastTuningMode = sig;
+    bridge.send({ type: 'tuning-changed', mode, mapping: tuning.mapping, banded: tuning.banded, description: tuningDescription() });
     lastHeldSerialized = '';
     broadcastHeldKeys();
   }
@@ -203,10 +208,10 @@ export function broadcastLayoutState(): void {
   const mode = tuning.mode;
   const q = referenceNote.q;
   const r = referenceNote.r;
-  const sig = mode + ':' + tuning.mapping + ':' + q + ':' + r + ':' + tuning.anchor;
+  const sig = mode + ':' + tuning.mapping + ':' + tuning.banded + ':' + q + ':' + r + ':' + tuning.anchor;
   if (sig !== lastLayoutStateSig) {
     lastLayoutStateSig = sig;
-    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, mapping: tuning.mapping, refQ: q, refR: r, anchor: tuning.anchor });
+    bridge.send({ type: 'hkl-layout-state', tuningMode: mode, mapping: tuning.mapping, banded: tuning.banded, refQ: q, refR: r, anchor: tuning.anchor });
   }
 }
 
@@ -1323,7 +1328,7 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
 
 function announce(): void {
   bridge.send({ type: 'hkl-hello', version: PROTOCOL_VERSION });
-  bridge.send({ type: 'tuning-changed', mode: tuningMode(), mapping: tuning.mapping, description: tuningDescription() });
+  bridge.send({ type: 'tuning-changed', mode: tuningMode(), mapping: tuning.mapping, banded: tuning.banded, description: tuningDescription() });
   /* Force a held-keys + footprint + layout-state broadcast even if empty.
      Composer's blank-score auto-adopt path keys off hkl-layout-state, so
      forcing a resend here ensures fresh-open Composer tabs receive it. */

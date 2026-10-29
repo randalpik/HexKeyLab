@@ -24,7 +24,8 @@ export const TOOLTIPS: Record<string, string> = {
   // ── Layout ──────────────────────────────────────────────────────────
   selTuning: 'Active tuning system: sets the just-intonation interpretation of every key.',
   cbNotes: 'Draw note names on each key.',
-  cbBands: 'Draw the octave-band seams (every key is one octave above the key three positions to its left along the q-axis).',
+  cbBanded: 'Banded layout: octave bands along the q-axis, with seams between them. Off: no bands — every seam takes one of the tuning\'s own steps, each band is respelled twelve fifths from its neighbor, and the reference note sits at the center.',
+  cbBands: 'Draw the octave-band seams (banded layout only).',
   cbExtend: 'Extend the repeating key pattern beyond the physical outline to fill the canvas.',
   selRotation: 'Lattice orientation: Vertical Freq (pitch rises straight up), Lumatone (physical board tilt), or Piano.',
   selAlignment: 'How the Lumatone and QWERTY layouts sit on the lattice: Vertical (fifths up the diagonal), or turned 60° — Left (fifths up the other diagonal) or Right (fifths along the key rows). Changes which notes the keys play.',

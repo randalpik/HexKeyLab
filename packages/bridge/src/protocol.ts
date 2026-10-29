@@ -151,16 +151,17 @@ export type HklEvent =
   /** Playback queue exhausted. */
   | { type: 'playback-finished' }
   /** Tuning state changed (informational; Composer can update status text). */
-  | { type: 'tuning-changed'; mode: string; mapping: string; description: string }
+  | { type: 'tuning-changed'; mode: string; mapping: string; banded: boolean; description: string }
   /** Full HKL layout state: tuning mode + ref-note (q, r). Sent on handshake
    *  and whenever either field changes. Distinct from `tuning-changed` (which
    *  carries only the mode + human description for status text) — this message
    *  exists so Composer can mirror HKL's full layout when opening a blank
    *  score, and so the match indicator can re-check on ref changes (which
    *  don't fire `tuning-changed`). `anchor` is the Syntonic / Polysyntonic
-   *  home band; the match gate compares it with the score's anchor at the
-   *  cursor in those modes. */
-  | { type: 'hkl-layout-state'; tuningMode: string; mapping: string; refQ: number; refR: number; anchor: number }
+   *  home band (every mode's, unbanded); the match gate compares it with the
+   *  score's anchor at the cursor wherever the layout reads it. `banded`:
+   *  false = the unbanded layout. */
+  | { type: 'hkl-layout-state'; tuningMode: string; mapping: string; banded: boolean; refQ: number; refR: number; anchor: number }
   /** Active layout outline + per-cell color, broadcast whenever the footprint
    *  composition or colors change (layout switch, outline mode change, QWERTY
    *  transpose, tuning toggle). Composer uses this to validate SC shifts

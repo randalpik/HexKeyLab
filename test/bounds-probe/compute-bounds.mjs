@@ -82,10 +82,12 @@ for (const row of qwertyRows) {
 
 // ── picker: the real module ────────────────────────────────────────────────
 
-/* Each probed ref is ranked as its own home band (Syntonic / Polysyntonic). */
-function pianoCells(refQ, refR, mode = '5', mapping = 'euler') {
+/* Each probed ref is ranked as its own home band (Syntonic / Polysyntonic; every
+   mode unbanded). One band of refs covers every case in both layouts: a ref one
+   band over sees the same relative layout. */
+function pianoCells(refQ, refR, mode = '5', mapping = 'euler', banded = true) {
   return pianoFootprint(refQ, refR, {
-    mode, mapping, anchor: anchorOf(refQ, mapping), banded: true,
+    mode, mapping, anchor: anchorOf(refQ, mapping), banded,
     equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
   });
 }
@@ -124,7 +126,7 @@ function pianoViewCenter(refQ, refR, m64Q, m64R, tilt) {
   ];
 }
 
-function pianoPoints(tilt, mode, mapping) {
+function pianoPoints(tilt, mode, mapping, banded) {
   const pts = [];
   const REFR_MIN = -3, REFR_MAX = 3;
   function accum(cells, refQ, refR) {
@@ -135,21 +137,21 @@ function pianoPoints(tilt, mode, mapping) {
   /* every column position of an octave band: 3 Euler, 6 Wicki-Hayden, 12 chromatic */
   for (let refQ = 0; refQ < bandWidth(mapping); refQ++) {
     for (let refR = REFR_MIN; refR <= REFR_MAX; refR++) {
-      accum(pianoCells(refQ, refR, mode, mapping), refQ, refR);
+      accum(pianoCells(refQ, refR, mode, mapping, banded), refQ, refR);
     }
   }
   return pts;
 }
 
-function nonePoints(tilt, mode, mapping) {
-  return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, mode, mapping)];
+function nonePoints(tilt, mode, mapping, banded) {
+  return [...lumatonePoints(tilt), ...qwertyPoints(tilt), ...pianoPoints(tilt, mode, mapping, banded)];
 }
 
 const OUTLINE_GENERATORS = {
   lumatone: (tilt) => lumatonePoints(tilt),
   qwerty: (tilt) => qwertyPoints(tilt),
-  piano: (tilt, mode, mapping) => pianoPoints(tilt, mode, mapping),
-  none: (tilt, mode, mapping) => nonePoints(tilt, mode, mapping),
+  piano: (tilt, mode, mapping, banded) => pianoPoints(tilt, mode, mapping, banded),
+  none: (tilt, mode, mapping, banded) => nonePoints(tilt, mode, mapping, banded),
 };
 
 // ── canvas metrics (mirrors src/render/canvas.ts) ──────────────────────────
@@ -189,7 +191,7 @@ const MODE_LABEL = {
   'Y': 'Polysyntonic',
 };
 
-function printMatrix(mode, mapping, label) {
+function printMatrix(mode, mapping, banded, label) {
   console.log(`\n${label} — kbMinW × CH (kbOffY=0):\n`);
   const colW = 15;
   console.log('              ' + outlines.map((o) => o.padEnd(colW)).join(''));
@@ -198,7 +200,7 @@ function printMatrix(mode, mapping, label) {
     const tilt = ROTATIONS[mapping][rotName];
     let row = rotName.padEnd(14);
     for (const outline of outlines) {
-      const m = canvasMetrics(bbox(OUTLINE_GENERATORS[outline](tilt, mode, mapping)));
+      const m = canvasMetrics(bbox(OUTLINE_GENERATORS[outline](tilt, mode, mapping, banded)));
       row += `${m.kbMinW}×${m.CH}`.padEnd(colW);
     }
     console.log(row);
@@ -208,34 +210,44 @@ function printMatrix(mode, mapping, label) {
 /* Collect piano metrics so we can emit the PIANO_BOUNDS_TABLE block ready
    to paste into src/render/canvas.ts. Lumatone/QWERTY are mode-independent
    for canvas extent (the only tuning-sensitive outline is piano). */
+const BANDINGS = [['banded', true], ['unbanded', false]];
 const pianoMetrics = {};
-for (const mapping of MAPPINGS) {
-  pianoMetrics[mapping] = {};
-  for (const mode of TUNING_MODES) {
-    pianoMetrics[mapping][mode] = {};
-    for (const rotName of rotationNames) {
-      const tilt = ROTATIONS[mapping][rotName];
-      pianoMetrics[mapping][mode][rotName] = canvasMetrics(bbox(OUTLINE_GENERATORS.piano(tilt, mode, mapping)));
+for (const [b, banded] of BANDINGS) {
+  pianoMetrics[b] = {};
+  for (const mapping of MAPPINGS) {
+    pianoMetrics[b][mapping] = {};
+    for (const mode of TUNING_MODES) {
+      pianoMetrics[b][mapping][mode] = {};
+      for (const rotName of rotationNames) {
+        const tilt = ROTATIONS[mapping][rotName];
+        pianoMetrics[b][mapping][mode][rotName] = canvasMetrics(bbox(OUTLINE_GENERATORS.piano(tilt, mode, mapping, banded)));
+      }
     }
   }
 }
 
-for (const mapping of MAPPINGS) {
-  for (const mode of TUNING_MODES) {
-    printMatrix(mode, mapping, `${mapping} ${mode} — ${MODE_LABEL[mode]}`);
+for (const [b, banded] of BANDINGS) {
+  for (const mapping of MAPPINGS) {
+    for (const mode of TUNING_MODES) {
+      printMatrix(mode, mapping, banded, `${b} ${mapping} ${mode} — ${MODE_LABEL[mode]}`);
+    }
   }
 }
 
 console.log('\nPIANO_BOUNDS_TABLE block for apps/hkl/src/render/canvas.ts:\n');
-console.log('const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode, CanvasMetrics>>> = {');
-for (const mapping of MAPPINGS) {
-  console.log(`  ${mapping}: {`);
-  for (const rotName of rotationNames) {
-    const entries = TUNING_MODES.map((m) => {
-      const x = pianoMetrics[mapping][m][rotName];
-      return `      '${m}': { kbMinW: ${x.kbMinW}, CH: ${x.CH} }`;
-    }).join(',\n');
-    console.log(`    ${rotName}: {\n${entries},\n    },`);
+console.log('const PIANO_BOUNDS_TABLE: Record<Banding, Record<Mapping, Record<RotationMode, Record<TuningMode, CanvasMetrics>>>> = {');
+for (const [b] of BANDINGS) {
+  console.log(`  ${b}: {`);
+  for (const mapping of MAPPINGS) {
+    console.log(`    ${mapping}: {`);
+    for (const rotName of rotationNames) {
+      const entries = TUNING_MODES.map((m) => {
+        const x = pianoMetrics[b][mapping][m][rotName];
+        return `        '${m}': { kbMinW: ${x.kbMinW}, CH: ${x.CH} }`;
+      }).join(',\n');
+      console.log(`      ${rotName}: {\n${entries},\n      },`);
+    }
+    console.log('    },');
   }
   console.log('  },');
 }

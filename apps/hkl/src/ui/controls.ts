@@ -1,5 +1,5 @@
-// Toolbar/keyboard control handlers: tuning select, mapping select, clear
-// selection, transpose-by-(dq, dr) buttons.
+// Toolbar/keyboard control handlers: tuning select, mapping select, banded
+// layout, clear selection, transpose-by-(dq, dr) buttons.
 //
 // Each handler mutates state then fires a single `effects/on…Changed()` for
 // the fan-out — replaces the old chained sync-call pattern. The transpose
@@ -10,12 +10,12 @@ import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import {
-  referenceNote, clearSelection as clearRefSelection, recomputeReferenceForOutline,
+  referenceNote, clearSelection as clearRefSelection, recomputeReference,
   convertReferenceFrame, manualSelection,
 } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { Alignment, HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
-import { eulerOf, fromEuler, vecFromEuler } from '@hkl/shared/mapping.js';
+import { eulerOf, fromEuler, vecFromEuler, octaveVector } from '@hkl/shared/mapping.js';
 import { dxH, dyH, cosT, sinT, currentRotationMode } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -133,7 +133,52 @@ export function setMapping(): void {
      resyncs Lumatone colors, broadcasts to Composer. */
   onTuningChanged();
   onSelectionChanged();
+  syncBandedControls(); /* the unbanded octave step is per mapping */
   savePrefs({ mapping: val });
+}
+
+/** Switch between the banded and the unbanded layout (docs/architecture.md →
+ *  Unbanded layout). The lattice stays static: every cell keeps its (q, r) and
+ *  retunes and respells in place, held voices included. Unbanded centers the
+ *  ref exactly, so the keyboard anchor leaves the band's spine and held
+ *  Lumatone / QWERTY keys follow their key (onRefChanged). */
+export function setBanded(): void {
+  const val = (document.getElementById('cbBanded') as HTMLInputElement).checked;
+  if (val === tuning.banded) return;
+  tuning.banded = val;
+  syncBandedControls();
+  /* each layout has its own valid-ref set (as on a mode change, setTuning) */
+  if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
+    clearRefSelection();
+    savePrefs({ manualRef: undefined });
+  }
+  recomputeReference(); /* the keyboard anchor: the band's spine ↔ the ref */
+  onTuningChanged();
+  savePrefs({ banded: val });
+}
+
+/** The controls banding decides: the checkbox itself, Show bands (nothing to
+ *  show unbanded) and the P8 / SC transpose buttons (disabled where the frame
+ *  has no such step). Run at startup and on a banding or mapping change. */
+export function syncBandedControls(): void {
+  (document.getElementById('cbBanded') as HTMLInputElement).checked = tuning.banded;
+  (document.getElementById('cbBands') as HTMLInputElement).disabled = !tuning.banded;
+  document.querySelectorAll<HTMLButtonElement>('.tpab[data-kind]').forEach((btn) => {
+    btn.disabled = transposeStep(+(btn.dataset.dq ?? '0'), +(btn.dataset.dr ?? '0'), btn.dataset.kind) === null;
+  });
+}
+
+/** A transpose button's Euler interval in the active layout's frame, or null
+ *  where the layout has none. Banded, every button is its Euler vector.
+ *  Unbanded, a band step is no octave: P8 (`kind` 'octave') takes the frame's
+ *  spelled-octave vector (octaveVector; Euler has none), and SC ('comma') is
+ *  off — Euler and Wicki-Hayden spell each note on one key, so there is no
+ *  comma sibling (decisions.md 2026-10-29). */
+function transposeStep(dq: number, dr: number, kind: string | undefined): [number, number] | null {
+  if (tuning.banded || kind === undefined) return vecFromEuler(dq, dr, tuning.mapping);
+  if (kind === 'comma') return null;
+  const v = octaveVector(tuning.mapping, false);
+  return v && [Math.sign(dq) * v[0], Math.sign(dq) * v[1]];
 }
 
 export function setRotationFromDom(): void {
@@ -183,7 +228,7 @@ export function setOutline(): void {
   /* The Composer cursor slot only applies in the piano outline, so toggling
      between piano and non-piano can flip the effective ref; reference.ts
      re-derives it (onRefChanged fans out if it moved). */
-  recomputeReferenceForOutline();
+  recomputeReference();
   /* Render fan-out: resize to the new outline's bounds + snap (immediate) +
      redraw. Shared with the overlay subscriber via render/controls-core. */
   applyOutlineRender(newOutline);
@@ -195,11 +240,13 @@ export function setOutline(): void {
   broadcastFootprint();
 }
 
-export function transposeSelection(dq: number, dr: number): void {
+export function transposeSelection(dq: number, dr: number, kind?: string): void {
   if (selection.selectedKeys.size === 0) return;
   /* The buttons name Euler intervals (P5, M3, m3, P8, SC); express the step in
-     the active mapping's frame. */
-  [dq, dr] = vecFromEuler(dq, dr, tuning.mapping);
+     the active layout's frame. */
+  const step = transposeStep(dq, dr, kind);
+  if (step === null) return;
+  [dq, dr] = step;
   /* vertical bounds check — block if any note's center would leave the canvas */
   const cyC = view.CH / 2 + view.kbOffY;
   const vq = view.viewQ, vr = view.viewR;
@@ -257,19 +304,19 @@ export function transposeSelection(dq: number, dr: number): void {
 /* key-repeat for transpose buttons */
 (function () {
   let tid: number | null = null, iid: number | null = null;
-  function startRepeat(dq: number, dr: number): void {
+  function startRepeat(dq: number, dr: number, kind: string | undefined): void {
     stopRepeat();
-    transposeSelection(dq, dr);
-    tid = window.setTimeout(function () { iid = window.setInterval(function () { transposeSelection(dq, dr); }, 80); }, 400);
+    transposeSelection(dq, dr, kind);
+    tid = window.setTimeout(function () { iid = window.setInterval(function () { transposeSelection(dq, dr, kind); }, 80); }, 400);
   }
   function stopRepeat(): void {
     if (tid !== null) { clearTimeout(tid); tid = null; }
     if (iid !== null) { clearInterval(iid); iid = null; }
   }
   document.querySelectorAll<HTMLElement>('.tpab[data-dq]').forEach(function (btn) {
-    const dq = +(btn.dataset.dq ?? '0'), dr = +(btn.dataset.dr ?? '0');
-    btn.addEventListener('mousedown', function (e) { e.preventDefault(); startRepeat(dq, dr); });
-    btn.addEventListener('touchstart', function (e) { e.preventDefault(); startRepeat(dq, dr); }, { passive: false });
+    const dq = +(btn.dataset.dq ?? '0'), dr = +(btn.dataset.dr ?? '0'), kind = btn.dataset.kind;
+    btn.addEventListener('mousedown', function (e) { e.preventDefault(); startRepeat(dq, dr, kind); });
+    btn.addEventListener('touchstart', function (e) { e.preventDefault(); startRepeat(dq, dr, kind); }, { passive: false });
   });
   document.addEventListener('mouseup', stopRepeat);
   document.addEventListener('touchend', stopRepeat);

@@ -21,13 +21,14 @@ The keyboard is an **isomorphic** hexagonal layout: each direction always steps 
 
 **A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors; a light or dark shade marks a white-key or black-key note name. In Equal tuning, three colors cycle by octave instead.
 
-In the Euler mapping the keyboard is divided into **bands** three keys wide, and every key sounds exactly an octave above the key three places to its left. The boundaries between bands are **seams**, drawn as dark wedges.
+In the Euler mapping the keyboard is divided into **bands** three keys wide, and every key sounds exactly an octave above the key three places to its left. The boundaries between bands are **seams**, drawn as dark wedges. Turning **Banded layout** off removes the bands (below).
 
 ### Display options (Layout tab)
 
 - **Hex size**: Small, Medium or Large.
 - **Note names**: the note name on each key. Turn on **HEJI accidentals** (Analysis tab) for the exact just spelling, with comma arrows and septimal accidentals.
-- **Band seams**: draw the seams.
+- **Banded layout** (on by default): turn it off to remove the octave bands. Every seam is retuned to one of the tuning's own steps, so no interval exists only at a seam, and each band is spelled twelve fifths away from its neighbor (A becomes G𝄪 one band to the right). Bands count from the reference note's band (as in Syntonic), and the reference sits exactly at the center. Syntonic and Polysyntonic become Pythagorean, Schismatic keeps its pitches, Equal keeps 12-TET; Septimal's octaves become 1207.7¢, with a closed 4:5:6:7 from every key to the right of a 9:7 step. Keys stay where they are: only their pitch, name and color change, and held notes retune. Chromatic + Pythagorean is the intended playing layout.
+- **Show bands**: draw the seams (banded layout only).
 - **Extend pattern**: color the whole canvas rather than only the area inside the outline.
 - **Outline**: the keyboard footprint drawn in white: **Lumatone** (280 keys), **QWERTY**, **Piano** (88 keys around the reference note), or **None**.
 - **Rotation**: **Vertical Freq** (pitch rises straight up), **Lumatone** (the instrument's tilt) or **Piano**. Only the picture turns.
@@ -109,6 +110,8 @@ With Composer open, the score's key is the reference unless you've Ctrl+clicked 
 ## Transposition
 
 **Transpose** (Playback tab) slides the keys you have on along five axes, each with ▲ / ▼ buttons (hold to repeat): perfect fifth (**P5**), major third (**M3**), minor third (**m3**), octave (**P8**) and syntonic comma (**SC**). Sustained instruments glide to the new pitch; struck and plucked instruments and organs strike again. A step that would push a note off the canvas is refused.
+
+Without bands, **P8** moves by the mapping's spelled octave (Wicki-Hayden and Chromatic; Euler has no spelled octave, so it is off), and **SC** is off.
 
 The **SC** step moves the chord to the keys a syntonic comma away. In Equal the pitch doesn't change. In the just tunings the result depends on the tuning and on where the chord sits, because the step crosses seams: in Ptolemaic it raises the chord by 81:80 (about 21.5 cents) or lowers it by about 19.6 cents.
 

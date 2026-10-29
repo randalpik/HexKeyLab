@@ -7,7 +7,8 @@
 //   A  Euler column steps per mode, from a band's first column: P 81:64 ×3,
 //      V 81:64 5:4 81:64, 7 9:7 5:4 5:4, D 81:64 5:4 5:4, 5 5:4 ×3; S = Y = P;
 //      the 3-column step in cents
-//   B  Syntonic and Polysyntonic unbanded = Pythagorean unbanded, every cell
+//   B  Syntonic and Polysyntonic unbanded = Pythagorean unbanded, every cell;
+//      Equal's JI reading is Ptolemaic's, banded and unbanded
 //   C  the anchor's pitch band is the banded layout (spelling and pitch);
 //      Schismatic is its banded tuning × schisma^−anchor, whole board
 //   D  re-anchoring by +1: the whole board drops one per-band comma and
@@ -30,6 +31,7 @@
 //   L  hook glyphs: hejiChain stacks single + two-hook glyphs; hejiLabel
 //      collapses to one hook + exponent above 2
 //   M  no Euler vector is a spelled octave from every cell
+//   N  octaveVector: the band step banded; F, G and M's vectors unbanded
 //
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/unbanded/oracle.mjs
 //
@@ -37,7 +39,7 @@
 
 import { coordExps, coordToMidi, freqAt, TUNING_MODES } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave, fifthName, parseNote, accToVal } from '../../packages/shared/src/notes.ts';
-import { bandOfCell, pitchBandOf, bandWidth, MAPPINGS } from '../../packages/shared/src/mapping.ts';
+import { bandOfCell, pitchBandOf, bandWidth, octaveVector, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOrder } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain, SEPT_DOWN_1, SEPT_UP_1, SEPT_DOWN_2, SEPT_UP_2 } from '../../packages/shared/src/heji.ts';
@@ -97,6 +99,9 @@ for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(
   const p = U(q, r, 'P', map, a).join();
   check(`B S ${map} a${a} (${q},${r})`, U(q, r, 'S', map, a).join(), p);
   check(`B Y ${map} a${a} (${q},${r})`, U(q, r, 'Y', map, a).join(), p);
+  /* Equal's JI reading (ratios, the piano picker) is Ptolemaic's in both layouts */
+  check(`B E reads as 5 ${map} a${a} (${q},${r})`, U(q, r, 'E', map, a).join(), U(q, r, '5', map, a).join());
+  check(`B E reads as 5 banded ${map} (${q},${r})`, B(q, r, 'E', map, a).join(), B(q, r, '5', map, a).join());
 }
 
 /* ── C: the anchor's band is banded; V is banded × schisma^−anchor ──────── */
@@ -295,6 +300,17 @@ for (const a of [-1, 0, 1]) {
     if (all) found.push(`${dq},${dr}`);
   }
   check(`M euler a${a} spelled-octave vectors`, found.join(' '), '');
+}
+
+/* ── N: octaveVector is the spelled-octave vector F, G and M found ─────── */
+for (const map of MAPPINGS) for (const banded of [true, false]) for (const a of [-1, 0, 1]) {
+  const v = octaveVector(map, banded);
+  check(`N ${map} ${banded ? 'b' : 'u'} octaveVector`, v === null ? 'none' : v.join(), banded ? `${bandWidth(map)},0` : { euler: 'none', wickiHayden: '-1,2', chromatic: '-2,2' }[map]);
+  if (v === null) continue;
+  for (const [q, r] of cells(map)) {
+    check(`N ${map} ${banded ? 'b' : 'u'} a${a} (${q},${r}) spelled P8`,
+      noteName(q + v[0], r + v[1], map, a, banded) + (keyOctave(q + v[0], r + v[1], map, a, banded) - 1), noteName(q, r, map, a, banded) + keyOctave(q, r, map, a, banded));
+  }
 }
 
 check('modes covered', JI.length + 1, TUNING_MODES.length);

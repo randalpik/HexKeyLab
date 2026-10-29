@@ -5589,3 +5589,10 @@ Adding the required `banded` to `coordExps` / `noteName` / `keyColor` / `hejiCom
 - Sweep `test/` and `tools/` with grep and pass the new argument explicitly at every call.
 - Diff every gate's full output against a pre-change baseline. Here all eight were byte-identical apart from Node's PID.
 - Found on the way: `test/wh-layout/oracle.mjs` had called `coordExps` without `anchor` since Syntonic landed. That was harmless only because it tests band-uniform modes.
+
+## Max's dev server hot-reloads every save, half-finished ones included (2026-10-29)
+
+Mid-change, `draw.ts` read a banding-keyed `VALID_REF_TABLE` while the generated table still had the old shape (its probe hadn't run yet). Vite hot-reloaded the pair into Max's open HKL and the lattice stopped rendering (`(intermediate value)[b] is undefined`). The typecheck would have caught it, but it runs only when I run it, and the page reloads on every save.
+
+- Order edits so every save leaves the app running: generated data, or a placeholder of the new shape, before its consumers.
+- Run `pnpm typecheck` before moving on from a shape change, not at the end of the phase.

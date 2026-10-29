@@ -28,12 +28,12 @@
 //
 // The HOME ref is manual ?? scoreRef ?? A3 — the effective ref minus the
 // cursor slot. Two anchors are derived from it here and nowhere else:
-//   • the keyboard anchor `view.kbAnchorQ/R` = refSpine(home): where the
-//     Lumatone / QWERTY layout sits, and the center of every non-piano
-//     outline's view. The cursor's prior note never moves it — entering a
+//   • the keyboard anchor `view.kbAnchorQ/R` = refSpine(home) banded, home
+//     itself unbanded: where the Lumatone / QWERTY layout sits, and the center
+//     of every non-piano outline's view. The cursor's prior note never moves it — entering a
 //     note must not shift the physical layout.
-//   • `tuning.anchor`, the Syntonic / Polysyntonic home band = the band of
-//     home. Recording playback and the OBS-overlay mirror pin it to a given
+//   • `tuning.anchor`, the Syntonic / Polysyntonic home band (every mode's,
+//     unbanded) = the band of home. Recording playback and the OBS-overlay mirror pin it to a given
 //     value (setAnchorOverride). A change notifies the anchor listener once, in
 //     a microtask after the synchronous fan-out below has run.
 // Every mutation recomputes the effective ref and the keyboard anchor; if
@@ -90,7 +90,8 @@ function effectiveRef(): RefCoord {
 function recompute(notify = true): boolean {
   recomputeAnchor();
   const home = homeRef();
-  const sp = refSpine(home.q, home.r, tuning.mapping);
+  /* unbanded centers the ref itself: no band offset in a layout without bands */
+  const sp = tuning.banded ? refSpine(home.q, home.r, tuning.mapping) : home;
   const dq = sp.q - view.kbAnchorQ, dr = sp.r - view.kbAnchorR;
   const eff = effectiveRef();
   if (eff.q === referenceNote.q && eff.r === referenceNote.r && dq === 0 && dr === 0) return false;
@@ -131,9 +132,11 @@ export function setAnchorOverride(a: number | null): void {
   recomputeAnchor();
 }
 
-/** Called by setOutline() when the outline mode changes — the cursor slot
- *  applies only in the piano outline, so the effective ref may change. */
-export function recomputeReferenceForOutline(): boolean {
+/** Recompute after a change to an input other than the tiers: the outline
+ *  (the cursor slot applies only in the piano outline, so the effective ref may
+ *  change) or the banding (the keyboard anchor is the band's spine banded, the
+ *  ref itself unbanded). */
+export function recomputeReference(): boolean {
   return recompute();
 }
 

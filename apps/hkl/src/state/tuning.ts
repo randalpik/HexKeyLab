@@ -8,6 +8,14 @@
 
 import type { TuningMode, Mapping } from './persistence.js';
 
+/** The key of the precomputed per-layout tables (VALID_REF_TABLE,
+ *  PIANO_BOUNDS_TABLE): the picker's footprint differs banded and unbanded. */
+export type Banding = 'banded' | 'unbanded';
+export const BANDINGS: ReadonlyArray<Banding> = ['banded', 'unbanded'];
+export function bandingOf(banded: boolean): Banding {
+  return banded ? 'banded' : 'unbanded';
+}
+
 export const tuning = {
   mode: '5' as TuningMode,
   /* Note-name mapping, orthogonal to `mode`: the coordinate frame every

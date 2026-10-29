@@ -21,6 +21,7 @@
 //   node test/hkl-inspect/console-scan-firefox.mjs          # warn+error+exceptions
 //   ALL=1 node test/hkl-inspect/console-scan-firefox.mjs    # include info/debug too
 //   HKL_URL=http://localhost:5170/ pnpm scan:hkl:firefox
+//   MAPPING=chromatic TUNING=7 BANDED=0 node test/hkl-inspect/console-scan-firefox.mjs
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -33,8 +34,10 @@ const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/'
 const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 const VEROVIO_MS = Number(process.env.VEROVIO_MS ?? 6000);
 const SHOW_ALL = process.env.ALL === '1';
-/* Optional layout before the chord: MAPPING=chromatic, TUNING=S (toolbar values). */
+/* Optional layout before the chord: MAPPING=chromatic, TUNING=S (toolbar values),
+   BANDED=0 (the unbanded layout). */
 const LAYOUT = { selMapping: process.env.MAPPING ?? null, selTuning: process.env.TUNING ?? null };
+const UNBANDED = process.env.BANDED === '0';
 
 const ALLOW = [/favicon\.ico/i];
 const isAllowed = (t) => ALLOW.some((re) => re.test(t));
@@ -115,6 +118,10 @@ async function main() {
       for (const [id, v] of Object.entries(${JSON.stringify(LAYOUT)})) {
         const sel = document.getElementById(id);
         if (v && sel) { sel.value = v; sel.dispatchEvent(new Event('change',{bubbles:true})); }
+      }
+      if (${UNBANDED}) {
+        const b = document.getElementById('cbBanded');
+        if (b) { b.checked = false; b.dispatchEvent(new Event('change',{bubbles:true})); }
       }
       const found = {};
       for (const id of ['cbStaff','cbHeji']) {

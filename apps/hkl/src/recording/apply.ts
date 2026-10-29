@@ -13,7 +13,7 @@ import { pedal } from '../state/pedal.js';
 import { audio } from '../state/audio.js';
 import { SampleEngine } from '../audio/samples.js';
 import { savePrefs } from '../state/persistence.js';
-import { setTuning, setMapping } from '../ui/controls.js';
+import { setTuning, setMapping, setBanded } from '../ui/controls.js';
 import type { LayoutSnapshot } from './types.js';
 
 function isOscillator(name: string): boolean {
@@ -37,6 +37,12 @@ export async function applySnapshot(s: LayoutSnapshot): Promise<void> {
   if (selMapping && selMapping.value !== s.mapping) {
     selMapping.value = s.mapping;
     setMapping();
+  }
+  /* Then banding: the events' pitches and spellings depend on it. */
+  const cbBanded = document.getElementById('cbBanded') as HTMLInputElement | null;
+  if (cbBanded && cbBanded.checked !== s.banded) {
+    cbBanded.checked = s.banded;
+    setBanded();
   }
 
   /* Pedal mode — no handler beyond the DOM listener, so we set state + DOM and

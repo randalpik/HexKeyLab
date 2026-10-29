@@ -44,7 +44,7 @@ import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
 import {
-  setTuning, setMapping, setOutline, clearSelection,
+  setTuning, setMapping, setBanded, syncBandedControls, setOutline, clearSelection,
   applyRotation, setRotationFromDom,
   applyAlignment, setAlignmentFromDom,
   applyHexSize, setHexSizeFromDom,
@@ -86,6 +86,7 @@ const $ = <T extends HTMLElement>(id: string): T =>
    single-purpose). */
 function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbNotes').checked = p.showNotes;
+  $<HTMLInputElement>('cbBanded').checked = p.banded;
   $<HTMLInputElement>('cbBands').checked = p.showBands;
   $<HTMLInputElement>('cbAnalysis').checked = p.showAnalysis;
   $<HTMLInputElement>('cbExtend').checked = p.extendPattern;
@@ -133,6 +134,7 @@ applyPrefsToDom(prefs);
    anything reads coordinates (the verticalFreq tilt below included). */
 tuning.mapping = prefs.mapping;
 tuning.banded = prefs.banded;
+syncBandedControls();
 /* Apply the persisted alignment, then rotation, before first paint — poses
    the physical layout, then resets geometry tilt, canvas bounds, and
    cv.style.height to match the saved mode. */
@@ -288,6 +290,7 @@ $<HTMLInputElement>('cbNotes').addEventListener('change', (e) => {
   view.textDirty = true; draw();
   savePrefs({ showNotes: (e.target as HTMLInputElement).checked });
 });
+$<HTMLInputElement>('cbBanded').addEventListener('change', setBanded);
 $<HTMLInputElement>('cbBands').addEventListener('change', (e) => {
   draw();
   savePrefs({ showBands: (e.target as HTMLInputElement).checked });
@@ -459,6 +462,7 @@ function resetToDefaults(): void {
 
   setTuning();
   setMapping();  /* back to Euler: a real switch, so held notes convert */
+  setBanded();   /* back to banded, if it was off */
   setOutline();  /* user-initiated path; tween view to new home position */
   setAlignmentFromDom();  /* held keys follow, LEDs resync, if it changed */
   applyRotation(p.rotation);

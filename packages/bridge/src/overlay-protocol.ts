@@ -31,6 +31,8 @@ export interface OverlaySnapshot {
    *  because the effective ref below may be a composer-source selection,
    *  which never moves it. Absent from an older publisher → 0. */
   anchor?: number;
+  /** Banded layout; absent from an older publisher → true. */
+  banded?: boolean;
   /** HEJI accidentals enabled. */
   heji: boolean;
   /** Effective reference-note lattice coord. */
