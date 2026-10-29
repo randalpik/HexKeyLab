@@ -13,8 +13,7 @@
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs } from '../state/persistence.js';
-import { baseKeys } from '../layout/baseKeys.js';
-import { view } from '../state/view.js';
+import { lumatoneCell } from '../layout/physical.js';
 import { keyColorHex } from '../render/colors.js';
 import {
   sysexBoardFor, fixedMidiChannelMap,
@@ -30,13 +29,13 @@ import type { SysexMessage } from '../types.js';
 export function syncLumatoneColors(): void {
   if (!midi.midiOut || !lumatone.autoSyncEnabled) return;
 
-  /* Compute target colors for all 280 physical keys. The Lumatone outline
-     is statically positioned on screen; the lattice underneath shifts by
-     kbAnchor (only updated by user-driven ref changes). */
-  const aQ = view.kbAnchorQ, aR = view.kbAnchorR;
+  /* Compute target colors for all 280 physical keys: the color of the cell
+     each key plays (layout/physical.ts). The Lumatone outline is statically
+     positioned on screen; the lattice underneath shifts by kbAnchor (only
+     updated by user-driven ref changes). */
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
-    const q = baseKeys[i][0] + aQ, r = baseKeys[i][1] + aR;
+    const [q, r] = lumatoneCell(i);
     target.push(keyColorHex(q, r));
   }
   if (!lumatone.deviceColors) lumatone.deviceColors = new Array<string | null>(280).fill(null);

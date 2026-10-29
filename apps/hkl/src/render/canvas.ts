@@ -18,8 +18,7 @@
 // kbOffY is forced to 0 — content is symmetric about the canvas vertical
 // midline; CH grows to fit the larger of |minY| / |maxY|.
 
-import { baseKeys } from '../layout/baseKeys.js';
-import { qwertyKeys } from '../input/qwerty.js';
+import { lumatoneCells, qwertyCells } from '../layout/physical.js';
 import { hexR, dxH, dyH, hexScale, cosT, sinT, hexToScreen, currentRotationMode } from '../layout/geometry.js';
 import type { Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { tuning } from '../state/tuning.js';
@@ -169,8 +168,8 @@ const PIANO_BOUNDS_TABLE: Record<Mapping, Record<RotationMode, Record<TuningMode
    live each time — it's fast and avoids the hardcoding-staleness risk for
    sets that aren't expensive. */
 function staticOutlineCells(outline: 'lumatone' | 'qwerty'): ReadonlyArray<readonly [number, number]> {
-  if (outline === 'lumatone') return baseKeys;
-  return qwertyKeys;
+  if (outline === 'lumatone') return lumatoneCells;
+  return qwertyCells;
 }
 
 interface ScreenBounds { minX: number; maxX: number; minY: number; maxY: number; }

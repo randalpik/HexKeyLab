@@ -8,8 +8,7 @@
 
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
-import { baseKeys } from '../layout/baseKeys.js';
-import { view } from '../state/view.js';
+import { lumatoneCell } from '../layout/physical.js';
 import { syncAudio } from '../audio/engine.js';
 import { syncPianoOut } from './piano-out.js';
 import { sysex } from '../lumatone/sysex.js';
@@ -19,15 +18,16 @@ import type { KeyId } from '../types.js';
 
 export function syncOutput(): void { syncAudio(); syncPianoOut(); }
 
-/* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r),
-   shifted by kbAnchor so the lattice slides under the static Lumatone outline
-   on user-driven ref change. Resolves a STRIKE only: held keys release
-   through the KeyId recorded at strike time (input/held.ts). */
+/* fixed MIDI: (channel 1-5, note 0-55) → physical key → the lattice cell it
+   plays at the current anchor (layout/physical.ts), so the lattice slides
+   under the static Lumatone outline on user-driven ref change. Resolves a
+   STRIKE only: held keys release through the KeyId recorded at strike time
+   (input/held.ts). */
 export function fixedMidiToKey(ch: number, note: number): KeyId | null {
   const idx = (ch - 1) * 56 + note;
   if (idx < 0 || idx >= 280) return null;
-  const base = baseKeys[idx];
-  return (base[0] + view.kbAnchorQ) + ',' + (base[1] + view.kbAnchorR);
+  const [q, r] = lumatoneCell(idx);
+  return q + ',' + r;
 }
 
 type MidiMessageHandler = (e: MIDIMessageEvent) => void;

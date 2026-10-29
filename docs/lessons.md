@@ -5531,6 +5531,13 @@ then the app holds `x.ts?t=…` and the harness a second copy. On 2026-10-29, af
 `state/midi.ts`, `departure.mjs` dropped from 56/56 to 24/56 with nothing wrong in the app — its fake port was
 wired into copies the app never read. It now walks every module from `/src/ui/init.ts` through the app's
 own import edges, and its `depUrl` throws on a missing edge instead of falling back to the bare path.
+The same day the fallback hid more dead edges. Three gates resolved `state/view.ts` through
+`midi/engine.ts` after a refactor removed that import, and `view.ts` had been hot-reloaded, so their anchor
+changes went into a copy (held-inputs 24/30, mapping-switch 28/33, velocity-owners 20/22, nothing wrong in
+the app). Making `depUrl` strict then exposed two gates resolving `state/tuning.ts` through `engine.ts`,
+whose `tuning` import had gone the day before — latent only because `tuning.ts` hadn't been hot-reloaded.
+Every `test/hkl-midi` `depUrl` now throws on a missing edge; resolve a state module through the module that
+actually reads it.
 
 ## Headless HKL pages publish into the live OBS overlay (2026-10-27)
 

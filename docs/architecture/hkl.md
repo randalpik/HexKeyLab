@@ -233,7 +233,7 @@ Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "les
 | Poly aftertouch (0xA0) | per-voice volume modulation. |
 | Pitch bend (0xE0) | ignored (see *Departure detection* — it was tried as a power-off tell and removed). |
 
-Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time — channels 0–4 = the five board groups, notes 0–55 = key index within board.
+Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time, through `layout/physical.ts` (key offset + kbAnchor) — channels 0–4 = the five board groups, notes 0–55 = key index within board.
 
 #### Departure detection: the liveness heartbeat
 
@@ -466,7 +466,7 @@ Dirty flags minimize rebuilds: tuning-mode change → hex layer; note names → 
 
 ### Outline geometry (precomputed)
 
-- `kbOutlinePaths`: array of closed polygon paths in baseKey screen coords, computed at init via topology tracing with `edgeIsect`.
+- `lumatoneOutlinePaths` / `qwertyOutlinePaths` (`render/draw.ts`): closed polygon paths traced with `edgeIsect` from the outline cell sets `lumatoneCells` / `qwertyCells` (`layout/physical.ts`) in anchor-relative coords; rebuilt with the scale geometry on a hex-size change.
 - `snapVtx(px, py)`: nearest outline vertex within 6px for seam endpoint snapping (no segment projections / flanking-hex logic).
 
 ### Output / input plumbing
@@ -529,14 +529,12 @@ DAMPER_RELEASE_FLOOR   # damper-contact threshold (0.05 ≈ -26 dB). Below this 
 
 ### Key data structures
 
-- `baseKeys`: 280 [q, r] pairs (5 boards × 56 keys), natural-layout coords.
+- `baseKeys`: 280 [q, r] pairs (5 boards × 56 keys) in board order — the physical layout (board routing, physical height). Lattice-facing code reads it through `layout/physical.ts`: `lumatoneCells` / `qwertyCells` (each key's lattice offset from kbAnchor) and `lumatoneCell(i)` / `qwertyCell(code)` (the cell a key plays now).
 - `colorTable`: 3×12 `(q%3, r%12) → hue code` (5-limit fast path).
 - `equalHueCycle`: `['BL','PU','PK']`.
 - `hueC`: hue code → {l, d, sl, sd} hex strings.
 - `hueCycleOrder`: `['PU','PK','OR','YE','GR','TE','BL']`.
 - `refSpine(refQ, refR)`: `(q, r) → (q, r)` qm=0-normalized spine cell; drives Lumatone/QWERTY/none layout shift.
 - `deviceColors`: 280-entry tracked device state for diff-based auto-sync.
-- `kbOutlinePaths`: precomputed outline polygons.
-- `kbBaseSet`: Set of `"bq,br"` for all baseKeys.
 - `REF`: ~60 reference interval entries.
 - `chordTemplates`: 24 chord templates.

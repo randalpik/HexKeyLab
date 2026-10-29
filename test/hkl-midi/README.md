@@ -158,9 +158,10 @@ app's own import edges from `/src/ui/init.ts` (read from each importer's
 transformed source). Once a module has been hot-reloaded, Vite serves its
 importers a `?t=<stamp>` URL, so a bare `/src/midi/engine.ts` import would be a
 *second* instance with no release handler registered, and the checks would
-test the wrong object. `departure.mjs`'s `depUrl` throws on a missing edge
-rather than falling back to the bare path; `damper.mjs` still imports bare
-paths and is exposed to the same failure after a hot reload.
+test the wrong object. `depUrl` throws on a missing edge rather than falling
+back to the bare path, so an import an app change removes surfaces as a
+"not imported by" error instead of a quietly disconnected module; `damper.mjs`
+still imports bare paths and is exposed to the same failure after a hot reload.
 
 ## Adding cases
 

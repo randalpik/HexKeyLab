@@ -38,7 +38,7 @@ const SCRIPT = `(async () => {
   const depUrl = async (fromPath, depPath) => {
     const src = await (await fetch(fromPath)).text();
     const i = src.indexOf(depPath);
-    if (i < 0) return depPath;
+    if (i < 0) throw new Error(depPath + ' is not imported by ' + fromPath);
     let j = i + depPath.length;
     while (j < src.length && src[j] !== '"' && src[j] !== "'") j++;
     return src.slice(i, j);
@@ -51,7 +51,7 @@ const SCRIPT = `(async () => {
   const [controls, refMod, handler, held, eng, viewMod, selMod, audioMod, midiMod, pedalMod, heartbeat, sx] =
     await Promise.all([
       import(controlsUrl), import(refUrl), import(handlerUrl), import(heldUrl), import(engineUrl),
-      depUrl(engineUrl, '/src/state/view.ts').then((u) => import(u)),
+      depUrl(engineUrl, '/src/layout/physical.ts').then((u) => depUrl(u, '/src/state/view.ts')).then((u) => import(u)),
       depUrl(heldUrl, '/src/state/selection.ts').then((u) => import(u)),
       depUrl(heldUrl, '/src/state/audio.ts').then((u) => import(u)),
       depUrl(engineUrl, '/src/state/midi.ts').then((u) => import(u)),

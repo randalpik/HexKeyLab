@@ -11,11 +11,10 @@
 // call from the current view + layout shift; the click hit-test reads it as
 // the screen-space lookup table.
 
-import { baseKeys } from '../layout/baseKeys.js';
+import { lumatoneCells, qwertyCells } from '../layout/physical.js';
 import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
 import { coordToMidi, anchorOf, TUNING_MODES } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
-import { qwertyKeys } from '../input/qwerty.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
@@ -109,7 +108,7 @@ function edgeIsect(hx1: number, hy1: number, d1: number, hx2: number, hy2: numbe
 type Point = [number, number];
 
 /* Trace boundary edges around a (q, r) cell set into closed polyline arrays.
-   Used for both the Lumatone (baseKeys) and QWERTY (qwertyKeys) outlines. */
+   Used for both the Lumatone (lumatoneCells) and QWERTY (qwertyCells) outlines. */
 function computeOutlinePaths(keys: ReadonlyArray<readonly [number, number]>): Point[][] {
   const keySet = new Set<string>();
   keys.forEach((k) => { keySet.add(k[0] + ',' + k[1]); });
@@ -163,8 +162,8 @@ function computeOutlinePaths(keys: ReadonlyArray<readonly [number, number]>): Po
   return paths;
 }
 
-let lumatoneOutlinePaths: Point[][] = computeOutlinePaths(baseKeys);
-let qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyKeys);
+let lumatoneOutlinePaths: Point[][] = computeOutlinePaths(lumatoneCells);
+let qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyCells);
 
 /* Spatial index for seam-snap. snapVtx() is called twice per seam segment
    (~thousands per frame in piano outline with a tall canvas) — a linear
@@ -262,15 +261,15 @@ const validRefSetByMode = byMappingAndMode((cells) => new Set(cells.map(([q, r])
 let validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
 
 /** Rebuild every scale-dependent cache after a hex-size change. The cell sets
- *  (baseKeys, qwertyKeys, VALID_REF_TABLE, validRefSetByMode) are in lattice
+ *  (lumatoneCells, qwertyCells, VALID_REF_TABLE, validRefSetByMode) are in lattice
  *  coords and unchanged; only their pixel projections + the derived snap
  *  indices + outR depend on hexR. `validRefSetByMode` (string-keyed gate) is
  *  scale-invariant and intentionally not rebuilt. Mirrors the inline module-
  *  load initializers above. */
 export function rebuildScaleGeometry(): void {
   outR = hexR + 1;
-  lumatoneOutlinePaths = computeOutlinePaths(baseKeys);
-  qwertyOutlinePaths = computeOutlinePaths(qwertyKeys);
+  lumatoneOutlinePaths = computeOutlinePaths(lumatoneCells);
+  qwertyOutlinePaths = computeOutlinePaths(qwertyCells);
   lumatoneSnapIndex = buildSnapIndex(lumatoneOutlinePaths);
   qwertySnapIndex = buildSnapIndex(qwertyOutlinePaths);
   validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
@@ -423,9 +422,9 @@ export function activeFootprintSet(): Set<KeyId> | null {
   const sh: readonly [number, number] = [view.kbAnchorQ, view.kbAnchorR];
   const set = new Set<KeyId>();
   if (outlineMode === 'lumatone') {
-    baseKeys.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
+    lumatoneCells.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
   } else {
-    qwertyKeys.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
+    qwertyCells.forEach((k) => { set.add((k[0] + sh[0]) + ',' + (k[1] + sh[1])); });
   }
   return set;
 }
@@ -458,7 +457,7 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
   const outlineMode = getOutlineMode();
   if (!showE && outlineMode !== 'none') {
     /* lumatone/qwerty outlines are statically positioned (drawn from raw
-       baseKeys / qwertyKeys without translation); piano outline rides with
+       lumatoneCells / qwertyCells without translation); piano outline rides with
        the lattice (viewQ/viewR offset). Translate the test point by the
        inverse of the render-side translate to compare against the raw path. */
     let tx = ux, ty = uy;
@@ -741,7 +740,7 @@ interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
 /* keyboard extent across all layouts for tight bounds when Extend is off.
    QWERTY bounds also span the full QWERTY-transpose range (-3..+3) so the
    precomputed union covers every reachable QWERTY position. */
-/* Baseline extents of the baseKeys / qwertyKeys cell sets, BEFORE applying
+/* Baseline extents of the lumatoneCells / qwertyCells cell sets, BEFORE applying
    any layout shift or transpose. The runtime shift (refSpine for Lumatone +
    QWERTY-transpose for QWERTY) is added at gridRange-time, so the clamp
    tracks the lattice as it slides underneath the static outline. */
@@ -750,11 +749,11 @@ let qwertyBaseQMin: number, qwertyBaseQMax: number, qwertyBaseRMin: number, qwer
 (function () {
   kbBaseQMin = 1e9; kbBaseQMax = -1e9; kbBaseRMin = 1e9; kbBaseRMax = -1e9;
   qwertyBaseQMin = 1e9; qwertyBaseQMax = -1e9; qwertyBaseRMin = 1e9; qwertyBaseRMax = -1e9;
-  baseKeys.forEach((k) => {
+  lumatoneCells.forEach((k) => {
     if (k[0] < kbBaseQMin) kbBaseQMin = k[0]; if (k[0] > kbBaseQMax) kbBaseQMax = k[0];
     if (k[1] < kbBaseRMin) kbBaseRMin = k[1]; if (k[1] > kbBaseRMax) kbBaseRMax = k[1];
   });
-  qwertyKeys.forEach((k) => {
+  qwertyCells.forEach((k) => {
     if (k[0] < qwertyBaseQMin) qwertyBaseQMin = k[0]; if (k[0] > qwertyBaseQMax) qwertyBaseQMax = k[0];
     if (k[1] < qwertyBaseRMin) qwertyBaseRMin = k[1]; if (k[1] > qwertyBaseRMax) qwertyBaseRMax = k[1];
   });
@@ -839,7 +838,7 @@ function gridRange(extended: boolean): GridRange {
      toggling Extend off would empty the canvas).
      During a view tween the single layer must cover BOTH view endpoints, but
      the clamp can only target one outline position; under a screen-stationary
-     Lumatone/QWERTY outline the start-of-slide cells (baseKeys + oldAnchor)
+     Lumatone/QWERTY outline the start-of-slide cells (lumatoneCells + oldAnchor)
      fall outside the new-anchor clamp and flash as gaps. So skip the clamp
      while a tween is pending and let the per-frame outline mask in draw() do
      the real clipping (same unclamped behavior as Extend-on / canvas bounds). */
@@ -866,7 +865,7 @@ function gridRange(extended: boolean): GridRange {
 
 function buildGridKeys(range: GridRange): DrawnKey[] {
   const gcx = gridW / 2, gcy = gridH / 2 + view.kbOffY;
-  const kbSet = new Set<string>(); baseKeys.forEach((k) => { kbSet.add(k[0] + ',' + k[1]); });
+  const kbSet = new Set<string>(); lumatoneCells.forEach((k) => { kbSet.add(k[0] + ',' + k[1]); });
   const gKeys: DrawnKey[] = [];
   for (let r = range.rMax; r >= range.rMin; r--) for (let q = range.qMin; q <= range.qMax; q++) {
     const isKb = kbSet.has(q + ',' + r);
@@ -997,7 +996,7 @@ export function draw(): void {
   const kbShQ = animation.isAnimating ? Math.round(view.viewQ) : view.kbAnchorQ;
   const kbShR = animation.isAnimating ? Math.round(view.viewR) : view.kbAnchorR;
   const kbSet = new Set<string>();
-  baseKeys.forEach((k) => {
+  lumatoneCells.forEach((k) => {
     kbSet.add(k[0] + kbShQ + "," + (k[1] + kbShR));
   });
   const vis = getVisibleRange(view.viewQ, view.viewR);
@@ -1153,7 +1152,7 @@ export function draw(): void {
         : Math.pow(Math.abs(2 * animT - 1), 6);
     /* snap seams to whichever outline is currently visible — a Lumatone snap
        under a hidden Lumatone outline would tug seams toward an invisible
-       reference. Lumatone/QWERTY polygons are drawn statically in baseKeys-
+       reference. Lumatone/QWERTY polygons are drawn statically in lumatoneCells-
        origin space (no kbSh translate), so their seam-space offset is zero.
        Piano outline's vertices are in absolute lattice space, so its offset
        to seam-space (where cells are at `(q-viewQ, r-viewR)`) is just
@@ -1393,7 +1392,7 @@ export function draw(): void {
 
     /* Lumatone/QWERTY outlines stay screen-stationary across ref-driven
        shifts: the lattice underneath translates (refSpine offset) while the
-       outline polygon stays at its baseKeys-origin coordinates.
+       outline polygon stays at its lumatoneCells-origin coordinates.
        Piano outline differs: its 88 cells are anchored to refNote in absolute
        lattice space (see compute88PianoCoords). We translate by the lattice
        scroll offset so the polygon tracks the cells it encompasses. */

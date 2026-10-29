@@ -1,7 +1,8 @@
 // Canvas viewport metrics + view center + dirty flags.
 //
 // CH/kbMinW/kbOffY are populated at module load by render/canvas.ts (from
-// baseKeys). CW changes on window resize via sizeCanvas.
+// the outline cell sets, layout/physical.ts). CW changes on window resize via
+// sizeCanvas.
 //
 // viewQ/viewR are the lattice-space view center. They're updated by
 // render/animation.ts during a layout-switch tween; read by the draw pipeline.

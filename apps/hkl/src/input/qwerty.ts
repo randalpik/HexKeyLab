@@ -1,11 +1,8 @@
 // QWERTY layout: maps physical computer-keyboard keys to BASE (q, r) lattice
-// coordinates. Used by:
-//   • input/keyboard-notes.ts — adds refSpine offset at note-on/off time,
-//     mirroring fixedMidiToKey(). The same physical key plays a different
-//     lattice cell at each ref, so the keyboard "rides with" the lattice
-//     the same way the Lumatone does.
-//   • render/draw.ts — qwertyKeys is used to compute the outline polygon
-//     and the bounds.
+// offsets. layout/physical.ts turns them into the cells the keys play
+// (input/keyboard-notes.ts) and the QWERTY outline's cell set (render/); the
+// same physical key plays a different cell at each ref, so the keyboard
+// "rides with" the lattice the same way the Lumatone does.
 //
 // Each row covers a contiguous q-range at fixed r; each row down is one
 // minor third lower (Δq=+1, Δr=-1). H = (0, 0) at ref A3.

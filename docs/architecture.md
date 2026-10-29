@@ -239,10 +239,13 @@ score-ref ?? A3; the *effective ref* is the home ref, except in the piano outlin
 note is the ref when it is newer than the Ctrl+click (elsewhere the cursor note is ignored and never
 displaces a Ctrl+click). The keyboard anchor `kbAnchor` = `refSpine(home ref)` — where the
 Lumatone/QWERTY layout sits and where every non-piano view centers — and the S/Y `tuning.anchor` are
-derived there and nowhere else (the overlay mirror alone copies the publisher's). Every tier change
+derived there and nowhere else (the overlay mirror alone copies the publisher's). A physical key
+(Lumatone key, QWERTY code) plays its fixed lattice offset + `kbAnchor`; that map lives in one place,
+`apps/hkl/src/layout/physical.ts` (`lumatoneCells` / `qwertyCells`, `lumatoneCell(i)` /
+`qwertyCell(code)`), which MIDI input, QWERTY input, Lumatone colors and the outline footprint all
+read. Every tier change
 recomputes both and, if the effective ref or `kbAnchor` moved, runs one listener synchronously,
-`effects/onRefChanged(dq, dr)`: held physical voices migrate by the `kbAnchor` delta, MIDI reverse
-map + Lumatone colors, piano-outline invalidation, view re-center, redraw, Composer broadcast. A
+`effects/onRefChanged(dq, dr)`: held physical voices migrate by the `kbAnchor` delta, Lumatone colors, piano-outline invalidation, view re-center, redraw, Composer broadcast. A
 Ctrl+click slides (`withRefSlide`); everything else snaps, and a snap while a slide is in flight
 redirects the slide rather than letting it drag the view back to its old target. Handlers only
 mutate tiers — none can move a ref without re-centering (decisions.md 2026-10-27).

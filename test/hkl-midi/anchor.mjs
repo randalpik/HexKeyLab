@@ -34,7 +34,7 @@ const SCRIPT = `(async () => {
   const depUrl = async (fromPath, depPath) => {
     const src = await (await fetch(fromPath)).text();
     const i = src.indexOf(depPath);
-    if (i < 0) return depPath;
+    if (i < 0) throw new Error(depPath + ' is not imported by ' + fromPath);
     let j = i + depPath.length;
     while (j < src.length && src[j] !== '"' && src[j] !== "'") j++;
     return src.slice(i, j);

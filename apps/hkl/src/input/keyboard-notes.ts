@@ -1,6 +1,6 @@
-// Computer-keyboard note input — always-on listeners on `window`. Maps physical
-// keys (event.code) via qwertyKeyMap to a BASE (q, r); we then add the active
-// kbAnchor offset at note-on time, mirroring fixedMidiToKey(). The same
+// Computer-keyboard note input — always-on listeners on `window`. A physical
+// key (event.code) plays the cell layout/physical.ts gives it at note-on time
+// (its offset + the active kbAnchor), mirroring fixedMidiToKey(). The same
 // physical key plays a different lattice cell at each user-driven ref change,
 // so the keyboard rides with the layout shift exactly like the Lumatone.
 //
@@ -21,8 +21,8 @@
 // Side-effect import: ui/init.ts must `import './input/keyboard-notes.js'` to
 // activate the listeners.
 
-import { view } from '../state/view.js';
 import { qwertyKeyMap } from './qwerty.js';
+import { qwertyCell } from '../layout/physical.js';
 import { heldKey, pressHeld, releaseHeld, releaseAllHeld, migrateHeld } from './held.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId } from '../types.js';
@@ -30,9 +30,8 @@ import type { KeyId } from '../types.js';
 const KEYBOARD_VELOCITY = DEFAULT_DYNAMIC_MAP.f;
 
 function codeToKey(code: string): KeyId | null {
-  const base = qwertyKeyMap[code];
-  if (!base) return null;
-  return (base[0] + view.kbAnchorQ) + ',' + (base[1] + view.kbAnchorR);
+  const c = qwertyCell(code);
+  return c ? c[0] + ',' + c[1] : null;
 }
 
 /** Ref-change migration for QWERTY-held voices: each held code re-resolves
