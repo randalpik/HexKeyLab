@@ -65,27 +65,3 @@ export function iowaMisTranscodeMiddleware(prefix, remoteBase, cacheDir) {
     res.end(fs.readFileSync(cachePath));
   };
 }
-
-/* /analyzer-configs-manifest: dev-only endpoint returning every JSON file in
-   configsDir as one map keyed by filename (sans .json). The analyzer page
-   renders its per-instrument checkbox list from this. configs/ is the single
-   source of truth — no in-browser editing. */
-export function analyzerConfigsManifest(configsDir) {
-  return (req, res, next) => {
-    if (!req.url || req.url.split('?')[0] !== '/analyzer-configs-manifest') return next();
-    try {
-      const files = fs.readdirSync(configsDir).filter((f) => f.endsWith('.json')).sort();
-      const out = {};
-      for (const f of files) {
-        const key = f.replace(/\.json$/, '');
-        out[key] = JSON.parse(fs.readFileSync(path.join(configsDir, f), 'utf8'));
-      }
-      res.setHeader('content-type', 'application/json');
-      res.setHeader('cache-control', 'no-cache');
-      res.end(JSON.stringify(out));
-    } catch (e) {
-      res.statusCode = 500;
-      res.end(String(e));
-    }
-  };
-}

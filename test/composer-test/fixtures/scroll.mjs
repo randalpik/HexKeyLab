@@ -6,7 +6,7 @@ export const FIXTURES = {
 
   /* ── Scroll-into-view ────────────────────────────────────────────── */
   /* The expression layer's scroll-follow tracks the LAYER's moment, not the
-     parked voice cursor (backlog 2026-09-05: selecting an expression while the
+     parked voice cursor (Max, 2026-09-05: selecting an expression while the
      voice cursor sat on an unmounted page jumped the view to the first page —
      the voice cursor's page). 80 bars over several pages, a dynamic in the last
      bar, the voice-2 cursor parked in bar 1; the assertion enters the layer,
@@ -100,7 +100,7 @@ export const FIXTURES = {
       score.scrollLeft = score.scrollWidth;
     `,
   },
-  /* Max's report (backlog Layout, 2026-09-17): in SCROLL view, backspace at the
+  /* Max's report (2026-09-17): in SCROLL view, backspace at the
    * very beginning of a piece with a pickup deleted the pickup measure and took
    * the staff heading with it — the brace and the system's left line survived,
    * the leading clefs, signatures and the staff lines under them became white

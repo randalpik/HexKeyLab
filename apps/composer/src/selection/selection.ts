@@ -10,8 +10,6 @@
 //   - measure: one or more 2-voice staves, anchored at measure boundaries,
 //              with a designated origin staff so multi-staff growth is
 //              symmetric.
-//
-// See /home/max/.claude/plans/it-s-time-to-add-unified-barto.md.
 
 import type { ComposerModel, Voice } from '../model/index.js';
 import { readTimeSig } from '../notation/beams.js';

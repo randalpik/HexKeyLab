@@ -213,7 +213,7 @@ Over a selection, `Ctrl+H` and `Ctrl+M` switch every empty bar in it together. A
 | Button | Format | |
 |---|---|---|
 | **Save .hkc** / **Load .hkc** | `.hkc` | Composer's own format. Keeps everything. |
-| **Export ▾ → .musicxml** | MusicXML | For MuseScore, Finale or Sibelius; one part per instrument. Carries everything Composer writes except movement titles and HEJI comma accidentals. |
+| **Export ▾ → .musicxml** | MusicXML | For MuseScore, Finale or Sibelius; one part per instrument. Carries everything Composer writes except movement titles, HEJI comma accidentals and cautionary (parenthesized) accidentals. |
 | **Export ▾ → .pdf** | PDF | The page view exactly as on screen (only the shown part, if one is selected), on US Letter. |
 | **Import .musicxml** | MusicXML | A score from another program, as a starting point: it opens in Equal tuning with HEJI off and colors ignored, ready to retune toward just intonation, and every note keeps its spelling. Percussion parts are skipped and compressed `.mxl` files aren't supported; Composer lays the score out anew. |
 

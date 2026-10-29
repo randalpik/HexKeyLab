@@ -77,9 +77,8 @@ sampling (every minor third) using `A`, `C`, `Ds`, `Fs` naming.
 ## Workflow
 
 ```
-# 1. Author or copy a config
-cp analyzer/configs/fluidR3-violin.json analyzer/configs/my-instrument.json
-# edit fields as needed
+# 1. Author a config (configs/ is gitignored: your configs stay local)
+$EDITOR analyzer/configs/my-instrument.json
 
 # 2. Generate the block + report
 node analyzer/generate-samples.js analyzer/configs/my-instrument.json

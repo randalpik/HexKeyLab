@@ -764,7 +764,7 @@ export class PageSystemSplicer {
     return refHost;
   }
 
-  /** Probe API (sonata-probes/splice-exactness-census.js): the gate's own
+  /** Probe API (a whole-document splice census): the gate's own
    *  comparison with NO tolerance — for every given live page, the reference's
    *  staff tops placed by Composer's rule (distributed, page-numbered, exactly
    *  as the gate places them) minus the live page's measured staff tops

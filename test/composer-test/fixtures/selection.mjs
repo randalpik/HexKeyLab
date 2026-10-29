@@ -138,7 +138,7 @@ export const FIXTURES = {
     ],
   },
   /* Alt+V — move the selected whole measures into the other voice on the same
-     staff (Max, backlog Composer/Features, 2026-09-17; his hotkey choice).
+     staff (Max, 2026-09-17; his hotkey choice).
      Correcting notes entered into the wrong voice. Asserted via
      FIXTURE_ASSERTIONS.sel_altV_movesToOtherVoice. */
   sel_altV_movesToOtherVoice: {
@@ -217,8 +217,7 @@ export const FIXTURES = {
     ],
   },
   /* Emptying a WHOLE measure from BEAT mode leaves the voice's cell empty —
-     one whole-measure placeholder — not a bar of rests (Max, backlog
-     Composer/Features, 2026-09-17). Measure-mode selection always behaved this
+     one whole-measure placeholder — not a bar of rests (Max, 2026-09-17). Measure-mode selection always behaved this
      way (`clearMeasureRange` leaves the layer bare); beat mode refilled the
      cleared span with beat-aligned rests unconditionally, so which MODE you
      had used to point at the bar decided what the document said. Four quarter

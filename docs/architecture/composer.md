@@ -263,11 +263,13 @@ under one beam.
   delete path removes one. `clefSlotAt` (`model/clef-slot.ts`) resolves every
   read and write: the barline after a full measure is ONE slot reachable from
   two cursors, and a new clef there is written at the head of the next
-  measure. Choosing the inherited clef removes the change.
+  measure. Choosing the inherited clef removes the change; the dialog
+  pre-selects the clef in force at the slot (`clefDialog.ts`).
 - **Pickup** (`Ctrl+Shift+A`, length in eighths): a dedicated measure 0 with
   `hkl:pickup-ticks` and `@metcon="false"`, numbered 0. Every budget-aware
   path honors it, including the clock for control events. An instant
-  downbeat tempo moves onto the pickup.
+  downbeat tempo moves onto the pickup. The time signature still shows in
+  full on it.
 
 ### Empty cells
 
@@ -341,7 +343,8 @@ Selection is a cursor mode (`'select'`, `selection/selection.ts`):
   hairpins), written and read only through DOM `copy`/`cut`/`paste` events —
   `navigator.clipboard` is unreliable in Firefox. Paste snaps to a beat (or
   replaces whole measures — each copied bar only onto a bar of the same
-  meter), clears the destination and reselects what was pasted.
+  meter), clears the destination and reselects what was pasted; measures are
+  appended when a paste runs past the end of the score.
 - **Overlay** (`selectionOverlay.ts`): one rect per system the selection
   touches; beats over empty space fall back to staff-height rects at the
   cursor's edge.
@@ -614,7 +617,7 @@ shells** (`render/pageshell.ts`), which also draw the page header.
   (`test/balance/partition-f.mjs` + `curve-batch.mjs`) on the sonata's dumped
   inputs (`sonata-inputs.json`) and 600 random sections; the suite's universal
   "partition is F" (`assertPartitionIsF`) and the `partF_*` fixtures
-  (page-layout); the corpus pipeline in `test/corpus/README.md`; the design
+  (page-layout); the design
   record in decisions.md (2026-10-19 – 10-21, "Partition: …").
 - Hard starts — locks, page breaks, section headers — split their section;
   removing one joins two sections, which F partitions whole. A page break or
@@ -735,7 +738,10 @@ omitted from a system when every measure on it carries the hide-empty flag
 for it (the top staff stays if all would hide). Line windows are rendered
 without their hidden staves; a system imported with all staves is re-rendered
 alone without them before placement, so heights and pagination see the
-reduced system. Navigation skips hidden cells (`isCellRendered`).
+reduced system. Navigation skips hidden cells (`isCellRendered`); a cursor
+whose own staff vanishes moves to the nearest drawn staff. A hidden staff
+comes back through a selection that spans its hidden cells (in page view, or
+in scroll view, which always shows every staff) or by entering a note there.
 
 **Multimeasure rests** (`model/multirest.ts`): in a view with exactly one
 staff, a run of two or more flagged empty measures renders as one measure
@@ -806,6 +812,57 @@ outside every measure). A failure throws.
 - Plain navigation and clicks move the cursor without re-rendering
   (`onCursorMove`).
 
+### Render cost
+
+Where the time goes on a large document: headless Chromium, 2026-10-09, a
+31-page score of 115 systems, measured with whole-document cost probes. Firefox was not
+re-measured after these rounds; Gecko charges more per DOM call.
+
+- **Edit**: a one-note edit costs 118–130 ms:
+  render of the hunk window 95, splice 55, refill 38, naturals 34, DOM surgery
+  15, mutation 11, post passes 10 (the buckets overlap). The first edit after a
+  load pays the in-flight assembly once (`finishSync`, ~7 s with the cursor
+  deep in the score).
+- **Structural edits** (cursor mid-score): page
+  break 258 ms, section header 152, mid-piece meter change 172, key change 296,
+  insert measure 178, tempo 217, pickup 1.3 s. A meter change at the head
+  re-flows every measure up to the next change (785 ms, O(range) by nature);
+  adding an instrument is the one full re-assembly (11.8 s).
+- **Zoom**: 0.93 s, no Verovio loads, every system node kept.
+- **Load** (a full re-assembly, which is also what a page-scale change costs):
+
+| Phase | Time | Calls | Notes |
+|---|---|---|---|
+| Verovio `renderToSVG` | 1.6 s | 20 windows | ~80 ms per 6-line window; per-system layout dominates |
+| Verovio `loadData` | 0.5 s | 20 | parse + setup per window |
+| `DOMParser` (window SVG + range MEI) | 0.5 s | 60 | |
+| Post passes (`postProcessRendered`) | 0.9 s | 115 systems | text 150, instrument gaps 180, slurs 80, ties 190, barline snap 100 |
+| Import + align + measure + fit + close | ~0.4 s | | one layout per system is inherent |
+| `model.serializeRangeForRender` | 0.16 s | 20 | |
+| Slice gaps (macrotask hops) | ~0.4 s | | was ~2 s with `requestIdleCallback` |
+| **Whole document** | **5.1–5.6 s** | | first page 0.17 s (synchronous to the cursor's page) |
+
+DOM calls per load, the ones Gecko charges for: `getBBox` 82 000 (79 ms in
+Chromium), `querySelector` / `querySelectorAll` 200 000 (250 ms), `closest`
+73 000, `getCTM` 3 400, `getScreenCTM` 684 (97 ms). About 450 forced reflows:
+the passes are already batched read-then-write, so a reflow here is mostly the
+one layout a freshly imported system must get.
+
+Measured and not worth pulling: the slice scheduler (~0.4 s of gaps; a
+macrotask hop is the floor), the forced reflows (~4 per system, each inherent
+to a pass boundary), and `serializeRangeForRender` (0.16 s).
+
+Dead ends (don't retry): `display:none` on `#score` to skip layout flushes (it
+forces a from-scratch relayout on restore, ~4× worse; lessons.md); chunk
+virtualization of scroll view (superseded by one persistent SVG with spot
+splices; decisions.md "Scroll view: one persistent SVG…"); Verovio `select`
+(measureRange) as a page-view window (a selection's layout re-breaks lines;
+lessons.md); naturals from pinned lines or from a justified render,
+`svgRemoveXlink`, `getBBox` call-count reduction alone, leader/trailer
+removal, and quantizing per-system placement terms or the distribution level
+(each measured and recorded in decisions.md / lessons.md, 2026-09-01 to
+09-04).
+
 ## Control-event layers
 
 Dynamics, hairpins, expressive text, pedal marks and tempo marks are
@@ -875,7 +932,12 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   disappeared are pruned with the ties. Playback (HKL's `computeLegatoPlan`): an
   overlapping release on instruments that replay on transpose, a glide
   handoff on sustained ones, an overlap when the pedal is down.
-- **Structure**: repeats `{`/`}`, endings `Ctrl+E`, double bar `]`, ottava
+- **Structure**: repeats `{`/`}`, endings `Ctrl+E` (a 1st ending on a
+  measure ending in `}`, a 2nd on the measure after one; next to an existing
+  ending it extends it; anywhere else refused with a status), double bar `]`
+  (refused on the last measure, which is locked to `@right="end"`), insert
+  measure `M` (at the next barline after the cursor, or at the cursor when it
+  sits on one), ottava
   `Ctrl+8` (sounds `q ± 3` per octave; a note's stored `data-q`/`oct` stay the
   written pitch, and playback and performance acceptance shift each note of the
   staff whose onset tick lies in `[data-hkl-t0, data-hkl-t1)`), trill/tremolo `Ctrl+R` (a tremolo
@@ -912,7 +974,9 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   (`recolorNotes`). The ✓/⚠ indicator and the entry-mismatch gate also compare
   HKL's anchor (`hkl-layout-state.anchor`) with the score's at the
   position/cursor; `apply-layout` in S/Y drops HKL's manual Ctrl+click
-  selection so the score-ref drives the anchor.
+  selection so the score-ref drives the anchor. The gate itself is a
+  `window.confirm` at note entry (`hklLayoutMismatch`, `input.ts`) offering to
+  apply the score's layout to HKL.
 - **Note-name mapping**: `<hkl:layoutReq mapping="wickiHayden|chromatic">` (absent =
   Euler, so Euler scores serialize exactly as before) is the frame of every
   `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
@@ -988,8 +1052,13 @@ sent).
   `.hkc` beside it (numbered if the name is taken), never over the source. Without a host: file
   input and downloads named from the title. The binding is app state, never
   MEI. Exports always go through the save dialog, before rendering. One file
-  operation at a time.
-- **MusicXML import** (`importMusicXml.ts`) reads Finale's encoding of hidden
+  operation at a time. A new score's first Save suggests `<title>.hkc` in the
+  folder last used; Export suggests the score's own folder and name; the
+  toolbar shows the bound file (full path on hover).
+- **MusicXML import** (`importMusicXml.ts`) brings in notes, chords, multiple
+  voices and instruments, tuplets, ties, slurs, graces, articulations,
+  dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's
+  hidden playback tempi) and key / meter / clef changes. It reads Finale's encoding of hidden
   staves and multimeasure rests into the empty-cell flags, breath marks, and
   parenthesized accidentals; it spells pitches onto lattice cells
   (`coord-spelling.ts`) and turns `<rest measure="yes">` into an empty layer.
@@ -1020,7 +1089,10 @@ sent).
   stream, slur numbers assigned in document order, pickups `implicit`, ottava
   pitches written as sounding, breaks as `<print>`, graces as `<grace/>` /
   `<grace slash="yes"/>` with no `<duration>` (a grace beam keeps its own beam
-  roles inside the regular beam that spans it). Not exported: section
+  roles inside the regular beam that spans it). Also carried: beams and
+  stems, breath marks, string harmonics, pedal, mid-piece key / meter / clef
+  changes (cut and common time keep their symbol), voltas and double bars,
+  hidden-staff ranges and multimeasure rests, instrument abbreviations. Not exported: section
   titles, HEJI commas, parenthesized accidentals; `<space>` comes back as a
   hidden rest. Parity census and probes: decisions.md "MusicXML export
   parity: the sonata census".
@@ -1062,8 +1134,6 @@ documentation, not a dispatch table: change both together.
   bug fix lands with a fixture.
 - **`test/composer-inspect/inspect.mjs`** — evaluate an expression or take a
   screenshot in a headless page.
-- **`test/composer-inspect/sonata-probes/`** — whole-document gates, censuses
-  and cost probes on Max's sonata (README there).
 - **`HKL_INDEX_CHECK=1`** turns on the in-app verifiers: navigation index,
   scoped ties and dirty ranges, multirest unit edges, and the page-splice
   reference gate.

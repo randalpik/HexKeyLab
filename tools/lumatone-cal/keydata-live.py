@@ -5,6 +5,8 @@
 # === SINGLE-KEY COMMANDS ==================================================
 #
 #   sudo python3 keydata-live.py <q> <r> <section> <value>
+#   (add --swap-boards-34 to any command on a unit whose boards 3 & 4 are
+#    physically swapped)
 #       q, r       — lattice coordinates (HKL "coords" toggle reveals them on
 #                    each hex; pick a problem key, read its (q, r))
 #       section    — 1=MAX, 2=MIN, 3=validity, 4=AT_MAX
@@ -54,7 +56,7 @@
 #
 # Memory slot for a key at HKL coords (q, r):
 #   board_group = baseKeys_index // 56  (HKL's spatial position, 0..4)
-#   sysex_board = sysexBoardMap[board_group]  ([1, 2, 3, 5, 4] for Max's swap)
+#   sysex_board = sysexBoardMap[board_group]  ([1, 2, 3, 4, 5] standard, [1, 2, 3, 5, 4] with --swap-boards-34)
 #   mem_slot    = sysex_board - 1   ← THIS is the in-memory + file index
 # Memory slot indexes the BBB's view (PIC number), NOT spatial board.
 #
@@ -153,8 +155,10 @@ SECTION_BITS = {
 }
 SECTION_NAMES = {1: 'MAX', 2: 'MIN', 3: 'validity', 4: 'AT_MAX'}
 
-# board_group → SysEx board (Max's unit has boards 3 & 4 swapped)
-SYSEX_BOARD_MAP = [1, 2, 3, 5, 4]
+# board_group → SysEx board: the standard map. Pass --swap-boards-34 for a unit
+# whose boards 3 & 4 are physically swapped (HKL's "Swap boards 3 ↔ 4").
+SYSEX_BOARD_MAP = [1, 2, 3, 4, 5]
+SWAPPED_BOARD_MAP = [1, 2, 3, 5, 4]
 
 # 280-element baseKeys table (from src/layout/baseKeys.ts).
 BASE_KEYS = [
@@ -424,7 +428,11 @@ def cmd_commit():
 
 
 def main():
+    global SYSEX_BOARD_MAP
     args = sys.argv[1:]
+    if '--swap-boards-34' in args:
+        args.remove('--swap-boards-34')
+        SYSEX_BOARD_MAP = SWAPPED_BOARD_MAP
     if not args:
         sys.exit('Usage:\n'
                  '  set:         sudo python3 keydata-live.py <q> <r> <section 1-4> <value>\n'

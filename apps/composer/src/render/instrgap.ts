@@ -1,5 +1,5 @@
 // Inter-instrument clearance — a DOM post-process on rendered systems
-// (2026-09-08, backlog Layout: "still not enough space between instruments on
+// (2026-09-08, Max: "still not enough space between instruments on
 // certain lines, ex. top system of page 16, where the mf dynamic on the viola
 // part reads as part of the piano part").
 //
@@ -9,7 +9,7 @@
 // staff a mark belongs to and wrong relative to the NEXT instrument: III m. 10
 // stacks the viola's `mf` under its triplet numerals, 3.6 spaces below the
 // viola, and the piano is then packed to one space below the mf. Census over
-// the sonata (sonata-probes/instrument-gap-census.js): of 151 marks at the
+// the sonata: of 151 marks at the
 // viola/piano boundary, 59 sit NEARER the piano than their own staff and 33
 // within one space of piano ink.
 //

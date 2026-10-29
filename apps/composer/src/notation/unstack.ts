@@ -1,5 +1,5 @@
 // Same-moment mark separation — a PRE-ENGRAVE render-clone pass (2026-09-09,
-// backlog Layout; Max on the sonata's p. 21 second system, mm. 94–99).
+// Max on the sonata's p. 21 second system, mm. 94–99).
 //
 // Verovio draws two control events sharing one `@tstamp`, `@staff` and
 // `@place` at ONE x and stacks them vertically, and it sizes the inter-staff

@@ -108,7 +108,7 @@ export function styleVoltaNumbers(scoreEl: HTMLElement): void {
 export type ViewMode = 'page' | 'scroll';
 
 /** Stashed DOM + validity key for the view mode NOT currently on screen
- *  (T1.2, docs/composer-render-perf.md). `nodes` are the real detached
+ *  (T1.2, decisions.md "Composer Tier-1 render-latency fixes", item 2). `nodes` are the real detached
  *  container children — not serialized HTML — so the scroll splicer's element
  *  refs stay valid across a stash/restore round-trip. */
 interface ModeCacheEntry {
@@ -226,7 +226,7 @@ const BASE_OPTIONS = {
      it OFF — a second bracketed group must not start hiding rest-only staves. */
   condense: 'none',
   /* Dynamics sit further below the staff than Verovio's default quarter of a
-     staff space (2026-09-04; backlog: "more space between the staff and the
+     staff space (2026-09-04; Max: "more space between the staff and the
      text by default"). Verovio measures `dynamDist` (units) to the glyph's own
      reference, and the glyph's top only starts to move past 2: probed 1→40,
      2→40, 3→72, 4→152 SVG units below the bottom line at unit 8 (a staff
@@ -236,7 +236,7 @@ const BASE_OPTIONS = {
   dynamDist: DYNAM_DIST,
   /* Clearance between elements that COLLIDE across a staff boundary — the
      viola's dynamics against the piano's high notes, the piano's low right-hand
-     content against its left hand (2026-09-05; backlog: "lack of gap between
+     content against its left hand (2026-09-05; Max: "lack of gap between
      elements that overflow in the area between instruments"). Verovio widens a
      staff distance only as far as the colliding boxes plus their margins, and
      the default margin is half a unit (a quarter of a staff space). This is the
@@ -319,7 +319,7 @@ class Renderer {
   /** Mode the container's current content was rendered in (null before the
    *  first render). Drives the stash/restore branch in renderComposer. */
   private lastRenderedMode: ViewMode | null = null;
-  /** Page-view virtualization state (T2.1, docs/composer-render-perf.md):
+  /** Page-view virtualization state (T2.1, decisions.md "Composer Tier-2: virtualized page view", item 1):
    *  which pages hold real SVG vs a fixed-size placeholder, the page box
    *  size, and whether the live toolkit still holds this layout (renderToSVG
    *  of a lazy page needs it). Describes the one page DOM wherever it lives —
@@ -1031,7 +1031,7 @@ class Renderer {
        on any tagged ancestor. Retag them too: a page left tagged dark after a
        switch to light kept the dark ink rules live, and with the inline
        notehead paint just removed those rules clobbered the noteheads white
-       until the next re-render re-tagged the page (backlog, 2026-09-05). */
+       until the next re-render re-tagged the page (Max, 2026-09-05). */
     for (const el of Array.from(this.scroller.querySelectorAll('[data-notation-theme]'))) {
       if (theme === 'light') delete (el as HTMLElement).dataset.notationTheme;
       else (el as HTMLElement).dataset.notationTheme = 'dark';
@@ -2190,7 +2190,7 @@ class Renderer {
        Host-wide and BEFORE placement — the header's bbox is what
        `firstContentTop` anchors the first system under.
        The COMPOSER CREDIT is page furniture and is suppressed in scroll view
-       (Max, backlog Layout): scroll renders with `header: 'none'`, so there is
+       (Max): scroll renders with `header: 'none'`, so there is
        no title block for it to sit under, and `styleTitleBlock` synthesized a
        credit-only `g.pgHead` whose right-aligned text landed at the far END of
        the single continuous system. The footer and the running header are

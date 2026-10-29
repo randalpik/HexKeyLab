@@ -3,7 +3,7 @@ import { sampleOutline, ctmOf } from './curves.js';
 //
 // Verovio places a dynamic, hairpin or expressive text just under its staff
 // (its `dynamDist` floor, or whatever the staff's lowest content forces).
-// Conventions on top of that (backlog, Opinionation):
+// Conventions on top of that (Max):
 //   • Inside a GRAND STAFF a mark is @place="between" (expressions.ts
 //     `defaultMarkPlace` / `normalizeMarkPlaces`, 2026-10-07) and Verovio's own
 //     between pass centers it in the gap, clear of the lower staff's content.
@@ -30,8 +30,8 @@ import { sampleOutline, ctmOf } from './curves.js';
 //     above the piano (2026-09-06).
 // Marks whose horizontal ranges overlap (a dynamic with its hairpin, a stacked
 // dynamic + text) move as ONE block so Verovio's own stacking survives.
-//   • SAME-MOMENT text is laid out side by side instead (2026-09-08, backlog
-//     Layout: "beat-level positioning of text is not being preserved from
+//   • SAME-MOMENT text is laid out side by side instead (2026-09-08, Max:
+//     "beat-level positioning of text is not being preserved from
 //     Finale import, leading to vertical overlap of elements that should be
 //     horizontally adjacent", sonata p. 21 m. 99). Verovio draws two marks
 //     sharing an anchor at one x and stacks them vertically; the block rule
@@ -67,7 +67,7 @@ import { sampleOutline, ctmOf } from './curves.js';
 //     The horizontal move comes first, so the vertical rules below cluster and
 //     measure the marks where they will actually be drawn.
 //   • ABOVE a staff, text (expressive text, a dynamic, a tempo) clears the
-//     slurs and ties of its own staff (2026-09-06, backlog Layout: sonata
+//     slurs and ties of its own staff (2026-09-06, Max: sonata
 //     p. 21 m. 94, the piano's "rit." sat on the right hand's slur). Verovio's
 //     floating positioners avoid the staff's notes but not its curves — a slur
 //     arching over a high run passes through the text. Every curve whose

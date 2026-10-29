@@ -168,11 +168,11 @@ function assertEq(actual, expected, msg) {
 // ── readHkiInstrument: atomic .hki → { key, def, audio } adapter ──
 // Proves a single .hki is self-sufficient for an engine consumer: no separately
 // authored defs JSON. Pure — no AudioContext needed (decode/playback is the
-// browser check). Uses a real shipped-style bundle from handoff/musiquest/.
+// browser check). Uses a real shipped bundle from public/samples/.
 {
-  const bytes = readFileSync(new URL('../../handoff/musiquest/piano.hki', import.meta.url));
+  const bytes = readFileSync(new URL('../../public/samples/viola.hki', import.meta.url));
   const { key, def, audio } = readHkiInstrument(new Uint8Array(bytes));
-  assertEq(key, 'piano', 'readHkiInstrument key = manifest.instrumentKey');
+  assertEq(key, 'viola', 'readHkiInstrument key = manifest.instrumentKey');
   assertEq(def.source, 'hki', 'def.source routes to instrumentProvider');
   if (!def.name) throw new Error('readHkiInstrument: def.name is empty');
   if (!Array.isArray(def.samples) || def.samples.length === 0) {

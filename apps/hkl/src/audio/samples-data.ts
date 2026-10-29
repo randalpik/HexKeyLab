@@ -813,7 +813,7 @@ const STATIC_INSTRUMENTS: Record<string, any> = {
       name:'Viola Pizzicato',source:'hki-shipped',bundleUrl:'/samples/viola_pizz.hki',
       releaseTime:0.15,volume:1,loop:false,decays:true,
       /* User-owned viola pizzicato samples (plucked, decay path) from
-         ~/musiquest-assets/audio/samples. Range 3-5. */
+         the MusiQuest sample library. Range 3-5. */
       samples:[
         {name:'C3',freq:130.813,gain:1.19,file:'samples/C3.mp3'},
         {name:'Db3',freq:138.591,gain:1.2714,file:'samples/Db3.mp3'},
@@ -856,7 +856,7 @@ const STATIC_INSTRUMENTS: Record<string, any> = {
     baritone_voice:{
       name:'Baritone Voice',source:'hki-shipped',bundleUrl:'/samples/baritone_voice.hki',
       releaseTime:0.3,volume:1,loop:true,decays:false,
-      /* User-owned baritone vowel-'aa' samples from ~/musiquest-assets/audio/samples,
+      /* User-owned baritone vowel-'aa' samples from the MusiQuest sample library,
          previously processed for non-looping use. Test run for the .hki pipeline at
          octaves 2-5 (analyzed as non-vibrato sustained loop).
          keepAllGreenRange covers the natural baritone vocal range — every green
@@ -902,7 +902,7 @@ const STATIC_INSTRUMENTS: Record<string, any> = {
       name:'Soprano Voice',source:'hki-shipped',bundleUrl:'/samples/soprano_voice.hki',
       releaseTime:0.3,volume:1,loop:true,decays:false,vibrato:true,
       /* User-owned female 'aa' samples (sustained, vibrato) from
-         ~/musiquest-assets/audio/samples. NB: source files are female_aaa_*,
+         the MusiQuest sample library. NB: source files are female_aaa_*,
          not female_aah_*. Range 3-6.
          keepAllGreenRange covers the natural soprano vocal range — every green
          sample is kept in C4-E6 to minimize audible timbral seams in vocal play. */

@@ -121,7 +121,7 @@ The "what it is / how it works" reference lives under [`docs/architecture/`](doc
 - **`docs/backlog.md`** — Max's source of truth for future direction and the task backlog. **Read-only for Claude**: suggest changes, never edit without explicit permission for that edit.
 - **`docs/architecture.md`** + **`docs/architecture/*.md`** — the developer architecture reference (above).
 - **`docs/guide/{core,composer,analyzer,orchestrator,overlay}.md`** — the user-facing guides (how to *use* each app), served by the HKL Guide app.
-- **`docs/analyzer-perception-handoff.md`** — the analyzer's perceptual gate methodology. Read before touching analyzer gates or building instrument sets.
+- **`docs/architecture/analyzer.md` → Perceptual seam selection** — the analyzer's perceptual gate methodology. Read before touching analyzer gates or building instrument sets.
 - **`docs/lessons.md`** — gotchas, dead-ends, hard-won truths. Read before debugging anything that smells familiar.
 - **`docs/decisions.md`** — append-only log of non-obvious design choices.
 - **`docs/lumatone-calibration.md`** — per-key hardware calibration over SSH with `tools/lumatone-cal/`.

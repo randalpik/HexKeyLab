@@ -11,7 +11,7 @@
 //
 // HMR websockets ride the same prefixes (each app's vite hmr.path matches its
 // base; hmr.clientPort is 5170 so the browser dials the proxy). The dev-only
-// /iowa-mis* and /analyzer-configs-manifest endpoints are mounted here at the
+// /iowa-mis* endpoints are mounted here at the
 // origin, so any app's absolute fetch reaches them regardless of base.
 //
 // Run via `pnpm dev`. Standalone per-app dev (`pnpm --filter @hkl/<app> dev`)
@@ -21,7 +21,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { iowaMisTranscodeMiddleware, analyzerConfigsManifest } from './middleware.mjs';
+import { iowaMisTranscodeMiddleware } from './middleware.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -67,7 +67,6 @@ process.on('SIGTERM', shutdown);
 const endpoints = [
   iowaMisTranscodeMiddleware('/iowa-mis', 'https://theremin.music.uiowa.edu/sound%20files/MIS%20Pitches%20-%202014', path.join(repoRoot, '.iowa-cache')),
   iowaMisTranscodeMiddleware('/iowa-mis-legacy', 'https://theremin.music.uiowa.edu/sound%20files/MIS', path.join(repoRoot, '.iowa-cache')),
-  analyzerConfigsManifest(path.join(repoRoot, 'apps/analyzer/configs')),
 ];
 
 function runEndpoints(req, res, done) {

@@ -1,6 +1,6 @@
 # Lumatone per-key calibration guide
 
-This guide describes how to do **per-key threshold calibration** on a Lumatone whose built-in macro-button-driven calibration flow isn't usable (e.g., broken macro buttons), or when finer-grained control than the firmware's UI offers is needed. It works by editing the Lumatone's internal calibration state directly, via SSH plus a small set of Python scripts in `tools/lumatone-cal/`.
+This guide describes **numeric per-key calibration** of a Lumatone: reading and setting each key's thresholds as numbers, rather than letting the firmware learn them from touch. It is the only way to see or set these values directly, so it serves any unit that needs finer or reproducible control than the built-in routine gives — and it is the only option on a unit whose macro buttons don't work. It edits the Lumatone's internal calibration state directly, via SSH plus a small set of Python scripts in `tools/lumatone-cal/`.
 
 This is a **developer/maintenance** document, separate from the user-facing HKL guide. If you're not the keyboard's owner, don't run any of this — it modifies firmware state on a connected device.
 
@@ -10,9 +10,9 @@ This is a **developer/maintenance** document, separate from the user-facing HKL 
 
 The Lumatone firmware ships a built-in calibration routine triggered by SysEx `0x24` (sysexCallibrateKeys). The user enters cal mode, plays through every key, and signals "done" by pressing the two macro buttons on each octave board. The firmware's per-key learning is committed and persisted at that point.
 
-This breaks if the macro buttons don't work (mechanical failure, disconnected wires from a prior repair). The PIC microcontroller on the affected octave board waits for the hardware macro signal forever; nothing the host sends over MIDI or SysEx can substitute. Cal mode for those boards never completes, learned thresholds never persist, and individual problem keys remain stuck at their pre-cal values.
+That routine learns by touch: it never shows the values it settles on, and you can't set or adjust one key's thresholds by number. It also depends on the macro buttons — if they don't work (mechanical failure, disconnected wires from a prior repair), the PIC microcontroller on the affected octave board waits for the hardware macro signal forever; nothing the host sends over MIDI or SysEx can substitute, so cal mode for that board never completes.
 
-The approach in this guide bypasses the macro-button gate by writing per-key calibration values directly to the Lumatone's filesystem and to its running firmware's memory, with iterative tuning support so each key can be dialed in by ear in seconds.
+The approach in this guide writes per-key calibration values directly to the Lumatone's filesystem and to its running firmware's memory, with iterative tuning support so each key can be dialed in by ear in seconds — and, as a side effect, it doesn't need the macro buttons at all.
 
 ---
 
@@ -39,11 +39,11 @@ The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/Terp
 
 ### Indexing quirk: spatial vs PIC
 
-The in-memory struct is laid out by **PIC/SysEx board number** (1..5), not by spatial position. On Max's unit, boards 3 and 4 are *physically* swapped — what looks like spatial board 4 actually wires to PIC 5, and spatial board 5 wires to PIC 4. In HKL this swap is the `swapBoards34` toggle, which selects the `[1, 2, 3, 5, 4]` board mapping (vs. the standard identity `[1, 2, 3, 4, 5]`) — mapping HKL's spatial group index 0..4 to SysEx board ID 1..5. These Python calibration scripts are independent of the app and assume the swapped mapping for Max's unit.
+The in-memory struct is laid out by **PIC/SysEx board number** (1..5), not by spatial position. On some units boards 3 and 4 are *physically* swapped — what looks like spatial board 4 actually wires to PIC 5, and spatial board 5 wires to PIC 4. In HKL this swap is the **Swap boards 3 ↔ 4** toggle (`swapBoards34`), which selects the `[1, 2, 3, 5, 4]` board mapping instead of the standard `[1, 2, 3, 4, 5]` — mapping HKL's spatial group index 0..4 to SysEx board ID 1..5. The Python scripts are independent of the app and use the standard map by default; on a swapped unit, add **`--swap-boards-34`** to every `keydata-live.py` and `keydata-locate.py` command (the same flag as `tools/lumatone-bench`).
 
 When editing for a key at HKL coords (q, r):
 - Find spatial `board_group = baseKeys_index // 56`
-- `sysex_board = [1,2,3,5,4][board_group]` (swapped mapping for Max's unit)
+- `sysex_board = SYSEX_BOARD_MAP[board_group]` (`[1,2,3,4,5]`, or `[1,2,3,5,4]` with `--swap-boards-34`)
 - **Memory slot in TC = `sysex_board - 1`** (NOT `board_group`)
 - File name = `KeyData_{sysex_board}`
 
@@ -112,7 +112,7 @@ Inspects a local copy of KeyData files. Given a lattice (q, r), prints which fil
 python3 tools/lumatone-cal/keydata-locate.py <q> <r> [PATH/TO/files/dir]
 ```
 
-If you've copied the KeyData files locally to `/home/max/lumatone/TerpstraController/files/`, point at that. Useful for offline exploration without an SSH session.
+If you've copied the KeyData files to a local mirror of the device (e.g. `<mirror>/TerpstraController/files/`), point at that. Useful for offline exploration without an SSH session.
 
 ### `keydata-live.py` (run on the Lumatone via SSH)
 
@@ -172,7 +172,7 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 
 ### Phase 0 — sane baseline
 
-1. **Push identity LUT** from HKL's lumadiag panel (Hardware foundation → "Push identity LUT to Lumatone"). Makes the firmware emit its full 0-127 range.
+1. **Push identity LUT** from HKL's **Calibrate Keys** overlay (Hardware foundation → "Push identity LUT to Lumatone"). Makes the firmware emit its full 0-127 range.
 2. **Seed all KeyData files with a known baseline**:
    ```bash
    # Copy the project's default (MAX=70 / MIN=0 / valid=1 / AT_MAX=200) to all 5 boards:
@@ -183,7 +183,7 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 
 ### Phase 1 — collect velocity statistics
 
-3. Open `?lumadiag=1` in HKL. Enable "Collect" in the **Per-key velocity statistics** section.
+3. Open **Calibrate Keys** in HKL (Lumatone tab, or `Shift+\`). Enable "Collect" in the **Per-key velocity statistics** section.
 4. Play every key 30-50 times across the full range of forces you'd use in normal play. The scatter populates with each key's (p5, p95) point. Two clusters typically emerge:
    - **Top-right cluster**: p5 >> 30, p95 close to 127. Keys saturate high — soft presses still register as forte.
    - **Diagonal-middle cluster**: p5 around 50-80, p95 around 80-100. Keys stuck in the middle of the velocity range.
@@ -222,12 +222,12 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 
 ### Phase 2b — firmware path: velocity interval table (CMD 0x20)
 
-**The empirical recipe** (validated 2026-05-18, Max's unit; see `docs/decisions.md` → "Velocity calibration final form"):
+**The empirical recipe** (validated 2026-05-18 on one unit; see `docs/decisions.md` → "Velocity calibration final form"):
 
 | Parameter | Value | What it does |
 |---|---|---|
-| `intervalCurve.low` | your fastest reliable press time (ticks) — Max=3 | lower boundary of bin 0 |
-| `intervalCurve.high` | **`low + 127`** (e.g. 130 for Max) | upper boundary; this width ensures the 127-entry table spans 128 distinct integer thresholds → no duplicates → no irregular reachable-bin pattern |
+| `intervalCurve.low` | your fastest reliable press time (ticks), e.g. 3 | lower boundary of bin 0 |
+| `intervalCurve.high` | **`low + 127`** (e.g. 130) | upper boundary; this width ensures the 127-entry table spans 128 distinct integer thresholds → no duplicates → no irregular reachable-bin pattern |
 | `intervalCurve.gamma` | **1.0** | linear distribution; the only sensible value given the high choice |
 | audio-stage `gamma` | **13.9** | empirical optimum to map your natural press range to the full ~30 dB audio range with smoothest dB-per-tick taper |
 | audio-stage `floor` | **0.03** | 30 dB curve range (digital-piano convention) |
@@ -236,19 +236,19 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 
 **Step-by-step:**
 
-10. Open the lumadiag panel. Find the **Hardware velocity intervals (CMD 0x20)** subsection.
-11. Enable the loopdiag overlay ("Show diagnostics" in the Playback toolbar) and turn on **Key data**. Play your fastest possible press several times across the keyboard. The orange velocity-event labels show `vN (Mt)` — note the *smallest* tick value (M) you can reliably produce. That's your `low`.
+10. Open Calibrate Keys. Find the **Hardware velocity intervals (CMD 0x20)** subsection.
+11. Enable the Diagnostics overlay (the **Diagnostics** checkbox on HKL's Playback tab, with Audio on) and turn on **Key data**. Play your fastest possible press several times across the keyboard. The orange velocity-event labels show `vN (Mt)` — note the *smallest* tick value (M) you can reliably produce. That's your `low`.
 12. Set `high = low + 127`. This makes the 127-entry table hold 128 distinct integer thresholds (low, low+1, ..., low+127), so binary_search exact-matches at a unique table index for every tick the keyboard can produce. Your natural press-time range (low..~50 for a typical keyboard) maps to bin indices ≈ 0..47, which under identity 0x08 LUT becomes MIDI vel 127..80 — i.e., your full play range lives in the upper half of MIDI velocity space.
 13. Set `gamma = 1.0`. (γ_int just changes the distribution of bin indices across the table; it doesn't change the reachable count. Linear is the simplest mental model under high = low + 127.)
 14. Click **Push to Lumatone (CMD 0x20)**.
 15. Above, click **Push identity LUT to Lumatone (CMD 0x08)** — this loads the "identity-from-1" mapping (bin 127 → vel 1 instead of vel 0).
-16. In the **HKL curve** subsection: set `floor=0.03`, `ceiling=1.00`, `gamma=13.9`. (The HKL curve gamma slider goes up to 20; high γ values like this only make sense once CMD 0x20 high is widened to cover the full 127-bin table as in step 12.)
-17. Play across the dynamic range. The "Distinct velocities observed" counter in the lumadiag velocity panel should converge to ~48–49 (one per integer tick in your physical range plus the two open-ended boundary bins).
+16. In the **Lumatone velocity curve** subsection: set `floor=0.03`, `ceiling=1.00`, `gamma=13.9`. (The curve's gamma slider goes up to 20; high γ values like this only make sense once CMD 0x20 high is widened to cover the full 127-bin table as in step 12.)
+17. Play across the dynamic range. The "Distinct velocities observed" counter in the Calibrate Keys velocity panel should converge to ~48–49 (one per integer tick in your physical range plus the two open-ended boundary bins).
 
 **Tuning by ear from this baseline:**
 - *Loud end feels twitchy:* lower audio `gamma` (13.9 → 12 → 11 → 10). Gives up 1–2 dB of total range but the loud-end per-tick step shrinks from ~0.94 dB to ~0.70 dB. γ=10 is the sweet spot for "uniform stepping across the whole range" if you don't mind giving up 2 dB.
 - *Bottom feels too quiet for the room:* raise audio `floor` (0.03 → 0.05 → 0.07). Trades curve range for soft-end audibility.
-- *Per-note loudness inconsistency:* use per-key auto-capture (per-key gain) — this is a per-key variance issue, not a global-curve issue.
+- *Per-note loudness inconsistency:* use **Per-key auto-capture** in Calibrate Keys (per-key gain) — this is a per-key variance issue, not a global-curve issue.
 - *Two samples sound different at the same velocity:* sample-side concern; not addressable from the gain curve.
 
 **Per-tick dB steps under the recipe** (high=130, γ_audio=13.9): ~0.94 dB/tick at the loud end (T=3..15), tapering smoothly to ~0.1 dB/tick near the floor (T=45..50). This is intrinsic to power-law audio curves over a wide dynamic range — pianos have a similar shape (wide differentiation at loud dynamics, compression near floor).
@@ -268,7 +268,7 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 ### Phase 4 — persist + HKL-side residuals
 
 15. **Commit:** `sudo python3 /home/debian/keydata-live.py --commit`. Reboot to verify TC loads the persisted values cleanly.
-16. **Remaining range gaps** (e.g. a few outlier keys whose loudness still drifts after global shaping): use HKL's per-key gain + audio-stage curve in the lumadiag "HKL curve" section. The per-key gain adjusts per-key loudness offset; the curve's `gamma` parameter compresses the low end further in audio gain space.
+16. **Remaining range gaps** (e.g. a few outlier keys whose loudness still drifts after global shaping): use HKL's per-key gain + audio-stage curve in Calibrate Keys' "Lumatone velocity curve" section. The per-key gain adjusts per-key loudness offset; the curve's `gamma` parameter compresses the low end further in audio gain space.
 
 ### Tips
 
@@ -307,7 +307,7 @@ sudo reboot
 ### Full restore from the dated backup taken during install
 
 ```bash
-sudo cp ~/keydata-backup-20260515/KeyData_? /home/debian/TerpstraController/files/
+sudo cp ~/keydata-backup-<date>/KeyData_? /home/debian/TerpstraController/files/
 sudo reboot
 ```
 
@@ -323,15 +323,15 @@ Beyond what's in this guide, the Lumatone supports a full factory reset via SysE
 
 ## What's deliberately NOT here
 
-- **A vendor SysEx that does this over MIDI.** That would require running a daemon on the BBB that translates SysEx → memory pokes. The current flow requires SSH for calibration sessions but not for everyday play. If you want to skip SSH entirely later, see the deferred Phase 2 work in `~/.claude/plans/eager-bouncing-koala.md`.
-- **A GUI in HKL for per-key threshold editing.** HKL handles software-side per-key gain and velocity curves (see `src/audio/velocityCal.ts`), which is enough for normal use. Direct hardware-side calibration is rare enough to live in CLI tools.
-- **Velocity LUT or interval table editing.** Those exist (CMD `0x08` and `0x20`) and are global, not per-key. The lumadiag panel exposes "Push identity velocity LUT" which is the primary tunable.
+- **A vendor SysEx that does this over MIDI.** That would require running a daemon on the BBB that translates SysEx → memory pokes. The current flow requires SSH for calibration sessions but not for everyday play.
+- **A GUI in HKL for per-key threshold editing.** HKL handles software-side per-key gain and velocity curves (see `apps/hkl/src/audio/velocityCal.ts`), which is enough for normal use. Direct hardware-side calibration is rare enough to live in CLI tools.
+- **Velocity LUT or interval table editing.** Those exist (CMD `0x08` and `0x20`) and are global, not per-key. Calibrate Keys exposes "Push identity LUT" which is the primary tunable.
 
 ---
 
 ## Caveats and known limits
 
-- The 4-bit clamp on per-board SysEx commands (`0x29`/`0x2A` for max/min thresholds) does NOT apply to the per-key writes in `KeyData_N` — those are 8-bit (0–254). Don't confuse the two; the lumadiag UI works with the 4-bit per-board values, this tool with the 8-bit per-key.
+- The 4-bit clamp on per-board SysEx commands (`0x29`/`0x2A` for max/min thresholds) does NOT apply to the per-key writes in `KeyData_N` — those are 8-bit (0–254). Don't confuse the two; Calibrate Keys works with the 4-bit per-board values, this tool with the 8-bit per-key.
 - The PIC firmware has no per-key velocity LUT or per-key gain knob. Beyond MIN/MAX threshold tuning, residual per-key loudness differences must be corrected in HKL via per-key gain in `velocityCal.ts`.
 - Sensor swing is a physical floor. A key whose ADC barely moves on full press will never have the dynamic range of a healthy key, no matter how the thresholds are tuned. The combination of (a) compressed-but-functional hardware thresholds, plus (b) HKL per-key gain to normalize loudness, is the realistic ceiling.
 - `lmtn_launcher.sh`'s firmware-update hook runs only when a `Lumatone-v*.tgz` file is found at `/home/debian/` at boot. As long as you don't put one there, your `KeyData_N` edits will not be overwritten.

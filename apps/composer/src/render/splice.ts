@@ -357,7 +357,7 @@ export class ScrollSplicer {
     }
     if (hiNew < lo && oldHi < oldLo) return true; // nothing changed
 
-    // SCORE START (Max, backlog Layout — 2026-09-17). Verovio draws the
+    // SCORE START (Max, 2026-09-17). Verovio draws the
     // system-initial clef, key and meter INSIDE the first measure's `g.staff`,
     // and gives that measure the staff lines that reach back to the system
     // origin; every later measure is drawn without any of it. The furniture

@@ -426,7 +426,7 @@ function relocateInitialClefs(doc: Document, dropFirstMeasure = false): void {
     /* A section (movement) start keeps its leading clef: `applySectionRestarts`
        folds it into the boundary scoreDef, so the new movement simply begins
        in its clef and no courtesy clef precedes the final barline (2026-09-06,
-       backlog Layout). The range render's first measure still drops it — the
+       Max). The range render's first measure still drops it — the
        head scoreDef carries it there (runningScoreDefContext). */
     if (i > 0 && measures[i].hasAttribute('data-hkl-section-title')) continue;
     for (const staff of Array.from(measures[i].children)) {
@@ -3360,7 +3360,7 @@ export class ComposerModel {
     return { id: ref.id, on };
   }
 
-  /** Selection-mode trills + tremolos (backlog line 100). Operates on the two
+  /** Selection-mode trills + tremolos. Operates on the two
    *  note/chord slots whose onsets fall in [tLo, tHi). Requires EXACTLY two
    *  equal-duration, undotted, non-tuplet slots whose combined value is a
    *  single notehead (else returns null = no-op). Then:

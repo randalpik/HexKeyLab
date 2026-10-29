@@ -301,7 +301,7 @@ def main():
     parser.add_argument('--restore', type=Path, help='Restore snapshot.json from an earlier run, then exit')
     parser.add_argument('--animation', type=Path, help='Play a converted animation instead of benchmark phases')
     parser.add_argument('--duration', type=float, help='Limit animation playback seconds (default full movie)')
-    parser.add_argument('--swap-boards-34', action='store_true', help='Use HKL swapped physical-board routing (Max\'s unit)')
+    parser.add_argument('--swap-boards-34', action='store_true', help='Use HKL swapped physical-board routing (a unit whose boards 3 and 4 are swapped)')
     args = parser.parse_args()
     if (not math.isfinite(args.seconds) or args.seconds <= 0
             or not math.isfinite(args.timeout) or args.timeout <= 0

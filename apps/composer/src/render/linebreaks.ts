@@ -952,8 +952,8 @@ export class PageLineBreaks {
   }
 
   /** Commit an ARBITRARY partition for the CURRENT document WITHOUT dropping
-   *  the width caches — diagnostics only: sonata-probes/apply-partition.js
-   *  lays out candidate partitions for screenshots. The result is not F of the
+   *  the width caches — diagnostics only: a probe uses it to lay out
+   *  candidate partitions for screenshots. The result is not F of the
    *  document; the next edit re-partitions only the sections it touches.
    *  (Until 2026-10-20 line-break undo/redo restored layout snapshots through
    *  here; F made that redundant.) `adoptPartition`'s `invalidate` would throw

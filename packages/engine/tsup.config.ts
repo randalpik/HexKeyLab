@@ -38,7 +38,7 @@ const VERSION: string = JSON.parse(readFileSync('package.json', 'utf8')).version
 // region from the constructor default, leaking one unity-gain raw-buffer
 // sample per source start — a click at the seam rate on instruments whose
 // segment entries sit away from zero crossings. Verified on-device: ~50
-// defects/10s → 0 (handoff/hkle-born-silent-gain-fix.md).
+// defects/10s → 0 (decisions.md, engine 2.4.1).
 // 2.4.2: fix — cancelPendingSwitch anchors its undo at the pending
 // crossfade's switchTime instead of ctx.currentTime. The now-anchored
 // cancel+restore destroyed the attack of any voice canceled before its
@@ -48,9 +48,9 @@ const VERSION: string = JSON.parse(readFileSync('package.json', 'utf8')).version
 // sRampFreq, sSlideAndFadeOut, scheduleSegmentSwitch), so any retune sweep
 // or early release inside the attack window hit it. In-flight-crossfade
 // cancellation (the case the restore was designed for) is unchanged
-// (handoff/hkle-cancel-pending-switch-attack.md).
+// (decisions.md, engine 2.4.2).
 // 2.4.3: fix — teardown/retune never disturbs an in-flight or imminent seam
-// crossfade (handoff/hkle-inflight-crossfade-cut.md). (a) sNoteOff and
+// crossfade (decisions.md, engine 2.4.3). (a) sNoteOff and
 // sSlideAndFadeOut leave a fade within XFADE_GUARD_S (12ms) of its switchTime
 // running — both sources sit under the closing voiceGain; the incoming source
 // is stopped after the release/glide instead of stop(0)'d mid-ramp (the

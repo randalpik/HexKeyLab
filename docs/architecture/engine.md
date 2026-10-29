@@ -49,7 +49,7 @@ osc    →                       gain      (envelope) → damperGain → pressur
 
 Both damper and pressure sit downstream of the release envelope so neither modulation fights `voiceGain`/`gain` cancel-schedule patterns.
 
-Gain constants: `sampleMaster = 1.0`, `oscGain = squareGain = 1.0` (pass-through; per-waveform amplitude lives in per-note `vol`). Damper smoothing `DAMPER_SMOOTH_TAU = 0.025` (≈25ms τ); below `DAMPER_RELEASE_FLOOR = 0.005` depth, sustained voices not protected by sostenuto are released.
+Gain constants: `sampleMaster = 1.0`, `oscGain = squareGain = 1.0` (pass-through; per-waveform amplitude lives in per-note `vol`). Damper smoothing `DAMPER_SMOOTH_TAU = 0.025` (≈25ms τ); below `DAMPER_RELEASE_FLOOR = 0.05` depth (≈ −26 dB: the damper has landed), sustained voices not protected by sostenuto are released outright rather than left ringing inaudibly but lit.
 
 ### Per-sample gain normalization
 
@@ -93,8 +93,8 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
   within `XFADE_GUARD_S` (12ms) of its switchTime is left running by every teardown
   and retune path. `sNoteOff`/`sSlideAndFadeOut` let the fade complete under the
   closing `voiceGain` (the incoming source stops after the release/glide — a
-  `stop(0)` mid-fade was a step discontinuity, Cause 1 of
-  handoff/hkle-inflight-crossfade-cut.md); `sRampFreq` rides the both-sources
+  `stop(0)` mid-fade was a step discontinuity, Cause 1 of the
+  in-flight crossfade-cut defect, decisions.md "Engine 2.4.3"); `sRampFreq` rides the both-sources
   in-flight ramp path instead of cancel+reschedule, whose `now+5ms` floor DEFERRED
   the fade past the validated wrap (old source into phase-unvalidated content —
   measured −3..−6dB seam dips under 20–40ms retune cadence, floor restored to clean
@@ -111,7 +111,7 @@ Per-voice: `sourceStartTime`, `sourceStartOffset`, `sourceLoopA`, `sourceLoopB`,
 | Tuning/seam changes (`rampActiveFreqs()`) | 150ms |
 | Transpositions | 100ms |
 
-`commitRampSync` integrates any in-flight ramp before starting a new one, and each `sRampFreq` immediately re-schedules the pending wrap under the new trajectory (every-step reschedule; a crossfade already in flight is never yanked — both sounding sources get identical ramp events instead). There is no deferred "re-anchor after settle" timer anymore: deferral starved the wrap-aligned path under continuous ramping, degrading every seam to the audible immediate splice (the Intonalogy live-retune hiccup, fixed 2026-07; repro rig in `test/ramp-stress/`). → see decisions.md "ramp-aware seams"
+`commitRampSync` integrates any in-flight ramp before starting a new one, and each `sRampFreq` immediately re-schedules the pending wrap under the new trajectory (every-step reschedule; a crossfade already in flight is never yanked — both sounding sources get identical ramp events instead). There is no deferred "re-anchor after settle" timer anymore: deferral starved the wrap-aligned path under continuous ramping, degrading every seam to the audible immediate splice (the Intonalogy live-retune hiccup, fixed 2026-07). → see decisions.md "ramp-aware seams"
 
 ## Polyphonic aftertouch
 
@@ -129,10 +129,10 @@ Two pedal jacks feed a unified damper-depth model plus an optional sostenuto lay
 Engine API:
 
 - `setDamperDepth()` — recomputes `damperDepth = max(cc4, cc64)`, updates `sustainPedalDown`, walks `sustainedKeys` applying new depth (skipping sostenuto-locked), releases keys when depth crosses below `DAMPER_RELEASE_FLOOR`.
-- `sostenutoOn()` — snapshots locked set; pins those voices' `damperGain` to 1.0 immediately (no ramp).
+- `sostenutoOn()` — snapshots the locked set (`audio.sostenutoLockedKeys` = the selected keys). Locked voices keep the damper level they have; nothing is raised.
 - `sostenutoOff()` — clears the set; re-applies current depth or releases each previously-locked key still in `sustainedKeys`.
 
-Continuous-damper behavior is **gain-based**, not release-time-based: `damperGain` attenuates sustained ringing by `(1 − depth)`, so half-pedaling attenuates in real time rather than deferring a decay rate. Sostenuto-locked keys are exempt (`damperGain` stays 1.0), matching the physical rod lifting dampers off locked strings. → see decisions.md "gain-based continuous damper"
+Continuous-damper behavior is **gain-based**, not release-time-based: `damperGain` attenuates sustained ringing by `(1 − depth)`, so half-pedaling attenuates in real time rather than deferring a decay rate. Sostenuto-locked keys are exempt from further damper changes and hold the level they had when caught (an attenuated note stays attenuated), matching the physical rod lifting dampers off locked strings. The damper never raises a voice: `Voice.damperLevel` is a one-way ratchet reset only by a fresh strike (hkl.md → pedal handling). → see decisions.md "gain-based continuous damper"
 
 Re-articulation: striking a sustained key triggers `noteOff` + new voice + flash; the new voice gets fresh `damperGain = 1.0`, and the note-off path re-applies current `damperDepth` when it re-enters `sustainedKeys`.
 
@@ -180,7 +180,7 @@ CDN-config import is a sibling path (JSON only, no bytes): the `INSTRUMENTS` Pro
 
 ## Publishing as `@hexkeylab/engine`
 
-The in-repo package stays `@hkl/engine` (private, raw-`.ts` subpath exports for Vite consumers). `pnpm --filter @hkl/engine build` (tsup) emits a self-contained `dist/` — ESM + CJS + `.d.ts`, with `@hkl/shared` **bundled in** and `fflate` left as the one external dependency (so each consumer's bundler picks fflate's `browser`/`node`/`react-native` build; bundling its Node ESM breaks browser/Metro). `dist/package.json` is generated by the build with the public name + a single `.` export, and takes its version from the workspace `package.json` — the one version source. To release: `pnpm version <patch|minor|major>` in `packages/engine`, add a changelog line to the comment block in `tsup.config.ts`, build, then `cd packages/engine/dist && pnpm publish --dry-run --no-git-checks` and, if the manifest is right, the same without `--dry-run`. Do NOT set `publishConfig.directory` on the workspace package — that redirects the in-repo workspace link to `dist/` and breaks the raw-`.ts` consumers. See `docs/hkle-extraction.md` for the broader initiative (incl. the React Native phase).
+The in-repo package stays `@hkl/engine` (private, raw-`.ts` subpath exports for Vite consumers). `pnpm --filter @hkl/engine build` (tsup) emits a self-contained `dist/` — ESM + CJS + `.d.ts`, with `@hkl/shared` **bundled in** and `fflate` left as the one external dependency (so each consumer's bundler picks fflate's `browser`/`node`/`react-native` build; bundling its Node ESM breaks browser/Metro). `dist/package.json` is generated by the build with the public name + a single `.` export, and takes its version from the workspace `package.json` — the one version source. To release: `pnpm version <patch|minor|major>` in `packages/engine`, add a changelog line to the comment block in `tsup.config.ts`, build, then `cd packages/engine/dist && pnpm publish --dry-run --no-git-checks` and, if the manifest is right, the same without `--dry-run`. Do NOT set `publishConfig.directory` on the workspace package — that redirects the in-repo workspace link to `dist/` and breaks the raw-`.ts` consumers. License: MIT (`packages/engine/LICENSE`, copied into `dist/` by the build).
 
 ## Other shared libraries
 

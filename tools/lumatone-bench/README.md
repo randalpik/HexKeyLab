@@ -5,7 +5,7 @@ or shared repo dependencies. Run on the computer connected to the Lumatone by
 **USB MIDI**. Requires Python 3.10+ and Lumatone firmware 1.0.11+ with 56 keys/board.
 
 ```sh
-cd /home/max/HexKeyLab/tools/lumatone-bench
+cd tools/lumatone-bench
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python bench.py --list
@@ -79,7 +79,7 @@ plays **silent video**; it does not start backing audio or synthesize notes.
 .venv/bin/python animation.py simulate out/assets/bad-apple.luma.json \
   --out out/apple-simulation-final
 
-# Physical playback on Max's unit (requires its board swap).
+# Physical playback (add --swap-boards-34 on a unit whose boards 3 and 4 are swapped).
 .venv/bin/python bench.py --animation out/assets/bad-apple.luma.json --swap-boards-34
 
 # Short physical excerpt from the beginning.

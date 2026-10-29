@@ -59,7 +59,7 @@ const startsOfLens = (lens) => { const st = []; let acc = 0; for (const L of len
 
 /* ── F: the reach-back curve ──────────────────────────────────────────────
  * The function both load and edit run (balance.ts). Inputs: the
- * sonata as dumped by sonata-probes/partition-inputs.js (per-measure naturals
+ * sonata as dumped from the live app (per-measure naturals
  * and sigWForLine, so each line pays its OWN leading block), plus random
  * sections. The simulation twin (partition-f.mjs + curve-batch.mjs) is the
  * reference the app's port must reproduce exactly. */

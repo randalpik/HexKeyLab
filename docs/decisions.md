@@ -2,6 +2,8 @@
 
 Append-only log of non-obvious design choices. Each entry: what we picked, what we rejected, why, and where the decision lives in the code. Add an entry whenever a non-obvious call gets made; future sessions read this before re-litigating settled ground.
 
+**About this log.** Entries record decisions as they were made, during development with an AI coding assistant (hence the first person in many of them). They are kept for the reasoning, not as current documentation: a later entry can supersede an earlier one, and `docs/architecture/` describes the system as it is. Many entries come from the developer's own setup — one Lumatone unit (whose boards 3 and 4 are physically swapped), a Korg SP-250 digital piano, his own scores (the "sonata" in many entries is his), recordings and sample libraries — so their measurements are evidence from that setup, and paths, files or documents they name that aren't in the repository were local to that machine.
+
 ---
 
 ## Stack: TypeScript + Vite, vanilla DOM
@@ -609,7 +611,7 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 
 **Picked**: Do not pursue a Finale 25 plugin for HKL-driven note entry. Pivot to HKL Composer (Verovio-backed standalone app).
 
-**What was tried** (`tools/finale-bridge/` spike, 2026-05-16):
+**What was tried** (Finale Lua bridge spike, 2026-05-16):
 - S1 (RGP Lua loads under Wine + Finale 25) — ✓
 - S2 (per-notehead color via `FCNoteheadMod`) — ✗
 - S3 (LuaSocket TCP polling under Wine) — ✗
@@ -621,7 +623,7 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 - The headline value of bridging HKL into Finale was the per-(q,r) notehead color. Without that the side-channel adds nothing the user doesn't already have from existing Finale Speedy Entry on a piano.
 
 **Where**:
-- `tools/finale-bridge/` — spike scripts (`spike-1-hello.lua`, `spike-2-color.lua`, `spike-3-poll.lua`) + README with the decision matrix. Gitignored (this directory is in `.gitignore`).
+- Spike scripts (`spike-1-hello.lua`, `spike-2-color.lua`, `spike-3-poll.lua`) + README with the decision matrix, kept outside the repo.
 
 ---
 
@@ -728,7 +730,6 @@ Pitch spelling reuses `noteName(q, r)` / `keyOctave(q, r)` from `src/tuning/note
 - The user's stated playback need ("HKL keys highlight + cursor moves on each voice + return-to-original-position on stop") is already met by the v1 architecture without changing HKL's audio engine — confirmation that the decoupling is right.
 
 **Where**:
-- Planning file (transient): `/home/max/.claude/plans/now-that-we-have-idempotent-pudding.md`.
 - All Phase 1 implementation under `src/composer/`, `src/bridge/`, `composer.html`, and `vite.config.ts`.
 
 ---
@@ -1708,14 +1709,14 @@ hooks where needed. Scope is **lattice + analysis vocabulary only** —
 Composer rendering is deferred; V-mode M3-chain spelling is unchanged.
 
 **Why**:
-1. Backlog item `docs/backlog.md:89` — the interval analyzer was preferring
+1. Max's request — the interval analyzer was preferring
    *derived* commas (Pythagorean comma = syntonic+schisma, diaschisma,
    septimal diesis) over primary commas (syntonic, septimal, schisma). HEJI
    notates only primary commas; aligning analysis text with HEJI vocabulary
    ("syntonic comma" instead of "Pythagorean comma − schisma") makes the
    analyzer's output read identically to HEJI annotations even when the
    display toggle is off. This is a free correctness win and the default.
-2. Backlog item `docs/backlog.md:88` — V mode's M3-chain accidental stacks
+2. Max's request — V mode's M3-chain accidental stacks
    are unreadable without a comma-context layer. HEJI doesn't *fix* the
    stacking (that's a separate respelling decision Max is reserving), but
    it adds back the harmonic-distance information the stacked accidentals
@@ -1824,7 +1825,7 @@ alteration entry gate stays untouched.
 produces unbounded accidental counts (`B#####` at q=+12 from refSpine A,
 etc.). With HEJI on, the chain piles arrows onto each accidental and
 spills extras to nat carriers. Either way, the label runs off the hex
-face. This is the unread-V-mode-cells item from `docs/backlog.md:88` that
+face. This is the unread-V-mode-cells item Max reported that
 was explicitly deferred when HEJI shipped.
 
 **Algorithm** (greedy in both cases):
@@ -1844,7 +1845,7 @@ was explicitly deferred when HEJI shipped.
 carriers for the SD arrows. Max corrected: greedy is simpler, gives a
 shorter visual result in all cases, and leaves the same number of glyphs
 or fewer. Worked-case regression in the plan file confirms parity with
-his backlog examples.
+his examples.
 
 **Why "always at the end" septimal hook**: when Case B-a-heavy fires AND
 the cell carries a septimal hook (Septimal mode + high-r Pythagorean spine
@@ -1862,7 +1863,7 @@ Unicode to Bravura on font-ready). New policy: paint nothing until
 `document.fonts.load(...)` hook re-triggers `draw()` on ready.
 
 **Threshold**: `COLLAPSE_THRESHOLD = 4` (strict `>`, so collapse fires at
-|AD|≥5 or |SD|≥5). Matches `docs/backlog.md:88`. Common cases (F##, Bb,
+|AD|≥5 or |SD|≥5). Matches Max's report. Common cases (F##, Bb,
 F# with one arrow) keep their existing multi-glyph rendering.
 
 **Typography**: superscript at `0.55 × hejiFontSize` in sans-serif. Vertical
@@ -2066,8 +2067,8 @@ one sharp. The V→D substitution avoids this entire class of
 arithmetic-coincidence picks by never assigning the cells a low-TH
 score in the first place.
 
-**Backlog items addressed**: `docs/backlog.md:86` (recompute V valid-
-ref bounds after mode is finalized) and `:88` (red-tier cents
+**Items addressed** (Max's requests): (recompute V valid-
+ref bounds after mode is finalized) and (red-tier cents
 tiebreak) — both resolved by this change; the cents rule turned out
 to be unnecessary once the V→D substitution was in.
 
@@ -2108,7 +2109,7 @@ The per-pair structure with auto-mirror was the right axis: complement symmetry 
 
 **Picked**: `src/composer/keybindings.ts` is a typed `KEYBINDINGS: KeySection[]` constant that drives the Help modal and serves as the canonical reference for every Composer keystroke. The actual key-event dispatcher remains hand-written in `src/composer/input.ts` (~1600 lines of branching). Adding a binding requires editing BOTH files; they're kept in sync by review discipline + the Help-modal fixture's content assertion, not by code generation.
 
-**Why**: The backlog item asked for a reference modal that "becomes the doc source rather than the current giant input.ts header docstring." Two reasonable readings: (1) modal-as-doc only — replace the docstring, leave dispatch alone; (2) full unification — make `keybindings.ts` a dispatch table and have `input.ts` interpret it. Picked (1).
+**Why**: Max asked for a reference modal that "becomes the doc source rather than the current giant input.ts header docstring." Two reasonable readings: (1) modal-as-doc only — replace the docstring, leave dispatch alone; (2) full unification — make `keybindings.ts` a dispatch table and have `input.ts` interpret it. Picked (1).
 
 Considered alternative — dispatch-driven-by-data — was rejected because:
 - The dispatch is rich: pending-state machines (tuplet armed → digit; hairpin start → hairpin end), mode predicates (voice vs expression vs select, with selection-mode having its own sub-dispatcher), context flags (chord-internal selection preserved across specific keys), platform quirks (Alt+arrow `preventDefault` to defeat Firefox back/forward nav, `Input.dispatchKeyEvent` in tests). Capturing all of this in declarative data would require either a complex DSL or rendering the data structure into something only marginally more readable than the existing switch-style code.
@@ -2217,9 +2218,9 @@ Iteration was deliberately left out because the only iteration HKL does over ins
 - Max's primary browser is Firefox, which doesn't fully support FSA (the persistent-permission half is Chromium-only).
 - FSA's "user grants access to a file" UX is friction-heavy: every reload prompts a permission re-grant for revoked handles.
 - HKL bundles are 5-50 MB typical; modern browsers allow at least 1 GB of IndexedDB storage in normal profiles. Cost of duplication is real but small.
-- "HKL remembers local file locations of hki bundles" (backlog wording) is satisfied by remembering the *bundle contents*, not the *file path*. The user experience is identical.
+- "HKL remembers local file locations of hki bundles" (Max's wording) is satisfied by remembering the *bundle contents*, not the *file path*. The user experience is identical.
 
-Considered "ask every session" (no persistence). Rejected: contradicts backlog wording and produces a friction loop where the user re-picks the same file every reload to play notes.
+Considered "ask every session" (no persistence). Rejected: contradicts Max's wording and produces a friction loop where the user re-picks the same file every reload to play notes.
 
 **Where**: `src/state/instrumentRegistry.ts` — `openDb`, `init`, `importBundle`, `removeBundle`, `getAudio`. Database name `hkl-instrument-registry`, version 1.
 
@@ -2233,18 +2234,18 @@ Considered "ask every session" (no persistence). Rejected: contradicts backlog w
 
 The `.hki` format is intentionally producer-agnostic — Phase 2 will produce bytes via the same `writeHki` from `src/shared/hki.ts` that the Node CLI uses, and HKL won't care which produced any given bundle. The Phase 2 preview-playback path is also one line on top of the existing import flow: the analyzer hands the in-progress manifest+blobs straight to `loadInstrument` via the registry path, no new engine support needed.
 
-If Phase 2 reveals a format change is warranted (e.g., per-velocity-layer audio for the orchestrator path described in backlog under ORCHESTRATOR), `HKI_MANIFEST_VERSION` bumps to 2 and `readHki` rejects v1 with a clear message. Both producer and consumer go through `validateManifest` so the migration is symmetric.
+If Phase 2 reveals a format change is warranted (e.g., per-velocity-layer audio for the orchestrator path planned for the orchestrator), `HKI_MANIFEST_VERSION` bumps to 2 and `readHki` rejects v1 with a clear message. Both producer and consumer go through `validateManifest` so the migration is symmetric.
 
-**Where**: Phase 1 added `src/shared/hki.ts`, `analyzer/bundle.js`, `src/state/instrumentRegistry.ts`, `src/ui/instrumentBundles.ts`; modified `analyzer/generate-samples.js`, `src/audio/samples-data.ts`, `src/audio/samples-engine.ts`, `src/ui/init.ts`, `vite.config.ts`, `index.html`, `package.json`. Phase 2 scope is in the backlog under ANALYZER.
+**Where**: Phase 1 added `src/shared/hki.ts`, `analyzer/bundle.js`, `src/state/instrumentRegistry.ts`, `src/ui/instrumentBundles.ts`; modified `analyzer/generate-samples.js`, `src/audio/samples-data.ts`, `src/audio/samples-engine.ts`, `src/ui/init.ts`, `vite.config.ts`, `index.html`, `package.json`.
 
 ---
 
 ## User-facing Analyzer UI (HKLA) shipped as third Vite multi-page entry (2026-05-26)
 
-**Picked**: `/analyzer.html` is a new Vite multi-page sibling of `index.html` (HKL) and `composer.html` (HKLC), with its own module tree under `src/analyzer/`. Single-instrument focus per backlog L144 ("Streamline analyzer UI ... focus should be on one instrument at a time"). Reuses the existing browser-runnable engine in `analyzer/*.js` (analysis-analysis.js, k-weighting.js, analyzer-visualization.js, analyzer-instruments.js) unchanged. Outputs `.hki` for local-source instruments and a new round-trippable `<key>-config.json` for CDN-source instruments. The per-sample diagnostic chart (envelope, slope, segments, candidates) is the existing HKLViz module reused as-is — strict parity with the dev sidecar so we can retire it.
+**Picked**: `/analyzer.html` is a new Vite multi-page sibling of `index.html` (HKL) and `composer.html` (HKLC), with its own module tree under `src/analyzer/`. Single-instrument focus per Max ("Streamline analyzer UI ... focus should be on one instrument at a time"). Reuses the existing browser-runnable engine in `analyzer/*.js` (analysis-analysis.js, k-weighting.js, analyzer-visualization.js, analyzer-instruments.js) unchanged. Outputs `.hki` for local-source instruments and a new round-trippable `<key>-config.json` for CDN-source instruments. The per-sample diagnostic chart (envelope, slope, segments, candidates) is the existing HKLViz module reused as-is — strict parity with the dev sidecar so we can retire it.
 
 **Rejected**:
-- Embed the analyzer UI in HKL itself (modal/side-panel). Couples analyzer code into HKL's bundle, defeats the future monorepo separation (backlog "HKLA" surface), crowds the toolbar.
+- Embed the analyzer UI in HKL itself (modal/side-panel). Couples analyzer code into HKL's bundle, defeats the future monorepo separation (the "HKLA" surface), crowds the toolbar.
 - A different URL slug (e.g. `/hkla.html` or `/instruments.html`). Same-origin BroadcastChannel and IndexedDB work regardless of slug; `.html` parity with the other entries is enough.
 - Single-channel multi-tenant bridge sharing the Composer protocol file (see next entry).
 
@@ -2263,7 +2264,7 @@ If Phase 2 reveals a format change is warranted (e.g., per-velocity-layer audio 
 - Leave the duplication: HKL's `samples-engine.ts:scheduleSegmentSwitch` AND a new copy inside `src/analyzer/audition.ts`. Rejected: same algorithm, two source-of-truths — drift is inevitable.
 - Make `src/audio/` shareable with the analyzer. Rejected: `src/audio/` is full of HKL-app state (voice tracking, MIDI velocity, range attenuation, INSTRUMENTS map) and the analyzer is supposed to be independent of HKL.
 
-**Why**: The "segment-loop executor" is exactly the HKLE (Engine) surface described in `docs/backlog.md` ENGINE section ("audio handler, normalizer, segment-loop executor"). Putting it in its own directory now seeds the eventual extracted library — the analyzer is the first non-HKL consumer, but the orchestrator will be the second. The split also forces the boundary at design time: the looper takes `AudioContext` + `AudioBuffer` + segments and produces audio, with no awareness of voices, MIDI, or instruments.
+**Why**: The "segment-loop executor" is exactly the HKLE (Engine) surface Max described ("audio handler, normalizer, segment-loop executor"). Putting it in its own directory now seeds the eventual extracted library — the analyzer is the first non-HKL consumer, but the orchestrator will be the second. The split also forces the boundary at design time: the looper takes `AudioContext` + `AudioBuffer` + segments and produces audio, with no awareness of voices, MIDI, or instruments.
 
 The `pickNextSeam` algorithm is genuinely pure data (no Web Audio, no state) and lives in `src/shared/segments.ts`. The state machine that drives `AudioBufferSourceNode` lifecycles lives in `src/engine/segmentLooper.ts`. `samples-engine.ts` and `audition.ts` both call `pickNextSeam` from shared; audition uses `startSegmentLooper` from engine; samples-engine still owns its own scheduleSegmentSwitch because rate ramps + voice keys aren't yet factored out (future refactor, not Phase 2 scope).
 
@@ -2350,7 +2351,7 @@ The HKL toolbar button is renamed `Bundles…` → `Import`, with the two file-p
 
 **Rejected**:
 - **Time-based (`@tstamp`/`@tstamp2`) anchoring** like dynamics/hairpins. A slur's identity is its two endpoint notes; tstamp anchoring is for markings that must survive nearby-note deletion. This is the deliberate exception to the "prefer tstamp" rule (lessons.md / the expressions.ts header comment). Trade-off: a deleted endpoint dangles the slur, handled by `pruneDanglingSlurs`.
-- **The older `(`-wraps-a-selection entry** described in a prior architecture.md draft. The backlog (Max's source of truth) specifies the `Ctrl+L` pending-state flow; that supersedes it. docs/architecture/composer.md (slurs) rewritten to match.
+- **The older `(`-wraps-a-selection entry** described in a prior architecture.md draft. Max specified the `Ctrl+L` pending-state flow; that supersedes it. docs/architecture/composer.md (slurs) rewritten to match.
 - **Deciding the legato mechanism Composer-side.** The instrument is HKL-side state, so Composer only ships slur *connectivity* (`voice`, `slurredToNext`) and HKL picks overlap-vs-glide from `instrReplaysOnTranspose()`.
 - **Refactoring the live pitch-transpose path to share the glide primitive.** The new batched `glideVoices(pairs, rampMs)` in `audio/engine.ts` was extracted for playback, but `keyboard-notes.ts`'s sustained-transpose branch (ear-tuned, working) was left calling its own inline handoff to avoid destabilizing it. A future dedup could route it through `glideVoices`.
 - **Per-event continuous-loudness shaping across a slur** and richer chord-slur handling — out of scope for v1. Chord-involved slur joins fall back to normal abutting playback.
@@ -2410,7 +2411,7 @@ HKL re-supplies all three at `engine.ts:initAudio` so runtime behavior is identi
 
 **Why**: this is the first concrete step of the approved pnpm-monorepo plan (`@hkl/engine` = HKLE, importable outside HKL). The seam is deliberately a config object on `init` rather than module-level setters so a standalone consumer wires everything in one call and the engine has no implicit global host. **Verified by typecheck + build only — the DI sits in the audio path, so loop crossfades / aftertouch swells / transpose-glide / imported-`.hki` playback are Max's by-ear gate before commit.**
 
-**Where**: `src/audio/samples-engine.ts` (`SampleEngineConfig` + `PaRampState`/`SeamEvent` types, injected module vars, relocated `inflightExpRampValue`, `init` config arg), `src/audio/samples.ts` (re-export `inflightExpRampValue` + config types), `src/audio/engine.ts` (wires the three deps at `initAudio`, imports `inflightExpRampValue` from the barrel), `src/audio/aftertouch.ts` (dropped `inflightExpRampValue`), `src/audio/diagnostics/loopOverlay.ts` (`SeamEvent` extends the engine's emitted type). Plan: `~/.claude/plans/i-d-like-to-do-temporal-thimble.md`.
+**Where**: `src/audio/samples-engine.ts` (`SampleEngineConfig` + `PaRampState`/`SeamEvent` types, injected module vars, relocated `inflightExpRampValue`, `init` config arg), `src/audio/samples.ts` (re-export `inflightExpRampValue` + config types), `src/audio/engine.ts` (wires the three deps at `initAudio`, imports `inflightExpRampValue` from the barrel), `src/audio/aftertouch.ts` (dropped `inflightExpRampValue`), `src/audio/diagnostics/loopOverlay.ts` (`SeamEvent` extends the engine's emitted type).
 
 ---
 
@@ -2432,7 +2433,7 @@ HKL re-supplies all three at `engine.ts:initAudio` so runtime behavior is identi
 - `analyzer/bundle.js` (a Node CLI outside module resolution) imports the `.hki` writer by **relative path**, updated to `../packages/shared/src/hki.ts` rather than the bare specifier.
 - Verified each package incrementally with `pnpm typecheck` + `pnpm build` + dev-server smoke (all three entry points + each `@hkl/*` specifier serve 200). `git mv` preserved rename history.
 
-**Where**: NEW `pnpm-workspace.yaml`, `packages/{shared,engine,notation,bridge}/package.json`. `package.json` (`packageManager`, four `@hkl/* workspace:*` deps). MOVED the files listed above into `packages/*/src/`. Import rewrites across ~50 `src/` files (relative → `@hkl/*`). Plan: `~/.claude/plans/i-d-like-to-do-temporal-thimble.md`.
+**Where**: NEW `pnpm-workspace.yaml`, `packages/{shared,engine,notation,bridge}/package.json`. `package.json` (`packageManager`, four `@hkl/* workspace:*` deps). MOVED the files listed above into `packages/*/src/`. Import rewrites across ~50 `src/` files (relative → `@hkl/*`).
 
 ---
 
@@ -3370,7 +3371,7 @@ insert — so no cross-app color recompute is needed. v1 doesn't follow harmonic
 play-ahead, or mid-piece starts.
 
 **OBS live overlay = HKL-only WebSocket mirror (2026-06-06).**
-Goal (backlog LAYOUT #1): composite the hex lattice + Composer view over a performance video in OBS,
+Goal (Max): composite the hex lattice + Composer view over a performance video in OBS,
 transparent and live-synced to Max's own performing instance. Plain window capture can't carry alpha
 (the OS flattens the window before OBS sees it) and chroma key is unreliable (the palette spans the
 whole hue wheel). So OBS renders the content itself: a second HKL instance loaded as a Browser Source
@@ -3686,7 +3687,7 @@ reaches `osc.type`.
 
 ## `@hkl/engine` published as a standalone package `@hexkeylab/engine` (2026-06-22)
 
-**Context**: HKLE is being lifted out of the monorepo for reuse in unrelated apps (first a browser-React app, later Intonalogy via React Native — see `docs/hkle-extraction.md`). This is the build/publish step on top of the earlier DI + manifest-injection work.
+**Context**: HKLE is being lifted out of the monorepo for reuse in unrelated apps (first a browser-React app, later Intonalogy via React Native). This is the build/publish step on top of the earlier DI + manifest-injection work.
 
 **Picked**:
 - **Dual identity, one source.** The workspace package stays `@hkl/engine` (private, `"exports": {"./*.js": "./src/*.ts"}`) so in-repo Vite consumers keep importing raw `.ts` with zero disruption. A **tsup** build (`pnpm --filter @hkl/engine build`) emits a separate self-contained `dist/` — ESM + CJS + `.d.ts` — with its own generated `dist/package.json` naming the public package `@hexkeylab/engine` and a single `.` export.
@@ -3696,7 +3697,7 @@ reaches `osc.type`.
 
 **Verified**: `pnpm typecheck` + `pnpm -r build` (all apps incl. HKL) + `pnpm check:boundaries` + `test/engine-smoke` (Node) + `test/react-consumer` (headless-Chromium browser gate: import → `init()` on a real `AudioContext` → decode → JI triad → `sRampFreq` retune, all green) + `npm publish packages/engine/dist --dry-run` (9 files, no `@hkl/*` deps). **Audio-path behavior is Max's by-ear gate** (loop crossfades / aftertouch / transpose-glide / `.hki` playback) per the standing posture. `test:composer` not run — no Composer/bridge/notation code changed.
 
-**Where**: `packages/engine/{tsup.config.ts,package.json,README.md,LICENSE,src/index.ts}`, `samples-engine.ts` (audioFetch + types, Iowa-rewrite removed). `apps/hkl/src/audio/samples-data.ts` (Iowa entries), `state/audio.ts` (placeholder), `index.html` (options). NEW `test/react-consumer/`. `docs/hkle-extraction.md` (initiative tracker).
+**Where**: `packages/engine/{tsup.config.ts,package.json,README.md,LICENSE,src/index.ts}`, `samples-engine.ts` (audioFetch + types, Iowa-rewrite removed). `apps/hkl/src/audio/samples-data.ts` (Iowa entries), `state/audio.ts` (placeholder), `index.html` (options). NEW `test/react-consumer/`.
 
 ## Instrument is per-voice, not a global "current instrument" (engine 2.0.0, 2026-07-07)
 
@@ -3709,7 +3710,7 @@ reaches `osc.type`.
 
 **Verified**: `pnpm typecheck` + `pnpm -r build` + `pnpm check:boundaries` + **`pnpm test:composer` (317/317, incl. `phase5_multi_instr_selection`)** + `test/engine-smoke` + `test/react-consumer` (per-voice signature) + `npm publish --dry-run` (2.0.0). **Audio feel is Max's by-ear gate** (live play, transpose glide, simultaneous multi-instrument Composer playback, aftertouch, recordings, `.hki`).
 
-**Where**: `packages/engine/src/samples-engine.ts` (+ `tsup.config.ts`/`package.json` version, `README.md`). `apps/hkl/src/audio/{engine.ts,samples.ts}`, `types.ts`, `input/keyboard-notes.ts`, `midi/handler.ts`, `ui/controls.ts`, `bridge/hkl-side.ts`. `apps/analyzer/cli/{generate-samples,backfill-gains}.js`. NEW `docs/musiquest-handoff.md` + `handoff/musiquest/` (three `.hki` + def JSONs).
+**Where**: `packages/engine/src/samples-engine.ts` (+ `tsup.config.ts`/`package.json` version, `README.md`). `apps/hkl/src/audio/{engine.ts,samples.ts}`, `types.ts`, `input/keyboard-notes.ts`, `midi/handler.ts`, `ui/controls.ts`, `bridge/hkl-side.ts`. `apps/analyzer/cli/{generate-samples,backfill-gains}.js`. NEW `handoff/musiquest/` (three `.hki` + def JSONs).
 
 ## Scroll splice serializes only the edited range (O(range), not O(total))
 
@@ -3721,7 +3722,7 @@ reaches `osc.type`.
 
 ## MusiQuest library conversion: pickSpacing, note-level trim, keepAllRange, and the transpose split (2026-07-08)
 
-**Context**: Converting MusiQuest's ~101 MB chromatic sample library (42 pitched sets at `~/musiquest-assets/audio/samples`) into `.hki` bundles for MQ integration. Requirements: minor-third thinning everywhere, half-step granularity for six voice sets, note-level natural-range trim (violin ≥ G3, etc.), loop analysis with an aggregated success report. 38 instruments converted (Max dropped `male_ooo`, `voice`, `mmm`, `la`); result ~26 MB staged in `handoff/musiquest/`.
+**Context**: Converting MusiQuest's ~101 MB chromatic sample library (42 pitched sets) into `.hki` bundles for MQ integration. Requirements: minor-third thinning everywhere, half-step granularity for six voice sets, note-level natural-range trim (violin ≥ G3, etc.), loop analysis with an aggregated success report. 38 instruments converted (Max dropped `male_ooo`, `voice`, `mmm`, `la`); result ~26 MB staged in `handoff/musiquest/`.
 
 **Picked**:
 - **`pickSpacing` (default 4) parametrizes the picker**; window `±floor(S/2)`, gap threshold `> S`. **Decay-path thinning is gated on the *presence* of `pickSpacing`**, not its value — legacy decay configs (`local-viola-pizz.json`) keep every usable sample byte-identically; dense chromatic sources opt in with `pickSpacing: 3`. Verified by before/after byte-diffs of block + .hki (modulo provenance timestamp) on `local-viola.json` (loop) and `local-viola-pizz.json` (decay).
@@ -3733,7 +3734,7 @@ reaches `osc.type`.
 
 **Verified**: backward-compat byte-diffs (above); `pnpm check:boundaries`; all 38 staged bundles unzip + manifest-validate (loop samples all carry segments, defs match manifests, no stray transpose); total 26 MB vs 101 MB source. **Loop smoothness by ear is Max's gate** — import staged `.hki` via HKL's `+ .hki` button.
 
-**Where**: `apps/analyzer/cli/{generate-samples,bundle,batch-musiquest}.js`, `apps/analyzer/configs/musiquest/*.json` (38), `package.json` (`analyze:musiquest`), `handoff/musiquest/{*.hki,defs/*.json,generation-report.md,musiquest-handoff.md}`, `docs/architecture/analyzer.md`.
+**Where**: `apps/analyzer/cli/{generate-samples,bundle,batch-musiquest}.js`, `apps/analyzer/configs/musiquest/*.json` (38), `package.json` (`analyze:musiquest`), `handoff/musiquest/{*.hki,defs/*.json,generation-report.md}`, `docs/architecture/analyzer.md`.
 
 ## .hki imports override static instruments; imports evict the engine cache (2026-07-09)
 
@@ -3764,7 +3765,7 @@ reaches `osc.type`.
 
 **Verified**: fix harness re-run in Firefox — worst seam +13.4 dB → 0.0 dB; `pnpm typecheck`, engine tsup build, `test/engine-smoke`, `pnpm check:boundaries`, HKL build all green. **By-ear confirmation in Firefox is Max's gate.**
 
-**Where**: `packages/engine/src/{samples-engine.ts,segmentLooper.ts}`, `packages/engine/{package.json,tsup.config.ts}` (2.0.1), `docs/lessons.md` (Firefox pre-ring entry), `handoff/musiquest/musiquest-handoff.md` (version note).
+**Where**: `packages/engine/src/{samples-engine.ts,segmentLooper.ts}`, `packages/engine/{package.json,tsup.config.ts}` (2.0.1), `docs/lessons.md` (Firefox pre-ring entry).
 
 ## Crossfade-residual gate + analyzer-chosen per-sample crossfade — engine 2.1.0 (2026-07-09)
 
@@ -3803,7 +3804,7 @@ reaches `osc.type`.
 
 **Verified**: fresh provenance + complete loop data in all five staged bundles; xylo C4 emits 523.25 Hz, glockenspiel F3 emits 349.23 Hz (= 2.0× label); handoff total 22.7 MB. **By-ear pass on all five replacements is done (Max)**; mallet octave audition pending.
 
-**Where**: `apps/analyzer/configs/musiquest/{violin,oboe,flute,cello,double_bass_arco,xylo,glockenspiel}.json`, `apps/analyzer/cli/batch-musiquest.js` (guard), `handoff/musiquest/{*.hki,defs/*.json,generation-report.md,musiquest-handoff.md}`.
+**Where**: `apps/analyzer/configs/musiquest/{violin,oboe,flute,cello,double_bass_arco,xylo,glockenspiel}.json`, `apps/analyzer/cli/batch-musiquest.js` (guard), `handoff/musiquest/{*.hki,defs/*.json,generation-report.md}`.
 
 ## HKL sustained-set refresh: full regen + eight MQ/replacement additions (2026-07-10)
 
@@ -3839,7 +3840,7 @@ reaches `osc.type`.
 
 **Verified**: typecheck + boundaries + HKL build green; headless load test against the live dev proxy — dropdown holds `violin`, `/samples/violin.hki` 200, engine decodes and a held note plays with no console errors beyond environmental headless noise. **By-ear audition passed (Max, 2026-07-10) on the probe bundle with identical pick data.** Batch note: `analyze:musiquest violin` staged violin cleanly; the run flags cello/clarinet/flute/trombone as stale-summary (their `out/` summaries were overwritten by the bundle-less HKL-side refresh) — pre-existing, their Jul 9 handoff bundles remain valid; a re-run would also pick up the fill fix and change their pick sets, so it awaits an explicit decision.
 
-**Where**: `apps/analyzer/configs/musiquest/violin.json`, `apps/analyzer/configs/sso-violin.json` (deprecation note), `apps/hkl/src/audio/samples-data.ts` (violin block, hki-shipped), `public/samples/violin.hki`, `handoff/musiquest/{violin.hki,defs/violin.json,generation-report.md,musiquest-handoff.md}`.
+**Where**: `apps/analyzer/configs/musiquest/violin.json`, `apps/analyzer/configs/sso-violin.json` (deprecation note), `apps/hkl/src/audio/samples-data.ts` (violin block, hki-shipped), `public/samples/violin.hki`, `handoff/musiquest/{violin.hki,defs/violin.json,generation-report.md}`.
 
 ## Full loop-instrument sweep under the fill-pass fix (2026-07-10)
 
@@ -3871,7 +3872,7 @@ reaches `osc.type`.
 
 ## Score size relative to page = page-dimension scaling, not unit/scale (2026-07-11)
 
-**Context**: Max wanted a Composer control to change the score size *relative to the page* (backlog "Change size relative to the page"). The obvious lever — Verovio's `unit` (staff size) or `scale` — would resize the notation, but that collides with the three carefully pixel-crisp zoom presets (`CRISP_PRESETS`: scale/unit/line-width/margin-parity co-tuned so staff lines land on whole device pixels). Under `svgViewBox:false`, `scale` is a true output zoom (page + notation together), so the existing zoom is pure magnification and does not change music-per-page.
+**Context**: Max wanted a Composer control to change the score size *relative to the page* (Max: "Change size relative to the page"). The obvious lever — Verovio's `unit` (staff size) or `scale` — would resize the notation, but that collides with the three carefully pixel-crisp zoom presets (`CRISP_PRESETS`: scale/unit/line-width/margin-parity co-tuned so staff lines land on whole device pixels). Under `svgViewBox:false`, `scale` is a true output zoom (page + notation together), so the existing zoom is pure magnification and does not change music-per-page.
 
 **Picked**: keep `scale`/`unit`/line-widths *fixed* at the crisp zoom preset (content size + crispness owned entirely by zoom), and add a per-document **`pageScale`** (60–160%, default 100) that scales only the page rectangle — `pageWidth`/`pageHeight` + the four margins — in **page view**. The notation keeps its on-screen size while the paper grows/shrinks around it and bars-per-system reflow: exactly "score size relative to the page," orthogonal to zoom. Stored as `page-scale` on `<hkl:config>` (like `heji`/`ignore-color`), so it travels with the `.hkc` and drives PDF export; absent ⇒ 100 (no migration). Crispness survives because scale/unit are untouched and the scaled top margin still flows through `crispMarginTop()`. Scroll view (no page rectangle) ignores it — which also means the HKL read-only Composer-view frame (scroll-mode) needs no change and streamed-cursor pixel-parity holds.
 
@@ -3952,7 +3953,7 @@ reaches `osc.type`.
 
 ## Lazy per-voice pan: StereoPannerNode only when a pan is specified (2026-07-23)
 
-**Context**: Consumer-side analysis of `@hkl/engine` for Intonalogy (React Native, RNAA — Phase 2 of docs/hkle-extraction.md) found the engine has no pan control. Requirement: Web Audio −1..1 pan, added without disturbing existing consumers (HKL, MusiQuest, react-consumer, engine-smoke).
+**Context**: Consumer-side analysis of `@hkl/engine` for Intonalogy (React Native, RNAA) found the engine has no pan control. Requirement: Web Audio −1..1 pan, added without disturbing existing consumers (HKL, MusiQuest, react-consumer, engine-smoke).
 
 **Picked**: per-voice `StereoPannerNode` spliced as the voice's outermost node (`pressureGain → panNode → master`), created **lazily — only once a pan is actually specified** via `sSetVoicePan(voiceKey, pan, rampSec?)` or the new optional trailing `pan` arg on `sNoteOn`/`sNoteOnFaded`. Outermost placement survives seam-crossfade source rotation (seams reconnect into `voiceGain` only). Feature-detected: hosts without `createStereoPanner` no-op silently. Engine **2.4.0** (additive).
 
@@ -3964,7 +3965,7 @@ reaches `osc.type`.
 
 **Verified**: `pnpm typecheck` + `pnpm check:boundaries` + `pnpm --filter @hkl/engine build` green; engine-smoke exercises lazy splice / node reuse / note-on pan arg / absent-voice no-op / missing-`createStereoPanner` no-op against the stub ctx; react-consumer smoke asserts the lazy panner appears on a real `AudioContext` through the built package.
 
-**Where**: `packages/engine/src/samples-engine.ts` (`ensureVoicePanNode`, `sSetVoicePan`, `pan?` args, voice `panNode` field), `packages/engine/{package.json,README.md}`, `test/engine-smoke/index.mjs`, `test/react-consumer/src/App.tsx`, `docs/architecture/engine.md`, `docs/hkle-extraction.md`.
+**Where**: `packages/engine/src/samples-engine.ts` (`ensureVoicePanNode`, `sSetVoicePan`, `pan?` args, voice `panNode` field), `packages/engine/{package.json,README.md}`, `test/engine-smoke/index.mjs`, `test/react-consumer/src/App.tsx`, `docs/architecture/engine.md`.
 
 ## Ramp-aware seams: every-step reschedule, analytic trajectory, no getter reads (2026-07-24)
 
@@ -3982,11 +3983,11 @@ reaches `osc.type`.
 
 **Verified**: headless harness drives — strings 400×1¢@50ms/60ms (16 seams), 600×1¢@15ms with overlapping 100ms ramps, −400×1¢@30ms down, winds + brass 300×1¢@40ms: **all 0 immediate seams, settled drift 0.00¢**; no-ramp sustained hold (8s, 7 wraps) unregressed. `pnpm typecheck` + `check:boundaries` + engine build + engine-smoke + react-consumer smoke green; HKL headless load/play spot-check clean. **By-ear pass on the harness is Max's gate; Android/RNAA re-test is the Phase-2 acceptance.**
 
-**Where**: `packages/engine/src/samples-engine.ts` (trajectory helpers, `carryRampOnto`, `normalizeRampAtAnchor`, `sRampFreq` rewrite, `SeamEvent.kind`, re-anchor removal), `test/ramp-stress/` (seam-kind counters), `docs/architecture/engine.md`, `docs/hkle-extraction.md`.
+**Where**: `packages/engine/src/samples-engine.ts` (trajectory helpers, `carryRampOnto`, `normalizeRampAtAnchor`, `sRampFreq` rewrite, `SeamEvent.kind`, re-anchor removal), `test/ramp-stress/` (seam-kind counters), `docs/architecture/engine.md`.
 
 ## t=0 timeline seed on every non-default AudioParam write (engine 2.4.1, 2026-08-13)
 
-**Context**: Intonalogy (react-native-audio-api 0.13.2, Android) root-caused a click at the seam rate to the born-silent idiom: `gain.value = 0` + `setValueAtTime(0, futureT)`. RNAA defers the `.value` setter AND resolves evaluation before the first timeline event from the param's **constructor default** (1.0), never the intrinsic value — so every source start (note-on + every seam) rendered its first sample at unity gain, injecting the raw buffer value additively. Audibility tracked segment-entry amplitude, disguising an all-instruments bug as a one-instrument bug. Zero browsers reproduce it (spec-conforming intrinsic-value fallback). Full report: `handoff/hkle-born-silent-gain-fix.md`.
+**Context**: Intonalogy (react-native-audio-api 0.13.2, Android) root-caused a click at the seam rate to the born-silent idiom: `gain.value = 0` + `setValueAtTime(0, futureT)`. RNAA defers the `.value` setter AND resolves evaluation before the first timeline event from the param's **constructor default** (1.0), never the intrinsic value — so every source start (note-on + every seam) rendered its first sample at unity gain, injecting the raw buffer value additively. Audibility tracked segment-entry amplitude, disguising an all-instruments bug as a one-instrument bug. Zero browsers reproduce it (spec-conforming intrinsic-value fallback).
 
 **Picked**: pair EVERY `.value = x` write whose `x` can differ from the param's constructor default with `param.setValueAtTime(x, 0)` — t=0 is unconditionally in the past, so the seed is always the earliest event and the timeline is authoritative from birth on every host; it cannot interfere with later events (audit: no post-creation `.value =` writes exist anywhere in the engine — all later control is timeline-based). Eleven seeds: the report's five verified born-silent gains (`sNoteOn`/`scheduleSegmentSwitch`/`doImmediateSwitch`/`sNoteOnFaded` segGain/newSG + segmentLooper `newGain`), plus the same-class audit: segmentLooper `g0` gain (latent audible bug whenever `gain ≠ 1` — the moment `schedulePending` queues future fade-out events, the whole pre-switchTime region resolves to 1.0 on RNAA; first segment only, later gains have past events by the time they're current), `carryRampOnto`'s rate write (covers both seam paths; one wrong-rate first sample = sub-sample position offset, inaudible but same defect), and the direct `playbackRate.value =` writes (sNoteOn, sNoteOnFaded, segmentLooper ×2). Writes intended at the default (voiceGain/damperGain/pressureGain/sampleMaster = 1.0) stay bare — the wrong lookup returns the right value. Canonical rationale comment lives at `scheduleSegmentSwitch`; engine-wide convention documented in `docs/architecture/engine.md` → Host AudioParam contract.
 
@@ -3998,7 +3999,7 @@ reaches `osc.type`.
 
 ## Cancel pending switches at switchTime, not now (engine 2.4.2, 2026-08-14)
 
-**Context**: Intonalogy (engine 2.4.1, web + native alike) reported two one-cause symptoms from `cancelPendingSwitch`: a click on every note onset (attack fade deleted → silence-to-full in ~1.5ms where `sNoteOnFaded(dur=0.1)` should ramp 100ms) and a hard `setValueAtTime` throw inside the fade window. Cause: the function's teardown restored `oldSegGain` to `v.vol` anchored at `now` — written for the mid-crossfade case, where the gain sits at steady `v.vol`. But `segGain` also carries the voice's own attack (sNoteOn's 4ms `ATTACK_FADE_S` ramp, sNoteOnFaded's 100ms equal-power `setValueCurveAtTime`), which sits earlier on the same timeline, and every looping voice carries a `pendingSwitch` from birth. Cancel before the attack started → `cancelScheduledValues(now)` deleted the fade and the 5ms restore drove the gain to full before the source's start (click); cancel with the attack in flight → `setValueAtTime(now)` landed inside the live curve (throw on strict hosts). Reachable from every teardown/retune path — `sNoteOff`, `sHardStop`, `sRampFreq`, `sSlideAndFadeOut` (the report missed this one), defensively `scheduleSegmentSwitch` — so a retune sweep over future-scheduled voices clicked every note of a sequence. Report: `handoff/hkle-cancel-pending-switch-attack.md`.
+**Context**: Intonalogy (engine 2.4.1, web + native alike) reported two one-cause symptoms from `cancelPendingSwitch`: a click on every note onset (attack fade deleted → silence-to-full in ~1.5ms where `sNoteOnFaded(dur=0.1)` should ramp 100ms) and a hard `setValueAtTime` throw inside the fade window. Cause: the function's teardown restored `oldSegGain` to `v.vol` anchored at `now` — written for the mid-crossfade case, where the gain sits at steady `v.vol`. But `segGain` also carries the voice's own attack (sNoteOn's 4ms `ATTACK_FADE_S` ramp, sNoteOnFaded's 100ms equal-power `setValueCurveAtTime`), which sits earlier on the same timeline, and every looping voice carries a `pendingSwitch` from birth. Cancel before the attack started → `cancelScheduledValues(now)` deleted the fade and the 5ms restore drove the gain to full before the source's start (click); cancel with the attack in flight → `setValueAtTime(now)` landed inside the live curve (throw on strict hosts). Reachable from every teardown/retune path — `sNoteOff`, `sHardStop`, `sRampFreq`, `sSlideAndFadeOut` (the report missed this one), defensively `scheduleSegmentSwitch` — so a retune sweep over future-scheduled voices clicked every note of a sequence.
 
 **Picked** (the report's own proposal, verified correct against source): branch on `now < p.switchTime`. Crossfade not yet begun → `cancelScheduledValues(p.switchTime)` only — everything `scheduleSegmentSwitch` put on `oldSegGain` sits at/after `switchTime`, so canceling there removes exactly those two events and leaves an unstarted/in-flight attack intact; nothing to restore, the voice's own envelope is left alone. Crossfade in flight → the existing 5ms restore, unchanged. This also removes any `setValueAtTime` from the pre-crossfade path, so no event can land inside a live curve from this function.
 
@@ -4178,11 +4179,11 @@ reaches `osc.type`.
 
 **Next steps recorded in the handoff doc §10** (Max's priority order): (1) root-cause the v12 regression before trusting the pipeline on other string sources — lead hypothesis: the coverage pass lost its outlier guard when the pick bar went seam-only (E3/Gs4 entered v11's deliberate gaps on sub-red SEAM alone despite 0.32/0.33 set-deviation, violating "gap preferred over audible outlier"), plus the real-valued attack dimension possibly over-eager on bowed strings (Ds2). (2) Korg piano (HKLO): investigate per-velocity-layer gain recalculation with the Bark-sones model — sustained-span model needs a decay adaptation; between-layer dynamics ordering must be preserved.
 
-**Where**: `docs/analyzer-perception-handoff.md` §§9–11 rewritten to current state; compare harness keeps cello-v12 as regression-study material.
+**Where**: compare harness keeps cello-v12 as regression-study material.
 
 ## 2026-08-25 — Inflight-crossfade-cut repro harness: real-time capture in ramp-stress, injection-validated detector, no engine changes
 
-**Context**: Intonalogy's third HKLE handoff (`handoff/hkle-inflight-crossfade-cut.md`, engine 2.4.2) — clicks when a note-off lands during an in-flight seam crossfade (Cause 1: unconditional `newSrc.stop(0)` in `cancelPendingSwitch`) and while retuning from a slider (Cause 2 hypothesis: `sRampFreq`'s in-flight gate races the audio clock). Max's reframe: live-tuning clicks are the pressing issue, and the engine's command-shaped tuning API (self-contained `sRampFreq` calls, hammered at 40ms by the consumer as a workaround) is the design gap to keep in view.
+**Context**: Intonalogy's third HKLE report (engine 2.4.2) — clicks when a note-off lands during an in-flight seam crossfade (Cause 1: unconditional `newSrc.stop(0)` in `cancelPendingSwitch`) and while retuning from a slider (Cause 2 hypothesis: `sRampFreq`'s in-flight gate races the audio clock). Max's reframe: live-tuning clicks are the pressing issue, and the engine's command-shaped tuning API (self-contained `sRampFreq` calls, hammered at 40ms by the consumer as a workaround) is the design gap to keep in view.
 
 **Picked**: extend `test/ramp-stress/` (not a new harness) with an automated capture+detect mode — `src/repro.js` scenarios + AudioWorklet PCM recorder fed from `tapMaster` (44.1kHz real-time ctx, `--mute-audio` Chromium so runs are silent at the machine), `detect.mjs` (second-difference outliers vs block-local median, impulsiveness-gated), `run.mjs` CDP driver (own vite server on a fresh port; reuses `test/composer-test/lib/{chromium,cdp}.mjs`, which gained an optional `extraArgs`). Real-time rather than OfflineAudioContext because Cause 2 is a JS-thread-vs-render race that offline suspend/resume cannot exhibit, and offline wall-timer desync would corrupt the engine's commit bookkeeping. Every engine call is logged with a pre-call `pendingSwitch` snapshot — all `cancelPendingSwitch` invocations are triggered by harness calls, so cancels are inferred exactly with zero engine instrumentation (the engine under test stays pristine). The detector is gated per-run by injection validation (synthetic instant-dip-with-5ms-recovery cuts into the clean capture; 100% at depth ≥ 0.2, zero false positives required) — the handoff's analyze_seams.py lesson, first such detector in-repo. Verdicts are categorical (zero vs many), never count ratios. `--gate` mode (exit non-zero on any in-window defect) is the post-fix regression gate.
 
@@ -4204,7 +4205,7 @@ reaches `osc.type`.
 
 ## 2026-08-29 — Composer Tier-1 render-latency fixes: theme repaints in place, view switches restore stashed DOM, redoLayout rejected
 
-**Context**: the sonata (446 bars / 37 pages) profiled at ~4.5 s per page-view full render, ~6.7 s per page→scroll switch, ~6.4 s per theme change (Chromium; Firefox worse — up to 10 s observed). Baseline + full lever list in docs/composer-render-perf.md; this entry records the first tranche (Tier 1), scoped performance-only, ahead of Tier 2 (page virtualization + progress feedback) and Phase C (system-splice cascade).
+**Context**: the sonata (446 bars / 37 pages) profiled at ~4.5 s per page-view full render, ~6.7 s per page→scroll switch, ~6.4 s per theme change (Chromium; Firefox worse — up to 10 s observed). This entry records the first tranche (Tier 1), scoped performance-only, ahead of Tier 2 (page virtualization + progress feedback) and Phase C (system-splice cascade).
 
 **Picked**:
 1. **Theme = DOM repaint, never a re-engrave.** `applyNotationTheme` was already fully reversible (dark tags the container + inline-paints noteheads; light removes both), so `Renderer.setTheme` is now a pure state setter and the theme handler calls the new `applyThemeToRendered()` on the existing DOM. Splicer and mode caches survive theme changes. 6.4 s → ~0.5 s on the sonata.
@@ -4214,7 +4215,7 @@ reaches `osc.type`.
 
 **Verified**: typecheck, composer build, boundaries, `HKL_INDEX_CHECK=1 test:composer` 328/328; headless probe asserts restored page counts (37 / 45 across zooms), scroll SVG width, single cursor overlay, and notehead fills across dark/light round-trips incl. the restore-with-stale-theme path. Awaiting Max's Firefox pass.
 
-**Where**: `apps/composer/src/render/render.ts` (ModeCacheEntry, stashAndRestore, applyThemeToRendered, renderPage split, render() cache/splicer reset), `apps/composer/src/main.ts` (freshRender gate on injections, theme handler), docs/composer-render-perf.md, docs/lessons.md.
+**Where**: `apps/composer/src/render/render.ts` (ModeCacheEntry, stashAndRestore, applyThemeToRendered, renderPage split, render() cache/splicer reset), `apps/composer/src/main.ts` (freshRender gate on injections, theme handler), docs/lessons.md.
 
 ## 2026-08-29 — Composer Tier-2: virtualized page view + heavy-render deferral/coalescing (page edits 4.5 s → 1.25 s Chromium)
 
@@ -4238,7 +4239,7 @@ reaches `osc.type`.
 
 **Picked**: `applyViewMode` no longer touches the class; `doReRender` calls `applyViewModeClass(renderer.getViewMode())` in the same synchronous block as `renderComposer`'s DOM write — class + content commit in one paint. During the deferred window the old view stays fully intact under the busy badge. Idempotent on every non-switch render. Boot's pre-render class set stays (correct background before Verovio loads). Probe-verified both directions (page DOM + `view-page` intact mid-deferral; atomic swap after; restore path 260 ms). Generalized as a rule in lessons.md: under deferral, every visible flip travels with the content swap.
 
-**Where**: `apps/composer/src/main.ts` (applyViewMode, doReRender), docs/composer-render-perf.md status log, lessons.md.
+**Where**: `apps/composer/src/main.ts` (applyViewMode, doReRender), lessons.md.
 
 ## 2026-08-30 — Scroll splicer: one document-order measure coordinate system + tstamp2 span expansion + ending-glyph reconcile
 
@@ -4279,7 +4280,7 @@ reaches `osc.type`.
 
 **Verified**: typecheck/build/boundaries clean; `HKL_INDEX_CHECK=1 test:composer` 334/334 incl. 3 new fixtures (`pageLineBreaksRefill` + visual baseline, `pageLineBreaksNoopDeterminism` — double round-trip + no-op stability, `pageLineBreaksDeriveFallback`); sonata battery: enablement parity 0.0, six-edit battery all refill-path with pins verbatim (voltas + key-change boundaries included), cascades 1–5 lines, untouched-line geometry bit-stable (the one 33-unit "violation" is the previous line's end-of-line courtesy signature appearing when a boundary moved next to a scoreDef — correct under full re-render; C-B's re-splice-k−1 rule), cold-start + derive-fallback + re-adopt paths probed. Latency unchanged by design (~1.5–2 s Chromium per edit, loadData-bound) — C-A is the structural prerequisite for C-B's splice, not the latency win.
 
-**Where**: `apps/composer/src/render/linebreaks.ts` (new), `apps/composer/src/render/render.ts` (renderPageComposer, buildOptions 'line' + geomMode, pageBreaksCtx, measureBudgetW), `apps/composer/src/render/splice.ts` (expandForSpanners/expandForEndings exported), `test/composer-test/fixtures.mjs` (PAGE_LINEBREAKS group + assertions), docs/composer-page-splice-design.md (Implementation section), docs/composer-render-perf.md (T3.0), docs/lessons.md (3 entries), docs/architecture/composer.md, docs/guide/composer.md.
+**Where**: `apps/composer/src/render/linebreaks.ts` (new), `apps/composer/src/render/render.ts` (renderPageComposer, buildOptions 'line' + geomMode, pageBreaksCtx, measureBudgetW), `apps/composer/src/render/splice.ts` (expandForSpanners/expandForEndings exported), `test/composer-test/fixtures.mjs` (PAGE_LINEBREAKS group + assertions), docs/composer-page-splice-design.md (Implementation section), docs/lessons.md (3 entries), docs/architecture/composer.md, docs/guide/composer.md.
 
 ## 2026-08-30 — Page-view edits preserve scroll; composer-test visual capture reworked (viewport-fit raster, compact-vs-fullPage framing, capture meta)
 
@@ -4289,7 +4290,7 @@ reaches `osc.type`.
 1. **renderPage (virtualized) captures and restores scrollTop/scrollLeft in the same synchronous block** — after placeholder sizing, before mountVisiblePages, so the pages at the restored position mount. Shorter documents re-clamp naturally. The numeric offset is preserved (content below a merged line legitimately shifts); anchor-based preservation belongs to Phase C-B's splice, which will stop rebuilding the container entirely.
 2. **Visual capture (test/composer-test/lib/visual.mjs) reworked** after Max found every page-mode baseline was cutting the paper: (a) the viewport is temporarily resized (device-metrics override) so the card stack actually rasterizes — an inner scroller's overflow is otherwise dark capture fill, captureBeyondViewport notwithstanding; (b) capture waits for geometry to be STABLE across consecutive frames (a fixed delay shot the pagescale relayout mid-flight); (c) framing is compact content-union by default and full page card via `visualFullPage: true` (set on pageViewMultiSystemCrisp, pageScaleGrowsPageNotContent, pageLineBreaksRefill), per Max — compact was right for everything except page-level fixtures; (d) every capture reports meta (pages, card dims, zoom, pageScale, scroll) into summary.json — the meta table immediately proved zoom/pageScale do NOT leak across fixtures (pagescale 1.4 confined to its fixture) and made the remaining flake self-describing.
 3. **Runner hardening**: per-fixture reset of the renderer's `lastFullMs` (one heavy fixture otherwise flips later fixtures into deferred rendering — timing-coupled baselines); `skipCursorTrace` fixture flag (the walk scrolls every stop into view — minutes on a deliberately multi-page doc); scenario runs now perform the visual check (single-fixture verify/re-seed in ~1 s instead of full runs); `PageLineBreaks.lastDeriveReason` names every refill bail in failure details; pageLineBreaks fixtures engage ownership via a settle loop instead of asserting on idle-timing-dependent intermediates.
-4. **All 35 baselines re-seeded** under the new capture rules. Note for later (Max): pagescale_140 shows a suspected intersection with the known backlog item "footer text doesn't reflow with page scaling" — not addressed here.
+4. **All 35 baselines re-seeded** under the new capture rules. Note for later (Max): pagescale_140 shows a suspected intersection with the known issue "footer text doesn't reflow with page scaling" — not addressed here.
 
 **Verified**: scroll fix probe-confirmed on the sonata (25392 → 25394 across an edit; was → 2744); `HKL_INDEX_CHECK=1 test:composer` 335/335 twice (re-seed run + plain verification run); typecheck/build/boundaries clean. New fixtures: pageEditPreservesScroll (multi-page doc, scroll held across an edit).
 
@@ -5045,8 +5046,8 @@ reference-clean); routine sweep **94.8 % → 95.7 %**; exhaustive every-measure
 pass **91.9 % → 94.5 %** with refusals **34 → 23** and causes **7 → 6**. The 15
 refusals the two guards held became 11 splices and 4 at `m-5q8` — a sixth
 divergent context line the header guard had been masking, sitting directly above
-the movement-III header, and therefore a candidate to share a cause with the
-backlog's "no preview signature changes over section breaks". The pass also
+the movement-III header, and therefore a candidate to share a cause with Max's
+report "no preview signature changes over section breaks". The pass also
 confirms no failure class specific to multi-line replaced sets: 3 of 62 fail,
 all inherited from a failing constituent, 0 failing while every constituent
 splices.
@@ -6357,7 +6358,7 @@ partition is built from. Set explicitly in both branches for the reason
 `setOptions` persists any option that is not re-specified.
 
 **Explicitly NOT fixed here** (Max: it belongs with the auto-balance item on
-the backlog): end-of-document still does not behave like end-of-section. A
+his list): end-of-document still does not behave like end-of-section. A
 section-final line is not "the last system" as far as Verovio is concerned, so
 it justifies at ANY fill, while a document-final line respects the threshold —
 measured on a two-section document where both end mid-line
@@ -6552,9 +6553,9 @@ be heatmapped. `run.mjs` shoots that same pair automatically on any non-visual
 fixture failure (`HKL_FAIL_SHOTS`). `visualMeta` records the capture framing
 (`clip`, `vpW`/`vpH`, `leftEl`).
 
-## 2026-09-04 — Engraving conventions batch (backlog Correctness + Opinionation)
+## 2026-09-04 — Engraving conventions batch (Correctness + Opinionation)
 
-**Context**: with Composer's performance at an acceptable baseline, Max asked for the musical-level backlog items (Correctness ×4, Opinionation ×7) to each get an attempt. Every mechanism below was probed against the live Verovio 6.3 toolkit first (lessons.md, 2026-09-04 entries) and lands with a fixture (`ENGRAVING` group, `engr_*`). One entry per non-obvious choice.
+**Context**: with Composer's performance at an acceptable baseline, Max asked for his musical-level items (Correctness ×4, Opinionation ×7) to each get an attempt. Every mechanism below was probed against the live Verovio 6.3 toolkit first (lessons.md, 2026-09-04 entries) and lands with a fixture (`ENGRAVING` group, `engr_*`). One entry per non-obvious choice.
 
 ### Brace + `bar.thru` mark a grand staff only
 
@@ -6586,7 +6587,7 @@ Footer, composer credit and section titles used the unscaled US-Letter constants
 
 ### MusicXML engraving fidelity: stems, hollow heads, tuplet visibility, and a tuplet rescale
 
-`<stem>` → `@stem.dir`/`@stem.visible`, `<notehead filled="no">` → `@head.fill="void"`, `<tuplet bracket/show-number>` → `@bracket.visible`/`@num.visible`. Explicit stems become "manual" stems in Composer (later transposition keeps them) — the same treatment MuseScore/Sibelius give imported stems; accepted. Finale's measured tremolo (two 32nds under a 1:8 tuplet) is rescaled to `k : numbase·k/num` (2:16) because Composer's tuplet model — placeholders, the placeholder invariant — holds exactly `num` atoms; the ratio is unchanged. **Slur analysis** (backlog "Verovio problem or ours? Can we detect it?"): ours by omission — dropping the source stems let Verovio's layer default flip m. 82's whole configuration; Verovio's layer rule itself (upper-voice slur above) is standard two-voice engraving and was not overridden. Detecting a slur on the bracket side is possible post-render (compare bboxes) but flipping it in m. 82 would run it through the layer-2 chord, so no automatic flip was added for native entry.
+`<stem>` → `@stem.dir`/`@stem.visible`, `<notehead filled="no">` → `@head.fill="void"`, `<tuplet bracket/show-number>` → `@bracket.visible`/`@num.visible`. Explicit stems become "manual" stems in Composer (later transposition keeps them) — the same treatment MuseScore/Sibelius give imported stems; accepted. Finale's measured tremolo (two 32nds under a 1:8 tuplet) is rescaled to `k : numbase·k/num` (2:16) because Composer's tuplet model — placeholders, the placeholder invariant — holds exactly `num` atoms; the ratio is unchanged. **Slur analysis** (Max: "Verovio problem or ours? Can we detect it?"): ours by omission — dropping the source stems let Verovio's layer default flip m. 82's whole configuration; Verovio's layer rule itself (upper-voice slur above) is standard two-voice engraving and was not overridden. Detecting a slur on the bracket side is possible post-render (compare bboxes) but flipping it in m. 82 would run it through the layer-2 chord, so no automatic flip was added for native entry.
 
 **Addendum (same day)**: the restyle changed the header's bbox bottom by one unit (dash glyph cells), which flipped rule v2's pixel quantization on re-placed pages and showed up ONLY in the gated sonata sweep (6 one-pixel divergences, 0 on the pre-change tree). `styleRunningHeader` now records the original bottom as `data-hkl-head-bottom` before touching the text and `headBottomOf` prefers it, so placement sees Verovio's header on every host. → lessons.md "Anything that touches the page header changes placement".
 
@@ -6663,7 +6664,7 @@ the movement break, movement IV's a one-bar stub at the end of the document.
 The edit path had the same hole: `repartition` repairs a line by moving one
 measure across a boundary, pulling only from the NEXT line, so a section-final
 line has nothing to pull from — composing at the end produced a stub, deleting
-at a section end a sparse stretched line. Backlog line 99; the 2026-09-03
+at a section end a sparse stretched line. The 2026-09-03
 last-justification entry deferred end-of-section parity to "the balancer".
 Max's rules: (1) within a run of systems where measures move freely, similar
 fill per system — similar, not optimal if optimal is expensive; (2) in the
@@ -6780,7 +6781,7 @@ guards the legality-preserving case).
 
 **Consequences**: the export clones every page synchronously before its first `await` — the mount window can evict far pages on the next idle tick (a pending IntersectionObserver callback schedules it); a detached SVG keeps its subtree, but the export must be one consistent picture of the screen. Print normalization (`normalizePageForPrint`) is all that remains of the old path — light theme forced (tags stripped, inline notehead colors removed), non-notehead black, hidden rests removed, stylesheet stroke inlined, and stylesheet text weight/slant inlined (`inlineComputedTextStyle`, added the same day after Max read the tempo's missing bold off the heatmap) — because svg-to-pdfkit reads presentation attributes and inline style only. The paper stays US Letter (`pageScale` is score-relative-to-page, not sheet size). The live toolkit's layout is never replaced, so `pageVirt.tkCurrent` has no export case left to guard. Sonata probe (31 pages): 31 PDF pages for 31 DOM pages; pages 1–2 pixel-aligned against clipped live captures (heatmap: edge antialiasing only); export ≈ 6 s plus ≈ 6.5 s to mount 30 pages. **Residual**: `Times, serif` text uses PDFKit's built-in Times, whose advances differ from the browser's substitute serif (the sonata's tempo text is visibly wider on screen) — fixing it means shipping one serif face for both screen and PDF; not done here. Probe: `test/composer-inspect/phasec/pdf-wysiwyg.mjs`.
 
-## 2026-09-05 — Composer layout backlog pass (the six "Layout:" items)
+## 2026-09-05 — Composer layout pass (Max's six "Layout:" items)
 
 Max asked for a solution and/or report on each. Four fixed, one rule refined,
 one assessed.
@@ -7066,7 +7067,7 @@ beam box of the slur's own notes.
 
 **Open**: nothing on this feature.
 
-## 2026-09-06 — Composer layout backlog pass, second batch (the eight "Layout:" items)
+## 2026-09-06 — Composer layout pass, second batch (Max's eight "Layout:" items)
 
 Max asked for a solution and/or report on each. Seven built (each with a
 fixture), one — the inter-instrument spacing — measured and designed, not
@@ -7274,7 +7275,7 @@ clearing by a line.
 
 ## 2026-09-08 — Beat-level text anchoring: `<offset>` honored, same-moment marks un-stacked
 
-**Context**: the two remaining `Layout:` items in backlog.md meet in one
+**Context**: the two remaining `Layout:` items on Max's list meet in one
 measure. p. 21 m. 99 (`<measure number="323">` of the sonata) holds six marks
 and exhibits both faults: three land at `tstamp=4` in a **3/4** bar because
 `<offset>` was never read, and the piano's `p` + `dim.` land at an identical
@@ -7568,7 +7569,7 @@ regression of the original defect.
 
 ## Score-global tempo, restated per part on the render clone (2026-09-09)
 
-Backlog Layout: "Tempo markings need to be duplicated between parts". The
+Max: "Tempo markings need to be duplicated between parts". The
 observed asymmetry was in the imported sonata — a "rit." appears above the
 viola AND the piano, "Poco più mosso" only above the viola — and it is an
 artifact of two import paths, not a decision: Finale writes a tempo
@@ -7615,7 +7616,7 @@ and a family model would need instrument taxonomy the score does not carry.
 
 ## Fermatas are pinned outside the grand staff (2026-09-09)
 
-Backlog Layout: "Fermata should default to the outside on a grand staff".
+Max: "Fermata should default to the outside on a grand staff".
 Verovio places a fermata above the note's OWN staff regardless of layer (probed
 on the default piano, all four voices: every fermata above its staff), so on a
 grand staff the lower staff's fermata lands in the inter-staff gap — staff 2's
@@ -7949,8 +7950,8 @@ mount that follows it.
 
 *(Revised the next day — the pull directive, the forced atom and the kept over-tight line described below were removed; see "Locks reflow like any measure-count change" (2026-09-12). The `<sb>`-as-lock, the partition-edit path, pin-removed-only unlock and the layout snapshots stand.)*
 
-**Decision.** A forced line break ("lock", Alt+Shift+↓ / Alt+Shift+↑, backlog
-Composer → Features) is a plain `<sb>` before the measure the break precedes
+**Decision.** A forced line break ("lock", Alt+Shift+↓ / Alt+Shift+↑, Max's
+request) is a plain `<sb>` before the measure the break precedes
 — no new attribute, no MEI `<section>` split. The page line-break owner
 already treats any section-level `<sb>`/`<pb>` as a hard start and a
 reflow-section boundary (`hardStartIds`, `sectionRanges`, the repair loop,
@@ -8023,7 +8024,7 @@ deterministic". A full derive is NOT required to satisfy that: the refill
 path is deterministic given the document and the current partition, and it
 is the same path every content edit already takes.
 
-**Consequences.** The pull is weaker than the backlog wording ("move the
+**Consequences.** The pull is weaker than Max's wording ("move the
 current and preceding measures to the previous system"): it guarantees the
 lock, and the join only when the balancer agrees. `forceSection`
 (balance.ts) and `balanceSectionForced` (linebreaks.ts) were removed rather
@@ -8032,7 +8033,7 @@ carry no post-reload state, they only make undo exact.
 
 ## Alt+Shift+↑ dropped: a lock says where a break must be, never where one must not be (2026-09-12)
 
-**Decision.** The backlog's second command ("move the current and preceding
+**Decision.** Max's second command ("move the current and preceding
 measures to the previous system") is not offered. Under the ruling above it
 had become exactly Alt+Shift+↓ on the following measure plus an unlock click
 — its only distinct content was removing a lock at the system's start. The
@@ -8044,7 +8045,7 @@ alternative — a persisted "keep with previous" marker that the balancer
 treats as an atom and the derive path must also honor (Verovio has no such
 thing) — is a second break type with its own reflow semantics, not a tweak.
 Not worth it for what is a cursor-placement convenience. Recorded so the
-backlog wording is not re-implemented as written.
+original wording is not re-implemented as written.
 
 ## The partition cache carries the owner's width caches (2026-09-12)
 
@@ -8458,7 +8459,7 @@ freeze), `perfVoiceRestGapHidesBar` (mid-piece gap; the gap note unclaimable unt
 
 ## Pickup length is counted in EIGHTH NOTES, not in denominator beats (2026-09-17)
 
-**Decision** (Max, backlog Composer/Features): `Ctrl+Shift+A` takes the anacrusis length in eighth
+**Decision** (Max): `Ctrl+Shift+A` takes the anacrusis length in eighth
 notes — anything shorter than a full bar — rather than in beats of the meter's denominator.
 
 **Why**: beats cannot express a half-beat pickup in 4/4, which is the commonest anacrusis there is,
@@ -8486,7 +8487,7 @@ Fixtures: `phase4_pickup_eighthGranularity` (a 1-eighth pickup in 4/4 driven thr
 
 ## A bar emptied in full is an empty cell, whatever selection mode pointed at it (2026-09-17)
 
-**Decision** (Max, backlog Composer/Features): clearing a beat selection that covers a whole measure
+**Decision** (Max): clearing a beat selection that covers a whole measure
 leaves that voice's cell EMPTY — the whole-measure `<space data-placeholder>` — instead of refilling it
 with beat-aligned rests. Partial spans are unchanged.
 
@@ -8744,7 +8745,7 @@ measureIdx)` — the tonic of the key signature **in effect at Composer's curren
 qm=0 Pythagorean spine at the octave **nearest C4**.
 
 **Why**: the ref was *stored state*, so a stale value rode the document forever ("ref stuck at the wrong
-coordinates") and had no relationship to the key ("ref doesn't update on key change", backlog:102/108).
+coordinates") and had no relationship to the key ("ref doesn't update on key change", Max).
 Deriving it leaves the bug class nowhere to live. Max's accepted cost: the ref can change unexpectedly as
 the cursor crosses a key change — cheap, because syncing to Composer is opt-in.
 
@@ -9913,7 +9914,7 @@ The explicit command promised by "Auto-autofill disabled" (2026-05-19) shipped a
 
 ## Scroll view draws no composer credit (2026-09-17, Max, recorded 2026-10-19)
 
-**Problem** (backlog Layout): scroll renders with `header: 'none'`, so there is no title block, and `styleTitleBlock` synthesized a credit-only `g.pgHead` right-aligned to the frame's width — which in scroll view is the whole system, so the composer's name was drawn at the end of the piece. **Picked**: the credit is page furniture, like the footer and running header. In scroll view `postProcessRendered` calls `styleTitleBlock(container, '')`, whose removal path also cleans a credit already baked into a stashed or spliced scroll DOM. **Fixture**: `engr_scrollNoComposerCredit`.
+**Problem** (Max): scroll renders with `header: 'none'`, so there is no title block, and `styleTitleBlock` synthesized a credit-only `g.pgHead` right-aligned to the frame's width — which in scroll view is the whole system, so the composer's name was drawn at the end of the piece. **Picked**: the credit is page furniture, like the footer and running header. In scroll view `postProcessRendered` calls `styleTitleBlock(container, '')`, whose removal path also cleans a credit already baked into a stashed or spliced scroll DOM. **Fixture**: `engr_scrollNoComposerCredit`.
 
 ## The pure-function partition supersedes "Page-view reflow is CONSERVATIVE" (2026-08-30) (recorded 2026-10-19)
 
@@ -10039,7 +10040,7 @@ Spec Phase 4 (`docs/composer-partition-consistency-spec.md`). **Line-break undo*
 
 Two final display adjustments before calling the Sonata port complete.
 
-**System gap, one-staff scores.** Rule v1's gap between systems is `max(below, F) + G + max(above, F)`, and pagination folds on v1, so G alone sets how tightly a page packs. At G = 4 units the floor is 8 staff spaces line to line and 2 spaces content to content — the viola part fit 11 lines on page 1 (measured gaps 8.0–9.6 spaces). Max's Finale part (`~/Documents/sonataBr1 - Part 1.pdf`, measured at 300 dpi: staff space 1.63 mm, ours 1.60 mm — the same rastral) holds 8 lines on page 1 at 13.5 spaces and 9 on page 2 at 12.65, vertically justified. G is now 8 units when the RENDERED score has one staff (`pageFitConstants(…, singleStaff)`, one helper `Renderer.fitConstants()` feeding both placement and first-fit so they cannot disagree). Keyed on the staff set (`visibleStavesFor(model, viewStaves, [])`), not per system: a full score whose hide-empty systems drop to one staff keeps the score's spacing. F and the distribution cap (14 units) are unchanged. Result: viola page 1 holds 9 lines at 10.0–12.8 spaces; the part goes from 9 to 10 pages. Multi-staff scores are untouched (sonata still 32 pages).
+**System gap, one-staff scores.** Rule v1's gap between systems is `max(below, F) + G + max(above, F)`, and pagination folds on v1, so G alone sets how tightly a page packs. At G = 4 units the floor is 8 staff spaces line to line and 2 spaces content to content — the viola part fit 11 lines on page 1 (measured gaps 8.0–9.6 spaces). Max's Finale part (PDF, measured at 300 dpi: staff space 1.63 mm, ours 1.60 mm — the same rastral) holds 8 lines on page 1 at 13.5 spaces and 9 on page 2 at 12.65, vertically justified. G is now 8 units when the RENDERED score has one staff (`pageFitConstants(…, singleStaff)`, one helper `Renderer.fitConstants()` feeding both placement and first-fit so they cannot disagree). Keyed on the staff set (`visibleStavesFor(model, viewStaves, [])`), not per system: a full score whose hide-empty systems drop to one staff keeps the score's spacing. F and the distribution cap (14 units) are unchanged. Result: viola page 1 holds 9 lines at 10.0–12.8 spaces; the part goes from 9 to 10 pages. Multi-staff scores are untouched (sonata still 32 pages).
 
 **Section numerals.** The band was 900 with the baseline at 360 and a 560 title: a Times cap height (~0.66 em) put the numeral's top AT the band top, so it sat ≥ G (1.9 spaces) under the previous system's content but ≥ 3.4 above its own — nearer the system it does not belong to — and 0.9 space under a page header when the section opens a page (score p. 10). Now `SECTION_HEADER_RESERVE` 1200, `SECTION_HEADER_BASELINE` 880, `SECTION_HEADER_FONT` 640 (4 spaces): cap top ~2.85 spaces into the band, baseline 2 spaces above the band's bottom. Minimums: numeral → previous content ≥ 4.9 spaces (6.9 in a one-staff part), → page header ≥ 3.9, → own content ≥ 2. Distribution slack is added above the band (the system's lead), so a loose page only moves the numeral further from the previous system. Each header costs 300 more units of page budget.
 

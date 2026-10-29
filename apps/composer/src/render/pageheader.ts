@@ -4,7 +4,7 @@
 // <rend> at "x-large" (540 px at the crisp presets, 1.5 × the 360 px text
 // size), the subtitle after an <lb/> at "small" (288 px). Composer draws the
 // COMPOSER CREDIT itself (right-aligned "Max Randal, Op. 12" — the line Max
-// calls the subtitle). Three things were wrong (backlog, Layout; Max's review
+// calls the subtitle). Three things were wrong (Max's review
 // the same day):
 //   • the title should be slightly larger (Max) — TITLE_FONT_PX;
 //   • the <lb/> steps the subtitle down by the OUTER rend's line height (347

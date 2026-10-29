@@ -39,7 +39,7 @@ ENUM_OCTAVE_9065  = 0x2e4c8   # 5 × uint8_t array (.bss)
 COMPLETION_BIT    = 0x04000000
 
 # Board indices to spoof. 0-based. Boards 1, 4, 5 (= indices 0, 3, 4) have
-# broken macro buttons on Max's unit. Override via argv to test single boards.
+# broken macro buttons on the unit it was written for. Override via argv to test single boards.
 DEFAULT_SPOOF = [0, 3, 4]
 
 

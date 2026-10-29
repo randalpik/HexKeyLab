@@ -18,7 +18,6 @@
     "check:boundaries": "node test/check-boundaries.mjs",
     "publish:engine": "pnpm --filter @hkl/engine build && npm publish packages/engine/dist",
     "analyze": "node --max-old-space-size=8192 --expose-gc apps/analyzer/cli/generate-samples.js",
-    "analyze:musiquest": "node apps/analyzer/cli/batch-musiquest.js",
     "test:composer": "node test/composer-test/run.mjs full",
     "test:composer:fast": "node test/composer-test/run.mjs fast",
     "test:composer:affected": "node test/composer-test/run.mjs affected",

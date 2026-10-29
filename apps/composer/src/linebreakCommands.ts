@@ -1,6 +1,6 @@
 /* Manual line breaks (2026-09-11/12) — the two commands, shared by the
  * keyboard (Alt+Shift+↓) and the lock-glyph click so both paths run the same
- * code. Backlog: "force a line break … logically split the section … lock
+ * code. Max's request: "force a line break … logically split the section … lock
  * symbol … clickable to revert".
  *
  * A lock is a plain `<sb>` in the document (model.setLineLockAt) and NOTHING
@@ -22,7 +22,7 @@
  *             boundary becomes a hard start.
  *   unlock:   the `<sb>` goes; the two sections join and F partitions them
  *             as one — the layout a reload of the unlocked document shows.
- * The backlog's Alt+Shift+↑ ("pull onto the previous system") was dropped
+ * Max's original Alt+Shift+↑ ("pull onto the previous system") was dropped
  * 2026-09-12: under this rule it was exactly ↓ at m+1 plus an unlock — the
  * document can say where a break MUST be, never where one must NOT be. */
 

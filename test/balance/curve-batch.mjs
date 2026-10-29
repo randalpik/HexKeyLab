@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Reach-back curve over many documents (2026-10-20, partition F's Phase 0 — decisions.md).
-// Reads partition-inputs dumps (sonata-probes/partition-inputs.js, any score)
+// Reads partition-inputs dumps (per-measure widths dumped from a live score)
 // and reports, per section: today's committed lines, the greedy count, and
 // every DISTINCT layout on the curve scored over the lines it changes plus
 // the untouched line before them (min fill of the changed lines, sd of

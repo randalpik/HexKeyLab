@@ -176,7 +176,7 @@ function visualCursorMeasure(): number {
      layer's MOMENT, not the parked voice cursor: scroll-follow and page
      mounting track it. Following the voice cursor here sent the view back to
      wherever that cursor was parked — the first page, typically — whenever a
-     layer action re-rendered (backlog 2026-09-05: "selecting an expression
+     layer action re-rendered (Max, 2026-09-05: "selecting an expression
      while the cursor is on an unmounted page jumps to the first page"). */
   if (s.cursorMode === 'expr' || s.cursorMode === 'pedal' || s.cursorMode === 'tempo') {
     const m = momentAtCurrentCursor(model);
@@ -927,7 +927,7 @@ function injectSectionHeaders(scoreEl: HTMLElement, model: ComposerModel): void 
 /* Volta (1st/2nd ending) number styling lives in render/render.ts now — the
  * page system splicer (Phase C-B) must apply it to its offscreen host too. */
 
-/* T2.2 (docs/composer-render-perf.md): heavy renders — multi-second engraves
+/* T2.2 (decisions.md "Composer Tier-2: virtualized page view", item 2): heavy renders — multi-second engraves
    on large documents — are deferred one frame so the busy badge paints first,
    and re-render requests arriving while one is queued or the thread is frozen
    coalesce into a single render of the LATEST model state (burst keystrokes
@@ -1754,8 +1754,8 @@ $<HTMLInputElement>('fileInputMusicXml')?.addEventListener('change', async (e) =
    input decodes them (headless fixtures and probes for non-UTF-8 files). */
 (window as unknown as { __composerImportMusicXmlBytes?: (bytes: Uint8Array) => void })
   .__composerImportMusicXmlBytes = (bytes: Uint8Array) => { loadMusicXml(decodeXmlText(bytes), 'MusicXML (test)'); };
-/* Test hook: load an .hkc the way Open does (headless probes work from Max's
-   working copy, ~/Documents/sonata.hkc, not the original MusicXML). */
+/* Test hook: load an .hkc the way Open does (headless probes work from an
+   edited .hkc working copy, not the original MusicXML). */
 (window as unknown as { __composerLoadHkc?: (text: string) => void })
   .__composerLoadHkc = (text: string) => {
     applyLoadedDocument(new ComposerModel(text).serialize(), 'Loaded .hkc (test)');
@@ -1854,7 +1854,7 @@ $('themeSelect')?.addEventListener('change', (e) => {
   renderer.setTheme(theme);
   /* Theme is a DOM-only repaint (reversible applyNotationTheme) — no reRender,
      no re-engrave, splicer + view-mode caches stay valid. See
-     docs/composer-render-perf.md T1.1. */
+     decisions.md "Composer Tier-1 render-latency fixes", item 1. */
   renderer.applyThemeToRendered();
   try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
 });

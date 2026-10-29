@@ -458,7 +458,7 @@ the tritone axis, `(Q,R)` above `(Q+2,R−2)`, are an octave.
     its sharp-side twin above.
   - On A's row that is Ab→G# and Eb→D#. Because each column holds every pitch class as the rows
     step by fifths, all 12 pitch classes occur.
-- **What carry does.** Pythagorean must tune those pairs 2/1 × Pythagorean comma. Carry puts
+- **What carry does.** Pythagorean must tune those pairs 2/1 × Pythagorean comma (23.46¢ wide). Carry puts
   **both** positions on a pitch-band boundary:
   - Eb→D# crosses the visual seam;
   - Ab→G# reaches the borrowed G#, which carries the band to the left.

@@ -1,8 +1,8 @@
 /* HexKeyLab Analyzer — instrument config helpers.
    Stateless utilities for enumerating chromatic note tables and building
-   sample URLs from a config object. The configs themselves live in
-   analyzer/configs/*.json (the single source of truth) and are loaded by the
-   page from the Vite dev server's /analyzer-configs-manifest endpoint. No DOM,
+   sample URLs from a config object. Configs are JSON files the CLI reads
+   (conventionally apps/analyzer/configs/, gitignored: they are local build
+   inputs); the browser UI builds the same object from its form. No DOM,
    no Web Audio.
 
    Config schema (matches generate-samples.js — only the analysis-relevant

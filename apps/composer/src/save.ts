@@ -230,7 +230,7 @@ function tremoloBeams(el: Element): number {
  *  did but the tuplet branch did NOT — and `regroupBeams` puts a beamed
  *  tuplet's members inside a `<beam>` child, so 500 of the sonata's 513
  *  tuplets and 1 453 of its 9 099 notes were silently dropped from the export
- *  (probe `sonata-probes/musicxml-export-coverage.js`). */
+ *  (found by a whole-document export-coverage probe). */
 function collectSlots(container: Element, keepTuplets: boolean): Slot[] {
   const out: Slot[] = [];
   const walk = (parent: Element): void => {

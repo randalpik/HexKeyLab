@@ -96,8 +96,8 @@ export const FIXTURES = {
       r();
     `,
   },
-  /* Same-moment dynamic + text lay out SIDE BY SIDE, not stacked (backlog,
-     Layout: sonata p. 21 m. 99's piano `p` and "dim." both landed at tstamp 1
+  /* Same-moment dynamic + text lay out SIDE BY SIDE, not stacked (Max:
+     sonata p. 21 m. 99's piano `p` and "dim." both landed at tstamp 1
      because Finale's horizontal nudge is dropped at import, so Verovio drew
      them at one x and stacked them vertically — and the block-cluster rule
      preserved that stack). Imported rather than built through the model, since
@@ -122,7 +122,7 @@ export const FIXTURES = {
     `,
   },
 
-  /* ── Engraving conventions (2026-09-04, backlog Correctness + Opinionation) ──
+  /* ── Engraving conventions (2026-09-04) ──
    * Each fixture pins one convention: what the document says AND what Verovio
    * drew, so a Verovio upgrade that changes the mechanism shows up here. Every
    * assertion lives in FIXTURE_ASSERTIONS under the same name. */
@@ -641,7 +641,7 @@ export const FIXTURES = {
       r();
     `,
   },
-  /* Theme switch in place (backlog 2026-09-05: "switching to light sometimes
+  /* Theme switch in place (Max, 2026-09-05: "switching to light sometimes
      doesn't switch note colors back until another rerender"): a page mounted
      under the dark theme carries its own data-notation-theme tag; the light
      switch must clear it, or the dark ink rules keep matching that page and
@@ -817,7 +817,7 @@ export const FIXTURES = {
     `,
     fullRender: 'the poisoned getBBox must be in place for the header restyle itself, so the fixture forces the engrave it is asserting about',
   },
-  /* The composer credit is PAGE FURNITURE (Max, backlog Layout: "Scroll view
+  /* The composer credit is PAGE FURNITURE (Max: "Scroll view
      shouldn't show composer text at the end"). Scroll renders with Verovio's
      `header: 'none'`, so there is no title block for the credit to sit under —
      `styleTitleBlock` synthesized a credit-only `g.pgHead` and right-aligned
@@ -862,7 +862,7 @@ export const FIXTURES = {
     `,
   },
   /* Tempo markings are restated above EVERY part (notation/parts.ts,
-     2026-09-09, backlog Layout): the model keeps one score-global <tempo>, so
+     2026-09-09): the model keeps one score-global <tempo>, so
      before this a two-part score drew "Allegro" above the top staff only —
      while an imported "rit.", which Finale writes into each part and the
      importer turns into a per-part <dir>, appeared above both. The copies are
@@ -887,7 +887,7 @@ export const FIXTURES = {
     `,
   },
   /* On a grand staff a fermata belongs OUTSIDE the braced pair
-     (notation/parts.ts, 2026-09-09, backlog Layout). Verovio puts one above
+     (notation/parts.ts, 2026-09-09). Verovio puts one above
      the note's own staff, which for the lower staff of the pair lands in the
      inter-staff gap; the render clone pins the top staff's above and the
      bottom staff's below, where Verovio draws the inverted glyph itself. */

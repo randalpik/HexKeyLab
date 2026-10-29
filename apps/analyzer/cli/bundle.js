@@ -209,7 +209,7 @@ export function buildBundle(cfg, picks, outDir, cacheDir) {
   fs.writeFileSync(outPath, bytes);
 
   /* Consumer-facing InstrumentDef JSON (the shape loadInstrument takes with
-     source:'hki-shipped' — see handoff/musiquest/musiquest-handoff.md §3).
+     source:'hki-shipped').
      Built from the same sampleEntries written into the bundle, so it can
      never drift from the manifest. Unlike the manifest, `transpose` is
      emitted unconditionally — external loaders shouldn't need our

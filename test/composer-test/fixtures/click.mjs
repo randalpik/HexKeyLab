@@ -190,7 +190,7 @@ export const FIXTURES = {
   },
   /* Clicking a rendered <dynam> selects it in the expression layer (switches
      cursorMode to expr, snaps to its moment); a follow-up Backspace deletes it
-     — the "easy delete" path the backlog asks for. */
+     — the "easy delete" path Max asked for. */
   click_dynam_selectsExpr_thenDeletes: {
     setup: `
       m.setCursor(0, 1);

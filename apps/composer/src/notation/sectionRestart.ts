@@ -3,7 +3,7 @@
 // Verovio draws a cautionary key + meter at the end of a system whenever the
 // next system starts with a new <scoreDef> — right for a mid-movement change,
 // wrong at a movement boundary, where the new movement simply begins in its own
-// key and meter (backlog, Opinionation). There is no option. What Verovio 6.3
+// key and meter (Max). There is no option. What Verovio 6.3
 // allows (source + live probes, 2026-09-04/05):
 //   • METER: `@meter.form="invis"` on the scoreDef blanks EVERY meter drawn from
 //     it — the courtesy included — while a layer-level <meterSig> in the

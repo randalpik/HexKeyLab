@@ -238,7 +238,7 @@ export const FIXTURES = {
   },
   /* MusicXML import — expressive text: a non-tempo <words> direction becomes a
      note-independent <dir> (italic preserved); tempo captions are excluded. */
-  /* MusicXML import — EVERY tempo marking (2026-09-06, backlog Layout P1):
+  /* MusicXML import — EVERY tempo marking (2026-09-06):
      words + <sound tempo> → a verbal <tempo>; a <metronome> → the metronome
      shown; a bare measure-level <sound tempo> → a text-less playback tempo;
      the same direction on a second part collapses into one. */
@@ -273,7 +273,7 @@ export const FIXTURES = {
       m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
-  /* MusicXML import — <offset> is the direction's real beat (backlog, Layout).
+  /* MusicXML import — <offset> is the direction's real beat (Max).
      Finale writes a mark at the END of a measure's element stream and offsets
      it back, so ignoring <offset> put the sonata's p. 21 m. 99 "dim."/"rit." at
      tstamp 4 in a 3/4 bar — on the barline, where textlayout's nudge then had

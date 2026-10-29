@@ -6,7 +6,7 @@
 // which Verovio does not honor — see lessons.md) displaces the visible one
 // exactly as a drawn rest would. Both are wrong on paper: two identical rests
 // at one moment are ONE rest, and an invisible rest must have no effect on
-// anything visible (backlog, Opinionation).
+// anything visible (Max).
 //
 // Verovio DOES honor `@loc` on <rest> and <mRest>, and two rests forced to the
 // same @loc at the same moment render at the same x with no collision shift
@@ -20,7 +20,7 @@
 //   • a visible rest whose span meets exactly one identical visible rest
 //     (same onset, same element, same written value) gets that location too,
 //     so the pair coincides (the partner is pinned when its layer is walked);
-//   • (2026-09-06, backlog Layout: sonata p. 17 m. 35) a visible rest whose
+//   • (2026-09-06, Max: sonata p. 17 m. 35) a visible rest whose
 //     span meets only NOTES or CHORDS in the other layer is kept ON THE STAFF
 //     when their ink leaves room. Verovio's two-voice offsets depend on the
 //     other note's duration, not on where its ink is: in m. 30 the voice-1

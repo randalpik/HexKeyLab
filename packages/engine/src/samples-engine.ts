@@ -22,7 +22,7 @@ export interface SeamEvent {
   /** Set (ms) when scheduleSegmentSwitch's now+5ms floor deferred this fade
       past the natural wrap — the old source played that far beyond its
       validated b before the crossfade began (phase-unvalidated content; the
-      seam-dip class from handoff/hkle-inflight-crossfade-cut.md). Post-2.4.3
+      seam-dip class; decisions.md, engine 2.4.3). Post-2.4.3
       this should only ever fire on a real JS stall: retune calls arriving
       inside XFADE_GUARD_S of the wrap ride the in-flight path instead of
       cancel+reschedule. Non-zero values under normal load are a bug. */
@@ -1051,7 +1051,7 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
        first timeline event resolves from the param's CONSTRUCTOR DEFAULT
        (1.0), never the intrinsic value — so the source's first sample
        injected the raw buffer value at unity gain, one click per source
-       start (2026-08, handoff/hkle-born-silent-gain-fix.md). The t=0 seed
+       start (2026-08; decisions.md, engine 2.4.1). The t=0 seed
        is unconditionally the earliest event, making the timeline
        authoritative from birth on every host.
        Same double-write guard applies to EVERY .value= write whose value
@@ -1159,7 +1159,7 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
      click) or, with the attack curve in flight, made the follow-up
      setValueAtTime(now) land inside a live setValueCurveAtTime window (throws
      on strict hosts: Firefox, react-native-audio-api; Chromium silently snaps
-     the attack instead). See handoff/hkle-cancel-pending-switch-attack.md.
+     the attack instead). See decisions.md, engine 2.4.2.
 
      Crossfade not yet begun (now < switchTime): everything scheduleSegment-
      Switch put on oldSegGain sits at or after switchTime, so canceling there

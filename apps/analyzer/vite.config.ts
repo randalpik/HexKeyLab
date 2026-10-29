@@ -7,7 +7,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 // Served under /analyzer/ on the shared dev origin (vite/dev-proxy.mjs) and at
 // the same sub-path in production. Standalone: `pnpm --filter @hkl/analyzer dev`
-// on :5175 — the /iowa-mis + /analyzer-configs-manifest dev endpoints live on
+// on :5175 — the /iowa-mis dev endpoints live on
 // the proxy, so use the umbrella `pnpm dev` for full-fidelity analysis.
 export default defineConfig({
   base: '/analyzer/',

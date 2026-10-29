@@ -287,8 +287,7 @@ export const FIXTURES = {
    * balanced before the first paint: no lone-bar system, every section-final
    * line legal, every system justified to the same width. Asserted via
    * FIXTURE_ASSERTIONS.pageBalanceSectionFinal. */
-  /* Single-part view is OWNED and balanced like the score (2026-09-05, Max's
-     backlog item): a piano + viola document whose viola part (voice 5) has
+  /* Single-part view is OWNED and balanced like the score (2026-09-05, Max): a piano + viola document whose viola part (voice 5) has
      the same 13 + 9 bar shape as pageBalanceSectionFinal, viewed viola-only
      through the real selector. The filtered render must engage the line-break
      owner, balance its sections before the paint and show only staff 3. */

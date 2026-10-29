@@ -3,8 +3,7 @@
 Composite HKL's hex lattice **and** its Composer-view score over a performance video in OBS, with a
 transparent background, **live-synced** to the performer's own HKL instance. The performing instance
 publishes its render state; a second, read-only instance loaded as an OBS **Browser Source** mirrors
-it transparently. (Backlog: LAYOUT — "export lattice + Composer view with transparent background
-directly into OBS".)
+it transparently.
 
 ```
  Performer: production HKL (Netlify, Firefox)  ──ws://127.0.0.1:5190──┐
@@ -154,7 +153,8 @@ black, identical to normal HKL (a transparent base leaked 1–2 px of video thro
 the mask that clips the animation-margin hexes switches from an opaque `#111` even-odd fill to a
 **`destination-out` erase** when transparent + extend-off — so everything *outside* the keyboard
 outline becomes transparent while still clipping per-frame. Extend-on keeps the dim paint (mirrors
-the performer's ghost tiling). Chrome is hidden via the `html.overlay` CSS block in `index.html`.
+the performer's ghost tiling), and Outline None draws no mask at all, so with either nothing around
+the keyboard becomes transparent. Chrome is hidden via the `html.overlay` CSS block in `index.html`.
 
 ---
 

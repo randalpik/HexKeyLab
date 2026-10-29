@@ -28,7 +28,7 @@ Architecture source of truth for the HKL viewer app (`apps/hkl/`). **For how to 
 
 ### Lumatone internals (reverse-engineered)
 
-Needed only for per-key hardware calibration (units with broken macro buttons) or diagnostics. Normal HKL operation requires none of it. → full workflow in [`../lumatone-calibration.md`](../lumatone-calibration.md). The same **Calibrate Keys** overlay (`lumatone/lumadiag.ts`) hosts the velocity-calibration UI — per-board threshold sliders, the firmware interval-curve sliders + push, the Lumatone velocity-curve preview — and, since 2026-09-13, the **Layer loudness match** slider: `prefs.layerBlend` → `SampleEngine.setLayerBlend`, the log-linear blend between a re-gained `.hki`'s level-matched (`gainLevel`) and sones-matched (`gain`) layer gains (see engine.md "Layer-blend gain").
+Needed for per-key hardware calibration (the only way to set key thresholds and velocity values numerically rather than by touch) and for diagnostics. Normal HKL operation requires none of it. → full workflow in [`../lumatone-calibration.md`](../lumatone-calibration.md). The same **Calibrate Keys** overlay (`lumatone/lumadiag.ts`) hosts the velocity-calibration UI — per-board threshold/sensitivity sliders with Get / Reset (plus Get all values / Reset all 5 boards and per-board velocity, AT and Lumatouch LUT resets), Push identity LUT (CMD 0x08), the firmware interval-curve sliders + push (CMD 0x20), the Lumatone velocity-curve preview, per-key velocity statistics and per-key auto-capture (per-key gain) — and, since 2026-09-13, the **Layer loudness match** slider: `prefs.layerBlend` → `SampleEngine.setLayerBlend`, the log-linear blend between a re-gained `.hki`'s level-matched (`gainLevel`) and sones-matched (`gain`) layer gains (see engine.md "Layer-blend gain").
 
 - **Hardware**: BeagleBone Black running Debian + 5 PIC microcontrollers (one per board). BBB↔PIC over UART `/dev/ttyO1`; host↔BBB over USB-MIDI. BBB is also a USB-ethernet gadget — device IP `192.168.6.2` (Linux host) / `192.168.7.2` (Mac/Windows). SSH `debian`/`temppwd`. Firmware: `/home/debian/TerpstraController/TerpstraController` (ARM 32-bit ELF, debug info), respawned forever by `lmtn_launcher.sh`.
 - **Per-key calibration state** lives in two layers:
@@ -36,7 +36,7 @@ Needed only for per-key hardware calibration (units with broken macro buttons) o
   - **RAM** (volatile): `kbd_preset_params` struct in `.bss`, 638-byte stride/board; offsets `+0x118` MAX, `+0x150` MIN, `+0x1c0` validity, `+0x1fe` AT-MAX. Lost at restart/power cycle.
 - **Indexing**: both layers use **PIC number** (`sysex_board`), not spatial board position. Slot `i` ↔ `KeyData_(i+1)` ↔ PIC `i+1`. The `sysexBoardFor` physical-swap only enters when translating spatial board_group → PIC number, never when indexing firmware structures.
 - Tooling: `tools/lumatone-cal/` Python scripts read/write both layers (`/proc/<tc-pid>/mem` volatile, file edit persistent).
-- **Local firmware mirror**: `/home/max/lumatone/` copies the device's `debian` home (the `TerpstraController` binary, `LMTN-01_OctaveBoard.hex` for the PICs, `files/`), so analysis needs no device. Disassemble with `gdb -batch -ex "disassemble <fn>"`: Arch's binutils has no ARM target, so `objdump -d` fails.
+- **Local firmware mirror**: a host copy of the device's `debian` home (the `TerpstraController` binary, `LMTN-01_OctaveBoard.hex` for the PICs, `files/`) means analysis needs no device. Disassemble with `gdb -batch -ex "disassemble <fn>"`: host binutils builds usually lack an ARM target, so `objdump -d` fails.
 - **PIC→BBB frames** are terminator-framed with no checksum or length field, and carry key travel time rather than velocity (the BBB rebuilds velocity via `files/VelocityLookUp_N`) — full detail in lessons.md.
 
 ### Self-contained audio
@@ -52,14 +52,14 @@ The Lumatone sends MIDI on a fixed (channel, note) scheme. HKL maps those addres
 - **Hex grid** rotated counterclockwise; `tiltAngle` is mode-dependent (set per outline by `setTiltForOutline` in `apps/hkl/src/layout/geometry.ts`: distinct values for Lumatone / Piano / vertical-frequency default). Gradient: q-axis = log(2)/3 per step (octave constraint); r-axis = midpoint of 5-limit log(3/2) and 7-limit adjusted value.
 - **Canvas sizing**: width = max(400, viewport − 24px); height from keyboard vertical extent + `padY = hexR + dxH × 0.5`. Vertical centering `kbOffY = −(minY + maxY)/2`. Wrapper `min-width: 424px`.
 - Hex shapes drawn in rotated context; note text drawn unrotated for readability.
-- **Extend pattern toggle** clamps cell range to keyboard extent when off.
+- **Extend pattern toggle** clamps cell range to keyboard extent when off. Disabled (forced on) while Outline is None, which has no extent to clamp to (`ui/controls.ts`).
 
 ### Controls
 
-A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout · Playback · Analysis · Recording · Lumatone · Piano`, plus a `Reset` prefs button) shows one fixed-height `.toolbar-group` at a time — tabs just flip `.tb-hidden`. Within a group, controls are stacked vertically wherever they fit, to keep the row narrow:
+A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout · Playback · Analysis · Recording · Lumatone · Piano`, plus a `Reset` prefs button) toggles its own fixed-height `.toolbar-group`, any number open at once — tabs just flip `.tb-hidden`. Layout and Playback start open; the open set persists as `prefs.toolbars`. Within a group, controls are stacked vertically wherever they fit, to keep the row narrow:
 
 - **Layout**: two columns of stacked selectors — Tuning + Mapping + Hex size, and Outline + Rotation (paired selects made equal-width via `.lsel-col`) — flanking the Note names / Band seams / Extend pattern checkbox column.
-- **Playback**: the instrument/waveform selector, with the Audio + Diagnostics checkboxes and the Import button beneath it (`.pb-stack`) · Transpose · Clear.
+- **Playback**: the instrument/waveform selector, with the Audio + Diagnostics checkboxes and the Import button beneath it (`.pb-stack`) · Transpose · Clear. **Diagnostics** (needs Audio) is the dev overlay for vetting sustained instruments (`audio/diagnostics/loopOverlay.ts`): a scrolling RMS/dB envelope of the sample bus (`SampleEngine.tapMaster`; oscillators aren't tapped) with a marker at every loop-seam crossfade — a dip ON a seam is a sample/seam-data problem, BETWEEN seams a crossfade-curve problem — plus per-frame max velocity and max poly AT of the held keys on the same 0–127 axis.
 - **Analysis**: two checkbox columns of four — Show analysis / coordinates / factors / Short intervals, and Show staff notation / Dark staff notation / Composer view / HEJI accidentals.
 - **Recording**: the Rec/Play, Save/Load .hkr and Export/Import .mid button pairs, then one column of status pill · Export to Composer · Capture audio (`.rec-stack`).
 - **Lumatone**: connection status · Auto-sync + sync pill · Pedals selector stacked in one column; Calibrate Pedal and Calibrate Keys beside it (`luma-conn-only`, so they show only when connected).
@@ -69,12 +69,12 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 | Control | Behavior |
 |---|---|
-| Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic}. Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
+| Tuning selector | {Equal, Ptolemaic, Pythagorean, Semiditonal, Septimal, Schismatic, Syntonic, Polysyntonic}. Entering Schismatic turns HEJI on (leaving it doesn't turn it off). Sets `tuning.mode` (derives `equalEnabled`/`septimalEnabled` for legacy sites); ramps audio. |
 | Mapping selector | {Euler, Wicki-Hayden, Chromatic} (`#selMapping`, pref `mapping`). `setMapping()` re-expresses the reference, anchor and held mouse / piano-input / pedal-sustained notes in the new coordinate frame (same pitch); held Lumatone / QWERTY voices keep their `(q,r)` and retune in place; rebuilds layers, footprint, Lumatone colors, tilt; broadcasts to Composer. See architecture.md → Note-name mapping. |
 | Outline selector | {Lumatone, QWERTY, Piano, None}. Selects the footprint outline; lattice slides via refSpine (Lumatone/QWERTY/None) or piano-viewport math (Piano). Ctrl+click any hex sets the ref note → drives positioning. |
 | Transpose | 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC), always visible. Key-repeat 400ms initial / 80ms subsequent. Selection transpose only — positioning is via ref note. |
 | Audio | Toggle + instrument/waveform selector. Piano default. Samples lazy-load with a blue "loading…" state. |
-| Clear | Deselects all. |
+| Clear | Deselects all and silences every held and pedal-sustained voice (the stuck-note panic button); also forgets held-input records. |
 | Lumatone status panel | Connection badge; **Pedals dropdown** (Sustain / Sostenuto+Sustain — how the sustain jack is read); **Calibrate Pedal** button; Auto-sync checkbox + status badge. |
 | Recording controls | ● Rec / ▶ Play / Save .hkr / Load .hkr / Export .mid / Import .mid + status pill. |
 
@@ -118,8 +118,8 @@ Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vect
 
 Scrollable panel below the canvas (max-height to viewport).
 
-- **Row 1 — Note cards**: each selected key as a colored tag (name in keyboard hue, octave, Hz), sorted low→high. With "Show coordinates" also shows `(q= r= p=)`.
-- **Row 2 — Chord analysis** (3–4 unique pitch classes): root (colored), quality, inversion, root-position JI ratio. Template matching uses semitone intervals + letter distances over **24 templates**: triads (major, minor, dim, aug, sus4, sus2); 7ths (major, dominant, minor, minor-major, dim, half-dim, aug, aug-major); added-2nd; aug-6ths (Italian, French, German); incomplete 7ths (dom, minor, major, minor-major, dim). Labeled "septimal" when root-position ratio has a factor of 7 AND max term ≤ 27. Equal mode hides ratio and strips "septimal".
+- **Row 1 — Note cards**: each selected key as a colored tag (name in keyboard hue, octave, Hz), sorted low→high. With "Show coordinates" also shows `(q= r= p=)`, where `p` is the position in the octave band: 0–2 Euler, 0–5 Wicki-Hayden, 0–11 Chromatic (`posInBandOf`). A septimal-column key carries a small magenta "7" badge.
+- **Row 2 — Chord analysis** (3–4 unique pitch classes): root (colored), quality, inversion, root-position JI ratio. Template matching uses semitone intervals + letter distances over **24 templates**: triads (major, minor, dim, aug, sus4, sus2); 7ths (major, dominant, minor, minor-major, dim, half-dim, aug, aug-major); added-2nd; aug-6ths (Italian, French, German); incomplete 7ths (dom, minor, major, minor-major, dim). Labeled "septimal" when root-position ratio has a factor of 7 AND max term ≤ 27, "Pythagorean" when it has only primes 2 and 3, and additionally "schismatic" in Schismatic mode when the notes span two bands (each band-crossing pair stacks a schisma; the ratio is hidden). Equal mode hides ratio and strips "septimal".
 - **Rows 3+ — Intervals**: all pairwise intervals grouped by generic size; colored note names + octaves, cents, named interval.
   - 5/7-limit: JI ratio shown; color by complement-reduced Tenney Height — green (<8), yellow (8–12.5), red (≥12.5). With **"Show factors"** the ratio renders in prime-power form for every interval (`5:4` → `5:2²`); otherwise plain `num:den`, with the factored form as a fallback above `2³²` where the integers would round off. Cents + tier are computed from the exact exponent vector, not `num/den`.
   - Equal: no ratio; names via `equalIntervalName()` (from actual note names + octaves, not lattice displacement). `semis % 12 === 0` → green (rational: unisons, octaves, d2/A7); else red.
@@ -373,7 +373,7 @@ Three mutually-exclusive states `idle | recording | playing`. State lives module
 
 ### UI
 
-Toolbar group after the Lumatone block: Rec / Play / Save .hkr / Load .hkr / Export .mid / Import .mid + a `recording-status` pill ("Idle" / "Recording 0:04" / "Playing 0:02 / 0:18" / "Loaded 0:18"). Timer runs only while state ≠ idle (`requestAnimationFrame`).
+Toolbar group after the Lumatone block: Rec / Play / Save .hkr / Load .hkr / Export .mid / Import .mid + a `recording-status` pill ("Idle" / "Recording 0:04" / "Playing 0:02 / 0:18" / "Loaded 0:18"; also "Preparing…", "Load failed: …", and "Enable Audio first" — Rec and Play need Audio on). Timer runs only while state ≠ idle (`requestAnimationFrame`).
 
 `?hklrec=1` exposes `window.__hkl_rec` with `getSession()`, `setSession(s)`, `selfTestRoundTrip()` for DevTools verification.
 
@@ -434,7 +434,7 @@ total_cost = Σ atom.complexity + Σ TIE_COST × (atoms − 1) + Σ boundary_pen
 
 **MEI emission (`meiEmit.ts`)**: builds the `.hkc` via the shared `@hkl/notation/mei-build` builder — the single source of truth for the `.hkc` dialect, shared with Composer's model (`emptyMeiDoc`, `buildNoteElement`/`buildChordElement`/`buildRestElement` all live there now; Composer re-exports them). `emitMei` reuses the head/`hkl:config`/scoreDef skeleton (`layoutReq.tuningMode` from the recording's snapshot, `refQ/refR = 0,0`), then appends one `<measure>` per bar: treble → staff 1 / layer 1, bass → staff 2 / layer 1 (layer 2 left empty; Composer fills placeholders on load). Each note carries `data-q`/`data-r` + a pre-darkened `color`; spelling reuses `noteName(q,r)` + `keyOctave(q,r)` from `@hkl/shared/notes.js` (sharps on +r, flats on −r; no key-signature inference in v1). **Ties**: a sustained note split across atoms — within a `QNote` or across a bar line (where `quantize` marks the previous QNote's trailing atom tied) — becomes an MEI `@tie` chain (`i`/`m`/`t`) on each note; `data-tie-partner` is left for Composer's `normalizeTies`, which runs on load via `replaceDocument`.
 
-**UI / transports**: "Export to Composer" opens a modal (title, time-sig numerator default 4 / denominator fixed at 4, optional BPM hint) with two actions — **Download `.hkc`** (`downloadBlob`, always available) and **Send to Composer** (gated on a live bridge connection: `isComposerConnected()`; disabled with an explanatory toast otherwise — no silent download fallback). Send dispatches the `import-score` `HklEvent` (`{ type, mei }`); Composer confirms-if-dirty then `replaceDocument` + adopts the score's `layoutReq`. `?hklrec=1` exposes `window.__hkl_rec.transcribe(opts)` returning `{ hkc, debug }` (debug = every intermediate IR: onsets, tempo, beats, meter, chords, qnotes, voiced).
+**UI / transports**: "Export to Composer" opens a modal (title, time-sig numerator 1–12, default 4 / denominator fixed at 4, optional BPM hint 40–240) with two actions — **Download `.hkc`** (`downloadBlob`, always available) and **Send to Composer** (gated on a live bridge connection: `isComposerConnected()`; disabled with an explanatory toast otherwise — no silent download fallback). Send dispatches the `import-score` `HklEvent` (`{ type, mei }`); Composer confirms-if-dirty then `replaceDocument` + adopts the score's `layoutReq`. `?hklrec=1` exposes `window.__hkl_rec.transcribe(opts)` returning `{ hkc, debug }` (debug = every intermediate IR: onsets, tempo, beats, meter, chords, qnotes, voiced).
 
 **Round-trip test**: `pnpm test:transcription` (`test/transcription-roundtrip/run.mjs`, needs `pnpm dev`) is a two-page headless check — emit a `.hkc` from a synthetic recording on the HKL page, load it into the Composer page via `replaceDocument`, and assert measure count, per-note `data-q`/`data-r`/`color`, no tie orphans, placeholder invariant, origin spelling, and serialize round-trip stability.
 

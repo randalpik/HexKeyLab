@@ -2,6 +2,8 @@
 
 Hard-won truths that aren't obvious from reading the code. Anti-patterns that burned us. Subtle behaviors that look like bugs but aren't. Read this before debugging anything that smells familiar, and add to it whenever something costs more than 30 minutes to figure out.
 
+**About these lessons.** They were learned on one development setup — one Lumatone unit (whose boards 3 and 4 are physically swapped), a Korg SP-250 digital piano, Firefox and Chromium on Arch Linux, and the developer's own scores, recordings and sample libraries — and some are specific to it: a figure measured on that unit or score, or a path, file or document that was local to that machine and isn't in the repository. The general lesson usually stands; the specifics are evidence from that setup, not guarantees for yours.
+
 ---
 
 ## Hardware
@@ -795,13 +797,13 @@ The two are entirely independent. External software (HKL, a DAW) can replicate C
 
 The wire format for CMD 0x20 splits each 12-bit value into two 6-bit nibbles, totaling 254 payload bytes. Natural order on the wire (no reversal — unlike 0x08).
 
-Sources: `/home/max/TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` (sendVelocityIntervalConfig), `KeyboardDataStructure.cpp:49` (DefaultVelocityIntervalTable).
+Sources: `TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` (the Lumatone editor's source) (sendVelocityIntervalConfig), `KeyboardDataStructure.cpp:49` (DefaultVelocityIntervalTable).
 
 ### Lumatone velocity pipeline: PIC measures, BBB binarizes + relabels
 
 (Corrects an earlier-and-now-deleted lesson that claimed the BBB was a pure MIDI proxy.)
 
-The architecture, verified by disassembling `/home/max/lumatone/TerpstraController/TerpstraController` (offsets `0x11d30 binary_search`, `0x11e78 SendMidiKeyStroke`, `0x9c84 decodePicMessage`, `0x15f00 setMyVelocityInterval`):
+The architecture, verified by disassembling the firmware binary (`TerpstraController/TerpstraController`, from a local mirror of the device) (offsets `0x11d30 binary_search`, `0x11e78 SendMidiKeyStroke`, `0x9c84 decodePicMessage`, `0x15f00 setMyVelocityInterval`):
 
 1. **PIC** (5 per-board microcontrollers) measures press-time as a 12-bit tick count and emits a UART message `[0x30, cmd, key, hi_byte, lo_nibble_byte, 0xFF]` to the BBB. `press_time = (hi_byte << 4) | (lo_nibble_byte & 0x0F)`.
 2. **BBB** (`TerpstraController`) decodes the message, then in `SendMidiKeyStroke`:
@@ -1611,7 +1613,7 @@ Consequences that bit us on the OBS overlay (see decisions.md "drop the off-by-d
 
 When building MEI for Verovio, a measure's control events (`<fermata>`, `<dynam>`, `<hairpin>`, `<slur>`, `<lv>`) must be appended **after** the `<staff>` children, not before. Appending a `<fermata>` as an early child of `<measure>` (e.g. while still building the layers) makes Verovio emit *"N time pointing element(s) could not be matched in measure …"* and silently drop the symbol — even though `@startid` resolves to a valid note. Collect control events during the walk and append them in a post-pass once the staves exist (Composer's own `addSibling`/`addSlur`/`addDynam` all append after staves). Surfaced during MusicXML import (`importMusicXml.ts`): fermatas were appended inside the layer loop and warned until moved to the post-pass.
 
-## MusicXML import gotchas (reference: `~/Documents/sonataBr1.musicxml`, Finale v25)
+## MusicXML import gotchas (reference: a Finale v25 export)
 
 - **`<divisions>` is per-part and can differ** (viola=24, piano=240 in the Sonata). Drive MEI note values from `<type>`+`<dot>` (divisions-independent), not `<duration>`; only use `<duration>`/divisions for tstamp positions and pickup-tick budgets.
 - **Measure `number` attributes are not positional** — Finale emits non-numeric ids like `number="X4"` (split measures / number resets). Index measures by document position, never by the `number` string.
@@ -1730,7 +1732,7 @@ Importing the viola+piano sonata, the intuitive assumption ("a double bar separa
 
 ## AudioParam `.value =` is dead the moment the timeline has (or will get) events — deferred-setter hosts resolve the pre-event region from the CONSTRUCTOR default
 
-HKLE is bring-your-own-`AudioContext`, and react-native-audio-api 0.13.2 diverges from the spec twice: the `.value` setter is deferred (queued to a control thread, not applied), and evaluation at times before the first scheduled event resolves from the param's *constructor default* (1.0 for gain/playbackRate) — never the intrinsic value. So the born-silent idiom `g.gain.value = 0; g.gain.setValueAtTime(0, futureT)` renders the source's first sample at unity gain: one raw-buffer sample injected per source start (note-on + every seam). Audibility tracks how far the segment entry sits from a zero crossing, which disguised an all-instruments bug as a one-instrument bug (winds enter at ~±0.0005 → inaudible; cello at ~−0.06 → click per seam). **No browser reproduces this** — Firefox/Chromium implement the spec's intrinsic-value fallback — so no web test can catch the class; it was found and verified on-device via Intonalogy (`handoff/hkle-born-silent-gain-fix.md`, fixed in engine 2.4.1, ~50 defects/10s → 0). The rule now enforced across the engine: every `.value = x` write where `x` can differ from the param's default gets a paired `setValueAtTime(x, 0)` — the t=0 seed is always the earliest event, so the timeline is authoritative from birth; harmless on spec hosts. Writes intended at the default (voiceGain etc. = 1.0) are exempt — the wrong lookup returns the right value there. Same-class trap to watch for in review: a param created with only `.value = x` that *later* receives future-scheduled events (segmentLooper's `g0` fade-out was this — the whole pre-switchTime region would have rendered at 1.0, not one sample). Sibling lesson: "Firefox fractional-rate sources emit pre-ring BEFORE their scheduled start" — the two host quirks together are why born-silent gains need BOTH the intrinsic write and the t=0 timeline seed.
+HKLE is bring-your-own-`AudioContext`, and react-native-audio-api 0.13.2 diverges from the spec twice: the `.value` setter is deferred (queued to a control thread, not applied), and evaluation at times before the first scheduled event resolves from the param's *constructor default* (1.0 for gain/playbackRate) — never the intrinsic value. So the born-silent idiom `g.gain.value = 0; g.gain.setValueAtTime(0, futureT)` renders the source's first sample at unity gain: one raw-buffer sample injected per source start (note-on + every seam). Audibility tracks how far the segment entry sits from a zero crossing, which disguised an all-instruments bug as a one-instrument bug (winds enter at ~±0.0005 → inaudible; cello at ~−0.06 → click per seam). **No browser reproduces this** — Firefox/Chromium implement the spec's intrinsic-value fallback — so no web test can catch the class; it was found and verified on-device via Intonalogy (fixed in engine 2.4.1, ~50 defects/10s → 0). The rule now enforced across the engine: every `.value = x` write where `x` can differ from the param's default gets a paired `setValueAtTime(x, 0)` — the t=0 seed is always the earliest event, so the timeline is authoritative from birth; harmless on spec hosts. Writes intended at the default (voiceGain etc. = 1.0) are exempt — the wrong lookup returns the right value there. Same-class trap to watch for in review: a param created with only `.value = x` that *later* receives future-scheduled events (segmentLooper's `g0` fade-out was this — the whole pre-switchTime region would have rendered at 1.0, not one sample). Sibling lesson: "Firefox fractional-rate sources emit pre-ring BEFORE their scheduled start" — the two host quirks together are why born-silent gains need BOTH the intrinsic write and the t=0 timeline seed.
 
 ## segGain carries BOTH the voice's attack and the seam events — never anchor a cancel/restore on it at `now`
 
@@ -1743,7 +1745,7 @@ Firefox (152) and react-native-audio-api keep a curve event whose start time is 
 
 ## Perceptual audio gates: measure what the ear hears, at the ear's scale (2026-08-18)
 
-Condensed from the Intonalogy cello rebuild (full story: docs/analyzer-perception-handoff.md §3–§6; decisions.md 2026-08-17/18). The recurring failure shape was optimizing a proxy the ear doesn't use:
+Condensed from the Intonalogy cello rebuild (full story: docs/architecture/analyzer.md → Perceptual seam selection; decisions.md 2026-08-17/18). The recurring failure shape was optimizing a proxy the ear doesn't use:
 
 - A click metric (crossfade residual) cannot see bumps/wahs — energy redistributed BETWEEN partials is invisible to a waveform difference.
 - Phase metrics are blind to PRESENCE: a flat trajectory has no phase (pre-vibrato seams passed every Δφ gate). Depth/ratio is its own dimension.
@@ -1775,7 +1777,7 @@ Two hard-won facts about racing `ctx.currentTime` against pre-scheduled seam eve
 
 ## Verovio setOptions + redoLayout does not reliably re-apply layout options — loadData is the only trustworthy relayout (Composer zoom/view-switch, 2026-08-29)
 
-The documented resize idiom (`setOptions(newOpts)` then `redoLayout()`) looked like a free win for option-only re-renders on an unchanged document (zoom presets, view-mode switches): skip the MEI parse/convert (~1.25 s of the sonata's 4.5 s page render) and relayout in place. Disproven by the headless probe the same day it was written: after a scroll-mode layout, `setOptions(page geometry)` + `redoLayout()` produced **2 pages instead of 37** — the relayout kept scroll's 100000-unit page rectangle, so the new `pageWidth`/`pageHeight` never took; and a zoom-preset relayout (`scale`+`unit` change) returned in **0 ms**, i.e. a silent no-op, while the drawn output scaled anyway — meaning `scale` is applied at draw time but the crisp preset's `unit` change (which must reflow spacing) likely never re-laid-out. No error, no console output either way — the failure is only visible by asserting on the OUTPUT (page count, SVG width), which is why the probe asserts those alongside timings. Verdict: on the CDN build ("latest"), treat `redoLayout` as unreliable for any cross-geometry or preset change; every option change that should reflow must go through `loadData`. The shortcut was reverted (see the DEAD END comment in `apps/composer/src/render/render.ts` and composer-render-perf.md T1.3); zoom's real fix is drawing fewer pages (T2.1), not skipping the parse.
+The documented resize idiom (`setOptions(newOpts)` then `redoLayout()`) looked like a free win for option-only re-renders on an unchanged document (zoom presets, view-mode switches): skip the MEI parse/convert (~1.25 s of the sonata's 4.5 s page render) and relayout in place. Disproven by the headless probe the same day it was written: after a scroll-mode layout, `setOptions(page geometry)` + `redoLayout()` produced **2 pages instead of 37** — the relayout kept scroll's 100000-unit page rectangle, so the new `pageWidth`/`pageHeight` never took; and a zoom-preset relayout (`scale`+`unit` change) returned in **0 ms**, i.e. a silent no-op, while the drawn output scaled anyway — meaning `scale` is applied at draw time but the crisp preset's `unit` change (which must reflow spacing) likely never re-laid-out. No error, no console output either way — the failure is only visible by asserting on the OUTPUT (page count, SVG width), which is why the probe asserts those alongside timings. Verdict: on the CDN build ("latest"), treat `redoLayout` as unreliable for any cross-geometry or preset change; every option change that should reflow must go through `loadData`. The shortcut was reverted (see the DEAD END comment in `apps/composer/src/render/render.ts`); zoom's real fix is drawing fewer pages (T2.1), not skipping the parse.
 
 ## Deferred renders tear the UI unless every visible flip travels with the content swap (Composer view switch, 2026-08-29)
 
@@ -2400,8 +2402,7 @@ layer after each candidate cursor.
 
 Also found in passing: a clef set on an EMPTY layer (only a placeholder space)
 does not roundtrip — `<clef/><space/>` loads back as `<space/><clef/>`, which
-would render the clef at the end of the measure. Not fixed; noted for the
-backlog.
+would render the clef at the end of the measure. Not fixed.
 
 - **When placing anything by cursor in a test, print the layer afterwards once.**
   The convention is documented, but "measure start" and "before the first
@@ -4034,7 +4035,7 @@ overlapping. The rebuilt inventory measures exact convex shapes — glyph boxes
 per `<use>`, per-character ink for text, the beam polygon itself, every
 stroked segment widened by half its stroke — clipped to each ink rect's x-slab,
 which gives the exact vertical gap or overlap for a flat-edged rect. Result on
-`~/Documents/sonata.hkc`: 0 collisions in 332 marks, closest approach 30 user
+Max's sonata: 0 collisions in 332 marks, closest approach 30 user
 units; on the unfixed p. 6 it flags exactly the one real stem collision. Before
 handing Max a collision list, run the true-positive check (the inventory must
 flag a known collision on unfixed code) — a list he has to refute item by item
@@ -5153,7 +5154,7 @@ fresh-load reference gate exact on all 31 pages throughout. The engraving passes
 82 000 `getBBox` calls (79 ms here); a cross-pass box memo would need write invalidation and is
 the next lever if Gecko is still slow. What a profile by function hides, a profile by DOM call
 shows — `cb-loadprofile.js`, `cb-domcalls.js`, `cb-ctmattr.js` in `test/composer-inspect/phasec/`
-are the probes; the next levers are written up in `docs/composer-render-perf.md` → Tier 4.
+are the probes; the measurements are in `docs/architecture/composer.md` → Render cost.
 
 ## A lazy assembly must show its page cards and hide its open page (2026-10-08)
 

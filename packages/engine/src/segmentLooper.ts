@@ -8,7 +8,7 @@
 //     instance, integrated with rate ramps, range attenuation, etc.
 //   - The Analyzer UI's audition (src/analyzer/audition.ts) — single voice
 //     at native rate, faithful preview of what production will sound like.
-//   - The future extracted HKLE library (per docs/backlog.md ENGINE).
+//   - The extracted HKLE library (`@hexkeylab/engine`).
 //
 // Web Audio APIs are runtime, so this module lives under src/engine/ (not
 // src/shared/). The pure algorithm — pickNextSeam — is in shared/segments.ts.

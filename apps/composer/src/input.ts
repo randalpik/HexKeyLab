@@ -2979,7 +2979,7 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     }
 
     /* M: insert an empty measure (plain M since 2026-09-11; Ctrl+M is the
-       multimeasure-rest flag). Rule from the backlog: "at the next
+       multimeasure-rest flag). Max's rule: "at the next
        measure boundary after the cursor (or AT the cursor if it's on a
        measure boundary already)". We use `measureBoundaryCursors` (the
        tstamp-aligned set Ctrl+arrow also lands on) as the authoritative

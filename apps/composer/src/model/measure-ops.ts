@@ -42,7 +42,7 @@ export function clearBeatRange(
     const tHiIn = Math.min(cap, tHiAbs - measureStart);
     /* Does the cleared span cover this measure ENTIRELY for this voice? Then
        the cell reverts to the EMPTY PLACEHOLDER instead of being refilled with
-       rests (Max, backlog Composer/Features — 2026-09-17): a bar the user just
+       rests (Max, 2026-09-17): a bar the user just
        emptied should read as empty, exactly as it does when the same bar is
        cleared from MEASURE selection (`clearMeasureRange` has always left the
        layer bare for `normalizePlaceholders`). Selection MODE was deciding
@@ -158,7 +158,7 @@ export function clearMeasureRange(
 
 /* ── move a voice's whole measures to its partner voice ────────────────────
  * Correcting notes entered into the wrong voice, which is easy to do (Max,
- * backlog Composer/Features — 2026-09-17). Driven from a BEAT selection: the
+ * 2026-09-17). Driven from a BEAT selection: the
  * measures the selection covers ENTIRELY and that actually hold something move
  * to the other voice on the same staff, provided that voice is free in each of
  * them. Anything less is an error rather than a partial result — this exists to

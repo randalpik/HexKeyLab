@@ -175,8 +175,8 @@ try {
        an inner scroller, so a bare captureScreenshot returns just the visible
        slice of one page — which reads as "the image is scaled wrong / cut off"
        rather than as a missing flag, and has already cost one round of
-       misleading comparison shots (2026-09-01). sonata-probes/run-probe.mjs has always
-       done this; the two capture paths now agree. */
+       misleading comparison shots (2026-09-01). The fixture runner's capture path has always
+       done this; the two now agree. */
     const dimsRes = await cdp.send('Runtime.evaluate', {
       expression: `JSON.stringify((() => {
         const el = document.querySelector('#score');

@@ -1035,7 +1035,7 @@ function scanPartDirections(
            direction BELONGS. Finale writes a mark at the end of a measure's
            element stream and offsets it back to its real beat, so dropping it
            put three of the sonata's p. 21 m. 99 marks at tstamp 4 in a 3/4 bar
-           — ON the barline (backlog, Layout). It moves the single @tstamp, so
+           — ON the barline (Max). It moves the single @tstamp, so
            the playback effect travels with the glyph: every offset the sonata
            carries is sound="no", but the offset position is the musically
            correct one (m. 43's diminuendo wedge is written AT the bar end with
@@ -1055,7 +1055,7 @@ function scanPartDirections(
         }
         /* A tempo direction (metronome and/or sound tempo): ONE <tempo> per
            direction, its <words> as the verbal text — every tempo marking in
-           the piece, not only the first (backlog, Layout P1: the sonata's
+           the piece, not only the first (Max: the sonata's
            "Poco più mosso", "Tempo I", … were dropped). */
         const isTempoDir = node.querySelector('metronome') !== null
           || node.querySelector('sound[tempo]') !== null;
@@ -1296,7 +1296,7 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
     part, (ls) => part.globalStaff[Math.min(Math.max(ls, 1), part.staffCount)],
   ));
   /* Say once what the <offset> handling did. The anchor used to be dropped
-     silently (backlog, Layout), and a clamp means a direction's offset reached
+     silently (Max), and a clamp means a direction's offset reached
      past its bar's start — worth seeing rather than guessing at later. */
   {
     const applied = dirScans.reduce((n, d) => n + d.offsetsApplied, 0);

@@ -480,7 +480,7 @@ function endingNumberOf(measure: Element): number | null {
 }
 
 /** Expand repeat barlines + voltas into the order measures actually sound.
- *  Start-aware (backlog line 96): a backward repeat is honored only when its
+ *  Start-aware: a backward repeat is honored only when its
  *  repeat-start was seen at/after `startIdx` — or, for an implicit repeat
  *  with no rptstart, only when starting from the top. Starting INSIDE a
  *  repeated body plays it through linearly without replaying. Each repeat is

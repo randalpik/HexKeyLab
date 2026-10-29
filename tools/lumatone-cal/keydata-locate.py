@@ -4,9 +4,9 @@
 # and print the current values.
 #
 # Usage:
-#   python3 keydata-locate.py <q> <r> [KEYDATA_DIR]
+#   python3 keydata-locate.py [--swap-boards-34] <q> <r> [KEYDATA_DIR]
 #
-# Defaults KEYDATA_DIR to ./files (i.e. run from /home/max/lumatone/TerpstraController).
+# Defaults KEYDATA_DIR to ./files (i.e. run from a local mirror's TerpstraController/).
 #
 # The (q, r) coordinates match HKL's baseKeys. Toggle "coords" in HKL to see
 # them on the canvas.
@@ -46,8 +46,10 @@ BASE_KEYS = [
     (15,-7),(16,-7),(17,-7),(18,-7),(15,-8),(16,-8),(17,-8),(18,-8),(19,-8),(18,-9),(19,-9),
 ]
 
-# board_group → SysEx board (Max's unit has boards 3 & 4 physically swapped)
-SYSEX_BOARD_MAP = [1, 2, 3, 5, 4]
+# board_group → SysEx board: the standard map. Pass --swap-boards-34 for a unit
+# whose boards 3 & 4 are physically swapped (HKL's "Swap boards 3 ↔ 4").
+SYSEX_BOARD_MAP = [1, 2, 3, 4, 5]
+SWAPPED_BOARD_MAP = [1, 2, 3, 5, 4]
 
 SECTION_NAMES = [
     'MAX threshold (1=trigger near rest, larger=lighter touch registers)',
@@ -69,11 +71,16 @@ def parse_section(line):
 
 
 def main():
-    if len(sys.argv) < 3:
-        sys.exit('Usage: keydata-locate.py <q> <r> [KEYDATA_DIR]')
-    q = int(sys.argv[1])
-    r = int(sys.argv[2])
-    keydata_dir = sys.argv[3] if len(sys.argv) > 3 else './files'
+    global SYSEX_BOARD_MAP
+    argv = sys.argv[1:]
+    if '--swap-boards-34' in argv:
+        argv.remove('--swap-boards-34')
+        SYSEX_BOARD_MAP = SWAPPED_BOARD_MAP
+    if len(argv) < 2:
+        sys.exit('Usage: keydata-locate.py [--swap-boards-34] <q> <r> [KEYDATA_DIR]')
+    q = int(argv[0])
+    r = int(argv[1])
+    keydata_dir = argv[2] if len(argv) > 2 else './files'
 
     idx = find_key(q, r)
     if idx is None:

@@ -1,4 +1,4 @@
-// Render-clone whole-bar rests (2026-09-22, backlog Composer).
+// Render-clone whole-bar rests (2026-09-22).
 //
 // A staff cell with no musical content — every layer holds only <space>
 // placeholders (or nothing), plus at most a <clef> — used to render as a bare
