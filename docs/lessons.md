@@ -498,7 +498,7 @@ The distinction is input identity: a Lumatone key has a persistent `(ch, note)` 
 
 If you migrate clicks too, you have to invent a synthetic identity for them ("phantom click on cell X moves to cell Y"), which doesn't match anything the user actually did. If you don't migrate physical inputs, held chords on the Lumatone jump pitches mid-press when the ref shifts.
 
-The fan-out in `src/effects/onRefChanged.ts` calls `migrateHeldQwertyVoices()` + `migrateHeldLumatoneVoices()` + `buildMidiReverse()` AFTER the ref mutation. All physical sources share one registry (`apps/hkl/src/input/held.ts`) keyed by source + input identity (`"ch,note"`, `e.code`, MIDI note), and each entry records the KeyId it struck: release resolves through that record, never through the current anchor, so an anchor change that skips migration cannot orphan a voice (2026-10-25).
+The fan-out in `src/effects/onRefChanged.ts` calls `migrateHeldQwertyVoices()` + `migrateHeldLumatoneVoices()` AFTER the ref mutation. All physical sources share one registry (`apps/hkl/src/input/held.ts`) keyed by source + input identity (`"ch,note"`, `e.code`, MIDI note), and each entry records the KeyId it struck: release resolves through that record, never through the current anchor, so an anchor change that skips migration cannot orphan a voice (2026-10-25).
 
 ### Outline polygon stays static; the lattice slides
 
@@ -5525,6 +5525,12 @@ fresh copy of the module with its own state: reads look plausible and are discon
 (`draw.ts` doesn't import `tuning/frequency.ts`; `engine.ts` does). Workspace packages are served as
 `/@fs/<abs path>?t=…`, which `depUrl`'s forward slice truncates. Before trusting a new harness, curl the
 importer (`curl -s localhost:5170/src/x.ts | grep dep`) for every edge it resolves.
+
+A bare `import('/src/x.ts')` has the same failure, deferred: it works until that module is hot-reloaded,
+then the app holds `x.ts?t=…` and the harness a second copy. On 2026-10-29, after edits to `handler.ts` and
+`state/midi.ts`, `departure.mjs` dropped from 56/56 to 24/56 with nothing wrong in the app — its fake port was
+wired into copies the app never read. It now walks every module from `/src/ui/init.ts` through the app's
+own import edges, and its `depUrl` throws on a missing edge instead of falling back to the bare path.
 
 ## Headless HKL pages publish into the live OBS overlay (2026-10-27)
 

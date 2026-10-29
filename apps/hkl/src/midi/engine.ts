@@ -1,118 +1,23 @@
-// MIDI port discovery + note-on/off output + the (q,r) ⇄ (note,channel) mapping
-// for the fixed-layout output.
-//
-// Output mapping: each unique pitch class across all three layouts gets a
-// degree number (0…N-1); the channel encodes the octave (oct + 6, clipped to
-// 1-10). On a layout switch buildMidiReverse rebuilds the (note,channel) → "q,r"
-// reverse lookup so MIDI input from the Lumatone hits the right lattice key.
+// Lumatone MIDI port discovery and liveness, plus the fixed-layout input map
+// (fixedMidiToKey: channel 1-5 × note 0-55 → lattice key). HKL sends the device
+// SysEx only; notes are never echoed back to it.
 //
 // findLumatone is the auto-detect entry point: scans access.outputs/inputs for
 // a port named "Lumatone", wires onmidimessage, and (on a fresh connection)
 // queries firmware + maybe runs an Auto-sync color push.
 
-import { tuning } from '../state/tuning.js';
-import { selection } from '../state/selection.js';
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
 import { baseKeys } from '../layout/baseKeys.js';
 import { view } from '../state/view.js';
-import { posInBand } from '../layout/coords.js';
-import { eulerOf } from '@hkl/shared/mapping.js';
-import { keyFreq } from '../tuning/frequency.js';
 import { syncAudio } from '../audio/engine.js';
 import { syncPianoOut } from './piano-out.js';
 import { sysex } from '../lumatone/sysex.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { buildPingSysEx, isPingReply } from '../lumatone/protocol.js';
-import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import type { KeyId } from '../types.js';
 
-interface MidiTarget {
-  note: number;
-  channel: number;
-}
-
-/* build scale degree lookup: enumerate unique pitch classes in the baseKeys
-   footprint. Ref-driven layout shifts span too many syntonic positions to
-   enumerate up front; degreeMap covers the default-position PCs and is
-   sufficient for the Lumatone MIDI-out mapping. */
-const degreeMap: Record<string, number> = {};
-(function () {
-  const pcList: { pk: string; cents: number }[] = [];
-  const pcSeen: Record<string, true> = {};
-  baseKeys.forEach(function (k) {
-    const q = k[0], r = k[1];
-    const p = posInBand(q) - 1;
-    const pk = r + ',' + p;
-    if (!pcSeen[pk]) {
-      pcSeen[pk] = true;
-      let cents = 1200 * (p * Math.log2(5 / 4) + r * Math.log2(3 / 2));
-      cents = ((cents % 1200) + 1200) % 1200;
-      pcList.push({ pk, cents });
-    }
-  });
-  pcList.sort(function (a, b) { return a.cents - b.cents; });
-  pcList.forEach(function (pc, i) { degreeMap[pc.pk] = i; });
-})();
-
-export function keyToMidi(q: number, r: number): MidiTarget | null {
-  /* pitch-class identity from the Euler-equivalent (a Wicki-Hayden copy shares
-     its equal-pitch Euler cell's degree); octave from the cell's own pitch */
-  const e = eulerOf(q, r, tuning.mapping);
-  const p = posInBand(e.q) - 1;
-  const deg = degreeMap[e.r + ',' + p];
-  if (deg === undefined) return null;
-  const ratio = keyFreq(q, r) / 220;
-  const oct = Math.floor(Math.log2(ratio) + 0.0001);
-  const ch = oct + 6;
-  if (ch < 1 || ch > 10) return null;
-  return { note: deg, channel: ch };
-}
-
-/* reverse lookup: (note,channel) → "q,r" for MIDI input. The lattice shift
-   under the static Lumatone outline is driven by kbAnchor, so the mapping
-   rebuilds on user-driven ref change (call sites: ctrl+click handler +
-   onRefChanged). */
-export function buildMidiReverse(): void {
-  midi.midiToKey = {};
-  const aQ = view.kbAnchorQ, aR = view.kbAnchorR;
-  baseKeys.forEach(function (k) {
-    const q = k[0] + aQ, r = k[1] + aR;
-    const m = keyToMidi(q, r);
-    if (m) midi.midiToKey[m.note + ',' + m.channel] = q + ',' + r;
-  });
-}
-buildMidiReverse();
-
-export function midiNoteOn(key: KeyId): void {
-  if (!midi.midiOut) return;
-  const parts = key.split(',');
-  const m = keyToMidi(+parts[0], +parts[1]);
-  if (!m) return;
-  midi.midiOut.send([0x90 + (m.channel - 1), m.note, DEFAULT_DYNAMIC_MAP.f]);
-  midi.activeMidiNotes[key] = m;
-}
-
-export function midiNoteOff(key: KeyId): void {
-  const m = midi.activeMidiNotes[key];
-  if (!m || !midi.midiOut) return;
-  midi.midiOut.send([0x80 + (m.channel - 1), m.note, 0]);
-  delete midi.activeMidiNotes[key];
-}
-
-export function stopAllMidi(): void { for (const k in midi.activeMidiNotes) midiNoteOff(k); }
-
-export function syncMidi(): void {
-  if (!midi.midiOut) { stopAllMidi(); return; }
-  for (const k in midi.activeMidiNotes) {
-    if (!selection.selectedKeys.has(k)) midiNoteOff(k);
-  }
-  selection.selectedKeys.forEach(function (k) {
-    if (!midi.activeMidiNotes[k]) midiNoteOn(k);
-  });
-}
-
-export function syncOutput(): void { syncAudio(); syncMidi(); syncPianoOut(); }
+export function syncOutput(): void { syncAudio(); syncPianoOut(); }
 
 /* fixed MIDI: (channel 1-5, note 0-55) → baseKeys index → lattice (q,r),
    shifted by kbAnchor so the lattice slides under the static Lumatone outline
@@ -204,9 +109,6 @@ export function markLumatoneGone(reason: string): void {
   console.warn('Lumatone: treating as disconnected \u2014 ' + reason);
   if (midi.midiIn) { midi.midiIn.onmidimessage = null; midi.midiIn = null; }
   midi.midiOut = null;
-  /* the device can't receive these; drop them so a later reconnect doesn't
-     inherit a stale active-note set */
-  midi.activeMidiNotes = {};
   sysex.cancel();
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
@@ -266,8 +168,6 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
        CCs can never arrive from a port that's gone, so held voices would
        otherwise hang forever (Chromium reaches here via statechange; Firefox
        never does — it departs via the heartbeat's markLumatoneGone instead). */
-    stopAllMidi();
-    midi.activeMidiNotes = {};
     sysex.cancel();
     lumatone.deviceColors = null;
     lumatone.fixedLayoutSent = false;
@@ -275,8 +175,6 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
       try { deviceLostHandler(); }
       catch (e) { console.error('Lumatone: releasing held input on departure failed', e); }
     }
-  } else if (midi.midiOut && oldOutId !== newOutId) {
-    syncMidi();
   }
   /* update input — only rewire the message handler when the port identity
      changes, so polling that returns the same physical device doesn't churn. */

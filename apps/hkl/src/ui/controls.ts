@@ -24,7 +24,6 @@ import {
   noteOff, syncAudio,
   instrReplaysOnTranspose,
 } from '../audio/engine.js';
-import { stopAllMidi, syncMidi, buildMidiReverse } from '../midi/engine.js';
 import { draw, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
 import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender } from '../render/controls-core.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
@@ -126,7 +125,6 @@ export function setMapping(): void {
   convertReferenceFrame(convert, (q, r) => validateRefNoteCandidate(q, r) === null);
   const manualRef = manualSelection();
   savePrefs({ manualRef: manualRef ? { q: manualRef.q, r: manualRef.r } : undefined });
-  buildMidiReverse();
   invalidatePianoOutline();
   applyRotation(currentRotationMode); /* the verticalFreq tilt depends on the mapping */
   /* Retunes held physical voices in place, rebuilds the layers + footprint,
@@ -232,7 +230,6 @@ export function transposeSelection(dq: number, dr: number): void {
   const shifted = new Set<KeyId>();
   selection.selectedKeys.forEach(function (k) { const p = k.split(','); shifted.add((+p[0] + dq) + ',' + (+p[1] + dr)); });
   selection.selectedKeys = shifted;
-  stopAllMidi(); syncMidi();
   if (instrReplaysOnTranspose()) syncAudio(); /* retrigger at new coords */
   draw();
 }
@@ -291,7 +288,6 @@ export function clearSelection(): void {
       delete audio.activeOscs[k];
     }
   }
-  stopAllMidi();
   clearAllHeld();
   draw();
 }

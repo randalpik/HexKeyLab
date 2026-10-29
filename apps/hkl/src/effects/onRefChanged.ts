@@ -17,7 +17,6 @@
 
 import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
 import { migrateHeldLumatoneVoices } from '../midi/handler.js';
-import { buildMidiReverse } from '../midi/engine.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { broadcastAllToComposer } from '../bridge/hkl-side.js';
 import { draw, invalidatePianoOutline } from '../render/draw.js';
@@ -39,9 +38,6 @@ export function onRefChanged(dq: number, dr: number): void {
        it (input/held.ts migrateHeld). One selection sync for both sources. */
     const moved = migrateHeldQwertyVoices() + migrateHeldLumatoneVoices();
     if (moved) onSelectionChanged();
-    /* Rebuild Lumatone MIDI output reverse-lookup so future note-ons land
-       on the right (channel, note) for the new lattice shift. */
-    buildMidiReverse();
     /* Different lattice cells now sit under each physical Lumatone key —
        push a color diff so the device LEDs follow. Self-gates on
        autoSyncEnabled + midiOut, so this is a no-op when irrelevant. */

@@ -153,11 +153,14 @@ expected); the fake ports are what the test installs instead. The fake output
 answers heartbeat pings (CMD 33h) on the fake input when "alive" and swallows
 them when "dead", which is how a powered-off Lumatone behaves.
 
-`engine.ts` and `heartbeat.ts` are imported by the exact URL `handler.ts`
-imports them by (read from its transformed source). Once a module has been
-hot-reloaded, Vite serves its importers a `?t=<stamp>` URL, so a bare
-`/src/midi/engine.ts` import would be a *second* instance with no release
-handler registered, and the departure checks would test the wrong object.
+Every module is imported by the exact URL the app imports it by, walking the
+app's own import edges from `/src/ui/init.ts` (read from each importer's
+transformed source). Once a module has been hot-reloaded, Vite serves its
+importers a `?t=<stamp>` URL, so a bare `/src/midi/engine.ts` import would be a
+*second* instance with no release handler registered, and the checks would
+test the wrong object. `departure.mjs`'s `depUrl` throws on a missing edge
+rather than falling back to the bare path; `damper.mjs` still imports bare
+paths and is exposed to the same failure after a hot reload.
 
 ## Adding cases
 

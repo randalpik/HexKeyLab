@@ -37,27 +37,33 @@ const URL = await isolatedHklUrl(process.env.HKL_URL ?? 'http://localhost:5170/'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SCRIPT = `(async () => {
-  /* Import engine/heartbeat by the exact URL handler.ts imports them by. Once
-     a module has been hot-reloaded, Vite serves its importers a '?t=<stamp>'
-     URL, so a bare '/src/midi/engine.ts' import here would be a SECOND engine
-     instance — one with no release handler registered — and the departure
-     checks would silently test the wrong object. */
+  /* Import every module by the exact URL the running app imports it by,
+     walking the app's own import edges from init.ts. Once a module has been
+     hot-reloaded, Vite serves its importers a '?t=<stamp>' URL, and a bare
+     import here is a SECOND instance the app never reads (no release handler
+     registered, a port the app never sees), so the departure checks silently
+     test the wrong object (docs/lessons.md, 2026-10-26). A missing edge
+     throws instead of falling back to the bare path. */
   const depUrl = async (fromPath, depPath) => {
     const src = await (await fetch(fromPath)).text();
     const i = src.indexOf(depPath);
-    if (i < 0) return depPath;
+    if (i < 0) throw new Error(depPath + ' is not imported by ' + fromPath);
     let j = i + depPath.length;
     while (j < src.length && src[j] !== '"' && src[j] !== "'") j++;
     return src.slice(i, j);
   };
+  const initUrl = '/src/ui/init.ts';
+  const refUrl = await depUrl(initUrl, '/src/effects/onRefChanged.ts');
+  const handlerUrl = await depUrl(refUrl, '/src/midi/handler.ts');
+  const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
   const [handler, midiState, sel, audioState, pedalState, eng, heartbeat] = await Promise.all([
-    import('/src/midi/handler.ts'),
-    import('/src/state/midi.ts'),
-    import('/src/state/selection.ts'),
-    import('/src/state/audio.ts'),
-    import('/src/state/pedal.ts'),
-    depUrl('/src/midi/handler.ts', '/src/midi/engine.ts').then((u) => import(u)),
-    depUrl('/src/midi/handler.ts', '/src/midi/heartbeat.ts').then((u) => import(u)),
+    import(handlerUrl),
+    depUrl(engineUrl, '/src/state/midi.ts').then((u) => import(u)),
+    depUrl(initUrl, '/src/state/selection.ts').then((u) => import(u)),
+    depUrl(handlerUrl, '/src/state/audio.ts').then((u) => import(u)),
+    depUrl(handlerUrl, '/src/state/pedal.ts').then((u) => import(u)),
+    import(engineUrl),
+    depUrl(handlerUrl, '/src/midi/heartbeat.ts').then((u) => import(u)),
   ]);
   const { midi } = midiState, { selection } = sel, { audio } = audioState, { pedal } = pedalState;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,7 +119,7 @@ const SCRIPT = `(async () => {
   const gone = (why = 'test') => eng.markLumatoneGone(why);
 
   /* ---- 0. probe instrument loads and degrades gracefully ---- */
-  const probe = await import('/src/lumatone/probe.ts');
+  const probe = await import(await depUrl(initUrl, '/src/lumatone/probe.ts'));
   check('0: lumaprobe exposed', typeof window.lumaprobe?.latency, 'function');
   check('0: monitor attached', typeof probe.probeMonitor, 'function');
   midi.midiOut = null;
@@ -308,7 +314,7 @@ const SCRIPT = `(async () => {
 
   /* leave nothing running */
   reset();
-  const sx = await import('/src/lumatone/sysex.ts');
+  const sx = await import(await depUrl(handlerUrl, '/src/lumatone/sysex.ts'));
   sx.sysex.cancel();
   midi.midiIn = null; midi.midiOut = null;
 

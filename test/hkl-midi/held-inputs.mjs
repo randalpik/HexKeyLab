@@ -22,6 +22,7 @@
 //   Q1-Q5  QWERTY: strike, ref-change migration, keyup release, unmigrated
 //          anchor change, blur releases everything held
 //   S1     damper down: release moves the key to sustainedKeys; pedal up ends it
+//   N1     nothing but SysEx reaches the Lumatone port (no note echo)
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -69,9 +70,13 @@ const SCRIPT = `(async () => {
   const isPing = (m) => m[4] === 0x00 && m[5] === 0x33;
   const pingReply = (m) => new Uint8Array([0xF0, 0x00, 0x21, 0x50, 0x00, 0x33, 0x01, m[6], m[7], m[8], m[9], 0xF7]);
   const fakeIn = { id: 'fake-lumatone-in', name: 'Lumatone', state: 'connected', onmidimessage: null };
+  const notSysex = [];   /* status bytes of anything but SysEx sent to the device */
   const fakeOut = {
     id: 'fake-lumatone-out', name: 'Lumatone', state: 'connected',
-    send(m) { if (isPing(m)) setTimeout(() => { if (fakeIn.onmidimessage) fakeIn.onmidimessage({ data: pingReply(m) }); }, 1); },
+    send(m) {
+      if (m[0] !== 0xF0) notSysex.push(m[0]);
+      if (isPing(m)) setTimeout(() => { if (fakeIn.onmidimessage) fakeIn.onmidimessage({ data: pingReply(m) }); }, 1);
+    },
   };
   const savedIn = midi.midiIn, savedOut = midi.midiOut;
   midi.midiIn = fakeIn; midi.midiOut = fakeOut;
@@ -171,6 +176,10 @@ const SCRIPT = `(async () => {
   check('S1b: release under the damper clears the record', held.heldCount('lumatone'), 0);
   deliver(0xB0, 64, 0);
   check('S1c: pedal up ends the sustain', audio.sustainedKeys.has(K0), false);
+
+  /* Every strike above (Lumatone, QWERTY, sustain) went through the selection
+     sync; HKL talks to the Lumatone in SysEx only, never echoing notes. */
+  check('N1: the Lumatone port carries only SysEx', notSysex.map((b) => b.toString(16)).join(' '), '');
 
   /* leave nothing running */
   reset();

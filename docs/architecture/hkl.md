@@ -102,7 +102,6 @@ Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vect
 
 - **Bounds check**: blocked if any note's screen center would leave canvas.
 - **Audio**: 100ms slide (`exponentialRampToValueAtTime`); sustained samples glide-and-fade; decaying instruments stop+retrigger.
-- **MIDI**: `stopAllMidi()` + `syncMidi()` after re-keying.
 - No-op when nothing selected.
 
 ### Note naming
@@ -270,7 +269,7 @@ while the Lumatone is **holding something** — keys down (`heldCount('lumatone'
 **`markLumatoneGone()`** (`midi/engine.ts`) then:
 
 1. **nulls `midiIn.onmidimessage`** so nothing still in flight can latch.
-2. nulls `midiOut`/`midiIn`, clears `activeMidiNotes`, cancels the SysEx queue, forgets `deviceColors` /
+2. nulls `midiOut`/`midiIn`, cancels the SysEx queue, forgets `deviceColors` /
    `fixedLayoutSent`, sets `pendingReconnect`, and updates the status indicator. This happens **before**
    step 3, so a failure there cannot leave the badge claiming the device is still connected.
 3. calls `releaseLumatoneInput()` (registered via `setLumatoneLostHandler` to avoid an import cycle), wrapped
@@ -473,9 +472,8 @@ Dirty flags minimize rebuilds: tuning-mode change → hex layer; note names → 
 ### Output / input plumbing
 
 - `syncAudio()` — diffs active voices against selection.
-- `syncMidi()` — noteOn/noteOff in parallel (Lumatone output; selection only).
 - `syncPianoOut()` — external-synth JI mirror; tracks selection ∪ sustained.
-- `syncOutput()` — all three.
+- `syncOutput()` — both. HKL sends the Lumatone SysEx only; no notes are echoed to it.
 - `handleMidiMessage(e)` — see [Lumatone input](#lumatone-input).
 
 ### Recording subsystem
@@ -536,9 +534,7 @@ DAMPER_RELEASE_FLOOR   # damper-contact threshold (0.05 ≈ -26 dB). Below this 
 - `equalHueCycle`: `['BL','PU','PK']`.
 - `hueC`: hue code → {l, d, sl, sd} hex strings.
 - `hueCycleOrder`: `['PU','PK','OR','YE','GR','TE','BL']`.
-- `degreeMap`: `(r,p) → scale degree (0–78)`, the pitch classes of the default Euler `baseKeys` footprint. `keyToMidi` (`midi/engine.ts`) gives a cell its fixed `(channel, note)`: the degree of its Euler-equivalent's class, the channel from its octave (1–10); a class outside that footprint, or an octave out of range, returns null.
 - `refSpine(refQ, refR)`: `(q, r) → (q, r)` qm=0-normalized spine cell; drives Lumatone/QWERTY/none layout shift.
-- `midiToKey`: fixed-layout reverse `(channel,note) → "q,r"`, recomputed via `buildMidiReverse()` whenever refSpine changes.
 - `deviceColors`: 280-entry tracked device state for diff-based auto-sync.
 - `kbOutlinePaths`: precomputed outline polygons.
 - `kbBaseSet`: Set of `"bq,br"` for all baseKeys.
