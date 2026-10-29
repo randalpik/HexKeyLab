@@ -5596,3 +5596,10 @@ Mid-change, `draw.ts` read a banding-keyed `VALID_REF_TABLE` while the generated
 
 - Order edits so every save leaves the app running: generated data, or a placeholder of the new shape, before its consumers.
 - Run `pnpm typecheck` before moving on from a shape change, not at the end of the phase.
+
+## Two caches blitted with one geometry must be rebuilt at the same geometry (2026-10-29)
+
+HKL's hex and text layers are separate offscreen canvases, but `draw()` blits both with one module-level geometry (`gridRef`, pad, size). A sliding Ctrl+click built both at the tween's midpoint geometry. A later Note names toggle rebuilt only the text layer, and `sizeGridCanvases()` moved the shared geometry to the final view, so the hex layer blitted out of place: the lattice desynced from the labels and the outline (Max). The dirty flags were correct per layer. The bug was that geometry is shared state neither flag owned.
+
+- Where caches share a geometry, record the geometry they were built at (`builtGridKey`) and rebuild every cache when it moves.
+- The gate compares the frame with a from-scratch rebuild (`test/hkl-midi/layer-sync.mjs`): a pixel identity catches any drift without knowing its cause.

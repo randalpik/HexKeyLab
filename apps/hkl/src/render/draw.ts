@@ -29,6 +29,7 @@ import {
   parseNote, accToVal, noteName,
 } from '@hkl/shared/notes.js';
 import { pianoFootprint } from '../tuning/picker.js';
+import { SEPT_UP_1, SEPT_UP_2 } from '@hkl/shared/heji.js';
 import {
   hejiCommas,
   hejiLabel,
@@ -569,6 +570,21 @@ const HEJI_FAMILY_Y_OFFSET: Record<HejiGlyphFamily, number> = {
   septimal:    0.18,
 };
 
+/* BravuraText draws each up hook lower than its down twin, at the same ink
+ * height (font units of 1000, read from public/BravuraText.otf 2026-10-29):
+ * single up y 64–487 vs down 324–747, double up 83–638 vs down 166–721.
+ * Raising an up hook by the difference gives it its down twin's vertical ink
+ * extent, so the one septimal family offset fits both directions. Fractions
+ * of the Bravura font size. */
+const SEPT_UP_RAISE: Readonly<Record<string, number>> = {
+  [String.fromCodePoint(SEPT_UP_1)]: 0.260,
+  [String.fromCodePoint(SEPT_UP_2)]: 0.084,
+};
+
+function septimalYOffset(g: HejiGlyphInfo): number {
+  return HEJI_FAMILY_Y_OFFSET.septimal - (SEPT_UP_RAISE[g.ch] ?? 0);
+}
+
 /* Bare-accidental codepoints per family — used as the layout-slot reference
  * regardless of what arrows are attached. Bravura's combined glyphs (e.g.
  * U+E2C1 = flat+1arrowDown) have the accidental at the LEFT of a wider
@@ -636,6 +652,18 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   for (const g of label.glyphs) {
     (g.family === 'septimal' ? septimalGs : chainGs).push(g);
   }
+  /* Glyphs anchor at their LEFT edge (see the render pass); set it before any
+     ink measurement, since actualBoundingBoxRight is measured from it. */
+  ctx.textAlign = 'left';
+  /* A down arrow hangs past its accidental's bare slot (natural ↓ by 0.057
+     em); the hooks start after that ink, not over it. Caller sets the Bravura
+     font. */
+  const hookOverhang = (): number => {
+    if (septimalGs.length === 0 || chainGs.length === 0) return 0;
+    if (label.collapse && label.collapse.position === 'after') return 0;
+    const last = chainGs[chainGs.length - 1];
+    return Math.max(0, ctx.measureText(last.ch).actualBoundingBoxRight - slotAdvance(last));
+  };
   /* width pass at base size */
   ctx.font = '500 ' + baseFontSize + 'px sans-serif';
   let totalW = ctx.measureText(label.letter).width;
@@ -643,6 +671,7 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   if (label.collapse) totalW += slotAdvance(label.collapse.glyph) + 0.5;
   for (const g of chainGs) totalW += slotAdvance(g) + 0.5;
   for (const g of septimalGs) totalW += slotAdvance(g) + 0.5;
+  totalW += hookOverhang();
   ctx.font = '500 ' + Math.round(baseFontSize * hejiScale * EXP_SCALE) + 'px sans-serif';
   if (label.collapse) totalW += ctx.measureText(String(label.collapse.count)).width;
   if (label.hookCount) totalW += ctx.measureText(String(label.hookCount)).width;
@@ -673,6 +702,7 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   const hookAscent = label.hookCount
     ? ctx.measureText(septimalGs[septimalGs.length - 1].ch).actualBoundingBoxAscent || hejiFontSize * 0.6
     : 0;
+  const overhang = hookOverhang();
   ctx.font = '500 ' + expFontSize + 'px sans-serif';
   const expW = label.collapse ? ctx.measureText(String(label.collapse.count)).width : 0;
   const hookExpW = label.hookCount ? ctx.measureText(String(label.hookCount)).width : 0;
@@ -680,12 +710,11 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   if (label.collapse) tw += collapseSlotW + 0.5 + expW;
   for (const w of chainSlotWs) tw += w + 0.5;
   for (const w of septimalSlotWs) tw += w + 0.5;
-  tw += hookExpW;
-  /* Render with textAlign='left' so each glyph's LEFT EDGE anchors at the
-     slot start. Combined accidental+arrow glyphs have the accidental at
-     the left of their advance box, so this keeps the accidental portion
-     aligned with the bare-accidental position regardless of arrows. */
-  ctx.textAlign = 'left';
+  tw += overhang + hookExpW;
+  /* Render with textAlign='left' (set above) so each glyph's LEFT EDGE
+     anchors at the slot start. Combined accidental+arrow glyphs have the
+     accidental at the left of their advance box, so this keeps the accidental
+     portion aligned with the bare-accidental position regardless of arrows. */
   let x = cx - tw / 2;
   ctx.font = '500 ' + fontSize + 'px sans-serif';
   ctx.fillText(label.letter, x, cy);
@@ -715,15 +744,15 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
     x += chainSlotWs[i] + 0.5;
   }
   if (label.collapse && label.collapse.position === 'after') drawCollapse();
+  x += overhang;
   for (let i = 0; i < septimalGs.length; i++) {
     const g = septimalGs[i];
-    const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
-    ctx.fillText(g.ch, x, cy + yOff);
+    ctx.fillText(g.ch, x, cy + septimalYOffset(g) * hejiFontSize);
     x += septimalSlotWs[i] + 0.5;
   }
   if (label.hookCount) {
     /* same placement as drawCollapse's exponent, off the trailing hook */
-    const yOff = HEJI_FAMILY_Y_OFFSET.septimal * hejiFontSize;
+    const yOff = septimalYOffset(septimalGs[septimalGs.length - 1]) * hejiFontSize;
     ctx.font = '500 ' + expFontSize + 'px sans-serif';
     ctx.fillText(String(label.hookCount), x - 0.5, cy + yOff - hookAscent + hookAscent * EXP_ASCENT_FRAC);
   }
@@ -764,6 +793,15 @@ if (typeof document !== 'undefined' && document.fonts) {
 // ── offscreen layers: hexCanvas (fills) + textCanvas (labels) ──────────────
 let hexCanvas: HTMLCanvasElement | null = null, textCanvas: HTMLCanvasElement | null = null;
 let gridRefQ = 0, gridRefR = 0, gridPadX = 0, gridPadY = 0, gridW = 0, gridH = 0, gridDpr = 1;
+/* The geometry both layers were last built at. The blit reads the one shared
+   geometry for both, so a rebuild of either at a different geometry must
+   rebuild the other (2026-10-29: a sliding ref change built both at the tween
+   midpoint; a Note names toggle then rebuilt only the text at the final view,
+   and the hex layer blitted out of place). */
+let builtGridKey = '';
+function gridKey(): string {
+  return [gridRefQ, gridRefR, gridPadX, gridPadY, gridW, gridH, gridDpr].join(',');
+}
 
 interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
 
@@ -845,6 +883,7 @@ export function buildHexLayerForTween(
   try {
     buildHexLayer();
     buildTextLayer();
+    builtGridKey = gridKey();
   } finally {
     pendingTweenStart = null;
     pendingTweenEnd = null;
@@ -998,10 +1037,13 @@ export function draw(): void {
   const showE = (document.getElementById("cbExtend") as HTMLInputElement)
     .checked;
 
-  /* rebuild layers if needed (not during animation) */
-  if (!animation.isAnimating) {
+  /* rebuild layers if needed (not during animation) — both at one geometry */
+  if (!animation.isAnimating && (view.hexDirty || view.textDirty)) {
+    sizeGridCanvases();
+    if (gridKey() !== builtGridKey) { view.hexDirty = true; view.textDirty = true; }
     if (view.hexDirty) buildHexLayer();
     if (view.textDirty) buildTextLayer();
+    builtGridKey = gridKey();
   }
 
   /* blit hex + text layers at current view offset */

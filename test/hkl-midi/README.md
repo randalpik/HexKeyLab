@@ -146,6 +146,34 @@ refSpine(ref)` outside the piano outline). Includes a snap landing mid-slide.
 **Run it before declaring any change to `state/reference.ts`,
 `effects/onRefChanged.ts`, a ref-moving handler, or the view tween done.**
 
+## Banded layout toggle
+
+```sh
+node test/hkl-midi/banded-toggle.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for `setBanded()` (docs/architecture.md → Unbanded layout): with
+keys held, turning Banded layout off keeps every cell's `(q,r)` and retunes in
+place (the ref band unchanged, the band to its right a Pythagorean comma up);
+Show bands and the P8 / SC transposes follow; the pref and the snapshot record
+it; unbanded centers the ref itself and banded the band's spine, held Lumatone
+keys following their key; P8 is (−1, 2) in Wicki-Hayden and (−2, 2) in chromatic,
+exact octaves; a recording snapshot restores its banding. **Run it before
+declaring any change to `setBanded`, the keyboard anchor, transpose, or
+`applySnapshot` done.**
+
+## Layer sync
+
+```sh
+node test/hkl-midi/layer-sync.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+The hex and text layers share one blit geometry, so every frame must equal a
+from-scratch rebuild of both: after a sliding Ctrl+click ref change, toggling
+Note names (a text-only rebuild) must not leave the hex layer at the tween's
+geometry. Failed 2/4 before the fix (2026-10-29). **Run it before declaring any
+change to the layer caches, `sizeGridCanvases`, or the view tween done.**
+
 ## Fresh profile
 
 ```sh

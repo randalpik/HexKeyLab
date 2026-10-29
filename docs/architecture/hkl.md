@@ -113,7 +113,7 @@ Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vect
 - **Exponent collapse** (`COLLAPSE_THRESHOLD = 4`): when |AD| or |SD| > 4, `hejiLabel()` emits a `collapse` spec — one accidental-form glyph + sans-serif superscript count:
   - **Case A** (both |AD|>4 AND |SD|>4): glyph = accidental + 1 arrow, exponent `k = min(|AD|,|SD|)`, position `before`. Leftover (excess of larger count) distributed by chain code.
   - **Case B** (|AD−SD|>4, greedy): `k = ||AD|−|SD||` absorbs the excess. |SD|>|AD| → natural+1 arrow, `before`; |AD|>|SD| → bare accidental, `after`. Leftover has equal residual AD/SD.
-- Septimal hooks always sit at the very end regardless of collapse position: one or two as glyphs (single U+E2DE/E2DF, two-hook U+E2E0/E2E1), more than two (`HOOK_COLLAPSE_THRESHOLD = 2`; only the unbanded Septimal layout stacks them) as one hook carrying a superscript `hookCount`. Composer's ±3 entry gate is unaffected — collapse is lattice-only (Composer draws the full chain).
+- Septimal hooks always sit at the very end regardless of collapse position: one or two as glyphs (single U+E2DE/E2DF, two-hook U+E2E0/E2E1), more than two (`HOOK_COLLAPSE_THRESHOLD = 2`; only the unbanded Septimal layout stacks them) as one hook carrying a superscript `hookCount`. Composer's ±3 entry gate is unaffected — collapse is lattice-only (Composer draws the full chain). Placement: BravuraText draws each up hook lower than its down twin at the same ink height, so `SEPT_UP_RAISE` lifts it to the down hook's vertical ink extent (font units read from the .otf); the hooks start after the previous glyph's ink, since a down arrow hangs past its accidental's bare slot (natural ↓ by 0.057 em).
 
 ### Info panel
 
@@ -455,7 +455,7 @@ Implementation-level notes. For module/file layout see the project overview ([`.
 - `hexCanvas`: colored hex fills for the extended grid (B-region warm-shifted in 7-limit, 3-hue formula in Equal).
 - `textCanvas`: note labels on transparent bg, scalable accidentals.
 
-Dirty flags minimize rebuilds: tuning-mode change → hex layer; note names → text layer; resize/extend → both; ref-driven tweens pre-build the hex layer across `[view → target]` (`buildHexLayerForTween`).
+Dirty flags minimize rebuilds: tuning-mode change → hex layer; note names → text layer; resize/extend → both; ref-driven tweens pre-build the hex layer across `[view → target]` (`buildHexLayerForTween`). The two layers are blitted with one shared geometry (gridRef, pad, size), so `draw()` builds both at the same geometry: when a rebuild would move it (e.g. the first text-only rebuild after a tween's midpoint build), both rebuild (`builtGridKey`; gate `test/hkl-midi/layer-sync.mjs`).
 
 **Per-frame draw**:
 1. Blit hexCanvas + textCanvas at view-offset.
