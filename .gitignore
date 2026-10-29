@@ -25,3 +25,5 @@ apps/analyzer/configs/
 apps/analyzer/cli/batch-musiquest.js
 test/composer-inspect/sonata-probes/
 test/corpus/
+AGENTS.local.md
+CLAUDE.md

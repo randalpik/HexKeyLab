@@ -1,6 +1,6 @@
 // Web MIDI output: enumerate output ports, pick one, send note-on/off to drive
 // the physical instrument. Firefox requires a secure context — localhost (the
-// :5170 umbrella) qualifies; file:// does not (see CLAUDE.md browser context).
+// :5170 umbrella) qualifies; file:// does not (see AGENTS.md browser context).
 
 export interface MidiPort { id: string; name: string; }
 

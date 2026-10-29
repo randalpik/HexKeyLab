@@ -36,6 +36,13 @@ Chromium job: a visual fixture shot mid-relayout under a concurrent build has
 failed for real, and the composer-inspect probe runner's deadline expires
 under a concurrent suite.
 
+After the `N/M passed` line the runner prints two diagnostics: the **splice
+ledger** (how many fixtures rendered with and without a full engrave, the
+full engraves grouped by reason — the triage list for the splice invariant)
+and **where the wall went** (setup time against total, and the eight slowest
+fixtures — a slow suite is usually a few fixtures building multi-page scores
+one chord at a time).
+
 ### `affected`
 
 `out/coverage-map.json` records, per fixture, the source lines it executed

@@ -110,7 +110,7 @@ export const FIXTURES = {
     });
   ` },
   /* C-E-G triad as a single chord. Pitches: C4 at (-4, -2), E4 at (1, 0),
-   * G4 at (0, 1). Lattice arithmetic per CLAUDE.md A3=(0,0). */
+   * G4 at (0, 1). Lattice arithmetic per AGENTS.md A3=(0,0). */
   m1ChordCEG: { setup: `
     m.setCursor(0, 1);
     m.insertChordAtCursor({

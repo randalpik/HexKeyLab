@@ -128,7 +128,10 @@ braced grand staff (staff 1 treble, 2 bass), two layers per staff, a `<tempo>`
 in measure 1, and `<meiHead><extMeta><hkl:config>` (namespace
 `https://hexkeylab.com/ns/mei`) holding the tuning requirement, the dynamic →
 velocity map and the document flags (`heji`, `ignore-color`, `page-scale`).
-`.hkc` is this MEI, saved as is.
+A new document's velocity map is generated from `DEFAULT_DYNAMIC_MAP`
+(`@hkl/shared/dynamics`), never copied; loading a document only fills in
+missing levels (`seedDefaults`, `expressions.ts`), so an existing `.hkc`'s map
+is never rewritten. `.hkc` is this MEI, saved as is.
 
 **Identity.** Every `<note>` carries `data-q`/`data-r` (its lattice cell — the
 pitch's source of truth); every note, staff and measure has an `xml:id`, set

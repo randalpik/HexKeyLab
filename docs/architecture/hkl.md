@@ -438,7 +438,7 @@ total_cost = Σ atom.complexity + Σ TIE_COST × (atoms − 1) + Σ boundary_pen
 
 **Round-trip test**: `pnpm test:transcription` (`test/transcription-roundtrip/run.mjs`, needs `pnpm dev`) is a two-page headless check — emit a `.hkc` from a synthetic recording on the HKL page, load it into the Composer page via `replaceDocument`, and assert measure count, per-note `data-q`/`data-r`/`color`, no tie orphans, placeholder invariant, origin spelling, and serialize round-trip stability.
 
-**Color handling**: `darkColorHex(q,r)` in `apps/hkl/src/transcription/pitch.ts` wraps `keyColorHex` with a per-hue table (`HUE_PROFILES`) remapping HKL's seven hues to paper-readable variants (OR/YE→goldenrod, GR→yellow-green, TE→cyan, PK→magenta) so the PK/OR and TE/GR confusion pairs on white become distinguishable. Stem/flag/accidental color suppressed (only the notehead carries lattice color).
+**Color handling**: `darkColorHex(q,r)` in `apps/hkl/src/transcription/pitch.ts` calls the shared `inkColorHex` (`@hkl/shared/keycolor.js`, also Composer's), whose per-hue table (`HUE_PROFILES`) remaps HKL's seven hues to paper-readable variants (OR/YE→goldenrod, GR→yellow-green, TE→cyan, PK→magenta) so the PK/OR and TE/GR confusion pairs on white become distinguishable. Stem/flag/accidental color suppressed (only the notehead carries lattice color). Colors follow the live layout (`tuning.mode`/`mapping`/`anchor`), not each event's recorded anchor, so a Syntonic/Polysyntonic take re-anchored mid-recording is colored as the anchor stands at export.
 
 **Out of scope for v1**: rubato/variable tempo, tuplets (triplets are the v2 target), time-sig change mid-piece, microtonal accidentals (HEJI via Ekmelily is a future path), manual correction UI (`sourceOnsetIds` preserved for it).
 
@@ -536,7 +536,7 @@ DAMPER_RELEASE_FLOOR   # damper-contact threshold (0.05 ≈ -26 dB). Below this 
 - `equalHueCycle`: `['BL','PU','PK']`.
 - `hueC`: hue code → {l, d, sl, sd} hex strings.
 - `hueCycleOrder`: `['PU','PK','OR','YE','GR','TE','BL']`.
-- `degreeMap`: `(r,p) → scale degree (0–78)`, internal pitch-class index.
+- `degreeMap`: `(r,p) → scale degree (0–78)`, the pitch classes of the default Euler `baseKeys` footprint. `keyToMidi` (`midi/engine.ts`) gives a cell its fixed `(channel, note)`: the degree of its Euler-equivalent's class, the channel from its octave (1–10); a class outside that footprint, or an octave out of range, returns null.
 - `refSpine(refQ, refR)`: `(q, r) → (q, r)` qm=0-normalized spine cell; drives Lumatone/QWERTY/none layout shift.
 - `midiToKey`: fixed-layout reverse `(channel,note) → "q,r"`, recomputed via `buildMidiReverse()` whenever refSpine changes.
 - `deviceColors`: 280-entry tracked device state for diff-based auto-sync.

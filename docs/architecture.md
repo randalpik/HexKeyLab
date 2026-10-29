@@ -23,7 +23,7 @@ and the repo map. Per-app deep-dives live alongside it:
 
 Design *rationale and history* live in [`decisions.md`](decisions.md); gotchas in
 [`lessons.md`](lessons.md); the agent operating-manual + critical hardware constants in
-[`CLAUDE.md`](../CLAUDE.md).
+[`AGENTS.md`](../AGENTS.md).
 
 ## Repo layout
 
@@ -52,7 +52,7 @@ Dependency DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, plus `@hk
 ← {analyzer, orchestrator}. `pnpm dev` runs all four app servers behind a single-origin reverse
 proxy at `http://localhost:5170` (`/`→hkl, `/composer/`, `/analyzer/`, `/orchestrator/`) — same
 origin is required because the HKL↔Composer/Analyzer/Orchestrator `BroadcastChannel` bridges and the
-`IndexedDB` instrument registry are per-origin. See [CLAUDE.md](../CLAUDE.md) for the run/build/test
+`IndexedDB` instrument registry are per-origin. See [AGENTS.md](../AGENTS.md) for the run/build/test
 commands.
 
 Imports use bare `@hkl/*` specifiers: each package's `exports` maps `./*.js` → `./src/*.ts`
@@ -508,8 +508,8 @@ left neighbor.
 ## Color scheme
 
 **Color belongs to the pitch, not the layout**: one function of a cell's prime exponents colors
-every JI mode under both mappings, so the same pitch gets the same color wherever it appears; a
-mode only decides which pitch sits on a cell. Light/dark encodes the 12-TET black/white key.
+every JI mode under both mappings, so the same pitch gets the same color wherever it appears (color is a reading aid for
+pitch identity across layouts); a mode only decides which pitch sits on a cell. Light/dark encodes the 12-TET black/white key.
 Implemented once, purely, in `@hkl/shared/keycolor.js` (`keyColor`, `keyColorHex`,
 `lightSourceHex`, `inkColorHex`); HKL's `render/colors.ts` only supplies its live layout, and
 Composer recolors notes with the same functions.

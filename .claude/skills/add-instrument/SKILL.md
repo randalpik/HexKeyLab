@@ -1,12 +1,12 @@
 ---
 name: add-instrument
-description: "Generate a new HexKeyLab sample-set from a CDN folder of pitched audio samples. TRIGGER when the user asks to 'add an instrument', 'try this soundfont', 'analyze samples from <URL>', or provides a CDN base URL with implied intent to integrate. Wraps analyzer/generate-samples.js + analyzer/insert-instrument.js."
+description: "Generate a new HexKeyLab sample-set from a CDN folder of pitched audio samples. TRIGGER when the user asks to 'add an instrument', 'try this soundfont', 'analyze samples from <URL>', or provides a CDN base URL with implied intent to integrate. Wraps apps/analyzer/cli/generate-samples.js + insert-instrument.js."
 ---
 
-# add-instrument — CDN folder → analyzed sample set → samples.ts entry
+# add-instrument — CDN folder → analyzed sample set → samples-data.ts entry
 
 The skill walks an instrument from a CDN URL through the existing analyzer
-pipeline (`analyzer/generate-samples.js`) into `src/audio/samples.ts`. It
+pipeline (`apps/analyzer/cli/generate-samples.js`) into `apps/hkl/src/audio/samples-data.ts`. It
 hands the user diagnostics before any commit, then waits for approval.
 
 ## When this fires
@@ -35,7 +35,7 @@ the user only gave a URL, ask:
    1–7 if user doesn't know; missing notes 404 silently.
 3. **Display name** (`displayName`). Title-cased, used in the HKL UI.
 4. **Instrument key** (`instrumentKey`). The JS object key in
-   `samples.ts`. Snake-case, derived from name unless user overrides.
+   `samples-data.ts`. Snake-case, derived from name unless user overrides.
 5. **For sustain only — vibrato?** (`vibrato: true|false`). True for
    anything with periodic AMP/PITCH modulation: orchestral strings,
    flute, drawbar organ, vocal pads. False for steady tones like
@@ -65,17 +65,17 @@ Reasonable defaults for fields the user probably won't care about:
 1. **Gather config** via AskUserQuestion if needed. Don't guess
    `decays` or `vibrato` — those drive the pipeline.
 
-2. **Write the config** to `analyzer/configs/<key>.json`. If a config
+2. **Write the config** to `apps/analyzer/configs/<key>.json` (gitignored). If a config
    with that key already exists, ask before overwriting.
 
 3. **Run the generator** with `Bash`:
    ```
-   node analyzer/generate-samples.js analyzer/configs/<key>.json
+   pnpm analyze apps/analyzer/configs/<key>.json
    ```
    This fetches (cached on subsequent runs), decodes, analyzes,
    classifies, picks samples, and writes:
-   - `analyzer/out/<key>-block.txt` (paste-ready JS)
-   - `analyzer/out/<key>-report.md` (diagnostics)
+   - `apps/analyzer/out/<key>-block.txt` (paste-ready JS)
+   - `apps/analyzer/out/<key>-report.md` (diagnostics)
 
 4. **Surface the report** to the user. Highlight:
    - **Loop instruments**: tier distribution (green/blue/yellow/red/
@@ -89,22 +89,22 @@ Reasonable defaults for fields the user probably won't care about:
    - **Pick count**. Loop typically 12–20, decay typically equal to
      usable input count.
 
-5. **Wait for approval.** Don't splice into `samples.ts` without
+5. **Wait for approval.** Don't splice into `samples-data.ts` without
    explicit user OK. The user may want to inspect the block first or
    ask for changes (different range, different gateOpts).
 
 6. **On approval**, run:
    ```
-   node analyzer/insert-instrument.js analyzer/configs/<key>.json
+   node apps/analyzer/cli/insert-instrument.js apps/analyzer/configs/<key>.json
    ```
    This finds the existing block (replace) or appends a new one. Then:
    ```
-   npm run typecheck && npm run build
+   pnpm typecheck && NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter @hkl/hkl build
    ```
    Confirm both pass.
 
-7. **Register the instrument in the UI dropdown.** `index.html` has a
-   hardcoded `<select id="waveform">` block — samples.ts is NOT
+7. **Register the instrument in the UI dropdown.** `apps/hkl/index.html` has a
+   hardcoded `<select id="waveform">` block — samples-data.ts is NOT
    auto-enumerated. Add an `<option value="<key>">Display Name</option>`
    in the family-appropriate position:
    - Decay keyboard/plucked group: piano, organs, harp, guitars
@@ -149,11 +149,11 @@ Reasonable defaults for fields the user probably won't care about:
 | Loop path: most samples classified `red`/`fail` | wrong path — instrument has no usable sustain (it's a decay) | Switch `decays: true`, drop `vibrato`, regenerate |
 | Loop path: most fail `'no modulation (best CV ...)'` | not a vibrato instrument, just a sustained one | Set `vibrato: false` to use macro-period |
 | Decay path: drift histogram >50¢ everywhere | recording out of tune, OR octave-mismatch convention | Check audio against labeled freq with autocorrelation; consider `transpose: 0.5` if the file is an octave *below* the labeled name |
-| `analyzer/out/<key>-block.txt` is empty | no usable samples in the range | Tighten the octave range or pick a different soundfont |
+| `apps/analyzer/out/<key>-block.txt` is empty | no usable samples in the range | Tighten the octave range or pick a different soundfont |
 
 ## See also
 
-- `analyzer/README.md` — script-level documentation
+- `apps/analyzer/README.md` — CLI documentation
 - `tools/HexKeyLab-analyzer.html` — the in-browser analyzer UI; load
   `file://` locally to inspect a single sample's loop points visually
 - `docs/decisions.md` — past decisions about sampling conventions and

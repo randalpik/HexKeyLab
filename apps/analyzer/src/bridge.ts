@@ -11,7 +11,7 @@
 // HKL acks each import with `import-ack { instrumentKey, ok, error? }`.
 //
 // Why inline (not shared IDB): keeps src/analyzer/ from importing
-// src/state/, matching the import-constraints in CLAUDE.md. The bridge
+// src/state/, matching the import-constraints in AGENTS.md. The bridge
 // stays a stateless message boundary.
 
 import {

@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * generate-samples.js — produce a samples.ts block for one instrument.
+ * generate-samples.js — build one instrument's samples-data.ts entry.
  *
  * Usage:
- *   node analyzer/generate-samples.js analyzer/configs/<name>.json
+ *   pnpm analyze apps/analyzer/configs/<name>.json
  *
  * Pipeline:
- *   1. Fetch every chromatic note in the config range from the CDN, cache to
- *      analyzer/.cache/<key>/<note>.mp3
- *   2. Decode each cached MP3 to f32 mono PCM at 44.1 kHz via ffmpeg
- *   3. Load tools/HexKeyLab-analyzer.html, evaluate its <script> with stub
- *      DOM globals, expose prepareLoopVibrato/prepareLoopMacroPeriod/
- *      refineFundamentalPeriod
- *   4. Run the appropriate path on each sample (loop vs decay, see plan)
- *   5. Tier-classify (loop) or peak-validate (decay)
- *   6. Pick samples at ~4-semitone spacing (configurable via pickSpacing), prefer higher tier
- *   7. Emit two outputs in analyzer/out/:
- *        <key>-block.txt    — ready-to-paste JS source
- *        <key>-report.md    — diagnostics
+ *   1. Fetch every chromatic note in the config range from the CDN (or read
+ *      `sourceDir` for source:'local'), cache to apps/analyzer/.cache/<configName>/
+ *   2. Decode each sample to f32 PCM at 44.1 kHz via ffmpeg
+ *   3. Run the loop or decay path from @hkl/analysis (analyzer-analysis.js)
+ *   4. Tier-classify (loop) or peak-validate (decay)
+ *   5. Pick samples (pickSpacing, default ~4 semitones; quality-first in
+ *      perception mode), measure K-weighted loudness, compute gains
+ *   6. Write to apps/analyzer/out/:
+ *        <key>-block.txt     — the samples-data.ts entry (insert-instrument.js splices it)
+ *        <key>-report.md     — diagnostics
+ *        <key>-summary.json  — machine-readable run summary
+ *        <key>.hki + <key>-def.json — when bundling (source:'local' or bundle)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,10 +53,10 @@ const SR = 44100;
 /* Per-sample normalization targets. Both loop and decay paths target the
    same TARGET_RMS, with a peak ceiling at TARGET_PEAK_DBFS that engages only
    when RMS targeting would push a sample's peak into clip range. The
-   measurement *methods* differ — loop uses stereo RMS over the analyzer's
-   steady region; decay uses K-weighted integrated loudness (ITU-R BS.1770,
-   see k-weighting.js) returned as a stereo-RMS-equivalent so the gain math
-   stays uniform. Single source of truth — backfill-gains.js mirrors these. */
+   measurement *windows* differ — loop uses the analyzer's steady region (else
+   the loudest 1s post-trim); decay the post-trim region — but both measure
+   K-weighted integrated loudness (ITU-R BS.1770, see k-weighting.js) returned
+   as a stereo-RMS-equivalent so the gain math stays uniform. Single source of truth — backfill-gains.js mirrors these. */
 const TARGET_DBFS = -18;
 const TARGET_RMS = Math.pow(10, TARGET_DBFS / 20);  /* ≈ 0.12589 */
 /* Peak ceiling — engages when RMS targeting would push a sample's peak above

@@ -13,8 +13,10 @@
  *      cache lines up with generate-samples.js's per-config directories.
  *   2. Decode to f32 mono PCM @ 44.1 kHz via ffmpeg → analyzer/.cache/.../*.raw
  *   3. Find trimStart (first |x|>0.003) and measure loudness+peak:
- *        loop  : findSteadyRegion (50ms/10ms RMS curve, ≥70% peak run); RMS
- *                over the steady span. vibrato:true passes smoothMs=300.
+ *        loop  : findSteadyRegion (50ms/10ms RMS curve, ≥70% peak run;
+ *                vibrato:true passes smoothMs=300), then K-weighted integrated
+ *                loudness over the steady span (≥400ms), else over the loudest
+ *                1s post-trim window — mirroring generate-samples.js.
  *        decay : K-weighted integrated loudness (ITU-R BS.1770-4, see
  *                k-weighting.js) over the full post-trim region with momentary
  *                window gating; stereo peak over the same span.
@@ -29,7 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { measureDecayLufs } from '@hkl/analysis/k-weighting.js';
+import { measureDecayLufs, measureLufs } from '@hkl/analysis/k-weighting.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -208,17 +210,6 @@ function stereoRmsOver(stereo, start, end) {
   return Math.sqrt(sumSq / (2 * (end - start)));
 }
 
-function stereoPeakOver(stereo, start, end) {
-  let p = 0;
-  for (let i = start; i < end; i++) {
-    const aL = Math.abs(stereo[2*i]);
-    const aR = Math.abs(stereo[2*i+1]);
-    const a = aL > aR ? aL : aR;
-    if (a > p) p = a;
-  }
-  return p;
-}
-
 function measureRmsLoop(stereo, mono, instr, fns) {
   /* findSteadyRegion still operates on the mono signal — its 50ms/10ms RMS
      curve is a steadiness detector, not a loudness measure, so the mono
@@ -231,12 +222,34 @@ function measureRmsLoop(stereo, mono, instr, fns) {
      doesn't drag troughs below 70% of peak and shatter the steady region. */
   const opts = { smoothMs: instr.vibrato ? 300 : 0 };
   const res = fns.findSteadyRegion(mono, SR, trim, mono.length, opts);
-  if (res.failReason) return { rms: null, failReason: res.failReason };
-  return {
-    rms: stereoRmsOver(stereo, res.steadyStart, res.steadyEnd),
-    peak: stereoPeakOver(stereo, res.steadyStart, res.steadyEnd),
-    region: 'steady',
-  };
+  /* Loudness mirrors generate-samples.js:measureRmsLoop: K-weighted integrated
+     loudness over the steady region (needs ≥400ms, one momentary window), else
+     over the loudest 1s post-trim window. Plain steady-region RMS left ~6 dB
+     of perceived drift across a viola's range. */
+  if (!res.failReason && res.steadyEnd - res.steadyStart >= Math.round(SR * 0.4)) {
+    const m = measureLufs(stereo, mono, SR, { startSample: res.steadyStart, endSample: res.steadyEnd });
+    if (m && m.rms != null) return { rms: m.rms, peak: m.peak, lufs: m.lufs, region: 'steady' };
+  }
+  const end = mono.length;
+  if (end - trim < Math.round(SR * 0.4)) {
+    return { rms: null, failReason: res.failReason || 'post-trim region too short for measurement' };
+  }
+  const winSamp = Math.min(end - trim, Math.round(SR * 1.0));
+  const hopSamp = Math.max(1, Math.round(SR * 0.1));
+  let bestRms = 0, bestStart = trim;
+  for (let s = trim; s + winSamp <= end; s += hopSamp) {
+    const r = stereoRmsOver(stereo, s, s + winSamp);
+    if (r > bestRms) { bestRms = r; bestStart = s; }
+  }
+  if (end - winSamp > trim) {
+    const r = stereoRmsOver(stereo, end - winSamp, end);
+    if (r > bestRms) { bestRms = r; bestStart = end - winSamp; }
+  }
+  if (bestRms <= 0) return { rms: null, failReason: res.failReason || 'silent after trim' };
+  const m = measureLufs(stereo, mono, SR, { startSample: bestStart, endSample: bestStart + winSamp });
+  return (m && m.rms != null)
+    ? { rms: m.rms, peak: m.peak, lufs: m.lufs, region: 'loudest-1s' }
+    : { rms: null, failReason: m ? m.failReason : 'K-weighted measure failed' };
 }
 
 function measureDecay(stereo, mono) {

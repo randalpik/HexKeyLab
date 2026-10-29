@@ -888,7 +888,7 @@ Two fixes available, neither yet applied to `chromium.mjs`:
 1. Have the spawned Chromium inherit the parent's process group and rely on the kernel's reaper on SIGHUP — works if the launcher uses `setpgid(0)` and the parent dies cleanly.
 2. Write the Chromium PID to a known location at launch and clean up stale entries on the next runner start.
 
-Pragmatic interim: run probes in the foreground (don't background with `run_in_background: true` unless the task is genuinely long-lived), and periodically `pkill -f "hkl-composer-test-" ; rm -rf /tmp/hkl-composer-test-*`.
+Interim: kill only the leaked Chromium's own PID — never by name or pattern (a pattern also matches a browser you're using) — and delete its stale `$TMPDIR/hkl-composer-test-*` profile. Long runs still go in the background with output captured to a file (test/composer-test/README.md).
 
 ### Visual screenshots in page mode capture mostly empty paper
 
@@ -1646,7 +1646,7 @@ In `ScrollSplicer.splice`, the dirty diff yields a new-index run `[lo..hiNew]` a
 
 ## `display:none` on the persistent SVG to skip layout BACKFIRES (full relayout on restore)
 
-Attempt (Phase B3): the splice's `postProcess` runs snap passes on the offscreen host; each `getScreenCTM`/`getBBox` forces a layout flush that (in Firefox) re-lays-out the 190k-px persistent `#score` SVG (`snapBarlines` was ~19% of a ~150 ms delete). Idea: `display:none` the persistent SVG across `postProcess`, restore before `spliceDom`'s bbox reads — the host is `position:absolute` so its geometry is unaffected, and tests confirmed pixel-identical splices. **It ballooned the delete to ~600 ms in Firefox.** Toggling `display` invalidates the ENTIRE subtree's layout, so `display:''` forces a from-scratch relayout of the whole giant SVG; `spliceDom`'s `getBBox` then pays that full layout instead of the cheap incremental one it had. Net far worse (bbx in spliceDom jumped to ~30%). Lesson: never toggle `display` (or anything that drops/re-adds a node from the layout/render tree) on a huge persistent subtree to "save" a flush — the re-add costs a full relayout that dwarfs the incremental flushes you avoided. If isolating layout is the goal, reach for `contain: layout` set ONCE (never toggled), and verify on the real engine — but Chromium can't see this cost (it lays the giant SVG out cheaply), so it needs Firefox to confirm. Reverted; `getScreenCTM` remains the biggest single delete cost.
+Attempt (Phase B3): the splice's `postProcess` runs snap passes on the offscreen host; each `getScreenCTM`/`getBBox` forces a layout flush that (in Firefox) re-lays-out the 190k-px persistent `#score` SVG (`snapBarlines` was ~19% of a ~150 ms delete). Idea: `display:none` the persistent SVG across `postProcess`, restore before `spliceDom`'s bbox reads — the host is `position:absolute` so its geometry is unaffected, and tests confirmed pixel-identical splices. **It ballooned the delete to ~600 ms in Firefox.** Toggling `display` invalidates the ENTIRE subtree's layout, so `display:''` forces a from-scratch relayout of the whole giant SVG; `spliceDom`'s `getBBox` then pays that full layout instead of the cheap incremental one it had. Net far worse (bbx in spliceDom jumped to ~30%). Lesson: never toggle `display` (or anything that drops/re-adds a node from the layout/render tree) on a huge persistent subtree to "save" a flush — the re-add costs a full relayout that dwarfs the incremental flushes you avoided. `contain: layout` set once (never toggled) was tried as well and had no measurable effect in Firefox; Chromium can't see this cost at all (it lays the giant SVG out cheaply), so any layout-isolation idea needs Firefox to confirm. Reverted; `getScreenCTM` remains the biggest single delete cost.
 
 ## Splice must anchor on the LEFT context, and dy must add the anchor's ty (getBBox excludes own transform)
 
@@ -2155,8 +2155,8 @@ window, so the divergence never arises. Moving the edit one line further back
 posed the real case, and the fixture then failed pre-fix with the expected
 `dW=101.0`.
 
-A fixture written from a description of a bug tests the description. Stash the
-fix and run it: if it still passes, it is not a regression guard, whatever its
+A fixture written from a description of a bug tests the description. Run it
+against the code before the fix: if it still passes, it is not a regression guard, whatever its
 name says.
 
 ## An intervention that reproduces the previous total to the unit has not done what it claims (2026-09-01)
@@ -4117,8 +4117,8 @@ Fixture `engr_instrGapCenteredDynamic` holds it: a single-staff instrument above
 a grand staff (instrgap only shifts instruments BELOW a boundary, so the shape
 matters), asserting both that the shift HAPPENED — otherwise the fixture passes
 vacuously — and that the grand staff's own dynamic stays centered. The
-whole-document inventory that found it is
-`test/composer-inspect/phasec/cb-markplace.js`; `cb-instrgap.js` could not see
+whole-document inventory that found it was a mark-placement census; the
+instrument-gap census could not see
 this class of defect at all, because it only measures marks at an instrument
 BOUNDARY and these were mis-placed inside their own grand staff.
 
@@ -4246,8 +4246,7 @@ Rule: an observer callback only WAKES a scheduler. The scheduler re-reads
 geometry against the CURRENT scroll position, does ONE unit of work per
 animation frame (so a paint lands between units), visible-first, and drops
 candidates that have left the band (they stay observed, so the observer
-re-wakes it if they return). `render.ts pumpMounts`; probe
-`test/composer-inspect/phasec/mount-drag.js`.
+re-wakes it if they return). `render.ts pumpMounts`.
 
 Corollary — **sample scroll velocity from the `scroll` event, not from the
 consumer's own frames.** The first cut stored scrollTop per pump frame and
@@ -5153,8 +5152,7 @@ Result in Chromium: 10.0 s → 5.6 s for the whole document, first page 0.65 s �
 fresh-load reference gate exact on all 31 pages throughout. The engraving passes still make
 82 000 `getBBox` calls (79 ms here); a cross-pass box memo would need write invalidation and is
 the next lever if Gecko is still slow. What a profile by function hides, a profile by DOM call
-shows — `cb-loadprofile.js`, `cb-domcalls.js`, `cb-ctmattr.js` in `test/composer-inspect/phasec/`
-are the probes; the measurements are in `docs/architecture/composer.md` → Render cost.
+shows. The measurements are in `docs/architecture/composer.md` → Render cost.
 
 ## A lazy assembly must show its page cards and hide its open page (2026-10-08)
 
