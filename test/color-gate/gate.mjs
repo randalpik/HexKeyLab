@@ -1,6 +1,7 @@
 // Lattice color regression gate (docs/architecture.md → Color scheme).
 //
-// Color is one function of the pitch. This gate pins what that function
+// Color is one function of the pitch (an inverted layout mirroring its base,
+// docs/architecture.md → Color scheme). This gate pins what that function
 // produces: for every mode × mapping over a wide cell window it records each
 // cell's (hue, white/black, septimal) as one code character, and once per
 // distinct code the exact hexes the three public outputs give — lattice

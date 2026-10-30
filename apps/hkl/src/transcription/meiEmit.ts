@@ -30,7 +30,7 @@ import {
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
 import { convertCell } from '@hkl/shared/mapping.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
-import { lightSourceHex } from '../render/colors.js';
+import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
 
 export interface EmitMeiOpts {
   title: string;
@@ -39,14 +39,18 @@ export interface EmitMeiOpts {
 
 /** Spell a lattice cell into a NoteSpec, mirroring Composer's buildNoteElement
  *  input (count-form accidental of any magnitude — Composer collapses to the
- *  right glyph stack). Spelled and colored as recorded; the coordinates are
- *  written in the score's mapping (scoreMappingFor; the same spelled note). */
-function noteSpecFromCoord(q: number, r: number, colorHex: string, snapshot: LayoutSnapshot): NoteSpec {
-  const { mapping, anchor, banded } = snapshot;
+ *  right glyph stack). Spelled as recorded; the coordinates are written in the
+ *  score's mapping (scoreMappingFor; the same spelled note) and colored there,
+ *  under the recording's own tuning, as Composer would color that cell. (An
+ *  inverted recording's anchor is its own frame's band; it only reads in the
+ *  anchor-reading modes, Syntonic / Polysyntonic and unbanded.) */
+function noteSpecFromCoord(q: number, r: number, snapshot: LayoutSnapshot): NoteSpec {
+  const { tuning: mode, mapping, anchor, banded } = snapshot;
   const parsed = parseNote(noteName(q, r, mapping, anchor, banded));
   const alter = accToVal(parsed.acc);
   const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
-  const [sq, sr] = convertCell(q, r, mapping, scoreMappingFor(mapping, 'euler'));
+  const target = scoreMappingFor(mapping, 'euler');
+  const [sq, sr] = convertCell(q, r, mapping, target);
   return {
     q: sq,
     r: sr,
@@ -54,11 +58,11 @@ function noteSpecFromCoord(q: number, r: number, colorHex: string, snapshot: Lay
     accid,
     oct: keyOctave(q, r, mapping, anchor, banded),
     midi: coordToMidi(q, r, mapping),
-    colorHex,
+    colorHex: inkColorHex(sq, sr, mode, target, anchor, banded),
     /* Bake the bright "light source" variant too, so the transcribed .hkc
        renders correctly in dark theme (Composer's dark mode / HKL's Composer
        view) instead of falling back to a lossy hue-merging brightness filter. */
-    lightColorHex: lightSourceHex(q, r),
+    lightColorHex: lightSourceHex(sq, sr, mode, target, anchor, banded),
   };
 }
 
@@ -103,7 +107,7 @@ function emitVoiceBar(
       continue;
     }
 
-    const specs = q.coords.map((c, i) => noteSpecFromCoord(c.q, c.r, q.colors[i], snapshot));
+    const specs = q.coords.map((c) => noteSpecFromCoord(c.q, c.r, snapshot));
     for (const a of q.atoms) {
       const incoming = carryTie.v;
       const outgoing = a.notation.tied;

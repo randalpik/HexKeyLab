@@ -22,6 +22,9 @@
 //      is null where the layout has none (the Accordion, an M3 count not a multiple of 3)
 //   K  the reference spine: every row holds a cell on its band's qm0 column (chromatic Q ≡ 0
 //      mod 12)
+//   L  color: one function of the pitch in plain layouts; an inverted layout mirrors the
+//      banded-Ptolemaic base (−(base + r)) and keeps every other term; 3-wide bands read
+//      ±(MIDI octave − band); a band step keeps the hue; Equal stays its octave cycle
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/layout-presets/oracle.mjs
 
 import {
@@ -30,6 +33,8 @@ import {
 } from '../../packages/shared/src/mapping.ts';
 import { coordExps, coordToMidi, anchorOf, TUNING_MODES } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
+import { keyColor } from '../../packages/shared/src/keycolor.ts';
+import { hueIdx, equalHueCycle } from '../../packages/shared/src/colors.ts';
 
 let checks = 0, fails = 0;
 function check(label, got, want) {
@@ -196,6 +201,35 @@ for (const L of MAPPINGS) for (let r = -9; r <= 9; r++) {
   let found = false;
   for (let q = -24; q <= 24 && !found; q++) found = ((toChromatic(q, r, L)[0] % 12) + 12) % 12 === 0;
   check(`K ${L} row ${r} holds a qm0 cell`, found, true);
+}
+
+/* L — color. The hue index from a cell's exponents (keycolor.ts) is one function of the pitch
+   in a plain layout; an inverted layout replaces its banded-Ptolemaic base with −(base + r) and
+   keeps every other term (Max, 2026-10-30). Recomputed here from coordExps, not keyColor. */
+{
+  const mod7 = (x) => ((x % 7) + 7) % 7;
+  const pitchIdx = (e) => Math.floor((57 + 7 * e[1] + 4 * e[2] + 10 * e[3]) / 12) - 4 - Math.floor(e[3] / 2);
+  const idxOf = (q, r, mode, L, a, banded) => hueIdx[keyColor(q, r, mode, L, a, banded).hue];
+  for (const L of MAPPINGS) {
+    const inv = LAYOUT[L].invert, W = bandWidth(L);
+    for (const [q, r] of CELLS) {
+      const base = pitchIdx(coordExps(q, r, '5', L, 0, true));
+      for (const banded of [true, false]) for (const mode of JI) for (const a of [0, 1]) {
+        const p = pitchIdx(coordExps(q, r, mode, L, a, banded));
+        const want = inv ? mod7(p - base - (base + r)) : mod7(p);
+        check(`L ${L} ${mode} ${banded ? 'b' : 'u'} a${a} (${q},${r}) hue`, idxOf(q, r, mode, L, a, banded), want);
+      }
+      /* the octave blocks: Euler-family bands read ±(MIDI octave − band), mirrored when inverted */
+      if (W === 3) {
+        const ob = Math.floor(coordToMidi(q, r, L) / 12) - bandOfCell(q, r, L) - 4;
+        check(`L ${L} (${q},${r}) Ptolemaic block`, idxOf(q, r, '5', L, 0, true), mod7(inv ? -ob : ob));
+      }
+      /* a band step keeps the hue (banded, uniform modes) */
+      for (const mode of UNIFORM) check(`L ${L} ${mode} (${q},${r}) band step keeps the hue`, idxOf(q + W, r, mode, L, 0, true), idxOf(q, r, mode, L, 0, true));
+      /* Equal stays its octave cycle */
+      check(`L ${L} E (${q},${r})`, keyColor(q, r, 'E', L, 0, true).hue, equalHueCycle[((Math.floor(coordToMidi(q, r, L) / 12) % 3) + 3) % 3]);
+    }
+  }
 }
 
 console.log(`${checks} checks, ${fails} failures`);

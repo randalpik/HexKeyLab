@@ -96,6 +96,7 @@ async function main() {
     const hklCdp = await openPage(await newTabWsUrl(browser.port), await isolatedHklUrl(BASE + '/?hklrec=1'), { waitMs: WAIT_MS });
     const hkc = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE());
     const hkcJanko = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('janko', '(q, r) => [2 * q + 3 * r, r]'));
+    const hkcRandal = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('randal', '(q, r) => [q + 3 * r, -r]'));
     hklCdp.close();
     if (typeof hkc !== 'string') {
       console.error('FAIL — emit stage:', hkc && hkc.__error ? hkc.__error : JSON.stringify(hkc));
@@ -130,13 +131,16 @@ async function main() {
       check('placeholder invariant', r.ph && r.ph.ok, r.ph && r.ph.detail);
       check('origin (0,0) spells A3', r.originOk !== false, 'origin note mis-spelled');
       check('serialize round-trip stable', r.roundtripStable === true, 'serialize drift');
-      /* a Janko recording: Euler layoutReq, the same notes at the same Euler cells */
-      const notesOf = (x) => (x.match(/<note\b[^>]*>/g) ?? []).map((t) => ['data-q', 'data-r', 'pname', 'accid', 'oct']
+      /* Janko (sheared) and Randal (inverted) recordings: an Euler layoutReq, and the
+         Euler notes at the Euler cells, colored as Euler colors them */
+      const notesOf = (x) => (x.match(/<note\b[^>]*>/g) ?? []).map((t) => ['data-q', 'data-r', 'pname', 'accid', 'oct', 'color', 'data-light-color']
         .map((a) => (t.match(new RegExp(' ' + a + '="([^"]*)"')) ?? [])[1] ?? '').join('/')).sort().join(' ');
-      const lr = typeof hkcJanko === 'string' ? (hkcJanko.match(/<hkl:layoutReq\b[^>]*>/) ?? [''])[0] : '';
-      check('Janko recording → Euler score (no mapping attribute)', lr !== '' && !lr.includes('mapping='), lr || JSON.stringify(hkcJanko));
-      check('Janko recording → the Euler notes, note for note', typeof hkcJanko === 'string' && notesOf(hkcJanko) === notesOf(hkc),
-        typeof hkcJanko === 'string' ? notesOf(hkcJanko) + ' vs ' + notesOf(hkc) : JSON.stringify(hkcJanko));
+      for (const [name, x] of [['Janko', hkcJanko], ['Randal', hkcRandal]]) {
+        const lr = typeof x === 'string' ? (x.match(/<hkl:layoutReq\b[^>]*>/) ?? [''])[0] : '';
+        check(name + ' recording → Euler score (no mapping attribute)', lr !== '' && !lr.includes('mapping='), lr || JSON.stringify(x));
+        check(name + ' recording → the Euler notes and colors, note for note', typeof x === 'string' && notesOf(x) === notesOf(hkc),
+          typeof x === 'string' ? notesOf(x) + ' vs ' + notesOf(hkc) : JSON.stringify(x));
+      }
       if (r.tieCount === 0) {
         console.warn('  ! warning: no ties in output — tie path not exercised this run');
       }

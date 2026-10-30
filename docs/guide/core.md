@@ -19,7 +19,7 @@ The toolbar's tabs each show or hide a group of controls, and you can have sever
 
 The keyboard is an **isomorphic** hexagonal layout: each direction always steps by the same interval, so a chord or scale has the same shape in every key. In the default Euler mapping, a step to the right is a major third (5:4), a step up-right a perfect fifth (3:2), and a step up-left a minor third (6:5), so a major or minor triad is three touching keys.
 
-**A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors; a light or dark shade marks a white-key or black-key note name. In Equal tuning, three colors cycle by octave instead.
+**A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors (in Randal, Park and Bass, whose rows climb in fourths, the colors step the other way as you go up a band: from the purple keys, the next octave's keys are blue rather than pink); a light or dark shade marks a white-key or black-key note name. In Equal tuning, three colors cycle by octave instead.
 
 In the Euler mapping the keyboard is divided into **bands** three keys wide, and every key sounds exactly an octave above the key three places to its left. The boundaries between bands are **seams**, drawn as dark wedges. Turning **Banded layout** off removes the bands (below).
 

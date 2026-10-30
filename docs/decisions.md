@@ -10422,4 +10422,35 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 
 **The 6.4.0 path, if it's ever wanted:** 6.4.0 plus `#score svg g.placeholder { display: none }` also passes all 66 visual fixtures. Composer uses Verovio only for MEI → SVG (`loadData` / `renderToSVG`). Of 6.4.0's changelog, that leaves only its unquantified performance improvements as possibly relevant: parts, `staffDef@num`, and the MusicXML and MIDI fixes don't apply.
 
-**Gates:** at runtime Composer reports Verovio 6.3.0-425dd7b; the visual fixtures pass 66/66.
+**Gates:** at runtime Composer reports Verovio 6.3.0-425dd7b; the visual fixtures pass 66/66, and the full Composer suite 728/728.
+
+## Inverted layouts mirror the color base (2026-10-30, Max)
+
+**Picked (Max):** in an inverted layout (Randal, Park, Bass), the cell's banded-Ptolemaic base hue index b is replaced by −(b + r), r being the row's octave lift.
+- **The blocks read band − MIDI octave:** on Randal's home band purple is C3–B♭3 and blue C♯4–B4, about 7 keys a block (7:5 against Euler's ~5).
+- **Every other term keeps its sign:** each mode's comma offsets, the unbanded per-band commas, and the septimal half steps. Equal's octave cycle is untouched.
+- **The rule:** hue = (today's index) − b − (b + r), keyed off `LAYOUT.invert`.
+- **Max's reasoning:** he tracks comma identity in relative color, not absolute. Intervals are never constant on color, and playing an inverted layout means relearning every relationship anyway, so the colors should be arranged optimally rather than kept consistent with Euler while explicitly inverted.
+
+**Rejected:**
+- **Pitch-only color in inverted layouts** (my first position, "color belongs to the pitch"). Each row's octave lift made a band's hues straddle octaves: Randal's home-band pink ran G2–C♯4.
+- **A full mirror** that also negates comma steps, septimal half steps and Equal (Max: those stay as they are).
+
+**Consequences:**
+- **A pitch's color now depends on the layout's orientation.** HKL in Randal next to an Euler score shows the same notes in different colors.
+- **Transcription:** notes are now colored in the score's frame, from the recording's snapshot. Before, it used HKL's live tuning on the recording's own cells, which was wrong for every converted recording (Janko's and Randal's notes alike) and whenever the live layout differed from the recording's.
+
+**Where:**
+- `@hkl/shared/keycolor.ts`;
+- `apps/hkl/src/transcription/meiEmit.ts`;
+- `test/color-gate/snapshot.json`, re-seeded to all 72 mode × mapping grids (the original 24 byte-identical);
+- `test/layout-presets/oracle.mjs`, new section L;
+- `test/unbanded/oracle.mjs` K;
+- `test/transcription-roundtrip/run.mjs`, adding a Randal recording and a color comparison.
+
+**Gates:**
+- **Color gate:** 472,392 cells PASS. Section L of the layout-presets oracle (682,234 checks, 0 failures) has 47,713 failures with the pitch-only rule.
+- **Gates unchanged in content:** Syntonic, unbanded, Wicki-Hayden, chromatic and alignment all pass.
+- **Transcription round-trip:** passes, and fails on the committed emitter's colors.
+- **Layout shots:** 48/54 pixel-identical to before. Only the six Randal / Park / Bass shots changed.
+- **Composer affected tier:** 726/726; typecheck, boundaries, and the HKL and Composer builds pass.

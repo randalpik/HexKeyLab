@@ -658,7 +658,7 @@ coordinates in the others reach it converted (`convertCell`), like any mapping m
 ## Color scheme
 
 **Color belongs to the pitch, not the layout**: one function of a cell's prime exponents colors
-every JI mode under both mappings, so the same pitch gets the same color wherever it appears (color is a reading aid for
+every JI mode under every mapping (inverted layouts mirror its base, below), so the same pitch gets the same color wherever it appears (color is a reading aid for
 pitch identity across layouts); a mode only decides which pitch sits on a cell. Light/dark encodes the 12-TET black/white key.
 Implemented once, purely, in `@hkl/shared/keycolor.js` (`keyColor`, `keyColorHex`,
 `lightSourceHex`, `inkColorHex`); HKL's `render/colors.ts` only supplies its live layout, and
@@ -673,6 +673,16 @@ Composer recolors notes with the same functions.
   Wicki-Hayden copy's "its column's color", a chromatic borrowed column's "its source band's
   hue" under S/Y, and Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised,
   teal → yellow … lowered) are all this one function.
+- **Inverted layouts** (Randal, Park, Bass: `LAYOUT` `invert`; Max, 2026-10-30): each row lifts
+  an octave, so by pitch alone a band's hues would straddle octaves (Randal's home-band pink ran
+  G2–C#4). The banded-Ptolemaic base index b (which there reads MIDI octave − band minus the r
+  octaves the row lifts) is replaced by −(b + r), so the blocks read **band − MIDI octave**: on
+  Randal's home band purple is C3–B♭3 and blue C♯4–B4, 7 or 8 keys a block (a fourths band holds
+  ~7.2 keys per octave against Euler's ~5). Every other term keeps its sign: each mode's comma
+  offsets, the unbanded per-band commas, the septimal half steps; Equal is untouched. A band step
+  still keeps the hue. Park and Bass mirror Wicki-Hayden's and chromatic's mixed blocks (their copy
+  columns). A pitch's color therefore differs between an inverted layout and the others; relative
+  color within the layout is what carries comma identity.
 - **Septimal half steps**: each septimal factor turns the hue half a step warm (`hueCycleOrder`
   index − e7/2 on top of the formula above, signed), so an odd `e7` takes `.sl`/`.sd` (a 50% lerp
   toward the next hue: `keyColor.half`) and `e7 = ±2` is a whole step. Banded layouts only reach
@@ -684,7 +694,8 @@ Composer recolors notes with the same functions.
 - **Light vs dark**: by the cell's own MIDI pitch class — light if ∈ {0,2,4,5,7,9,11}, else dark.
 
 Regression gate: `test/color-gate/gate.mjs` pins hue/light/septimal and the three hex outputs for
-every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended color change).
+every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended color change);
+`test/layout-presets/oracle.mjs` section L checks the rule itself, inverted layouts included.
 
 Base palette (light/dark hex): PK `#FF4C79`/`#59002C`, PU `#C94CFF`/`#3E0059`, BL `#4C96FF`/`#002559`,
 TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF884C`/`#591D00`.

@@ -1,8 +1,9 @@
-// Key color — one function of the pitch.
+// Key color — one function of the pitch (and, in an inverted layout, its row).
 //
 // Color belongs to the pitch, not to the layout: a tuning mode or note-name
 // mapping only decides which pitch sits on a cell, and the same pitch gets the
-// same color wherever it appears. For the JI modes the hue is a function of the
+// same color wherever it appears, except that an inverted layout mirrors the
+// base (below). For the JI modes the hue is a function of the
 // cell's prime-exponent vector e = [e2, e3, e5, e7] (coordExps):
 //
 //   hue = hueCycleOrder[ floor((57 + 7·e3 + 4·e5 + 10·e7) / 12) − 4   mod 7 ]
@@ -18,11 +19,18 @@
 //
 // Equal is the one separate rule: a 3-hue cycle by sounding octave.
 //
+// An inverted layout (each row lifts an octave: LAYOUT invert) mirrors the
+// Ptolemaic base, so its octave blocks run the other way along the band (Max,
+// 2026-10-30). The base is the cell's banded Ptolemaic index, which there reads
+// MIDI octave − band minus the r octaves its row lifts; it is replaced by
+// −(base + r), i.e. band − MIDI octave. Every other term keeps its sign: each
+// mode's comma offsets, the unbanded per-band commas, the septimal half-steps.
+//
 // Pure: callers pass the layout. HKL wraps these with its live tuning state
 // (apps/hkl/src/render/colors.ts); Composer can call them directly.
 
 import { coordExps, coordToMidi, type TuningMode } from './freq.js';
-import type { Mapping } from './mapping.js';
+import { LAYOUT, type Mapping } from './mapping.js';
 import {
   type Hue, hueC, hueCycleOrder, whiteSet, equalHueCycle,
   hexToRgb, rgbToHsl, hslToRgb, rgbToHex, profileForHue,
@@ -50,8 +58,13 @@ export function keyColor(q: number, r: number, mode: TuningMode, mapping: Mappin
   const [, e3, e5, e7] = coordExps(q, r, mode, mapping, anchor, banded);
   /* hueCycleOrder walks the cycle backward, so warm is −1: e7 half-steps warm
      land on index − floor(e7/2), plus the half-step variant when e7 is odd */
-  const hue = hueCycleOrder[mod(Math.floor((57 + 7 * e3 + 4 * e5 + 10 * e7) / 12) - 4 - Math.floor(e7 / 2), 7)];
-  return { hue, isW, half: mod(e7, 2) === 1, isSept: e7 !== 0 };
+  let idx = Math.floor((57 + 7 * e3 + 4 * e5 + 10 * e7) / 12) - 4 - Math.floor(e7 / 2);
+  if (LAYOUT[mapping].invert) {
+    const [, b3, b5] = coordExps(q, r, '5', mapping, anchor, true);
+    const base = Math.floor((57 + 7 * b3 + 4 * b5) / 12) - 4;
+    idx += -(base + r) - base;
+  }
+  return { hue: hueCycleOrder[mod(idx, 7)], isW, half: mod(e7, 2) === 1, isSept: e7 !== 0 };
 }
 
 /** Lattice key color: .l / .d by white/black, .sl / .sd on a half step. */

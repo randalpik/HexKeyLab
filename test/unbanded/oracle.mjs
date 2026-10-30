@@ -263,8 +263,12 @@ for (const map of MAPPINGS) {
     for (const banded of [true, false]) {
       const e = coordExps(q, r, '7', map, a, banded);
       /* position in half-steps along hueCycleOrder (which walks warm → −1):
-         the comma formula's hue, then e7 half-steps warm */
-      const pos = 2 * (Math.floor((57 + 7 * e[1] + 4 * e[2] + 10 * e[3]) / 12) - 4) - e[3];
+         the comma formula's hue, then e7 half-steps warm; an inverted layout
+         mirrors its banded-Ptolemaic base b to −(b + r) (keycolor.ts) */
+      const e5b = coordExps(q, r, '5', map, a, true);
+      const base = Math.floor((57 + 7 * e5b[1] + 4 * e5b[2]) / 12) - 4;
+      const mirror = LAYOUT[map].invert ? -(base + r) - base : 0;
+      const pos = 2 * (Math.floor((57 + 7 * e[1] + 4 * e[2] + 10 * e[3]) / 12) - 4 + mirror) - e[3];
       const c = keyColor(q, r, '7', map, a, banded);
       check(`K 7 ${map} a${a} ${banded ? 'b' : 'u'} (${q},${r})`,
         `${c.hue} ${c.half} ${c.isSept}`, `${hueCycleOrder[md(Math.ceil(pos / 2), 7)]} ${md(pos, 2) === 1} ${e[3] !== 0}`);
