@@ -14,8 +14,9 @@
 //   D  re-anchoring by +1: the whole board drops one per-band comma and
 //      respells 12 fifths flat; Equal's pitch never moves
 //   E  spelling: a band step is +12 fifths in every mapping; the spelled
-//      letter, octave and accidental reproduce the nominal MIDI; Euler and
-//      Wicki-Hayden spell every (note, octave) once
+//      letter, octave and accidental reproduce the nominal MIDI; a layout
+//      sampling every chromatic column (c = 1) has spelled twins, every other
+//      spells each (note, octave) once
 //   F  Wicki-Hayden Pythagorean: isomorphic and unimodular (each 3-limit pitch
 //      on one key); (−1, 2) is a spelled, exact octave
 //   G  chromatic Pythagorean (carry): even-Δq vectors single-valued, odd-Δq
@@ -39,7 +40,7 @@
 
 import { coordExps, coordToMidi, freqAt, TUNING_MODES } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave, fifthName, parseNote, accToVal } from '../../packages/shared/src/notes.ts';
-import { bandOfCell, pitchBandOf, bandWidth, octaveVector, MAPPINGS } from '../../packages/shared/src/mapping.ts';
+import { bandOfCell, pitchBandOf, bandWidth, octaveVector, LAYOUT, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOrder } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain, SEPT_DOWN_1, SEPT_UP_1, SEPT_DOWN_2, SEPT_UP_2 } from '../../packages/shared/src/heji.ts';
@@ -143,7 +144,8 @@ for (const map of MAPPINGS) {
       seen.set(id, (seen.get(id) ?? 0) + 1);
     }
     const dups = [...seen.values()].filter((n) => n > 1).length;
-    if (map === 'chromatic') check(`E chromatic a${a} has spelled twins`, dups > 0, true);
+    /* every chromatic column sampled (c = 1: chromatic, Bass) → spelled twins */
+    if (LAYOUT[map].c === 1) check(`E ${map} a${a} has spelled twins`, dups > 0, true);
     else check(`E ${map} a${a} each spelled note once`, dups, 0);
   }
 }
@@ -305,7 +307,7 @@ for (const a of [-1, 0, 1]) {
 /* ── N: octaveVector is the spelled-octave vector F, G and M found ─────── */
 for (const map of MAPPINGS) for (const banded of [true, false]) for (const a of [-1, 0, 1]) {
   const v = octaveVector(map, banded);
-  check(`N ${map} ${banded ? 'b' : 'u'} octaveVector`, v === null ? 'none' : v.join(), banded ? `${bandWidth(map)},0` : { euler: 'none', wickiHayden: '-1,2', chromatic: '-2,2' }[map]);
+  check(`N ${map} ${banded ? 'b' : 'u'} octaveVector`, v === null ? 'none' : v.join(), banded ? `${bandWidth(map)},0` : { euler: 'none', wickiHayden: '-1,2', chromatic: '-2,2', janko: '5,2', accordion: 'none', gerhard: 'none', randal: 'none', park: '1,2', bass: '2,2' }[map]);
   if (v === null) continue;
   for (const [q, r] of cells(map)) {
     check(`N ${map} ${banded ? 'b' : 'u'} a${a} (${q},${r}) spelled P8`,

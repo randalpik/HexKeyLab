@@ -4,7 +4,7 @@
 // layout off) respells each pitch band 12 fifths from the anchor's — the same
 // rule in every tuning mode, Equal included.
 
-import { eulerOf, pitchBandOf, type LayoutId } from './mapping.js';
+import { eulerOf, pitchBandOf, type Mapping } from './mapping.js';
 
 export const letterSemi: Record<string, number> = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
 
@@ -83,7 +83,7 @@ function fifthIndex(name: string): number {
  *  (A → G𝄪 one band to the right): the cell's pitch band (`pitchBandOf`, so a
  *  chromatic borrowed column keeps its source's spelling) lies 12 fifths per
  *  band from the anchor's. */
-export function noteName(q: number, r: number, mapping: LayoutId, anchor: number, banded: boolean): string {
+export function noteName(q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): string {
   const c = eulerOf(q, r, mapping);
   const name = eulerNoteName(c.q, c.r);
   return banded ? name : fifthName(fifthIndex(name) + 12 * (pitchBandOf(q, r, mapping) - anchor));
@@ -120,7 +120,7 @@ export function fmtNote(name: string): string {
    Cb4 is octave 4 (C-letter), B#3 is octave 3 (B-letter). The nominal MIDI
    never changes with the spelling, so the unbanded respelling only moves the
    octave through its accidental (C4 → B#3). */
-export function keyOctave(q: number, r: number, mapping: LayoutId, anchor: number, banded: boolean): number {
+export function keyOctave(q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): number {
   const v = accToVal(parseNote(noteName(q, r, mapping, anchor, banded)).acc);
   const c = eulerOf(q, r, mapping);
   const natMidi = 57 + 4 * c.q + 7 * c.r - v; /* strip accidental to get natural-letter MIDI */

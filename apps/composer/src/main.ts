@@ -32,6 +32,7 @@ import { buildPlayback, buildPedalEvents, playbackRun, playbackStartMs, highligh
 import { PerformanceMatcher } from './render/performance.js';
 import { addDir } from './expressions.js';
 import { openSetupDialog } from './setupDialog.js';
+import { scoreMappingFor } from '@hkl/notation/mei-build.js';
 import { openHelpDialog } from './helpDialog.js';
 import { attachScoreClickHandler } from './click.js';
 import {
@@ -348,7 +349,9 @@ bridge.on((msg: HklEvent) => {
         autoAdoptedHklLayout = true;
         const isMode = (s: string): s is TuningMode => (TUNING_MODES as ReadonlyArray<string>).includes(s);
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
-        model.setLayoutReq({ tuningMode, mapping: hklMapping, banded: model.getLayoutReq().banded });
+        /* a mapping a score can't use yet keeps the score's */
+        const mapping = scoreMappingFor(hklMapping, model.getLayoutReq().mapping);
+        model.setLayoutReq({ tuningMode, mapping, banded: model.getLayoutReq().banded });
         broadcastLayoutReq();
       }
       refreshLayoutMatchIndicator();

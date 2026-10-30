@@ -14,9 +14,11 @@
 //      four tilts (the arithmetic is tilt-generic; the tilts needn't match
 //      layout/geometry.ts);
 //   C. anchor offsets — under the Piano outline the ref can be Composer's cursor
-//      note, d bands from the home band. Banded Syntonic's band offset is periodic
-//      in d (period 4), the one mode where d changes the footprint; the runtime
-//      measures d = 0 only, so d = 1, 2, 3 must never be taller.
+//      note, d bands from the home band. The runtime measures the offsets
+//      footprintAnchorOffsets names (0–3 in banded Syntonic, whose band offset is
+//      periodic in d; 0 elsewhere, where it is linear or absent); every other
+//      offset must reproduce one of those (Syntonic: 4 ≡ 0, −1 ≡ 3; elsewhere:
+//      1 ≡ 2 ≡ 0).
 //
 // Run:
 //   node --max-old-space-size=1024 --import ./test/orchestrator-smoke/register-ts.mjs test/picker/footprint-extent.mjs
@@ -25,7 +27,7 @@
 
 import { TUNING_MODES, anchorOf, coordToMidi } from '../../packages/shared/src/freq.ts';
 import { MAPPINGS, LAYOUT, posInBandOf } from '../../packages/shared/src/mapping.ts';
-import { pianoFootprint, footprintExtents, footprintHalfHeight } from '../../apps/hkl/src/tuning/picker.ts';
+import { pianoFootprint, footprintAnchorOffsets, footprintExtents, footprintHalfHeight } from '../../apps/hkl/src/tuning/picker.ts';
 
 const hexR = 16, dxH = hexR * 1.78, dyH = hexR * 1.54;
 const sy = (q, r, t) => -((q * dxH + r * dxH * 0.5) * Math.sin(t) + r * dyH * Math.cos(t));
@@ -89,20 +91,20 @@ for (const banded of [true, false]) for (const mapping of MAPPINGS) {
     const runtime = T.map((t) => footprintHalfHeight(ext, (q, r) => sy(q, r, t)));
     T.forEach((_, k) => { if (Math.abs(runtime[k] - brute[k]) > 1e-6) bad++; });
     /* C */
-    let taller = 0;
-    if (banded && mode === 'S') {
-      for (const d of [1, 2, 3]) {
-        const extD = footprintExtents(state, d);
-        T.forEach((t, k) => { if (footprintHalfHeight(extD, (q, r) => sy(q, r, t)) > runtime[k] + 1e-6) taller++; });
-      }
+    let offBad = 0;
+    const offs = footprintAnchorOffsets(state);
+    const extAt = new Map(offs.map((d) => [d, d === 0 ? ext : footprintExtents(state, d)]));
+    const probes = offs.length === 4 ? [[4, 0], [-1, 3]] : [[1, 0], [2, 0]];
+    for (const [d, twin] of probes) {
+      if (JSON.stringify(footprintExtents(state, d)) !== JSON.stringify(extAt.get(twin))) offBad++;
     }
-    failures += bad + taller;
-    line.push(`${mode}:${bad + taller === 0 ? '✓' : `✗${bad}/${taller}`}`);
+    failures += bad + offBad;
+    line.push(`${mode}:${bad + offBad === 0 ? '✓' : `✗${bad}/${offBad}`}`);
   }
   console.log(`${banded ? 'banded  ' : 'unbanded'} ${mapping.padEnd(11)} ${line.join(' ')}`);
 }
 console.timeEnd('footprint-extent');
 console.log(failures === 0
-  ? '\n✓ every footprint is its position\'s window; runtime heights match brute force; Syntonic offsets never taller'
+  ? '\n✓ every footprint is its position\'s window; runtime heights match brute force; every anchor offset repeats a measured one'
   : `\n✗ ${failures} failures`);
 process.exit(failures === 0 ? 0 : 1);

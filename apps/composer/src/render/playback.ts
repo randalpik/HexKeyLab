@@ -315,19 +315,20 @@ function harmonicParts(noteEls: Element[]): { diamond: Element | null; ref: Elem
  *     reference (q+6, r+1); anything else → +1 octave above the diamond.
  *  Coord deltas (Euler): octave = q+3 (band structure), P5 = r+1, M3 = q+1,
  *  P4 = octave−P5 = (q+3, r−1); expressed in the score's `mapping` via
- *  vecFromEuler (Wicki-Hayden doubles q). Returns null if the diamond lacks
- *  coords. */
+ *  vecFromEuler, null where the layout has no such vector (the Accordion's M3),
+ *  which then doesn't match. Returns null if the diamond lacks coords. */
 function harmonicSoundingCoord(diamond: Element, ref: Element | null, mapping: Mapping): CoordRef | null {
   const d = extractCoords(diamond);
   if (!d) return null;
-  const v = (dq: number, dr: number): [number, number] => vecFromEuler(dq, dr, mapping);
-  const [oq] = v(3, 0), [oq2] = v(6, 0), [m3q] = v(1, 0), [p4q] = v(3, -1);
+  const plus = (c: CoordRef, v: [number, number] | null): CoordRef | null => v && { q: c.q + v[0], r: c.r + v[1] };
+  const is = (dq: number, dr: number, v: [number, number] | null): boolean => v !== null && dq === v[0] && dr === v[1];
+  const octave = vecFromEuler(3, 0, mapping);
   const lo = ref ? extractCoords(ref) : null;
-  if (!lo) return { q: d.q + oq, r: d.r };                         /* natural → +octave */
+  if (!lo) return plus(d, octave);                                              /* natural → +octave */
   const dq = d.q - lo.q, dr = d.r - lo.r;
-  if (dq === m3q && dr === 0) return { q: lo.q + oq2, r: lo.r + 1 }; /* M3 → 2 oct + P5 */
-  if (dq === p4q && dr === -1) return { q: lo.q + oq2, r: lo.r };    /* P4 → 2 oct */
-  return { q: d.q + oq, r: d.r };                                    /* fallback → +octave */
+  if (is(dq, dr, vecFromEuler(1, 0, mapping))) return plus(lo, vecFromEuler(6, 1, mapping));  /* M3 → 2 oct + P5 */
+  if (is(dq, dr, vecFromEuler(3, -1, mapping))) return plus(lo, vecFromEuler(6, 0, mapping)); /* P4 → 2 oct */
+  return plus(d, octave);                                                       /* fallback → +octave */
 }
 
 /** The slot-bearing element for a note. A note inside a chord inherits the

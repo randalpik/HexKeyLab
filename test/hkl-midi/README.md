@@ -112,8 +112,10 @@ Behavioral gate for `setMapping()` (docs/architecture.md → Note-name mapping).
 reference at A4 — its spine has q ≠ 0, so the anchor moves on a switch — a held
 Lumatone key keeps its `(q,r)` and retunes in place, a held mouse note converts
 with its pitch kept, release leaves nothing behind, both directions, and with a
-reference change between switch and release. **Run it before declaring any
-change to `setMapping`, the held-input registry, or ref anchoring done.**
+reference change between switch and release; then the same switch into each
+sheared and inverted preset, the anchor landing on the generalized spine.
+**Run it before declaring any change to `setMapping`, the held-input registry,
+`refSpine`, or ref anchoring done.**
 
 ## Syntonic / Polysyntonic anchor
 

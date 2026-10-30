@@ -7,7 +7,7 @@
 import '@hkl/notation/verovio-types.js';
 import type { VerovioToolkit } from '@hkl/notation/verovio-types.js';
 import { injectHejiGlyphs } from '@hkl/notation/heji-render.js';
-import { applyNotationTheme } from '@hkl/notation/verovio.js';
+import { applyNotationTheme, VEROVIO_URL } from '@hkl/notation/verovio.js';
 import { installMusicFont, MUSIC_FONT_OPTIONS } from '@hkl/notation/music-font.js';
 import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapStaffLinesToGrid, snapBarlines, snapSystemRightEdge } from '@hkl/notation/render-presets.js';
 import { pageFitConstants, measureExtents, placeSystems, foldIndex, translateOf, ExtentsStore, SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, type PlacedSystem, type SysExtents, type PageFitConstants, type DistributeOpts, alignStaffRows } from './pagefit.js';
@@ -127,7 +127,6 @@ export type ScoreTheme = 'light' | 'dark' | 'transparent';
 export type ZoomLevel = 50 | 75 | 100;
 export const ZOOM_PRESETS: ReadonlyArray<ZoomLevel> = [50, 75, 100];
 
-const VEROVIO_CDN = 'https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js';
 
 /* Page geometry constants in Verovio's 1/100 mm units.
  * US Letter = 8.5 × 11 in = 2159 × 2794. Margin 0.55 in = 13.97 mm → 140.
@@ -433,10 +432,10 @@ class Renderer {
         return;
       }
       const tag = document.createElement('script');
-      tag.src = VEROVIO_CDN;
+      tag.src = VEROVIO_URL;
       tag.async = true;
       tag.onload = () => this.bindToolkit(resolve);
-      tag.onerror = () => reject(new Error('failed to load Verovio from ' + VEROVIO_CDN));
+      tag.onerror = () => reject(new Error('failed to load Verovio from ' + VEROVIO_URL));
       document.head.appendChild(tag);
     });
   }

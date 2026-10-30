@@ -11,14 +11,14 @@ Run them one at a time.
 | Script | Checks |
 |---|---|
 | `octave-consistency.mjs` | MIDI N and N+12 get the same spelling, one spelled octave apart (where the octave sits is the picker's choice, nearest the ref). Exits non-zero on any break outside Syntonic / Polysyntonic; those are reported (availability: a spelling's 5-limit pitch can exist in one octave's band and not the next), as is the unbanded layout (Euler has no spelled octave there). |
-| `footprint-extent.mjs` | The canvas-height reduction (`footprintExtents`, `footprintHalfHeight`): every ref's footprint is its band position's window, cell for cell; the runtime heights equal brute force over every (position, ref MIDI); banded Syntonic's anchor offsets (d mod 4) are never taller than d = 0. About 3 minutes. |
+| `footprint-extent.mjs` | The canvas-height reduction (`footprintExtents`, `footprintHalfHeight`): every ref's footprint is its band position's window, cell for cell; the runtime heights equal brute force over every (position, ref MIDI); every ref-to-anchor offset reproduces one the runtime measures (`footprintAnchorOffsets`: 0–3 in banded Syntonic, 0 elsewhere). About 8 minutes over the nine layouts. |
 
 Both iterate every `MAPPINGS` layout × `TUNING_MODES` value × banding.
 
 ## When to re-run
 
 - Changing the picker, the per-mode tuning (`coordExps`), Tenney Height or spelling: both.
-- Adding a tuning mode or a layout: both. A layout that fails check C means banded Syntonic needs its four anchor phases in the runtime height (render/canvas.ts).
+- Adding a tuning mode or a layout: both. A mode whose band offset isn't linear in the band distance fails check C until `footprintAnchorOffsets` names its phases.
 
 ## History
 

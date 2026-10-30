@@ -22,7 +22,7 @@
 // (apps/hkl/src/render/colors.ts); Composer can call them directly.
 
 import { coordExps, coordToMidi, type TuningMode } from './freq.js';
-import type { LayoutId } from './mapping.js';
+import type { Mapping } from './mapping.js';
 import {
   type Hue, hueC, hueCycleOrder, whiteSet, equalHueCycle,
   hexToRgb, rgbToHsl, hslToRgb, rgbToHex, profileForHue,
@@ -43,7 +43,7 @@ const mod = (a: number, n: number): number => ((a % n) + n) % n;
 
 /** Hue, white/black and septimal flags for (q, r) under `mode` / `mapping` /
  *  `anchor` / `banded` (see coordExps). */
-export function keyColor(q: number, r: number, mode: TuningMode, mapping: LayoutId, anchor: number, banded: boolean): KeyColor {
+export function keyColor(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): KeyColor {
   const midi = coordToMidi(q, r, mapping);
   const isW = whiteSet.has(mod(midi, 12));
   if (mode === 'E') return { hue: equalHueCycle[mod(Math.floor(midi / 12), 3)], isW, half: false, isSept: false };
@@ -55,7 +55,7 @@ export function keyColor(q: number, r: number, mode: TuningMode, mapping: Layout
 }
 
 /** Lattice key color: .l / .d by white/black, .sl / .sd on a half step. */
-export function keyColorHex(q: number, r: number, mode: TuningMode, mapping: LayoutId, anchor: number, banded: boolean): string {
+export function keyColorHex(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): string {
   const v = keyColor(q, r, mode, mapping, anchor, banded);
   if (v.half) return v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!;
   return v.isW ? hueC[v.hue].l : hueC[v.hue].d;
@@ -65,7 +65,7 @@ export function keyColorHex(q: number, r: number, mode: TuningMode, mapping: Lay
  *  white/black. The notehead color on a DARK notation surface, where the .d
  *  black-key variant is too dark to read (the accidental glyph already conveys
  *  sharp/flat, so the notehead only needs to carry the hue). */
-export function lightSourceHex(q: number, r: number, mode: TuningMode, mapping: LayoutId, anchor: number, banded: boolean): string {
+export function lightSourceHex(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): string {
   const v = keyColor(q, r, mode, mapping, anchor, banded);
   return v.half ? hueC[v.hue].sl! : hueC[v.hue].l;
 }
@@ -73,7 +73,7 @@ export function lightSourceHex(q: number, r: number, mode: TuningMode, mapping: 
 /** Ink-on-white-paper notehead color: the lattice color remapped to its
  *  per-hue ink profile (HUE_PROFILES), so outputs are exactly the sanctioned
  *  ink set that sanctionedLightForInk reverse-maps. */
-export function inkColorHex(q: number, r: number, mode: TuningMode, mapping: LayoutId, anchor: number, banded: boolean): string {
+export function inkColorHex(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): string {
   const [r0, g0, b0] = hexToRgb(keyColorHex(q, r, mode, mapping, anchor, banded));
   const [h] = rgbToHsl(r0, g0, b0);
   const p = profileForHue(h);

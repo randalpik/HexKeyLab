@@ -23,11 +23,14 @@
 // Chromatic (12-wide bands, qm0 at position 4): the same rule — the ref sits
 // at most 4 columns left or 7 right of the spine.
 //
-// One formula covers all three: q − posInBand + W/3 (W = band width, qm0 at
-// position W/3).
+// One formula covers every layout: the spine is the ref band's qm0 chromatic
+// column (chromatic position 4), which sits in layout column ⌊4/c⌋ of the band
+// (c the band step: W/3 in Euler, Wicki-Hayden and chromatic; column 1 in the
+// Accordion's 4-wide bands). Every row samples it, since c divides the shear
+// (docs/architecture.md → Sheared and inverted layouts).
 
-import { bandWidth, posInBandOf, type Mapping } from '@hkl/shared/mapping.js';
+import { LAYOUT, posInBandOf, type Mapping } from '@hkl/shared/mapping.js';
 
 export function refSpine(refQ: number, refR: number, mapping: Mapping): { q: number; r: number } {
-  return { q: refQ - posInBandOf(refQ, refR, mapping) + bandWidth(mapping) / 3, r: refR };
+  return { q: refQ - posInBandOf(refQ, refR, mapping) + Math.floor(4 / LAYOUT[mapping].c), r: refR };
 }

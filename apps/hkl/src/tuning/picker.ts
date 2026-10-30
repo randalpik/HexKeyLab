@@ -76,6 +76,15 @@ export function footprintExtents(state: TuningStateLike, anchorOffset = 0): Arra
   return out;
 }
 
+/** The ref-to-anchor band offsets whose footprints can differ. Under the Piano
+ *  outline the ref can sit d bands from the anchor (Composer's cursor note,
+ *  recording playback, the overlay mirror). Banded Syntonic's band offset is
+ *  periodic in d ([0, +1, 0, −1][d mod 4]); every other band offset is linear
+ *  in the band distance (Polysyntonic, Schismatic) or absent, so d drops out. */
+export function footprintAnchorOffsets(state: TuningStateLike): number[] {
+  return state.mode === 'S' && state.banded ? [0, 1, 2, 3] : [0];
+}
+
 /** The largest |sy(cell) − sy(MIDI 64's cell)| over every ref's footprint, sy
  *  a linear screen projection: the piano view centers MIDI 64's cell vertically
  *  (render/canvas.ts), so twice this, plus padding, is a canvas height that fits

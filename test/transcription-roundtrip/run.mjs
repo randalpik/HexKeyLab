@@ -26,11 +26,15 @@ const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
 /* A small recording exercising chords, a treble/bass split, a note sustained
    across a bar line (→ a tie), and a trailing rest. bpmHint pins the tempo so
    the DP result is stable run-to-run. */
-const BUILD_AND_TRANSCRIBE = `
+/* mapping: the recording's layout; at: Euler (q, r) → that layout's cell (Janko
+   (2q + 3r, r) is the same note). A layout a score can't use (SCORE_MAPPINGS)
+   must come out in Euler, note for note. */
+const BUILD_AND_TRANSCRIBE = (mapping = 'euler', at = '(q, r) => [q, r]') => `
 (() => {
   const snapshot = { tuning:'5', septimalEnabled:false, equalEnabled:false,
-    septimalW:0, instrument:'piano', pedalMode:'sustain', refHz:220 };
-  const N = (t,q,r,dur,v=90) => [ {t,k:'on',q,r,v}, {t:t+dur,k:'off',q,r} ];
+    septimalW:0, instrument:'piano', pedalMode:'sustain', refHz:220, mapping:'${mapping}', anchor:0, banded:true };
+  const at = ${at};
+  const N = (t,q0,r0,dur,v=90) => { const [q, r] = at(q0, r0); return [ {t,k:'on',q,r,v}, {t:t+dur,k:'off',q,r} ]; };
   const events = [].concat(
     N(0.0, 0,  1, 0.45), N(0.0, 0, -1, 0.45),  /* chord: treble + bass */
     N(0.5, 0,  0, 0.45),
@@ -90,17 +94,18 @@ async function main() {
   try {
     /* 1 — emit a .hkc from a real recording on the HKL page. */
     const hklCdp = await openPage(await newTabWsUrl(browser.port), await isolatedHklUrl(BASE + '/?hklrec=1'), { waitMs: WAIT_MS });
-    const hkc = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE);
+    const hkc = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE());
+    const hkcJanko = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('janko', '(q, r) => [2 * q + 3 * r, r]'));
     hklCdp.close();
     if (typeof hkc !== 'string') {
       console.error('FAIL — emit stage:', hkc && hkc.__error ? hkc.__error : JSON.stringify(hkc));
-      browser.stop();
+      await browser.stop();
       process.exit(1);
     }
     if (!hkc.includes('<measure') || !hkc.includes('data-q')) {
       console.error('FAIL — emitted .hkc missing <measure>/data-q');
       console.error(hkc.slice(0, 500));
-      browser.stop();
+      await browser.stop();
       process.exit(1);
     }
 
@@ -114,7 +119,7 @@ async function main() {
     const check = (name, ok, detail) => { checks.push({ name, ok, detail }); if (!ok) exitCode = 1; };
     if (!r || r.__error) {
       console.error('FAIL — assert stage threw:', r && r.__error ? r.__error : JSON.stringify(r));
-      browser.stop();
+      await browser.stop();
       process.exit(1);
     }
     check('replaceDocument + parse', r.ok === true, r.stage + ': ' + (r.detail ?? ''));
@@ -125,6 +130,13 @@ async function main() {
       check('placeholder invariant', r.ph && r.ph.ok, r.ph && r.ph.detail);
       check('origin (0,0) spells A3', r.originOk !== false, 'origin note mis-spelled');
       check('serialize round-trip stable', r.roundtripStable === true, 'serialize drift');
+      /* a Janko recording: Euler layoutReq, the same notes at the same Euler cells */
+      const notesOf = (x) => (x.match(/<note\b[^>]*>/g) ?? []).map((t) => ['data-q', 'data-r', 'pname', 'accid', 'oct']
+        .map((a) => (t.match(new RegExp(' ' + a + '="([^"]*)"')) ?? [])[1] ?? '').join('/')).sort().join(' ');
+      const lr = typeof hkcJanko === 'string' ? (hkcJanko.match(/<hkl:layoutReq\b[^>]*>/) ?? [''])[0] : '';
+      check('Janko recording → Euler score (no mapping attribute)', lr !== '' && !lr.includes('mapping='), lr || JSON.stringify(hkcJanko));
+      check('Janko recording → the Euler notes, note for note', typeof hkcJanko === 'string' && notesOf(hkcJanko) === notesOf(hkc),
+        typeof hkcJanko === 'string' ? notesOf(hkcJanko) + ' vs ' + notesOf(hkc) : JSON.stringify(hkcJanko));
       if (r.tieCount === 0) {
         console.warn('  ! warning: no ties in output — tie path not exercised this run');
       }
@@ -137,7 +149,7 @@ async function main() {
       ? `\nPASS  (${r.measures} measures, ${r.noteCount} notes, ${r.tieCount} tied)`
       : '\nFAIL');
   } finally {
-    browser.stop();
+    await browser.stop();
   }
   process.exit(exitCode);
 }

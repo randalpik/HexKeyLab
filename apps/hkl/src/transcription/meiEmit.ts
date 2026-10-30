@@ -25,8 +25,10 @@ import {
   type NoteSpec,
   type Duration,
   type Dots,
+  scoreMappingFor,
 } from '@hkl/notation/mei-build.js';
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
+import { convertCell } from '@hkl/shared/mapping.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { lightSourceHex } from '../render/colors.js';
 
@@ -37,15 +39,17 @@ export interface EmitMeiOpts {
 
 /** Spell a lattice cell into a NoteSpec, mirroring Composer's buildNoteElement
  *  input (count-form accidental of any magnitude — Composer collapses to the
- *  right glyph stack). */
+ *  right glyph stack). Spelled and colored as recorded; the coordinates are
+ *  written in the score's mapping (scoreMappingFor; the same spelled note). */
 function noteSpecFromCoord(q: number, r: number, colorHex: string, snapshot: LayoutSnapshot): NoteSpec {
   const { mapping, anchor, banded } = snapshot;
   const parsed = parseNote(noteName(q, r, mapping, anchor, banded));
   const alter = accToVal(parsed.acc);
   const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
+  const [sq, sr] = convertCell(q, r, mapping, scoreMappingFor(mapping, 'euler'));
   return {
-    q,
-    r,
+    q: sq,
+    r: sr,
     pname: parsed.letter.toLowerCase() as NoteSpec['pname'],
     accid,
     oct: keyOctave(q, r, mapping, anchor, banded),
@@ -136,7 +140,7 @@ export function emitMei(
     meterCount: num,
     meterUnit: 4,
     tempoBpm: bpm,
-    layoutReq: { tuningMode: snapshot.tuning, mapping: snapshot.mapping, banded: snapshot.banded },
+    layoutReq: { tuningMode: snapshot.tuning, mapping: scoreMappingFor(snapshot.mapping, 'euler'), banded: snapshot.banded },
   });
   const doc = new DOMParser().parseFromString(skeleton, 'application/xml');
   const section = doc.querySelector('section');

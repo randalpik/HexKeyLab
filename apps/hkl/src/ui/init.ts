@@ -18,6 +18,7 @@
 import { onRefChanged, withRefSlide } from '../effects/onRefChanged.js';
 import { getComposerRequiredLayout, applyComposerLayout, reconcileSelectionOnSyncEnable, preloadComposerInstruments } from '../bridge/hkl-side.js';
 import { tuning } from '../state/tuning.js';
+import { MAPPINGS, MAPPING_LABELS } from '@hkl/shared/mapping.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
 import { pedal } from '../state/pedal.js';
@@ -106,6 +107,8 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selAlignment').value = p.alignment;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
+  /* the options come from the one list (dropdown order, labels) */
+  $<HTMLSelectElement>('selMapping').replaceChildren(...MAPPINGS.map((m) => new Option(MAPPING_LABELS[m], m)));
   $<HTMLSelectElement>('selMapping').value = p.mapping;
   $<HTMLSelectElement>('selHexSize').value = p.hexSize;
   $<HTMLInputElement>('cbAudio').checked = p.audioEnabled;

@@ -13,26 +13,39 @@ import { LAYOUT } from '@hkl/shared/mapping.js';
 import type { HkrSession, HkrEvent, LayoutSnapshot } from '../recording/types.js';
 
 const TOLERANCE_CENTS = 25;
-/* Euler q range; a Wicki-Hayden column is a whole tone and a chromatic column a
-   semitone, so the q range scales by 4/c (LAYOUT) to cover the same pitch span.
-   Pitch-equal cells (a Wicki-Hayden original and its copy one board over, a
-   chromatic cell and its in-band twin) share a frequency: MIDI carries pitch
-   only, so the import resolves to whichever the index meets first. */
-const Q_SPAN = 30;
+/* The index covers rows R_MIN…R_MAX and, in each, the cells whose chromatic
+   column, raised by its octaves (an inverted layout raises row r by r octaves),
+   lies within ±COLS of A3's: ±30 Euler columns, the same pitch span in every
+   layout (docs/architecture.md → The layout matrix). Cells are visited q-major,
+   r-minor. Pitch-equal cells (a Wicki-Hayden original and its copy one board
+   over, a chromatic cell and its in-band twin, every enharmonic in Equal)
+   share a frequency: MIDI carries pitch only, so the import resolves to
+   whichever the index meets first. */
+const COLS = 120;
 const R_MIN = -16, R_MAX = 16;
+
+function forEachIndexCell(mapping: LayoutSnapshot['mapping'], fn: (q: number, r: number) => void): void {
+  const { c, s, invert } = LAYOUT[mapping];
+  const lift = s + (invert ? 12 : 0); /* columns per row, octaves included */
+  const qLo = (r: number): number => Math.ceil((-COLS - lift * r) / c);
+  const qHi = (r: number): number => Math.floor((COLS - lift * r) / c);
+  const qMin = Math.min(qLo(R_MIN), qLo(R_MAX)), qMax = Math.max(qHi(R_MIN), qHi(R_MAX));
+  for (let q = qMin; q <= qMax; q++) {
+    for (let r = R_MIN; r <= R_MAX; r++) {
+      if (q >= qLo(r) && q <= qHi(r)) fn(q, r);
+    }
+  }
+}
 
 interface FreqIndexEntry { logF: number; q: number; r: number }
 
 function buildFreqIndex(snapshot: LayoutSnapshot): FreqIndexEntry[] {
   const state = snapshotToTuningState(snapshot);
   const entries: FreqIndexEntry[] = [];
-  const qSpan = (4 / LAYOUT[snapshot.mapping].c) * Q_SPAN;
-  for (let q = -qSpan; q <= qSpan; q++) {
-    for (let r = R_MIN; r <= R_MAX; r++) {
-      const f = keyFreqWithState(q, r, state);
-      if (f > 0 && Number.isFinite(f)) entries.push({ logF: Math.log(f), q, r });
-    }
-  }
+  forEachIndexCell(snapshot.mapping, (q, r) => {
+    const f = keyFreqWithState(q, r, state);
+    if (f > 0 && Number.isFinite(f)) entries.push({ logF: Math.log(f), q, r });
+  });
   entries.sort((a, b) => a.logF - b.logF);
   return entries;
 }
@@ -157,15 +170,12 @@ export function midiToSession(bytes: ArrayLike<number>, snapshot: LayoutSnapshot
 export function selfTestRoundTrip(snapshot: LayoutSnapshot, epsilon = 0.5): Array<{ q: number; r: number; cents: number }> {
   const drift: Array<{ q: number; r: number; cents: number }> = [];
   const state = snapshotToTuningState(snapshot);
-  const qSpan = (4 / LAYOUT[snapshot.mapping].c) * Q_SPAN;
-  for (let q = -qSpan; q <= qSpan; q++) {
-    for (let r = R_MIN; r <= R_MAX; r++) {
-      const f0 = keyFreqWithState(q, r, state);
-      const { note, bend14 } = coordToMidi(q, r, snapshot);
-      const f1 = midiToFreq(note, bend14);
-      const cents = 1200 * Math.abs(Math.log2(f1 / f0));
-      if (cents > epsilon) drift.push({ q, r, cents });
-    }
-  }
+  forEachIndexCell(snapshot.mapping, (q, r) => {
+    const f0 = keyFreqWithState(q, r, state);
+    const { note, bend14 } = coordToMidi(q, r, snapshot);
+    const f1 = midiToFreq(note, bend14);
+    const cents = 1200 * Math.abs(Math.log2(f1 / f0));
+    if (cents > epsilon) drift.push({ q, r, cents });
+  });
   return drift;
 }

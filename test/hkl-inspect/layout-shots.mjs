@@ -13,9 +13,12 @@
 // moves the keyboard anchor off (0, 0), then Vertical Freq under the other two
 // mappings, then the Alignment views: the Lumatone and QWERTY outlines under
 // every rotation with Left and Right, and the Piano / None outlines with Right
-// (which must look as at Vertical). Order matters: the score-ref, mapping and
-// alignment steps change state that later shots inherit; shots 0-27 never set
-// an alignment, so they compare against a run from before Alignment existed.
+// (which must look as at Vertical), then the six sheared and inverted presets
+// (shots 42-53: Lumatone and Piano outlines, Vertical Freq, at A3). Order
+// matters: the score-ref, mapping and alignment steps change state that later
+// shots inherit; shots 0-27 never set an alignment, so they compare against a
+// run from before Alignment existed, and 0-41 against a run from before the
+// presets.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,6 +51,9 @@ for (const outline of ['lumatone', 'qwerty'])
       shots.push({ outline, rotation, extend: true, alignment, mapping: 'euler', clearRef: true });
 for (const outline of ['piano', 'none'])
   shots.push({ outline, rotation: 'lumatone', extend: true, alignment: 'right' });
+for (const mapping of ['janko', 'accordion', 'gerhard', 'randal', 'park', 'bass'])
+  for (const outline of ['lumatone', 'piano'])
+    shots.push({ outline, rotation: 'verticalFreq', extend: true, alignment: 'vertical', mapping, clearRef: true });
 
 const chrome = await launchChromium();
 const cdp = new CDP(await newTabWsUrl(chrome.port));

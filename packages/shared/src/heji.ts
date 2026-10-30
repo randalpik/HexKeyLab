@@ -20,7 +20,7 @@
 //   sept7 > 0 → down-hooks; sept7 < 0 → up-hooks.
 
 import { coordExps, solveCommas, type TuningMode } from './freq.js';
-import type { LayoutId } from './mapping.js';
+import type { Mapping } from './mapping.js';
 
 /* ── glyph tables ──────────────────────────────────────────────────────────
  * Each row indexed by [bare, 1-down, 1-up, 2-down, 2-up]. Column 0 is the
@@ -89,7 +89,7 @@ export interface HejiCommas {
  *  septimal commas between the cell's pitch and its 'P' pitch. A schisma
  *  (Schismatic's band stacking) isn't notated — it re-spells, and color
  *  carries it. Equal returns {0, 0}. */
-export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: LayoutId, anchor: number, banded: boolean): HejiCommas {
+export function hejiCommasFor(mode: TuningMode, q: number, r: number, mapping: Mapping, anchor: number, banded: boolean): HejiCommas {
   if (mode === 'E') return { syn5: 0, sept7: 0 };
   const e = coordExps(q, r, mode, mapping, anchor, banded);
   const p = coordExps(q, r, 'P', mapping, anchor, banded);

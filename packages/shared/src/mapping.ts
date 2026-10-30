@@ -30,18 +30,13 @@
 //                 (A's row: F F# G G# A Bb B C C# D D# E)
 // A3 sits at (0,0) — the qm0 column, chromatic position 4 — in every layout.
 
-/** The mappings HKL and Composer expose. */
-export type Mapping = 'euler' | 'wickiHayden' | 'chromatic';
+/** Every layout the matrix model defines. In Euler, Wicki-Hayden and Chromatic
+ *  r is the fifths axis; the other six are sheared or inverted
+ *  (docs/architecture.md → Sheared and inverted layouts). */
+export type Mapping = 'euler' | 'wickiHayden' | 'chromatic' | 'janko' | 'accordion' | 'gerhard' | 'randal' | 'park' | 'bass';
 
-/** Every layout the matrix model defines. The six beyond `Mapping` are not yet
- *  selectable: HKL's reference spine, picker and tilt, and Composer's Setup,
- *  still assume a fifths r axis. */
-export type LayoutId = Mapping | 'janko' | 'accordion' | 'gerhard' | 'randal' | 'park' | 'bass';
-
-export const MAPPINGS: ReadonlyArray<Mapping> = ['euler', 'wickiHayden', 'chromatic'];
-
-/** Every layout, in dropdown order. */
-export const LAYOUT_IDS: ReadonlyArray<LayoutId> = [
+/** Every mapping, in dropdown order (Max, 2026-10-30). */
+export const MAPPINGS: ReadonlyArray<Mapping> = [
   'euler', 'wickiHayden', 'chromatic', 'janko', 'accordion', 'gerhard', 'randal', 'park', 'bass',
 ];
 
@@ -49,7 +44,7 @@ export function isMapping(x: unknown): x is Mapping {
   return (MAPPINGS as ReadonlyArray<unknown>).includes(x);
 }
 
-export const MAPPING_LABELS: Readonly<Record<LayoutId, string>> = {
+export const MAPPING_LABELS: Readonly<Record<Mapping, string>> = {
   euler: 'Euler',
   wickiHayden: 'Wicki-Hayden',
   chromatic: 'Chromatic',
@@ -73,7 +68,7 @@ export interface LayoutMatrix {
 }
 
 /** Each layout's matrix into the chromatic frame. */
-export const LAYOUT: Readonly<Record<LayoutId, LayoutMatrix>> = {
+export const LAYOUT: Readonly<Record<Mapping, LayoutMatrix>> = {
   euler: { c: 4, s: 0, invert: false },
   wickiHayden: { c: 2, s: 0, invert: false },
   chromatic: { c: 1, s: 0, invert: false },
@@ -87,13 +82,13 @@ export const LAYOUT: Readonly<Record<LayoutId, LayoutMatrix>> = {
 
 /** The chromatic cell [Q, R] that cell (q, r) of `layout` samples, and the exact
  *  octaves `oct` it sounds above that cell. */
-export function toChromatic(q: number, r: number, layout: LayoutId): [number, number, number] {
+export function toChromatic(q: number, r: number, layout: Mapping): [number, number, number] {
   const { c, s, invert } = LAYOUT[layout];
   return invert ? [c * q + s * r, 0 - r, r] : [c * q + s * r, r, 0];
 }
 
 /** Columns per octave band: 12 / c (3 Euler, 6 Wicki-Hayden, 12 chromatic). */
-export function bandWidth(layout: LayoutId): number {
+export function bandWidth(layout: Mapping): number {
   return 12 / LAYOUT[layout].c;
 }
 
@@ -139,7 +134,7 @@ const CHROMATIC_TWINS: ReadonlyArray<readonly [number, number, number]> = [
  *  where its Euler-equivalent's band puts it. Under Wicki-Hayden an even column
  *  Q is Euler column Q/2, and an odd column (a copy of column (Q−1)/2, 2 cells
  *  down and an octave down) is ((Q−1)/2 − 3, R+2). */
-export function eulerOf(q: number, r: number, layout: LayoutId): EulerCell {
+export function eulerOf(q: number, r: number, layout: Mapping): EulerCell {
   const L = LAYOUT[layout];
   if (!L.invert) return chromaticEuler(L.c * q + L.s * r, r);
   const e = chromaticEuler(L.c * q + L.s * r, 0 - r);
@@ -152,7 +147,7 @@ export function eulerOf(q: number, r: number, layout: LayoutId): EulerCell {
  *  mode for Euler, Wicki-Hayden and chromatic, whose original columns are
  *  Euler's own, (4/c)·q. Of the four chromatic cells with that equivalent, the
  *  first the layout samples. */
-export function fromEuler(q: number, r: number, layout: LayoutId): [number, number] {
+export function fromEuler(q: number, r: number, layout: Mapping): [number, number] {
   const { c, s, invert } = LAYOUT[layout];
   for (const [j, dk, dR] of CHROMATIC_TWINS) {
     const R = r + dR, row = invert ? 0 - R : R, oct = invert ? row : 0;
@@ -169,14 +164,14 @@ export function fromEuler(q: number, r: number, layout: LayoutId): [number, numb
  *  schisma) above the key one band-width to its left. This is the SPATIAL band:
  *  seams, position in band, the reference spine, the S/Y anchor and the
  *  Schismatic schisma count all use it. */
-export function bandOfCell(q: number, r: number, layout: LayoutId): number {
+export function bandOfCell(q: number, r: number, layout: Mapping): number {
   const L = LAYOUT[layout];
   return chromaticBand(L.c * q + L.s * r);
 }
 
 /** Position of cell (q, r) within its band, 0 … W−1: its chromatic position
  *  (Q + 4) mod 12 in column steps. A3's qm0 column is W/3 where that is whole. */
-export function posInBandOf(q: number, r: number, layout: LayoutId): number {
+export function posInBandOf(q: number, r: number, layout: Mapping): number {
   const { c, s } = LAYOUT[layout];
   return Math.floor((((c * q + s * r + 4) % 12) + 12) % 12 / c);
 }
@@ -186,7 +181,7 @@ export function posInBandOf(q: number, r: number, layout: LayoutId): number {
  *  column's band — one band lower for F# and G# (positions 1 and 3), its own
  *  otherwise. Every other column carries its own band. Read only by the S/Y band
  *  term and the unbanded respelling. */
-export function pitchBandOf(q: number, r: number, layout: LayoutId): number {
+export function pitchBandOf(q: number, r: number, layout: Mapping): number {
   const L = LAYOUT[layout];
   return chromaticPitchBand(L.c * q + L.s * r);
 }
@@ -199,7 +194,7 @@ export function pitchBandOf(q: number, r: number, layout: LayoutId): number {
  *  that is a lattice vector: (−1, 2) Wicki-Hayden, (−2, 2) chromatic, (5, 2)
  *  Janko, (1, 2) Park, (2, 2) Bass. Null where it isn't: Euler, Accordion,
  *  Gerhard, Randal. */
-export function octaveVector(layout: LayoutId, banded: boolean): readonly [number, number] | null {
+export function octaveVector(layout: Mapping, banded: boolean): readonly [number, number] | null {
   if (banded) return [bandWidth(layout), 0];
   const { c, s, invert } = LAYOUT[layout];
   const n = (invert ? 2 : -2) - 2 * s;
@@ -212,9 +207,7 @@ export function octaveVector(layout: LayoutId, banded: boolean): readonly [numbe
  *  column; in Euler, Wicki-Hayden and chromatic the q component just scales by
  *  4/c. Null where the layout has no such vector: the Accordion only has those
  *  whose dq is a multiple of 3. */
-export function vecFromEuler(dq: number, dr: number, layout: Mapping): [number, number];
-export function vecFromEuler(dq: number, dr: number, layout: LayoutId): [number, number] | null;
-export function vecFromEuler(dq: number, dr: number, layout: LayoutId): [number, number] | null {
+export function vecFromEuler(dq: number, dr: number, layout: Mapping): [number, number] | null {
   const { c, s, invert } = LAYOUT[layout];
   const row = invert ? 0 - dr : dr;
   const n = 4 * dq - (invert ? s + 12 : s) * row;
@@ -223,7 +216,7 @@ export function vecFromEuler(dq: number, dr: number, layout: LayoutId): [number,
 
 /** The cell of `layout` that samples chromatic cell (Q, R) raised `oct`
  *  octaves, or null. */
-function fromChromatic(Q: number, R: number, oct: number, layout: LayoutId): [number, number] | null {
+function fromChromatic(Q: number, R: number, oct: number, layout: Mapping): [number, number] | null {
   const { c, s, invert } = LAYOUT[layout];
   const row = invert ? 0 - R : R;
   if ((invert ? row : 0) !== oct) return null;
@@ -237,7 +230,7 @@ function fromChromatic(Q: number, R: number, oct: number, layout: LayoutId): [nu
  *  every mode (Euler ⊂ Wicki-Hayden ⊂ chromatic nest this way); any other cell
  *  goes through its Euler-equivalent — exact in every band-uniform mode, a
  *  schisma or a comma away in V/S/Y. Identity when the layouts agree. */
-export function convertCell(q: number, r: number, from: LayoutId, to: LayoutId): [number, number] {
+export function convertCell(q: number, r: number, from: Mapping, to: Mapping): [number, number] {
   if (from === to) return [q, r];
   const [Q, R, oct] = toChromatic(q, r, from);
   const same = fromChromatic(Q, R, oct, to);

@@ -17,6 +17,7 @@
 
 import type { Alignment, HexSize, Mapping, RotationMode } from '../state/persistence.js';
 import { LAYOUT } from '@hkl/shared/mapping.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 import { poseOffset } from './physical.js';
 
 /* Hex inradius (px) and derived axis pitches. `let` exports: setHexSize()
@@ -43,15 +44,22 @@ export function setHexSize(size: HexSize): void {
   hexScale = hexR / 16;
 }
 
-/* `qStep` = average log-frequency per q step. The r-axis gradient subtracts
-   half of it because each row is offset half a column. */
-function verticalFreqTilt(qStep: number): number {
-  const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
+/* `qStep` / `rStep` = average log-frequency per q / r step. The r-axis
+   gradient subtracts half of qStep because each row is offset half a column. */
+function verticalFreqTilt(qStep: number, rStep: number): number {
   const gx = qStep / dxH;
-  const gy = (avgR - qStep / 2) / dyH;
+  const gy = (rStep - qStep / 2) / dyH;
   return Math.PI / 2 - Math.atan2(gy, gx);
 }
-const TILT_VERTICAL_FREQ = verticalFreqTilt(Math.log(2) / 3);
+/* A layout's average log-frequency per step: c semitones per column; per row,
+   the fifths layouts' average fifth (a twelfth of a syntonic comma under 3:2),
+   shifted by the row step's distance from a fifth in equal semitones. */
+function verticalFreqTiltOf(mapping: Mapping): number {
+  const rowStep = coordToMidi(0, 1, mapping) - 57;
+  const avgFifth = Math.log(3 / 2) - Math.log(81 / 80) / 12;
+  return verticalFreqTilt(Math.log(2) * LAYOUT[mapping].c / 12, avgFifth + (rowStep - 7) * Math.log(2) / 12);
+}
+const TILT_VERTICAL_FREQ = verticalFreqTiltOf('euler');
 /* The tilt that levels the Lumatone case row — the (+7, −2) board step as the
    alignment poses it — computed from that vector's own pixel direction, so it
    is exact although dxH:dyH is not a regular hexagon's 2:√3. x > 0 in every
@@ -78,7 +86,7 @@ export function setRotation(mode: RotationMode, mapping: Mapping, pose: Alignmen
   switch (mode) {
     case 'lumatone': tiltAngle = caseLevelTilt(pose); break;
     case 'piano': tiltAngle = TILT_PIANO; break;
-    default: tiltAngle = verticalFreqTilt(Math.log(2) * LAYOUT[mapping].c / 12);
+    default: tiltAngle = verticalFreqTiltOf(mapping);
   }
   cosT = Math.cos(tiltAngle);
   sinT = Math.sin(tiltAngle);

@@ -140,19 +140,21 @@ export function setBanded(): void {
   savePrefs({ banded: val });
 }
 
-/** The controls banding decides: the checkbox itself, Show bands (nothing to
- *  show unbanded) and the P8 / SC transpose buttons (disabled where the frame
- *  has no such step). Run at startup and on a banding or mapping change. */
+/** The controls banding and mapping decide: the checkbox itself, Show bands
+ *  (nothing to show unbanded) and every transpose button (disabled where the
+ *  frame has no such step: P8 / SC unbanded, and the Accordion's M3, m3 and
+ *  SC). Run at startup and on a banding or mapping change. */
 export function syncBandedControls(): void {
   (document.getElementById('cbBanded') as HTMLInputElement).checked = tuning.banded;
   (document.getElementById('cbBands') as HTMLInputElement).disabled = !tuning.banded;
-  document.querySelectorAll<HTMLButtonElement>('.tpab[data-kind]').forEach((btn) => {
+  document.querySelectorAll<HTMLButtonElement>('.tpab[data-dq]').forEach((btn) => {
     btn.disabled = transposeStep(+(btn.dataset.dq ?? '0'), +(btn.dataset.dr ?? '0'), btn.dataset.kind) === null;
   });
 }
 
 /** A transpose button's Euler interval in the active layout's frame, or null
- *  where the layout has none. Banded, every button is its Euler vector.
+ *  where the layout has none. Banded, every button is its Euler vector, where
+ *  one exists (vecFromEuler: the Accordion has none for M3, m3 and SC).
  *  Unbanded, a band step is no octave: P8 (`kind` 'octave') takes the frame's
  *  spelled-octave vector (octaveVector; Euler has none), and SC ('comma') is
  *  off — Euler and Wicki-Hayden spell each note on one key, so there is no

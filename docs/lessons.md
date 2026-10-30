@@ -5599,3 +5599,22 @@ HKL's hex and text layers are separate offscreen canvases, but `draw()` blits bo
 
 - Where caches share a geometry, record the geometry they were built at (`builtGridKey`) and rebuild every cache when it moves.
 - The gate compares the frame with a from-scratch rebuild (`test/hkl-midi/layer-sync.mjs`): a pixel identity catches any drift without knowing its cause.
+
+## Fifths-layout assumptions hide in the gates too (2026-10-30)
+
+Widening `Mapping` to the nine presets surfaced the assumptions the compiler can't see, and most were in gates rather than app code:
+- the Syntonic oracle took "the first column of band b" as `b·W − W/3`, fractional for the Accordion's W = 4;
+- it also took a band step's comma change from the band index. But a cell carries its pitch band's offset (`pitchBandOf`), an odd chromatic column carries the band five columns left, and the Accordion's bands start on one;
+- the unbanded oracle expected spelled twins only from the mapping named `'chromatic'`. Bass has them too, as does every c = 1 layout;
+- the alignment gate asserted rows are 3:2, which holds only where r is the pure line of a plain layout;
+- the layout-presets oracle's "old closed forms" section iterated `MAPPINGS`, meaning the three.
+
+Derive such facts from `LAYOUT` (`⌊4/c⌋`, `pitchBandOf`, `c`, `s`, `invert`): the rule AGENTS.md sets for app code applies to tests as well. A gate that names a mapping, or uses `W/3` or 7, is the same bug in a place no typecheck reaches.
+
+## An unpinned dependency is an unreviewed change (2026-10-30)
+
+Composer loaded Verovio from `verovio.org/javascript/latest`. The morning 6.4.0 shipped, 62 of 63 visual baselines failed with nothing changed here.
+- **Cause:** a new hidden `<g class="… placeholder">` at every `sb`, `pb`, `scoreDef` and `section` is `visibility: hidden` and so stays inside `getBBox`. That raised every system's box, which Composer's page fit reads.
+- **Foreseen in principle:** decisions.md 2026-09-02 had already called a model of Verovio's stacking "exact today and one release from wrong".
+- **The remedy is the pin:** `VEROVIO_URL` names an exact release (decisions.md "Pin Verovio").
+- **Triage when visuals drift uniformly with no local change:** check every runtime-fetched dependency's version first; Composer logs `Verovio <version>` at startup. Then bisect by pinning: the old version should pass everything, and the new one plus a fix should too.

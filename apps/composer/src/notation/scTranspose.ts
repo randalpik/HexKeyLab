@@ -148,7 +148,12 @@ export function scTransposeChordNote(
     return FAILED_SC;
   }
   const { mapping, banded } = model.getLayoutReq();
-  const [dq, dr] = vecFromEuler(7 * dir, -4 * dir, mapping);
+  const step = vecFromEuler(7 * dir, -4 * dir, mapping);
+  if (!step) {
+    hooks.setStatus?.('This layout has no syntonic-comma step.', 'error');
+    return FAILED_SC;
+  }
+  const [dq, dr] = step;
   const newQ = oldCoord.q + dq;
   const newR = oldCoord.r + dr;
   const newKey = newQ + ',' + newR;

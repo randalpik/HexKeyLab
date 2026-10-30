@@ -89,7 +89,19 @@ The **Mapping** dropdown (Layout tab) chooses where the notes sit on the keyboar
   - In Ptolemaic, it is the just chromatic scale of your reference, with the leading tone directly to its left.
   - In Syntonic and Polysyntonic, the two keys just left of the reference's column (its major sixth and seventh) come from the lowered band next door, so the leading tone and major sixth are just and the reference's major I, IV and V chords are all just within three keys.
 
+Three mappings lean their rows, so the seams slant and the pure fifth sits a few keys along instead of straight up-right:
+- **Janko**: rows of whole tones, a semitone up to the up-right and down to the up-left; bands are 6 keys wide. The pure fifth is three keys right and one up-right. Comma alternatives of a note sit only 2 keys apart.
+- **Accordion** (the chromatic button accordion, C-system): rows of minor thirds, a semitone up-right, a whole tone down up-left; bands are 4 keys wide. The pure fifth is two keys right and one up-right. Each row is a diminished-seventh chord, and in Ptolemaic, Semiditonal and Septimal, Pythagorean minor triads and minor sevenths are compact from every key.
+- **Gerhard**: Euler's keys re-arranged: rows of major thirds, minor thirds up-right, a semitone down up-left; bands are 3 keys wide. The pure fifth is one key right and one up-right. Just triads become arcs instead of triangles, and Pythagorean minor chords come closer.
+
+Three mappings put fourths up-right instead of fifths. The up-right fourth is pure in every just tuning; their fifths are pure in Ptolemaic, Pythagorean, Semiditonal and Septimal:
+- **Randal**: rows of major thirds, fourths up-right, semitones up-left; bands are 3 keys wide (Euler with fourths for fifths).
+- **Park**: rows of whole tones, fourths up-right, minor thirds up-left; bands are 6 keys wide (Wicki-Hayden with fourths).
+- **Bass**: rows of semitones, fourths up-right, major thirds up-left; bands are 12 keys wide. Strings in fourths, as Chromatic is strings in fifths.
+
 On the Lumatone, Wicki-Hayden covers about 4½ octaves. Chromatic spans MIDI notes 12–102: each board covers about five octaves top to bottom, a fifth lower than the board to its left.
+
+A Composer score uses Euler, Wicki-Hayden or Chromatic for now. While HKL plays in another mapping, Composer converts what you play into the score's.
 
 Switching mapping keeps what you're holding. Mouse and MIDI-keyboard notes keep their pitch and move to that note's new key; Lumatone and computer-keyboard notes stay on their key and glide to its new pitch.
 
@@ -111,7 +123,7 @@ With Composer open, the score's key is the reference unless you've Ctrl+clicked 
 
 **Transpose** (Playback tab) slides the keys you have on along five axes, each with ▲ / ▼ buttons (hold to repeat): perfect fifth (**P5**), major third (**M3**), minor third (**m3**), octave (**P8**) and syntonic comma (**SC**). Sustained instruments glide to the new pitch; struck and plucked instruments and organs strike again. A step that would push a note off the canvas is refused.
 
-Without bands, **P8** moves by the mapping's spelled octave (Wicki-Hayden and Chromatic; Euler has no spelled octave, so it is off), and **SC** is off.
+Without bands, **P8** moves by the mapping's spelled octave (Wicki-Hayden, Chromatic, Janko, Park and Bass; Euler, Accordion, Gerhard and Randal have none, so it is off there), and **SC** is off. In the Accordion, **M3**, **m3** and **SC** are always off: its keys have no single step for them.
 
 The **SC** step moves the chord to the keys a syntonic comma away. In Equal the pitch doesn't change. In the just tunings the result depends on the tuning and on where the chord sits, because the step crosses seams: in Ptolemaic it raises the chord by 81:80 (about 21.5 cents) or lowers it by about 19.6 cents.
 

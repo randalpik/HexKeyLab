@@ -142,6 +142,25 @@ export const FIXTURES = {
       window.__bridgeMock.sendHeldKeys([RN(1, 0, 'c', 's', 4, 61)], 'euler');
     `,
   },
+  /* HKL plays in a sheared layout a score can't use (Janko, decisions.md
+     2026-10-30 "Layout presets in HKL"): its held E4 at Janko (3, 1) reaches a
+     Euler score as Euler (0, 1). Before the mapping widened, Composer read the
+     unknown id as Euler and took (3, 1) itself — G#5. */
+  map_held_keys_from_janko: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '5', mapping: 'euler' });
+      window.__bridgeMock.sendHeldKeys([RN(3, 1, 'e', '', 4, 64)], 'janko');
+    `,
+  },
+  /* Setup offers the mappings a score can use (SCORE_MAPPINGS), not all nine. */
+  map_setup_score_mappings: {
+    setup: `
+      ${HELPERS}
+      document.getElementById('btnSetup').click();
+      window.__mapOptions = [...document.getElementById('setupMapping').options].map((o) => o.value);
+    `,
+  },
 };
 
 const expect = (got, want) => (JSON.stringify(got) === JSON.stringify(want)
@@ -237,5 +256,17 @@ export const ASSERTIONS = {
         if (!held) return { ok: false, detail: 'no getHeldKeys hook' };
         return (${expect.toString()})(held.map((k) => k.q + ',' + k.r + ':' + k.pname + '/' + k.accid + '/' + k.oct), ['2,0:c/s/4']);
       })()` },
+  ],
+  map_held_keys_from_janko: [
+    { name: 'getHeldKeys returns the Euler cell of the Janko key',
+      expr: `(() => {
+        const held = window.__hkl_composer.getHeldKeys ? window.__hkl_composer.getHeldKeys() : null;
+        if (!held) return { ok: false, detail: 'no getHeldKeys hook' };
+        return (${expect.toString()})(held.map((k) => k.q + ',' + k.r + ':' + k.pname + '/' + k.accid + '/' + k.oct), ['0,1:e//4']);
+      })()` },
+  ],
+  map_setup_score_mappings: [
+    { name: 'the Setup mapping list is Euler, Wicki-Hayden, Chromatic',
+      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic'])` },
   ],
 };

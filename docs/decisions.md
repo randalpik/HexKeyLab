@@ -10369,3 +10369,57 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - `test/hkl-midi/ref-centering.mjs` C15–C16 fail on the old code (the far clear slid; a nearby slide left a 1750×649 layer) and pass now, 24/24.
 - The `test/hkl-midi/` sweep passes (layer-sync, lattice-scroll, alignment, mapping-switch, banded-toggle, anchor, ref-validity, held-inputs, fresh-profile, velocity-owners, damper, departure).
 - `pnpm typecheck` and the HKL build pass.
+
+## Layout presets in HKL (2026-10-30, Max)
+
+**Picked** (Phase 2 of docs/local/layout-presets.md):
+- **All nine presets are selectable in HKL.** `Mapping` is the nine; Phase 1's `LayoutId` is folded in. `MAPPINGS` is in dropdown order and `isMapping` accepts all nine. HKL's Mapping dropdown is built at init from `MAPPINGS` / `MAPPING_LABELS`.
+- **Reference spine:** layout column `⌊4/c⌋`, the qm0 chromatic column; `W/3` was fractional for the Accordion.
+- **Vertical Freq tilt:** the per-row average is the fifths layouts' average shifted by (row step − 7) equal semitones.
+- **MIDI-import index:** a cell's chromatic column, raised by its octaves, within ±120 of A3's, visited q-major as before. That is the old box exactly in the fifths layouts.
+- **Transposes:** a button whose Euler vector the layout lacks is disabled: the Accordion's M3, m3 and SC.
+- **Banded Syntonic canvas height measures all four ref-to-anchor phases** (`footprintAnchorOffsets`). Its band offset is the one that isn't linear in band distance, and in Janko, Gerhard, Park and Bass a phase other than d = 0 is the tallest; `test/picker/footprint-extent.mjs` found it. This costs four times the first-use picker work in banded Syntonic.
+
+**My calls (Claude):**
+- **Composer scores stay on Euler, Wicki-Hayden and Chromatic** (`SCORE_MAPPINGS` / `scoreMappingFor`, `@hkl/notation/mei-build`) until Composer's notation paths are generalized: the cursor-ref spine walk, the SC hop and the retune radius.
+  - Setup lists those three.
+  - A blank score's adopt keeps its own mapping when HKL's is another.
+  - HKL's transcription writes a recording made in another layout as Euler: the same spelled notes, converted.
+- **Composer now receives new-layout coordinates converted** (`convertCell`). Before the widening it read an unknown mapping id as Euler, a latent misread.
+- **Null `vecFromEuler` in Composer:** the SC transpose fails with a status message where the layout has no comma step, and harmonic playback skips the M3 / P4 rules where those vectors are missing.
+
+**Found along the way:**
+- **Gates encoded fifths-layout assumptions**; they are now derived from `LAYOUT` (lessons.md, "Fifths-layout assumptions hide in the gates too").
+- **`test/transcription-roundtrip/` had been failing since Phase 1.** Its synthetic snapshot lacked `mapping` (and `banded`, since the unbanded work). It now carries a complete `LayoutSnapshot` and awaits `browser.stop()`.
+
+**Gates:**
+- **Model and picker:** the layout-presets oracle, 0 failures. Over all nine layouts:
+  - color-gate PASS;
+  - Wicki-Hayden 54,488/54,488;
+  - chromatic 148,292/148,292;
+  - Syntonic 2,264,534/2,264,534;
+  - unbanded 562,346/562,346;
+  - alignment 52/52;
+  - `test/picker/footprint-extent.mjs` (7:45) and `octave-consistency.mjs` (175,560 banded pairs, 0 breaks outside S/Y).
+- **HKL live:** `test/hkl-midi/`, 13 gates, all pass. mapping-switch is 69/69 with the new M8 (into each new preset).
+- **Composer:** `map_held_keys_from_janko` and `map_setup_score_mappings` fail with the old behavior restored and pass now.
+- **Transcription:** the round-trip passes, including a Janko recording; its Janko checks fail without the conversion.
+- **Visual:** `test/hkl-inspect/layout-shots.mjs` shots 0–41 are pixel-identical to before; shots 42–53 show the six presets.
+- **Builds:** `pnpm typecheck`, `check:boundaries`, and the HKL and Composer builds pass.
+
+**Status:** Phase 3 (Composer) is next.
+
+## Pin Verovio (2026-10-30, Max)
+
+**Problem:** HKL and Composer loaded Verovio from `verovio.org/javascript/latest`.
+- **What changed:** Verovio 6.4.0, published 2026-10-30, includes PR #4484, "Generate SVG placeholder for empty system elements". It adds a `<g class="… placeholder">` holding an `<ellipse rx=90 ry=90>`, set to `visibility: hidden`, at every `sb`, `pb`, `scoreDef` and `section`.
+- **Effect:** the placeholder is hidden but still inside `getBBox`. Each system's box top rose: on the sonata, by 80–86 SVG units on ordinary systems and 489 on one. That box is Composer's page-fit `above` (`measureExtents`), so every score's spacing and page breaks would have shifted. 62 of 63 visual baselines failed the same day, with no change in this repo.
+
+**Picked (Max):** pin an exact release.
+- **Version:** 6.3.0, the build every baseline was made with (66/66 visual fixtures pass on it).
+- **One constant:** `VEROVIO_URL` in `@hkl/notation/verovio.ts`, which Composer imports; there used to be two copies.
+- **Upgrading is a decision:** check upstream releases for features worth having, then price the upgrade. Bump the pin, run the full Composer suite (visual baselines included) and the sonata page probes.
+
+**The 6.4.0 path, if it's ever wanted:** 6.4.0 plus `#score svg g.placeholder { display: none }` also passes all 66 visual fixtures. Composer uses Verovio only for MEI → SVG (`loadData` / `renderToSVG`). Of 6.4.0's changelog, that leaves only its unquantified performance improvements as possibly relevant: parts, `staffDef@num`, and the MusicXML and MIDI fixes don't apply.
+
+**Gates:** at runtime Composer reports Verovio 6.3.0-425dd7b; the visual fixtures pass 66/66.

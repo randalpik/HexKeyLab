@@ -6,9 +6,10 @@
 //
 // The piano outline's height fits every ref. tuning/picker.ts
 // footprintExtents gives, per position in band, the one stitched footprint
-// every ref's 88 cells are a window of (2W picker runs), cached here per
-// (mapping, mode, banding); footprintHalfHeight measures it under the live
-// tilt and hex size.
+// every ref's 88 cells are a window of (2W picker runs; four times that in
+// banded Syntonic, whose footprint depends on the ref's band offset from the
+// anchor), cached here per (mapping, mode, banding); footprintHalfHeight
+// measures it under the live tilt and hex size.
 //
 // kbOffY is forced to 0 — content is symmetric about the canvas vertical
 // midline; CH grows to fit the larger of |minY| / |maxY|.
@@ -18,7 +19,7 @@ import { hexR, dxH, dyH, cosT, sinT, hexToScreen } from '../layout/geometry.js';
 import type { OutlineMode } from '../state/persistence.js';
 import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
-import { footprintExtents, footprintHalfHeight } from '../tuning/picker.js';
+import { footprintAnchorOffsets, footprintExtents, footprintHalfHeight } from '../tuning/picker.js';
 
 /** Solve for the lattice viewport center (viewQ, viewR) such that
  *  hexToScreen places refNote at screen-X = 0 (horizontal center) and
@@ -48,19 +49,20 @@ export function computePianoViewCenter(
   ];
 }
 
-/* The piano footprint extents per (mapping, mode, banding): the picker runs
-   that size the piano outline, cached so a rotation, hex-size or outline
-   change is arithmetic. The anchor drops out (each ref ranked as its own home
-   band; test/picker/ gates the other offsets). */
-const extentCache = new Map<string, Array<Array<[number, number]>>>();
+/* The piano footprint extents per (mapping, mode, banding), one set per
+   ref-to-anchor offset that can change them (footprintAnchorOffsets: four in
+   banded Syntonic, one otherwise): the picker runs that size the piano outline,
+   cached so a rotation, hex-size or outline change is arithmetic.
+   test/picker/footprint-extent.mjs gates the offsets. */
+const extentCache = new Map<string, Array<Array<Array<[number, number]>>>>();
 function pianoHalfHeight(): number {
   const key = tuning.mapping + '|' + tuning.mode + '|' + tuning.banded;
-  let ext = extentCache.get(key);
-  if (!ext) {
-    ext = footprintExtents(tuning);
-    extentCache.set(key, ext);
+  let exts = extentCache.get(key);
+  if (!exts) {
+    exts = footprintAnchorOffsets(tuning).map((d) => footprintExtents(tuning, d));
+    extentCache.set(key, exts);
   }
-  return footprintHalfHeight(ext, (q, r) => hexToScreen(q, r).sy);
+  return Math.max(...exts.map((ext) => footprintHalfHeight(ext, (q, r) => hexToScreen(q, r).sy)));
 }
 
 /* Lumatone / QWERTY are static cell sets (no tuning dependence). Project

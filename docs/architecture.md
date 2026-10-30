@@ -57,7 +57,7 @@ commands.
 
 Imports use bare `@hkl/*` specifiers: each package's `exports` maps `./*.js` → `./src/*.ts`
 (`@hkl/analysis` mixes `.js` and `.ts`, so its map is `["./src/*.js","./src/*.ts"]`); imports inside a
-package stay relative. Verovio's WASM is CDN-loaded by `@hkl/notation`; the analyzer and orchestrator
+package stay relative. Verovio's WASM is CDN-loaded by `@hkl/notation`, pinned to an exact release (`VEROVIO_URL`, 6.3.0; never `latest`, decisions.md 2026-10-30 "Pin Verovio"); the analyzer and orchestrator
 bundle their own workers. The root `pnpm build` is `pnpm -r --filter='!./test/**' build`: test
 packages are excluded because `test/react-consumer` links the git-ignored `packages/engine/dist`, which
 breaks fresh-clone/Netlify builds (its smoke gate builds itself via `run.mjs`). `allowBuilds` in
@@ -374,10 +374,13 @@ every relative interval, and the ref's MIDI only slides the 88-note window.
   −87…+87 (2W picker runs, cached per mapping, mode and banding). `footprintHalfHeight` is the
   largest |sy − sy(MIDI 64's cell)| over every window, since the piano view centers MIDI 64's
   cell vertically.
-- **Anchor offset.** Composer's cursor ref can sit d bands from the home band. Only banded
-  Syntonic's footprint depends on d (period 4), and it is never taller than d = 0.
-- **Gate:** `test/picker/footprint-extent.mjs` (reduction, heights against brute force, Syntonic
-  offsets). → decisions.md 2026-10-30 "Ref validity is the piano range; canvas heights at
+- **Anchor offset.** Composer's cursor ref (or recording playback, or the overlay) can sit d bands
+  from the home band. Only banded Syntonic's footprint depends on d, with period 4: its band offset
+  is the one that isn't linear in the band distance. So the runtime measures its four phases
+  (`footprintAnchorOffsets`), at four times the cost. In Gerhard, Park and Bass a phase other than
+  d = 0 is the tallest.
+- **Gate:** `test/picker/footprint-extent.mjs` (reduction, heights against brute force, every
+  anchor offset repeating a measured one). → decisions.md 2026-10-30 "Ref validity is the piano range; canvas heights at
   runtime".
 
 Coverage: ~55 unique MIDI/ref in 5-limit; 88-cell footprint per ref in 7-limit (~208–210 unique
@@ -606,10 +609,10 @@ left neighbor.
 
 #### Sheared and inverted layouts
 
-The matrix defines six more layouts (`LayoutId`; `LAYOUT_IDS` lists all nine in dropdown order).
-The shared primitives handle them. HKL and Composer don't expose them yet: `Mapping`, `MAPPINGS`
-and `isMapping` keep the three, because the reference spine, the picker and the tilt still assume
-a fifths `r` axis.
+The matrix defines six more layouts, selectable in HKL alongside the three (`MAPPINGS` lists all
+nine in dropdown order). A Composer score uses the first three (`SCORE_MAPPINGS`,
+`apps/composer/src/setupDialog.ts`) until Composer's notation paths are generalized; HKL
+coordinates in the others reach it converted (`convertCell`), like any mapping mismatch.
 
 | layout | (c, s, invert) | q / r / (−1,1) | band W | pure line |
 |---|---|---|---|---|
@@ -629,9 +632,26 @@ a fifths `r` axis.
   Wicki-Hayden's (Park = WH(q, −r)·2^r), Bass the chromatic frame's, and the Accordion every third
   chromatic column.
 - **Spelled octaves**: unbanded, `octaveVector` is (5, 2) Janko, (1, 2) Park and (2, 2) Bass; the
-  Accordion, Gerhard and Randal have none. `vecFromEuler` returns null on the Accordion for Euler
-  vectors whose M3 count isn't a multiple of 3; its overload for `Mapping` stays non-null.
-- Gate: `test/layout-presets/oracle.mjs`.
+  Accordion, Gerhard and Randal have none. Chromatic and Bass (c = 1) sample every chromatic
+  column, so they have spelled twins; the others spell each note once.
+- **Transposes**: `vecFromEuler` returns null on the Accordion for Euler vectors whose M3 count
+  isn't a multiple of 3, so its M3, m3 and SC buttons are off (`syncBandedControls`).
+- **Reference spine** (`refSpine`): the ref band's qm0 chromatic column (chromatic position 4), in
+  the ref's row. That is layout column `⌊4/c⌋` of the band: `W/3` in the fifths layouts, column 1
+  in the Accordion. Every row samples it, since `c | s`.
+- **Vertical Freq tilt** (`layout/geometry.ts`): c semitones per column, and per row the fifths
+  layouts' average fifth shifted by the row step's distance from 7 equal semitones.
+- **Piano picker**: candidates are the layout's own family `(q_N + ρk, r_N − c·k)`, ρ the row step
+  (Piano canvas height, above).
+- **Syntonic / Polysyntonic**: a cell carries its pitch band's comma offset (`pitchBandOf`), and an
+  odd chromatic column carries the band five columns left. The Accordion starts each band on an odd
+  column (`Q = 12b − 3`), so its first column takes the previous band's offset, as the chromatic
+  layout's odd columns do.
+- **MIDI import** (`midi-io/import.ts`): the index covers rows ±16 and, in each, the cells whose
+  chromatic column, raised by its octaves, lies within ±120 of A3's: the same pitch span in every
+  layout, and in the fifths layouts the old ±30-Euler-column box exactly.
+- Gates: `test/layout-presets/oracle.mjs`; `test/picker/`, `test/syntonic/`, `test/unbanded/`,
+  `test/color-gate/` and `test/alignment/` run over all nine.
 
 ---
 

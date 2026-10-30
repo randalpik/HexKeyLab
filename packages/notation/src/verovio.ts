@@ -20,7 +20,13 @@ import { CRISP_PRESETS, crispMarginTop, lineWidthOptions, pinExactScale, snapSta
    Single source of truth for scale/unit/widths. */
 const FRAME_PRESET = CRISP_PRESETS[50];
 
-const VEROVIO_CDN = 'https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js';
+/* The Verovio build HKL and Composer load, pinned to an exact release. Never
+   `latest`: on 2026-10-30 `latest` moved to 6.4.0, whose hidden placeholders at
+   every sb / pb / scoreDef / section enlarge each system's getBBox and so change
+   Composer's page fitting (decisions.md 2026-10-30, "Pin Verovio"). Upgrading
+   is a decision: check upstream releases for wanted features, bump this, run the
+   full Composer suite (visual baselines included) and the sonata page probes. */
+export const VEROVIO_URL = 'https://www.verovio.org/javascript/6.3.0/verovio-toolkit-wasm.js';
 
 /* Single-page, no-breaks geometry for a one-measure inset. A large pageWidth
  * gives breaks:'none' headroom and Verovio clips the emitted SVG width to the
@@ -192,10 +198,10 @@ export function loadVerovioToolkit(): Promise<VerovioToolkit> {
     };
     if (window.verovio) { bind(); return; }
     const tag = document.createElement('script');
-    tag.src = VEROVIO_CDN;
+    tag.src = VEROVIO_URL;
     tag.async = true;
     tag.onload = bind;
-    tag.onerror = () => reject(new Error('failed to load Verovio from ' + VEROVIO_CDN));
+    tag.onerror = () => reject(new Error('failed to load Verovio from ' + VEROVIO_URL));
     document.head.appendChild(tag);
   });
   return toolkitPromise;
