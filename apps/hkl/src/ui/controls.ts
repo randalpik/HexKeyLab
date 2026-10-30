@@ -9,10 +9,7 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import {
-  referenceNote, clearSelection as clearRefSelection, recomputeReference,
-  convertReferenceFrame, manualSelection,
-} from '../state/reference.js';
+import { recomputeReference, convertReferenceFrame, manualSelection } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { Alignment, HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { eulerOf, fromEuler, vecFromEuler, octaveVector } from '@hkl/shared/mapping.js';
@@ -58,17 +55,8 @@ export function setTuning(): void {
     savePrefs({ hejiEnabled: true });
     view.textDirty = true;
   }
-  /* Mode change can orphan a ref note that was valid in the old bucket but
-     not the new one (each mode has its own picker output and therefore its
-     own valid-ref set). Conservative: on any mode change, re-check the ref
-     against the new bucket and clear the selection if invalid. reference.ts
-     re-anchors kbAnchor to the new effective ref and onRefChanged migrates
-     held physical voices with it (lessons: ref-tier reset that shifts kbAnchor
-     without voice migration). */
-  if (prevMode !== val && validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
-    clearRefSelection();
-    savePrefs({ manualRef: undefined });
-  }
+  /* The ref stays: its validity is the piano range, which no mode changes
+     (validateRefNoteCandidate). */
   onTuningChanged();
   (document.getElementById('selTuning') as HTMLSelectElement).blur();
   savePrefs({ tuning: val });
@@ -147,11 +135,6 @@ export function setBanded(): void {
   if (val === tuning.banded) return;
   tuning.banded = val;
   syncBandedControls();
-  /* each layout has its own valid-ref set (as on a mode change, setTuning) */
-  if (validateRefNoteCandidate(referenceNote.q, referenceNote.r) !== null) {
-    clearRefSelection();
-    savePrefs({ manualRef: undefined });
-  }
   recomputeReference(); /* the keyboard anchor: the band's spine ↔ the ref */
   onTuningChanged();
   savePrefs({ banded: val });

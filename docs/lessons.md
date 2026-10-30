@@ -175,25 +175,21 @@ Three earlier attempts that failed:
 - **Largest-`proj` tiebreak**: monotone, broke 469 octave-consistency cases empirically.
 - **Minimum-`|proj|` Manhattan**: same as zero-centered at the ref's octave; same breakage.
 
-The picker is in `src/render/draw.ts:compute88PianoCoords`.
+The picker is `apps/hkl/src/tuning/picker.ts` (wrapped by `compute88PianoCoords` in `render/draw.ts`).
 
-### Diagonal MIDI band, not a square: the valid-ref scan
+### A constraint copied from another app outlives its reason (2026-10-30)
 
-The valid-ref-region cache must iterate the diagonal MIDI band `4q + 7r ∈ [−36, 51]` exactly. The prior square scan `q ∈ [−30, 30], r ∈ [−30, 30]` missed valid refs at extreme q (e.g. at `r = −20` the band extends well past `q = 30`). Symptom: `validateRefNoteCandidate` passed the live check but the cached set didn't contain the ref, so the dotted outline showed false gaps and (when the cache was incorrectly the gate) refs were rejected with "Reference out of valid region."
+HKL's ref validator required every cell of the 88-cell footprint to spell within ±3 accidentals, "matching Composer's own clamp" (2026-05-21). Five days later Composer lifted that clamp, a Verovio-collision workaround rather than a musical limit (decisions.md, 2026-05-26), but HKL's copy stayed five months. It brought an 11-minute offline probe, an 862 KB generated table (≈683 KB of the minified bundle, for a dotted outline) and an outline clipped at the probe's scan edge. A limit mirrored from another app needs a pointer to its source, and the source's change needs a sweep for its mirrors. The rule is now the piano range (decisions.md 2026-10-30).
 
-Fix: `bandQRange(r) = [⌈(−36 − 7r)/4⌉, ⌊(51 − 7r)/4⌋]` and a nested loop with `r ∈ [−25, 25]` (the wider range still covers all cells the picker would visit at any reachable ref). The live `validateRefNoteCandidate` doesn't consult the cache at all — the cache exists only for the dotted visual outline.
+### Brute force over refs hid a finite symmetry (2026-10-30)
+
+The piano canvas height came from a hand-pasted table: the footprint's extent over W × 7 sampled refs (one band × refR ∈ [−3, 3], a range nothing enforced). Against every ref it was short in 45 of 144 entries, by up to 246 px. But the footprint relative to its ref depends only on the mapping, mode, banding and the ref's position in band, so W stitched footprints cover every ref exactly: 2W picker runs at runtime, no probe (docs/architecture.md → Piano canvas height). Before sampling a space, look for the symmetry that makes it finite.
 
 ### Pre-distribution code is allowed to break its own intermediate states
 
 While HKL is unreleased, prefs / `.hkr` schema migrations from the user's *own* intermediate experiments are dead weight. The whole-codebase purge in 2026-05 deleted: the `'7-legacy'` tuning mode (`septimalMode='global'`, septimal seam-shift UI, 6-shift V7-legacy intersection cache), the 3-layout system (`curLayout`, `setLayout`, `applyLayoutImmediate`, `layoutShifts`, ♭/♮/♯ button group, ArrowLeft/Right cycle, QWERTY transpose ▲/▼), the `migrateTuningMode` / `normalizeRotation` / `isLayoutId` validators, and the `qwertyTranspose` snapshot field. Replaced with strict-validation persistence: any unrecognized scalar pref reverts to default; any unrecognized pref key is dropped.
 
 This wouldn't be acceptable in a distributed app. Pre-release it's the right tradeoff: every retained migration is one more bit of state you have to keep working forever, and the only existing user is also the developer.
-
-### Don't put validation rules in the cache, put them in the live validator
-
-`validateRefNoteCandidate(q, r)` is the authoritative check on a candidate ref. Two and only two conditions: MIDI ∈ [21, 108] AND every cell in the 88-cell footprint spells with ≤±3 accidentals. The cached V5 / V7-uniform outline sets are precomputed visual aids; they are NOT a gate the validator consults.
-
-Mixing them up is how "Reference out of valid region" false-rejects happen: a ref outside the cache's bounding box (or outside the cached set due to a stale build) passed the live check but failed the cache lookup. Fix is one-directional: validator runs LIVE per candidate; cache is built once for the visual outline; the two never compare.
 
 ### `reduce()` on large ratios loses precision past 2^53
 
@@ -223,9 +219,7 @@ In Equal mode, only octave-equivalent intervals are rational (unisons, octaves, 
 
 `TuningMode` is declared in **two places** that must stay in sync: `src/state/persistence.ts` (HKL-side full app state) and `src/shared/freq.ts` (shared with Composer, kept self-contained so Composer-side modules don't pull in HKL state). When adding a new mode, you must update both type aliases AND the `TUNING_MODES` array in `freq.ts` — TypeScript won't catch the mismatch in `freq.ts` because nothing imports both definitions in a way that compares them.
 
-Adding a mode also requires extensions in every `Record<TuningMode, …>` site (typecheck WILL catch these as exhaustiveness errors). Known sites: `MODE_LABELS` in `composer/notation/retune.ts`; `TUNING_LABELS` in `composer/setupDialog.ts` and `bridge/hkl-side.ts`; `PIANO_BOUNDS_TABLE` in `render/canvas.ts`; `VALID_REF_TABLE` in `render/refbounds-table.ts`; `validRefSetByMode` and `validRefPathsByMode` in `render/draw.ts`. Plus `isTuningMode` guards in `persistence.ts`, `recording/hkr.ts`, `composer/main.ts`, and `bridge/hkl-side.ts` (these are runtime guards, not exhaustive Records — typecheck won't flag missing entries). The selector `<option>` in `index.html` and `tuningDescription()` in `bridge/hkl-side.ts` are also required for the mode to be selectable and bridge-broadcasted.
-
-`refbounds-table.ts` is generated by `tools/bounds-probe/`. To add an experimental mode without re-probing, refactor the generator output to a `Omit<Record<…>, 'V'>` `GENERATED` const and re-export `{ ...GENERATED, 'V': GENERATED.P }`. Same pattern works for `PIANO_BOUNDS_TABLE` (just copy P's numbers). Re-probe when the experimental mode graduates or its picker output diverges meaningfully from its alias.
+Adding a mode also requires extensions in every `Record<TuningMode, …>` site (typecheck WILL catch these as exhaustiveness errors). Known sites: `MODE_LABELS` in `composer/notation/retune.ts`; `TUNING_LABELS` in `composer/setupDialog.ts` and `bridge/hkl-side.ts`. Plus `isTuningMode` guards in `persistence.ts`, `recording/hkr.ts`, `composer/main.ts`, and `bridge/hkl-side.ts` (these are runtime guards, not exhaustive Records — typecheck won't flag missing entries). The selector `<option>` in `index.html` and `tuningDescription()` in `bridge/hkl-side.ts` are also required for the mode to be selectable and bridge-broadcasted.
 
 ### V mode dispatches diverge from Pythagorean in three non-obvious places
 
@@ -323,6 +317,8 @@ Hex/text canvases are rebuilt on dirty flags (layout extent, septimal shift, not
 The offscreen canvases are built at a fixed reference (`gridRef`) with padding covering layout travel distances. A small-range layout shift (e.g. the old ♭/♮/♯ system's `(±7, ∓4)` travel) is just a blit offset; no rebuild.
 
 The ref-driven shift (§ refSpine) can move the view to ANY (q, r) — well beyond the static pad's coverage. For those shifts, `buildHexLayerForTween(startQ, startR, endQ, endR)` is called BEFORE the tween fires; `sizeGridCanvases` then sets `gridRef` at the midpoint of the tween range and adds half the tween distance to the pad. The hex layer covers both endpoints, no cut-off borders mid-tween. Applies to all outline modes (piano has always done this; Lumatone / QWERTY now do too because refSpine can move them anywhere).
+
+That layer is the bounding box of both views, so its cost grows with the slide's length, and nothing shrank it afterward: `draw()` rebuilds only when a layer is dirty, and building the tween layer clears both flags. Once refs could sit hundreds of keys out (2026-10-30, the ±3-accidental rule dropped), clearing one built a 6958×791 layer, and every frame blitted from it until the next mode change: a lag spike, then a low framerate. Now a target beyond one canvas width or height snaps, and a landed tween marks both layers dirty (`syncViewToOutline`, `animateLayout`; gated by `test/hkl-midi/ref-centering.mjs` C15–C16).
 
 If you find yourself debugging "cut-off lattice borders during a tween", check that `buildHexLayerForTween` was called before `tweenTo` for that outline mode. The piano path has had it forever; the Lumatone/QWERTY path was added when ref-driven shifts replaced the 3-layout buttons.
 

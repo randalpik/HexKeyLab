@@ -10313,3 +10313,59 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - `pnpm typecheck`, `check:boundaries` and the HKL and Composer builds pass.
 
 **Status:** Phase 2 (HKL: reference spine, picker, tilt, transposes, bounds tables, dropdown) is next.
+
+## Ref validity is the piano range; canvas heights at runtime (2026-10-30, Max)
+
+**Picked:**
+- **A ref is valid iff its MIDI is in A0–C8** (`validateRefNoteCandidate`). The ±3-accidental footprint rule is dropped. It copied Composer's clamp on 2026-05-21 (`a036856`), which Composer lifted five days later (above, "HEJI accidentals + arbitrary stacks in Composer": "purely a Verovio-collision workaround, not a musical limit"). Validity no longer depends on mode or banding, so switching either keeps the ref. The Valid ref bounds overlay is the piano-range strip, traced live.
+- **The piano canvas height stays constant across ref changes** within a mapping, mode, banding and rotation, and fits every ref (Max). It's computed exactly at runtime: the footprint relative to its ref depends only on the mapping, mode, banding and the ref's position in band, so `footprintExtents` stitches one footprint over relative MIDI −87…+87 per position (2W picker runs, cached per mapping, mode and banding) and `footprintHalfHeight` measures every window under the live tilt.
+- **The picker's candidates are the layout's own family** `(q_N + ρk, r_N − c·k)` (ρ the row step), centered on the ref's row. The old window was absolute, around the origin, which only the ±3 rule had kept refs inside. The octave-line metric `ρΔq − cΔr` follows in `resolve.ts`.
+
+**Rejected:**
+- **The brute-force probes** (`test/bounds-probe/`).
+  - `VALID_REF_TABLE` was ≈683 KB of the minified bundle for a display aid, and clipped at its scan edge in 12 buckets.
+  - `PIANO_BOUNDS_TABLE` sampled W × 7 refs (refR ∈ [−3, 3], a range nothing enforced) and was short in 45 of 144 entries, by up to 246 px. Its `kbMinW` half was dead.
+- **A parallelogram bound** (MIDI span × iso-MIDI angle, plus row spread × its slope), Max's first sketch.
+  - It is exact in Vertical Freq, but up to 3× over elsewhere (unbanded Chromatic, Lumatone rotation: 1639 vs 550 px). The footprint drifts across octaves in unbanded, Syntonic and Polysyntonic, and the extremes don't coincide even in banded Ptolemaic.
+  - Nor is the horizontal extent a closed form of the layout: banded Euler's row spread is 5 rows in Ptolemaic, 15 in Pythagorean and 27 in Polysyntonic.
+
+**My call (Claude):** the runtime measures anchor offset d = 0 only.
+- Under the Piano outline, Composer's cursor ref can sit d bands from the home band. Banded Syntonic's footprint depends on d mod 4, but no d ≠ 0 shape is taller on Euler, Wicki-Hayden or Chromatic.
+- `test/picker/footprint-extent.mjs` asserts this for every layout. If a layout breaks it, Syntonic takes its four phases, at 4× its cost.
+
+**Cost:** first use per mapping, mode and banding (Node, medians over 16 modes × bandings): Euler 12 ms, Wicki-Hayden 42 ms, Chromatic 158 ms. Cached after that; Max judges it live. The chunk that carried the table went from 770 KB to 86 KB (gzip 103 → 32 KB).
+
+**Where:**
+- `tuning/picker.ts`: the family, `footprintExtents` and `footprintHalfHeight`.
+- `tuning/resolve.ts`: ρ.
+- `render/canvas.ts`: the runtime height. `PIANO_BOUNDS_TABLE` and `view.kbMinW` are deleted.
+- `render/draw.ts`: the validator and `validRefPaths`. `refbounds-table.ts` is deleted.
+- `ui/controls.ts`: no ref clear on a mode or banding switch.
+- `state/tuning.ts`: `Banding` / `BANDINGS` / `bandingOf` deleted.
+- `test/picker/` (`octave-consistency.mjs` moved; `footprint-extent.mjs`) and `test/hkl-midi/ref-validity.mjs`.
+
+**Gates:**
+- The new picker reproduces the old one's footprints for all 125,664 refs with |r| ≤ 25 of the three layouts × 16 mode-bandings.
+- Runtime heights against the old table: Vertical Freq equal in 48/48; 45 taller, none lower.
+- `test/picker/footprint-extent.mjs` passes on all 48 cases. A mutant (window off by one, heights × 0.999) fails it. `octave-consistency.mjs` is identical to before.
+- The Phase 1 gates are byte-identical.
+- `test/hkl-midi/` passes: anchor 23/23, mapping-switch 33/33, alignment 18/18, banded-toggle 39/39, ref-centering 16/16, lattice-scroll 19/19, ref-validity 26/26.
+- `pnpm typecheck`, `check:boundaries` and the HKL and Composer builds pass.
+
+## Far ref changes snap; a landed slide rebuilds its layer (2026-10-30, Max)
+
+**Problem (Max):** Ctrl+clicking a ref hundreds of keys from A3, to clear it, caused a lag spike and then a low framerate. Such refs became reachable once ref validity became the piano range (above).
+- The slide pre-builds one offscreen layer covering the bounding box of both views (`buildHexLayerForTween`). Clearing a ref 214 keys out built a 6958×791 layer, against 1672×611 normally.
+- That layer then stayed: `draw()` rebuilds only when a layer is dirty, building the tween layer clears both flags, and nothing set them when the tween landed. Every frame kept blitting from it.
+
+**Picked:**
+- **Slide only while the old and new views overlap,** meaning a screen displacement under one canvas width and one canvas height. Otherwise snap, cancelling any slide in flight (`syncViewToOutline`).
+  - Past that point the two views share no landmark, and at the fixed 500 ms the motion is a blur.
+  - The tween layer is now capped at 4× a normal one.
+  - The cutoff scales with the window and hex size, unlike a key count. Ctrl+clicking a key on screen stays well inside it.
+- **A landed tween marks both layers dirty** (`animateLayout`). The next frame rebuilds them at normal size around the resting view: one normal rebuild, the cost a snap already pays.
+
+**Gates:**
+- `test/hkl-midi/ref-centering.mjs` C15–C16 fail on the old code (the far clear slid; a nearby slide left a 1750×649 layer) and pass now, 24/24.
+- The `test/hkl-midi/` sweep passes (layer-sync, lattice-scroll, alignment, mapping-switch, banded-toggle, anchor, ref-validity, held-inputs, fresh-profile, velocity-owners, damper, departure).
+- `pnpm typecheck` and the HKL build pass.

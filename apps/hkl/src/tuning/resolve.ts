@@ -37,11 +37,12 @@ export function resolve12TetToCoord(
   footprint: Set<KeyId>,
 ): ResolvedCoord | null {
   /* Octave step in (q, r) is (+12/c, 0) with c the column step in semitones
-     (4 Euler, 2 Wicki-Hayden, 1 chromatic); proj = 7Δq − cΔr shifts by 7·12/c
-     per octave. */
+     (4 Euler, 2 Wicki-Hayden, 1 chromatic) and ρ the row step (7 in the fifths
+     layouts); proj = ρΔq − cΔr shifts by ρ·12/c per octave (tuning/picker.ts). */
   const mapping = tuning.mapping;
   const c = LAYOUT[mapping].c;
-  const PROJ_PER_OCT = 7 * (12 / c);
+  const rho = coordToMidi(0, 1, mapping) - 57;
+  const PROJ_PER_OCT = rho * (12 / c);
   const refMidi = coordToMidi(refQ, refR, mapping);
   const octaveDelta = Math.round((midiNote - refMidi) / 12);
   const projTarget = PROJ_PER_OCT * octaveDelta;
@@ -57,7 +58,7 @@ export function resolve12TetToCoord(
     if (coordToMidi(q, r, mapping) !== midiNote) continue;
     const ratio = jiRatio(refQ, refR, q, r);
     const th = tenneyHeightFromExps(ratio.e);
-    const absNProj = Math.abs(7 * (q - refQ) - c * (r - refR) - projTarget);
+    const absNProj = Math.abs(rho * (q - refQ) - c * (r - refR) - projTarget);
     if (th < bestTh || (th === bestTh && absNProj < bestAbsNProj)) {
       bestTh = th;
       bestAbsNProj = absNProj;

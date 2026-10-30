@@ -13,5 +13,5 @@ pitch-preserving frame conversion (Schismatic copies → Euler land exactly one 
 low), and that the 280 Lumatone keys stay 280 distinct cells. No dev server needed;
 exits non-zero on failure. **Run it after any change to `@hkl/shared/{mapping,freq,notes,heji}.ts`
 or to `render/colors.ts`.** The picker side is covered by
-`test/bounds-probe/octave-consistency.mjs`; switching with keys held by
+`test/picker/`; switching with keys held by
 `test/hkl-midi/mapping-switch.mjs`.

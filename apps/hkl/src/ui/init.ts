@@ -496,9 +496,8 @@ initRecorderUI();
 setRefListener(onRefChanged);
 setTuning();
 if (prefs.manualRef) {
-  /* Silently drop a persisted manualRef that no longer validates under
-     the current tuning (e.g. user changed limit/septimal between sessions
-     and the stored cell would now require >±3 accidentals on some MIDI). */
+  /* Silently drop a persisted manualRef that no longer validates (outside
+     the piano range in the persisted mapping's frame). */
   const invalid = validateRefNoteCandidate(prefs.manualRef.q, prefs.manualRef.r);
   if (invalid) {
     savePrefs({ manualRef: undefined });

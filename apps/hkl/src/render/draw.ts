@@ -12,22 +12,19 @@
 // the screen-space lookup table.
 
 import { lumatoneCells, qwertyCells, outlineCells, outlinePose, type Cell } from '../layout/physical.js';
-import { bandOfCell, MAPPINGS, type Mapping } from '@hkl/shared/mapping.js';
-import { coordToMidi, anchorOf, TUNING_MODES } from '@hkl/shared/freq.js';
+import { bandOfCell, LAYOUT, type Mapping } from '@hkl/shared/mapping.js';
+import { coordToMidi } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
-import { tuning, BANDINGS, bandingOf, type Banding } from '../state/tuning.js';
+import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
-import type { TuningMode } from '../state/persistence.js';
 import { whiteSet, hueC, keyColorVariant } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
-import {
-  parseNote, accToVal, noteName,
-} from '@hkl/shared/notes.js';
+import { noteName } from '@hkl/shared/notes.js';
 import { pianoFootprint } from '../tuning/picker.js';
 import { SEPT_UP_1, SEPT_UP_2 } from '@hkl/shared/heji.js';
 import {
@@ -37,7 +34,6 @@ import {
   type HejiGlyphFamily,
   type HejiGlyphInfo,
 } from "../tuning/heji.js";
-import { VALID_REF_TABLE } from './refbounds-table.js';
 import { isCtrlHeld } from '../ui/keyboard.js';
 import { overlayPublishTick } from '../bridge/overlay-publish.js';
 import type { KeyId } from '../types.js';
@@ -75,6 +71,9 @@ export function setTransparentBg(on: boolean): void {
 let layoutAnimId: number | null = null;
 function animateLayout(): void {
   const stillRunning = animation.step();
+  /* landed: the tween's layer spans both endpoints (buildHexLayerForTween);
+     rebuild it at normal size around where the view came to rest */
+  if (!stillRunning) { view.hexDirty = true; view.textDirty = true; }
   draw();
   layoutAnimId = stillRunning ? requestAnimationFrame(animateLayout) : null;
 }
@@ -177,9 +176,7 @@ let qwertyOutlinePaths: Point[][] = computeOutlinePaths(qwertyCells);
    Set<number> / Map<number, …> key inside hot loops (seam dedup,
    neighbor checks). String concatenation (`q + ',' + r`) allocates one
    short string per iteration; for ~12k iterations per draw that's
-   substantial GC pressure. Range comfortably covers any lattice cell we
-   touch (refNote validation caps refR at ±3, piano cells span ±30 q in
-   7-limit extremes — well inside ±5000). */
+   substantial GC pressure. Unique for r ∈ [−5000, 95000), any q. */
 function packQR(q: number, r: number): number {
   return (q + 5000) * 100000 + (r + 5000);
 }
@@ -247,40 +244,41 @@ export function invalidatePianoOutline(): void {
   view.textDirty = true;
 }
 
-/* ── valid-ref-region (static gate + outline, per tuning bucket) ────────────
-   Two static sets of (q, r) refNote candidates that pass the ±3-accidental
-   check across the relevant tuning bucket:
-     V5         — used in 5-limit + 12-TET (septimalEnabled=false).
-     V7-uniform — used in 7-limit (septimalEnabled=true; qm=2 all B-d1-upper).
-   Both are pure functions of the picker logic + accidental rule, so they're
-   precomputed offline by test/bounds-probe/compute-refbounds.mjs and stored
-   in VALID_REF_TABLE, per banding × mapping × tuning mode (each mapping's
-   cells are in its own frame). The outline polygons are cheap to derive (edge
-   tracing over the cell set); built once at module load. */
-function byMappingAndMode<T>(f: (cells: ReadonlyArray<readonly [number, number]>) => T): Record<Banding, Record<Mapping, Record<TuningMode, T>>> {
-  const out = {} as Record<Banding, Record<Mapping, Record<TuningMode, T>>>;
-  for (const b of BANDINGS) {
-    out[b] = {} as Record<Mapping, Record<TuningMode, T>>;
-    for (const m of MAPPINGS) {
-      out[b][m] = {} as Record<TuningMode, T>;
-      for (const t of TUNING_MODES) out[b][m][t] = f(VALID_REF_TABLE[b][m][t]);
-    }
+/* ── valid-ref region: the piano-range strip ─────────────────────────────────
+   A ref is valid iff its MIDI is in A0–C8 (validateRefNoteCandidate), so the
+   region is the strip between two iso-MIDI lines. Each row's in-range cells
+   are one interval, 88/c keys wide; the outline traces the in-range cells of
+   the rows within twice a canvas half-diagonal of the view (any tilt), so the
+   trace's closing edges across its first and last rows stay off the canvas.
+   Retraced when the view leaves that margin, or the mapping or hex size
+   changes. */
+let validRefStrip: { mapping: Mapping; rLo: number; rHi: number; paths: Point[][] } | null = null;
+
+function validRefPaths(): Point[][] {
+  const reach = Math.ceil(Math.hypot(view.CW, view.CH) / 2 / dyH) + 1;
+  const r0 = Math.round(view.viewR);
+  const s = validRefStrip;
+  if (s && s.mapping === tuning.mapping && s.rLo <= r0 - reach && s.rHi >= r0 + reach) return s.paths;
+  const { c } = LAYOUT[tuning.mapping];
+  const rho = coordToMidi(0, 1, tuning.mapping) - 57;
+  const cells: Array<[number, number]> = [];
+  for (let r = r0 - 2 * reach; r <= r0 + 2 * reach; r++) {
+    /* 21 ≤ 57 + c·q + ρ·r ≤ 108 */
+    for (let q = Math.ceil((-36 - rho * r) / c); q <= Math.floor((51 - rho * r) / c); q++) cells.push([q, r]);
   }
-  return out;
+  validRefStrip = { mapping: tuning.mapping, rLo: r0 - 2 * reach, rHi: r0 + 2 * reach, paths: computeOutlinePaths(cells) };
+  return validRefStrip.paths;
 }
-const validRefSetByMode = byMappingAndMode((cells) => new Set(cells.map(([q, r]) => (q + ',' + r) as KeyId)));
-let validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
 
 /** Rebuild every scale-dependent cache after a hex-size change. The cell sets
- *  (lumatoneCells, qwertyCells, VALID_REF_TABLE, validRefSetByMode) are in lattice
- *  coords and unchanged; only their pixel projections + the derived snap
- *  indices + outR depend on hexR. `validRefSetByMode` (string-keyed gate) is
- *  scale-invariant and intentionally not rebuilt. Mirrors the inline module-
- *  load initializers above. */
+ *  (lumatoneCells, qwertyCells) are in lattice coords and unchanged; only
+ *  their pixel projections + the derived snap indices + outR depend on hexR,
+ *  and the valid-ref strip retraces on its next draw. Mirrors the inline
+ *  module-load initializers above. */
 export function rebuildScaleGeometry(): void {
   outR = hexR + 1;
   rebuildFootprintGeometry();
-  validRefPathsByMode = byMappingAndMode(computeOutlinePaths);
+  validRefStrip = null;
   invalidatePianoOutline();
 }
 
@@ -295,25 +293,13 @@ export function rebuildFootprintGeometry(): void {
   computeKbExtents();
 }
 
-function activeValidRefSet(): Set<KeyId> {
-  return validRefSetByMode[bandingOf(tuning.banded)][tuning.mapping][tuning.mode];
-}
-
-function activeValidRefPaths(): Point[][] {
-  return validRefPathsByMode[bandingOf(tuning.banded)][tuning.mapping][tuning.mode];
-}
-
 /* The 88-cell piano footprint for a ref under the live tuning: one ranking
    rule for every mode and mapping (TH, then the augmented 4th at the
-   tritone tie, then key steps among identical pitches) — see tuning/picker.ts, which
-   the offline bounds probes run too. `anchor`: the Syntonic / Polysyntonic
-   home band to rank under — validation passes the candidate's own (a
-   Ctrl+click makes it home). Exported for callers that need the cell set
-   under a hypothetical refNote (Ctrl+click validation). */
-export function compute88PianoCoords(
-  refQ: number, refR: number, anchor: number = tuning.anchor,
-): Array<[number, number]> {
-  return pianoFootprint(refQ, refR, { ...tuning, anchor });
+   tritone tie, then key steps among identical pitches) — see tuning/picker.ts,
+   which also sizes the canvas (render/canvas.ts). Exported for the live
+   gates (test/hkl-midi/anchor.mjs). */
+export function compute88PianoCoords(refQ: number, refR: number): Array<[number, number]> {
+  return pianoFootprint(refQ, refR, tuning);
 }
 
 /* Cached MIDI 64 (E4) cell for the current refNote + tuning. Updated by
@@ -362,34 +348,16 @@ export function snapViewForOutline(outline: OutlineMode): void {
   view.viewR = tR;
 }
 
-/** Decide whether (q, r) is a sensible reference-note. Used by:
- *   • ctrl+click handler (src/ui/init.ts) — blocks user from setting bad ref
- *   • composer bridge handler (src/bridge/hkl-side.ts) — drops invalid
- *     composer-broadcast refNotes before they hit state. Composer also has
- *     an accidental-cap fallback when ENTERING notes, but rejecting at the
- *     ref-note-set stage is smoother now that we have the validator on the
- *     HKL side.
- *
- *  Rules:
- *  1. coordToMidi(q, r) ∈ [21, 108] — refNote must be inside 88-key range.
- *  2. Every cell in the 88-cell set the picker produces under this refNote
- *     must spell with ≤ ±3 accidentals (matching Composer's own clamp). */
+/** Decide whether (q, r) is a sensible reference note: its MIDI lies in the
+ *  88-key piano range, A0–C8. That is the whole rule (Max, 2026-10-30): the
+ *  former ±3-accidental footprint rule copied a Composer clamp that Composer
+ *  lifted in 2026-05. Used by Ctrl+click and the prefs restore (ui/init.ts),
+ *  the mapping switch (ui/controls.ts) and the Composer bridge
+ *  (bridge/hkl-side.ts). */
 export function validateRefNoteCandidate(q: number, r: number): string | null {
   const midi = coordToMidi(q, r, tuning.mapping);
   if (midi < 21 || midi > 108) {
     return 'Reference note out of 88-key piano range (MIDI ' + midi + ')';
-  }
-  /* Live picker check: only constraints are (1) MIDI range above and
-     (2) every 88-cell footprint cell having ≤±3 accidentals. The cached
-     gate sets exist only to draw the dotted boundary; they're not the
-     authoritative validator. Ranked with the candidate as its own home band
-     (Syntonic / Polysyntonic), as a Ctrl+click would make it. */
-  const anchor = anchorOf(q, r, tuning.mapping);
-  const cells = compute88PianoCoords(q, r, anchor);
-  for (const [cq, cr] of cells) {
-    const name = noteName(cq, cr, tuning.mapping, anchor, tuning.banded);
-    const acc = Math.abs(accToVal(parseNote(name).acc));
-    if (acc > 3) return 'Reference would require ' + acc + '× accidentals (' + name + ')';
   }
   return null;
 }
@@ -801,6 +769,12 @@ let gridRefQ = 0, gridRefR = 0, gridPadX = 0, gridPadY = 0, gridW = 0, gridH = 0
 let builtGridKey = '';
 function gridKey(): string {
   return [gridRefQ, gridRefR, gridPadX, gridPadY, gridW, gridH, gridDpr].join(',');
+}
+
+/** The offscreen layers' size in CSS px, as last sized (the live gates read
+ *  it: test/hkl-midi/ref-centering.mjs). */
+export function hexLayerSize(): { w: number; h: number } {
+  return { w: gridW, h: gridH };
 }
 
 interface GridRange { qMin: number; qMax: number; rMin: number; rMax: number; }
@@ -1424,7 +1398,7 @@ export function draw(): void {
      in absolute (q, r) coords and therefore needs the lattice-scroll
      translate in every outline mode). */
   if (isCtrlHeld()) {
-    const validPaths = activeValidRefPaths();
+    const validPaths = validRefPaths();
     if (validPaths.length > 0) {
       ctx.save();
       ctx.translate(view.CW / 2, cyC);
@@ -1544,7 +1518,7 @@ export function draw(): void {
     (document.getElementById("cbValidRefBounds") as HTMLInputElement | null)
       ?.checked ?? false;
   if (showValidRef) {
-    const validPaths = activeValidRefPaths();
+    const validPaths = validRefPaths();
     if (validPaths.length > 0) {
       ctx.save();
       ctx.translate(view.CW / 2, cyC);

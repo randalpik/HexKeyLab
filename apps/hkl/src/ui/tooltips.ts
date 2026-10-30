@@ -69,7 +69,7 @@ export const TOOLTIPS: Record<string, string> = {
   selPianoDevice: 'External MIDI device for piano-keyboard input / output.',
   cbPianoEnabled: 'Enable 12-TET piano-keyboard MIDI input. Notes are resolved to lattice cells via Tenney Height against the current reference note (broadcast by HKL Composer when connected; A3 otherwise).',
   cbPianoOutput: 'Mirror HKL playback to the selected device’s audio engine, tuned to true just intonation via per-channel RPN fine-tuning (one voice per MIDI channel). Independent of the Audio toggle. Needs a synth set to receive on all MIDI channels.',
-  cbValidRefBounds: 'Show a dotted outline marking the region where you can Ctrl+click to set a new reference note. Shape depends on the active tuning bucket (5-limit/12-TET vs 7-limit).',
+  cbValidRefBounds: 'Show a dotted outline marking the region where you can Ctrl+click to set a new reference note: the piano range, A0–C8.',
 
   // ── Composer (hidden group, shown when Composer connects) ────────────
   cbSyncToComposer: 'When on, HKL aggressively applies any layout requirement broadcast by Composer (tuning mode + ref note). When off, mismatches trigger a prompt at playback start.',

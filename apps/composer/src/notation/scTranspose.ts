@@ -4,9 +4,6 @@
 // the spelling). Always changes the note's lattice color/hue; sometimes
 // changes letter + accidental.
 //
-// Blocked when the resulting spelling would need ≥ 4 accidentals (a
-// quadruple sharp / flat) — Verovio can't render those legibly.
-//
 // Chord-child: after mutation, the chord's note children are re-sorted
 // ascending by MIDI to preserve the chord-sort invariant. The selected
 // note's xml:id stays stable (sel.noteId still points at the same element).
@@ -131,8 +128,8 @@ const FAILED_SC: SCResult = { ok: false, previewNotes: [], previewTicks: 0 };
  *  (parent is `<layer>`). On success, also collects the post-shift vertical
  *  slice (every note from every voice that's sounding at the element's start
  *  tick) for the caller to feed into a one-shot playback preview. Blocked
- *  by quadruple-accidental clamp, by the layout-outline constraint (when a
- *  non-empty footprint is passed), or by a missing target. */
+ *  by the layout-outline constraint (when a non-empty footprint is passed)
+ *  or by a missing target. */
 export function scTransposeChordNote(
   model: ComposerModel,
   hooks: InputHooks,

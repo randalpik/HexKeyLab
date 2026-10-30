@@ -43,7 +43,7 @@ packages/
   notation/   @hkl/notation — Verovio/MEI rendering
   bridge/     @hkl/bridge — BroadcastChannel protocol + message types
   analysis/   @hkl/analysis — DOM-free sample-analysis DSP (Analyzer + Orchestrator) → analyzer.md
-test/         composer-test, composer-inspect, bounds-probe, interval-names, engine-smoke, orchestrator-smoke, *-check.mjs
+test/         composer-test, composer-inspect, picker, interval-names, engine-smoke, orchestrator-smoke, *-check.mjs
 tools/        lumatone-cal, reset-calibration.sh   (hardware/ops)
 vite/         dev-proxy.mjs + middleware (the dev umbrella)
 ```
@@ -225,7 +225,8 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
 - **Piano picker**: every mode ranks under its own unbanded ratios. Schismatic's banded-only
   exception (ranking as Semiditonal, decisions.md 2026-05-25) answered its banded spelling
   disagreeing with its schisma-stacked pitch; unbanded spelling agrees, and ranking unbanded V as
-  banded D left no valid ref. `VALID_REF_TABLE` / `PIANO_BOUNDS_TABLE` carry both bandings.
+  banded D left no footprint within ±3 accidentals. The piano canvas height is computed per
+  banding (Piano canvas height, below).
 - **Spelling** (`noteName` / `keyOctave(…, anchor, banded)`): the banded spelling plus 12 fifths
   per pitch band from the anchor's, one rule for every mode, Equal included.
   - A band step `(W, 0)` is spelled as an augmented seventh (A → G𝄪).
@@ -263,8 +264,8 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
   `apps/composer/src/input.ts`.
 - The selector `<option>` in `apps/hkl/index.html` and the `tuningDescription()` switch in
   `apps/hkl/src/bridge/hkl-side.ts`.
-- Re-run both `test/bounds-probe/` probes (they run the real picker over `TUNING_MODES`) so
-  `PIANO_BOUNDS_TABLE` and `VALID_REF_TABLE` get the new mode's bucket under every mapping.
+- Run both `test/picker/` gates (they run the real picker over `TUNING_MODES`). Nothing is
+  generated: the piano canvas height is computed at runtime.
 - Its unbanded seam: an entry in `UNBANDED` (`@hkl/shared/freq.js`, a `Record<TuningMode, …>` the
   compiler flags) and in `test/unbanded/oracle.mjs`.
 - Nothing per mode for color (one pitch function, `@hkl/shared/keycolor.js`) or HEJI (derived from
@@ -318,8 +319,9 @@ lives in one place,
 read. Every tier change
 recomputes both and, if the effective ref or `kbAnchor` moved, runs one listener synchronously,
 `effects/onRefChanged(dq, dr)`: held physical voices migrate by the `kbAnchor` delta, Lumatone colors, piano-outline invalidation, view re-center, redraw, Composer broadcast. A
-Ctrl+click slides (`withRefSlide`); everything else snaps, and a snap while a slide is in flight
-redirects the slide rather than letting it drag the view back to its old target. Handlers only
+Ctrl+click slides (`withRefSlide`) while the old and new views overlap (a screen displacement under
+one canvas width and height); a farther target snaps, as everything else does, and a snap while a
+slide is in flight redirects the slide rather than letting it drag the view back to its old target. Handlers only
 mutate tiers — none can move a ref without re-centering (decisions.md 2026-10-27).
 
 ```ts
@@ -341,13 +343,14 @@ button forgets all records. **Held-voice migration**: on ref change, Lumatone an
 with the lattice (`migrateHeld`) so a held key keeps its relative pitch; piano and *mouse-click* voices
 stay on their cell. Fan-out: `apps/hkl/src/effects/onRefChanged.ts`.
 
-**Ref validation** (`validateRefNoteCandidate` in `apps/hkl/src/render/draw.ts`): two constraints —
-(1) `coordToMidi(q,r) ∈ [21,108]` (`57 + 4q + 7r` Euler); (2) the 88-cell footprint spells with ≤ ±3
-accidentals. The dotted "valid ref bounds" overlay is a cached visual aid from the same check, not a
-separate gate.
+**Ref validation** (`validateRefNoteCandidate` in `apps/hkl/src/render/draw.ts`): the ref's MIDI is in
+the 88-key piano range, `coordToMidi(q,r) ∈ [21,108]`. That is the whole rule (Max, 2026-10-30;
+decisions.md), so it doesn't depend on mode or banding, and switching either keeps the ref. The dotted
+"valid ref bounds" overlay traces that strip live (`validRefPaths`): each row's in-range cells are
+one interval, 88/c keys wide.
 
-**88-cell picker** (`apps/hkl/src/tuning/picker.ts`, wrapped by `compute88PianoCoords`; the bounds
-probes run the same module): for each MIDI 21..108, among the cells with that nominal MIDI, ONE
+**88-cell picker** (`apps/hkl/src/tuning/picker.ts`, wrapped by `compute88PianoCoords`; the canvas
+height and `test/picker/` run the same module): for each MIDI 21..108, among the cells with that nominal MIDI, ONE
 ranking rule in every mode and mapping. The three rules are:
 (1) lowest reduced Tenney Height of the ratio from the ref
 under the mode's own ratios; (2) if the lowest-TH cells differ in pitch — only at the tritone, whose
@@ -356,11 +359,26 @@ the ref by letter; any other tie would fall back to the ref's octave line); (3) 
 cells of that pitch (Wicki-Hayden twins, P/D comma siblings, in-band vs cross-band octaves), the one
 fewest key steps from the ref — so the footprint clusters on the ref's band. TH is octave-invariant,
 so spelling is octave-consistent by construction.
-- `test/bounds-probe/octave-consistency.mjs` finds 0 breaks outside S/Y, and also in Wicki-Hayden
+- `test/picker/octave-consistency.mjs` finds 0 breaks outside S/Y, and also in Wicki-Hayden
   and chromatic Syntonic.
 - In Euler S/Y and in Wicki-Hayden and chromatic Polysyntonic, a spelling's 5-limit pitch can
   exist in one octave's band and not the next, so some drift is expected and reported. The ref maps to itself. `'V'` ranks under `'D'` ratios so
 schisma exponents don't distort the spelling. → decisions.md 2026-10-26 "One picker rule".
+
+**Piano canvas height** (`apps/hkl/src/render/canvas.ts`): constant across ref changes within a
+mapping, mode, banding and rotation, and tall enough for every ref (the canvas scrolls vertically).
+The footprint relative to its ref depends only on the mapping, mode, banding and the ref's position
+in its band: a step along the pure line, or one band over with the anchor following, preserves
+every relative interval, and the ref's MIDI only slides the 88-note window.
+- **Computing it.** `footprintExtents` picks, per position, one footprint over relative MIDI
+  −87…+87 (2W picker runs, cached per mapping, mode and banding). `footprintHalfHeight` is the
+  largest |sy − sy(MIDI 64's cell)| over every window, since the piano view centers MIDI 64's
+  cell vertically.
+- **Anchor offset.** Composer's cursor ref can sit d bands from the home band. Only banded
+  Syntonic's footprint depends on d (period 4), and it is never taller than d = 0.
+- **Gate:** `test/picker/footprint-extent.mjs` (reduction, heights against brute force, Syntonic
+  offsets). → decisions.md 2026-10-30 "Ref validity is the piano range; canvas heights at
+  runtime".
 
 Coverage: ~55 unique MIDI/ref in 5-limit; 88-cell footprint per ref in 7-limit (~208–210 unique
 pitches reachable from a central key). One LTN file gives every physical key a stable
@@ -427,10 +445,9 @@ occupies the middle four columns.
   it sits in its band — Euler's rule (`qm1 → q−1`, `qm2 → q+1`) with 6-wide bands; the anchor is
   that cell. (A first rule moved a copy ref to its same-name original one board away, `(Q−7, R+2)`;
   that misaligned the ref horizontally and was replaced.) **Picker / resolver**: candidates satisfy
-  `c·q + 7r = N` (c = 4 Euler, 2 Wicki-Hayden, 1 chromatic), stepping along the isotone `(7, −c)`
-  over `k ∈ ±80/c` (the same ±80-fifth span in every mapping); projection `7Δq − c·Δr`; copies are
-  candidates like any cell. `VALID_REF_TABLE` / `PIANO_BOUNDS_TABLE` carry an
-  outer mapping dimension (regenerated by `test/bounds-probe/`).
+  `c·q + ρ·r = N` (c = 4 Euler, 2 Wicki-Hayden, 1 chromatic; ρ the row step, 7 in all three),
+  stepping along the isotone `(ρ, −c)` over ±⌈80/c⌉ steps centered on the ref's row (the same
+  ±80-row span in every mapping); projection `ρΔq − c·Δr`; copies are candidates like any cell.
 - **Switching mapping** (`setMapping`, `apps/hkl/src/ui/controls.ts`): the reference, anchor, held mouse /
   piano-input / pedal-sustained notes convert by the frame formula (same pitch); held Lumatone / QWERTY
   voices keep their `(q,r)` and retune in place (they release through the key they struck,
@@ -583,7 +600,7 @@ left neighbor.
 
 **Gates:**
 - `test/chromatic-layout/oracle.mjs`;
-- the chromatic rows of `test/syntonic/oracle.mjs`, `test/color-gate/`, `test/bounds-probe/` and
+- the chromatic rows of `test/syntonic/oracle.mjs`, `test/color-gate/`, `test/picker/` and
   `test/hkl-midi/mapping-switch.mjs`;
 - the Composer `mapping` and `syntonic` fixtures.
 

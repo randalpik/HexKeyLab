@@ -142,9 +142,26 @@ Ctrl+click on the canvas and Composer's `set-reference-note` / `set-score-ref` /
 `composer-bye` / `apply-layout` on the live bridge channel, Sync on and off,
 outline and mapping switches — and checks after each that the effective ref is
 what the tiers call for and the view is centered on it (`view = kbAnchor =
-refSpine(ref)` outside the piano outline). Includes a snap landing mid-slide.
+refSpine(ref)` outside the piano outline). Includes a snap landing mid-slide,
+a far ref change (beyond one canvas) snapping instead of sliding, and the
+slide's expanded offscreen layer rebuilt at normal size when it lands.
 **Run it before declaring any change to `state/reference.ts`,
 `effects/onRefChanged.ts`, a ref-moving handler, or the view tween done.**
+
+## Ref validity and the piano canvas
+
+```sh
+node test/hkl-midi/ref-validity.mjs    # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for `validateRefNoteCandidate` and the runtime piano canvas
+height (docs/architecture.md → Ref validation, Piano canvas height): a ref is
+valid iff its MIDI is in A0–C8, so C♯𝄪4, whose footprint spells past ±3, is
+accepted and survives every tuning and banding switch; MIDI 21 and 108 pass and
+17, 109 and 112 don't. Under the Piano outline, in Pythagorean and
+Polysyntonic, Vertical Freq and Piano rotations, refs across the range never
+change the canvas height and every footprint fits it. **Run it before declaring
+any change to ref validation, the picker, or `recomputeCanvasBounds` done.**
 
 ## Banded layout toggle
 

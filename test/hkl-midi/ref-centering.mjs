@@ -32,6 +32,9 @@
 //   C12 leaving the piano outline resurfaces the Ctrl+click under the cursor
 //   C13 a mapping round-trip keeps the view centered
 //   C14 applying a Syntonic layout drops the Ctrl+click and re-centers
+//   C15 clearing a far ref (214 keys out) snaps instead of sliding, layer at
+//       normal size; C16 a nearby Ctrl+click still slides and the layer is
+//       rebuilt at normal size when it lands
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -52,13 +55,15 @@ const SCRIPT = `(async () => {
   const root = '/src/ui/init.ts';
   const drawUrl = await depUrl(root, '/src/render/draw.ts');
   const refStateUrl = await depUrl(root, '/src/state/reference.ts');
-  const [viewMod, tuningMod, refState, spineMod, drawMod, canvasMod] = await Promise.all([
+  const [viewMod, tuningMod, refState, spineMod, drawMod, canvasMod, animMod, geo] = await Promise.all([
     import(await depUrl(root, '/src/state/view.ts')),
     import(await depUrl(root, '/src/state/tuning.ts')),
     import(refStateUrl),
     import(await depUrl(refStateUrl, '/src/tuning/refspine.ts')),
     import(drawUrl),
     import(await depUrl(drawUrl, '/src/render/canvas.ts')),
+    import(await depUrl(drawUrl, '/src/render/animation.ts')),
+    import(await depUrl(drawUrl, '/src/layout/geometry.ts')),
   ]);
   const { view } = viewMod, { tuning } = tuningMod, ref = refState.referenceNote;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -148,6 +153,29 @@ const SCRIPT = `(async () => {
   sel('selTuning', '5'); tick('cbSyncToComposer', false);
   refState.clearSelection();
   await post({ type: 'composer-bye' });
+
+  /* C15–C16: a Ctrl+click slides only while the two views overlap, and the
+     slide's expanded layer is rebuilt at normal size when it ends */
+  const layerNormal = () => {
+    const s = drawMod.hexLayerSize();
+    return { ok: s.w === view.CW + 6 * geo.hexR && s.h === view.CH + 6 * geo.hexR, got: s.w + 'x' + s.h, want: (view.CW + 6 * geo.hexR) + 'x' + (view.CH + 6 * geo.hexR) };
+  };
+  const push = (name, ok, got, want) => results.push({ name, ok, got, want });
+  refState.setSelectionFromManual(-214, 128); await wait(150);    /* MIDI 97, 214 keys from A3 */
+  expect('C15a a far ref is set and centered', '-214,128');
+  if (!clickCell(-214, 128)) fail('C15', 'cell -214,128 not on screen');
+  await wait(50);                                                   /* well inside a 500 ms slide */
+  push('C15b clearing a far ref snaps (no slide)', !animMod.animation.isAnimating, animMod.animation.isAnimating, false);
+  expect('C15c ...already centered on A3', '0,0');
+  const n15 = layerNormal(); push('C15d ...with the layer at normal size', n15.ok, n15.got, n15.want);
+  await wait(SLIDE);                                                /* C16 stands alone, whatever C15 did */
+  push('C16  starts at rest', !animMod.animation.isAnimating, animMod.animation.isAnimating, false);
+  if (!clickCell(-3, 3)) fail('C16', 'cell -3,3 not on screen');
+  await wait(50);
+  push('C16a a nearby Ctrl+click still slides', animMod.animation.isAnimating, animMod.animation.isAnimating, true);
+  await wait(SLIDE);                                                expect('C16b ...and lands centered', '-3,3');
+  const n16 = layerNormal(); push('C16c ...with the layer rebuilt at normal size', n16.ok, n16.got, n16.want);
+  refState.clearSelection(); await wait(SLIDE);
   return { pass: results.every((r) => r.ok), results };
 })()`;
 

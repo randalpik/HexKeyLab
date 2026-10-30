@@ -14,7 +14,7 @@
 // augmented 4th.
 //
 // Run (every mode × mapping, refs across one band, refR ∈ [−3, 3]):
-//   node --import ./test/orchestrator-smoke/register-ts.mjs test/bounds-probe/octave-consistency.mjs
+//   node --import ./test/orchestrator-smoke/register-ts.mjs test/picker/octave-consistency.mjs
 //
 // Syntonic / Polysyntonic are REPORTED, not gated (Max, 2026-10-26: some
 // inconsistency there is expected — the layout offers a spelling's 5-limit

@@ -53,7 +53,7 @@ function applySnapshot(s: OverlaySnapshot): void {
   document.body.classList.toggle('staff-dark', s.staffDark);
 
   /* 2. Set tuning state directly (mirrors setTuning's core, minus the audio
-     retune / ref auto-clear / savePrefs that the full app does), then run the
+     retune / savePrefs that the full app does), then run the
      engine-free render primitives. tuning.mode must be set before
      applyTuningRender (re-colors/respells) and before applyRotation/applyHexSize
      (recomputeCanvasBounds varies CH by mode). */

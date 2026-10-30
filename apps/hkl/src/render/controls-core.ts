@@ -11,7 +11,7 @@
 import { view } from '../state/view.js';
 import { tuning } from '../state/tuning.js';
 import { referenceNote } from '../state/reference.js';
-import { setRotation, setHexSize, currentRotationMode } from '../layout/geometry.js';
+import { setRotation, setHexSize, currentRotationMode, dxH, dyH, cosT, sinT } from '../layout/geometry.js';
 import { setAlignment, outlinePose } from '../layout/physical.js';
 import { recomputeCanvasBounds, computePianoViewCenter, sizeCanvas } from './canvas.js';
 import {
@@ -65,8 +65,9 @@ export function outlineFromDom(): OutlineMode {
    For piano-mode tweens we pre-rebuild the hex layer covering BOTH
    endpoints (start + target) — animating through a region the layer
    wasn't rebuilt for produces the cut-off-borders artifact. The expanded
-   layer survives the whole tween and shrinks back on the next normal
-   rebuild. `immediate` skips the tween and snaps; used at init so a
+   layer survives the whole tween and is rebuilt at normal size when it
+   lands (draw.ts animateLayout); a target too far to slide to snaps
+   instead (below). `immediate` skips the tween and snaps; used at init so a
    fresh load lands without a startup animation, and for outline-switch
    transitions (where snap was already the design). */
 export function syncViewToOutline(outline: OutlineMode, immediate: boolean): void {
@@ -80,6 +81,22 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
        (state/reference.ts) — the Composer cursor never moves it. */
     targetQ = view.kbAnchorQ;
     targetR = view.kbAnchorR;
+  }
+  /* Slide only while the two views overlap: a screen displacement under one
+     canvas width and one canvas height. Past that the slide shares no landmark
+     with where it started (and in ANIM_DURATION it is a blur), and its layer,
+     the bounding box of both views (buildHexLayerForTween), grows without
+     bound — so snap, cancelling any slide in flight. Clicking a key on screen
+     stays well inside it. */
+  const dQ = targetQ - view.viewQ, dR = targetR - view.viewR;
+  const ux = dQ * dxH + dR * dxH * 0.5, uy = -dR * dyH;
+  if (Math.abs(ux * cosT + uy * sinT) >= view.CW || Math.abs(-ux * sinT + uy * cosT) >= view.CH) {
+    animation.cancel();
+    view.viewQ = targetQ;
+    view.viewR = targetR;
+    view.hexDirty = true;
+    view.textDirty = true;
+    return;
   }
   /* A snap while a slide is in flight redirects the slide to the new target
      instead: the slide's next step would otherwise drag the view back toward

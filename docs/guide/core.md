@@ -99,9 +99,9 @@ Switching mapping keeps what you're holding. Mouse and MIDI-keyboard notes keep 
 
 The reference note is the key the outline (Lumatone, QWERTY or Piano) is centered on: **A3** by default.
 
-- **Ctrl+click** a key (**Cmd+click** on a Mac) to make it the reference. The keyboard slides so it sits at the center of the outline. Lumatone and computer-keyboard notes you're holding move with it, so a held chord keeps its shape; mouse notes stay on their keys.
-- While Ctrl is held, keys that can't be the reference are dimmed: a reference must be in the 88-key piano range, and the keys around it must be spelled with at most triple sharps or flats. **Valid ref bounds** (Piano tab) outlines the allowed area permanently.
-- Ctrl+click the current reference again to clear it. It goes back to the score's key if Composer is open, otherwise to A3. Switching to a tuning in which your reference isn't valid also clears it.
+- **Ctrl+click** a key (**Cmd+click** on a Mac) to make it the reference. The keyboard slides so it sits at the center of the outline (it jumps instead when the new position is more than a screen away). Lumatone and computer-keyboard notes you're holding move with it, so a held chord keeps its shape; mouse notes stay on their keys.
+- While Ctrl is held, keys that can't be the reference are dimmed: a reference must be in the 88-key piano range, A0–C8. **Valid ref bounds** (Piano tab) outlines the allowed area permanently.
+- Ctrl+click the current reference again to clear it. It goes back to the score's key if Composer is open, otherwise to A3. Switching tuning or banding keeps your reference.
 
 With Composer open, the score's key is the reference unless you've Ctrl+clicked one. With **Sync to Composer** on (in the toolbar's Composer group, shown while Composer is connected), each key change in the score replaces your Ctrl+click. Moving Composer's cursor doesn't move the reference, except with the Piano outline, where the note before the cursor becomes the reference.
 

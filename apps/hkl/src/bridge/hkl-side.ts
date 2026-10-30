@@ -1474,12 +1474,8 @@ bridge.on((msg: ComposerEvent) => {
     case 'set-reference-note': {
       /* Sets the cursor slot of the selection tier from Composer — the
          selection in the piano outline when newer than the user's Ctrl+click,
-         ignored elsewhere (reference.ts). Validated against the same
-         MIDI-range + accidental constraints as Ctrl+click — Composer has its
-         own accidental-clamp fallback for entering notes, but rejecting at the
-         ref-note-set stage is smoother (the dashed marker never moves to an
-         unspellable cell and the piano outline never reshapes to a >±3
-         layout). The re-center snaps (onRefChanged): cursor-follow used to
+         ignored elsewhere (reference.ts). Validated against the piano range,
+         as Ctrl+click is. The re-center snaps (onRefChanged): cursor-follow used to
          animate, but the multi-message reset race made even single updates
          land mid-tween when the handshake was still in flight. */
       const [rnQ, rnR] = fromComposer(msg.q, msg.r, msg.mapping);
@@ -1488,9 +1484,8 @@ bridge.on((msg: ComposerEvent) => {
     }
     case 'set-score-ref': {
       /* Sets the score-ref tier (the score's cursor-independent fallback ref,
-         from the key at Composer's position). Validate against the same MIDI +
-         accidental constraints as Ctrl+click / set-reference-note so the ref
-         never lands on an unspellable cell. reference.ts re-anchors kbAnchor
+         from the key at Composer's position). Validated against the piano
+         range, as Ctrl+click / set-reference-note are. reference.ts re-anchors kbAnchor
          when it becomes the home ref and onRefChanged snaps the view and
          migrates held physical voices. */
       const [srQ, srR] = fromComposer(msg.q, msg.r, msg.mapping);

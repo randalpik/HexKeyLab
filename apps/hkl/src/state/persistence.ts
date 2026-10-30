@@ -139,7 +139,7 @@ export interface PrefsV1 {
    *  for just-intonation pitches. Independent of audioEnabled. Off by default. */
   pianoOutputEnabled: boolean;
   /** Show a dotted outline marking the valid ref-note placement region
-   *  (V5 in 5-limit/12-TET, V7-intersection in 7-limit). Off by default. */
+   *  (the piano range, A0–C8). Off by default. */
   validRefBounds: boolean;
   /** User's manual reference-note selection (set via Ctrl+click on a hex).
    *  Absent if the user has never set one, or if they cleared it by
