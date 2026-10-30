@@ -384,7 +384,7 @@ export function validateRefNoteCandidate(q: number, r: number): string | null {
      gate sets exist only to draw the dotted boundary; they're not the
      authoritative validator. Ranked with the candidate as its own home band
      (Syntonic / Polysyntonic), as a Ctrl+click would make it. */
-  const anchor = anchorOf(q, tuning.mapping);
+  const anchor = anchorOf(q, r, tuning.mapping);
   const cells = compute88PianoCoords(q, r, anchor);
   for (const [cq, cr] of cells) {
     const name = noteName(cq, cr, tuning.mapping, anchor, tuning.banded);
@@ -1303,7 +1303,7 @@ export function draw(): void {
         const nq = kq + d[0],
           nr = kr + d[1];
         if (!allSet.has(packQR(nq, nr))) continue;
-        if (bandOfCell(kq, tuning.mapping) === bandOfCell(nq, tuning.mapping)) continue;
+        if (bandOfCell(kq, kr, tuning.mapping) === bandOfCell(nq, nr, tuning.mapping)) continue;
         const nb = posMap[nq + "," + nr];
         if (!nb) continue;
         const mx = (k.ux + nb.ux) / 2,

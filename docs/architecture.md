@@ -131,7 +131,7 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
 | Syntonic (`[0, +1, 0, −1][d mod 4]`) | 0 | +1 | 0 | −1 | 0 | +1 | 0 | −1 | 0 |
 | Polysyntonic (`d`) | −4 | −3 | −2 | −1 | 0 | +1 | +2 | +3 | +4 |
 
-- **Pitch**: `coordExps(q, r, 'P', mapping) + k(pitchBandOf(q, mapping) − anchor)·SC`, SC =
+- **Pitch**: `coordExps(q, r, 'P', mapping) + k(pitchBandOf(q, r, mapping) − anchor)·SC`, SC =
   `[−4, 4, −1, 0]`. The band is the one whose offset the cell **carries**: its own frame band
   (a Wicki-Hayden copy shares its column's 6-band), except a chromatic column copied from the band
   to its left (below), which keeps that band's offset.
@@ -158,7 +158,7 @@ syntonic commas around the **home band**, which is always unaltered. Offset `k` 
   round. Hole census, ref A3, A1–A6: the left band lacks only D#2 of the lowered set; the right
   band lacks nine notes between B1 and D#4. Under Euler the same rule runs on 3-wide bands, where
   the `+3q` octaves become ±SC — allowed, unrecommended, not gated.
-- **The anchor** (home band) is `anchorOf(refQ, mapping)` = the (spatial) band of the *anchor
+- **The anchor** (home band) is `anchorOf(refQ, refR, mapping)` = the (spatial) band of the *anchor
   reference*, so the clicked band becomes home. A borrowed chromatic key keeps its comma relative
   to home: clicked in another band, it makes that band home and stays one comma below
   Pythagorean; clicked in the home band, it just becomes the ref. The anchor reference is
@@ -374,14 +374,23 @@ A second axis, orthogonal to the tuning mode: **where note names sit** on the he
 with `MAPPINGS`, `MAPPING_LABELS`; toolbar `Mapping:` dropdown). It applies identically to every
 tuning mode — no per-mode gating.
 
-**One column step.** `r` is always the fifth, and a column step `(+1, 0)` is `COLUMN_STEP`
-semitones: 4 Euler, 2 Wicki-Hayden, 1 chromatic. Everything except `eulerOf` derives from it:
-- `coordToMidi = 57 + c·q + 7r`;
-- band width `W = 12/c`, with `bandOfCell = floor((q + W/3)/W)` and `posInBandOf = (q + W/3) mod W`;
-- the ref's qm0 column at position `W/3`;
-- `fromEuler` / `vecFromEuler` scale `q` by `4/c`;
-- the picker's isotone `(7, −c)`;
-- the `verticalFreq` column gradient `log(2)·c/12`.
+**The layout matrix.** Every layout samples the chromatic frame: cell `(q, r)` is the chromatic
+cell `(c·q + s·r, r)` — or, inverted, `(c·q + s·r, −r)` raised `r` exact octaves (`toChromatic`).
+`LAYOUT` holds each layout's `(c, s, invert)`: `c` the column step in semitones, `s` the shear in
+chromatic columns per row. The three mappings here are unsheared and plain, so `r` is the fifth
+and a column step `(+1, 0)` is `c` semitones: 4 Euler, 2 Wicki-Hayden, 1 chromatic. Every
+primitive goes through the sampled chromatic cell:
+- `coordToMidi = 57 + Q + 7R + 12·oct` (`57 + c·q + 7r` for the three); `coordExps` is the
+  chromatic cell's, plus its exact octaves;
+- the band is the chromatic cell's, `floor((Q + 4)/12)`, so `bandOfCell`, `posInBandOf`,
+  `pitchBandOf` and `anchorOf` take `(q, r)`. Band width is `W = 12/c`; for the three,
+  `bandOfCell = floor((q + W/3)/W)` and `posInBandOf = (q + W/3) mod W`;
+- `eulerOf` is the chromatic cell's Euler-equivalent, raised `oct` bands. `fromEuler`,
+  `vecFromEuler`, `convertCell` and `octaveVector` derive from the chromatic frame; for the three,
+  `fromEuler` / `vecFromEuler` scale `q` by `4/c`;
+- three quantities still read only `c`, which is exact for these three: the ref's qm0 column at
+  position `W/3`, the picker's isotone `(7, −c)`, and the `verticalFreq` column gradient
+  `log(2)·c/12`.
 
 These are the only three fifth-axis hex layouts whose steps all lie within a fifth, up to
 reflection: `q`-step `a` and `(−1,+1)` = `7 − a` are mirror images. Each one doubles `q`: Euler
@@ -577,6 +586,35 @@ left neighbor.
 - the chromatic rows of `test/syntonic/oracle.mjs`, `test/color-gate/`, `test/bounds-probe/` and
   `test/hkl-midi/mapping-switch.mjs`;
 - the Composer `mapping` and `syntonic` fixtures.
+
+#### Sheared and inverted layouts
+
+The matrix defines six more layouts (`LayoutId`; `LAYOUT_IDS` lists all nine in dropdown order).
+The shared primitives handle them. HKL and Composer don't expose them yet: `Mapping`, `MAPPINGS`
+and `isMapping` keep the three, because the reference spine, the picker and the tilt still assume
+a fifths `r` axis.
+
+| layout | (c, s, invert) | q / r / (−1,1) | band W | pure line |
+|---|---|---|---|---|
+| Janko | 2, −6, no | M2 / ±semitone / ∓semitone | 6 | P5 at (3,1) |
+| Accordion (C-system) | 3, −6, no | m3 / m2 / −M2 | 4 | P5 at (2,1) |
+| Gerhard | 4, −4, no | M3 / m3 / −m2 | 3 | P5 at (1,1) |
+| Randal | 4, 0, yes | M3 / P4 / m2 | 3 | P4 axis |
+| Park | 2, 0, yes | M2 / P4 / m3 | 6 | P4 axis |
+| Bass | 1, 0, yes | m2 / P4 / M3 | 12 | P4 axis |
+
+- **Pure line** `(−s/c, 1)`: a lattice vector because `c | s`. It is an exact 3/2 (4/3 inverted) in
+  every JI mode, banded and unbanded.
+- **Seams** slant `−s/c` keys per row, along the pure line, which therefore never crosses one.
+- **Inverted** layouts keep their fourth exact in every mode. Their fifth, the band step minus the
+  fourth, is exact in 5/P/D/7 only: in V/S/Y it carries the band term.
+- **Cell sets**: Gerhard and Randal sample Euler's cells (Gerhard = Euler(q − r, r)), Janko and Park
+  Wicki-Hayden's (Park = WH(q, −r)·2^r), Bass the chromatic frame's, and the Accordion every third
+  chromatic column.
+- **Spelled octaves**: unbanded, `octaveVector` is (5, 2) Janko, (1, 2) Park and (2, 2) Bass; the
+  Accordion, Gerhard and Randal have none. `vecFromEuler` returns null on the Accordion for Euler
+  vectors whose M3 count isn't a multiple of 3; its overload for `Mapping` stays non-null.
+- Gate: `test/layout-presets/oracle.mjs`.
 
 ---
 

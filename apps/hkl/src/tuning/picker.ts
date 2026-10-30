@@ -40,7 +40,7 @@
 // each band to match its pitch, so it ranks under its own ratios like any mode.
 
 import { coordToMidi, tenneyHeightFromExps } from '@hkl/shared/freq.js';
-import { COLUMN_STEP } from '@hkl/shared/mapping.js';
+import { LAYOUT } from '@hkl/shared/mapping.js';
 import { noteName } from '@hkl/shared/notes.js';
 import { jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
@@ -51,7 +51,7 @@ export function pianoFootprint(refQ: number, refR: number, state: TuningStateLik
   /* Octave step is (12/c, 0): (+3, 0) Euler, (+6, 0) Wicki-Hayden, (+12, 0)
      chromatic. The isotone projection 7(q−refQ) − c(r−refR) shifts by 7·12/c
      per octave. */
-  const c = COLUMN_STEP[mapping];
+  const c = LAYOUT[mapping].c;
   let inv = 1; /* c·inv ≡ 1 (mod 7) */
   while ((c * inv) % 7 !== 1) inv++;
   const K = 80 / c;

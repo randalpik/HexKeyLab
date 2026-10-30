@@ -20,7 +20,7 @@
 // Exits non-zero on any failure.
 
 import { coordExps, coordToMidi, anchorOf, bandOffset } from '../../packages/shared/src/freq.ts';
-import { bandOfCell, pitchBandOf, bandWidth, COLUMN_STEP, MAPPINGS } from '../../packages/shared/src/mapping.ts';
+import { bandOfCell, pitchBandOf, bandWidth, LAYOUT, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOrder, hueIdx } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain } from '../../packages/shared/src/heji.ts';
@@ -48,13 +48,13 @@ function ratio(e) {
 
 for (const mapping of MAPPINGS) {
   const W = bandWidth(mapping);                    /* band width in q */
-  const QR = 20 * 4 / COLUMN_STEP[mapping];
+  const QR = 20 * 4 / LAYOUT[mapping].c;
   for (const mode of ['S', 'Y']) {
     for (const anchor of ANCHORS) {
       for (let q = -QR; q <= QR; q++) {
         for (let r = -10; r <= 10; r++) {
           const tag = `${mode} ${mapping} a=${anchor} (${q},${r})`;
-          const d = pitchBandOf(q, mapping) - anchor;
+          const d = pitchBandOf(q, r, mapping) - anchor;
           const k = bandOffset(mode, d);
           const e = coordExps(q, r, mode, mapping, anchor, true);
           const p = coordExps(q, r, 'P', mapping, anchor, true);
@@ -98,7 +98,7 @@ for (const mapping of MAPPINGS) {
 
 /* anchorOf = the reference's own-frame (spatial) band — the clicked band becomes home */
 for (const mapping of MAPPINGS) {
-  for (let q = -30; q <= 30; q++) check(`anchorOf ${mapping} ${q}`, anchorOf(q, mapping), bandOfCell(q, mapping));
+  for (let q = -30; q <= 30; q++) check(`anchorOf ${mapping} ${q}`, anchorOf(q, 0, mapping), bandOfCell(q, 0, mapping));
 }
 /* HEJI chains for ±1…±4 commas on every conventional alteration render */
 for (let alter = -2; alter <= 2; alter++) {

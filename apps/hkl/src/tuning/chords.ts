@@ -108,7 +108,7 @@ export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): Cho
   if (schismatic) {
     outer: for (let i = 0; i < notes.length; i++) {
       for (let j = i + 1; j < notes.length; j++) {
-        if (bandOfCell(notes[i].q, state.mapping) !== bandOfCell(notes[j].q, state.mapping)) { isSchismatic = true; break outer; }
+        if (bandOfCell(notes[i].q, notes[i].r, state.mapping) !== bandOfCell(notes[j].q, notes[j].r, state.mapping)) { isSchismatic = true; break outer; }
       }
     }
   }

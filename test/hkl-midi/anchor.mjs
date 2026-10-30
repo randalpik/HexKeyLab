@@ -130,7 +130,7 @@ const SCRIPT = `(async () => {
   const at = (midi) => fp[midi - 21];
   const c4 = at(61);
   check('N6a: C#4 → the 5-limit major third (5/4 = 275 Hz)', cents(keyFreq(c4[0], c4[1]), 275), 0);
-  check('N6b: C#4 cell sits one band left (lowered)', sharedMap.bandOfCell(c4[0], tuning.mapping), -1);
+  check('N6b: C#4 cell sits one band left (lowered)', sharedMap.bandOfCell(c4[0], c4[1], tuning.mapping), -1);
   check('N6c: A4 → the in-band pure octave (−1,2)', at(69).join(','), '-1,2');
   check('N6d: A3 → the ref itself', at(57).join(','), '0,0');
 

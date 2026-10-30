@@ -1,7 +1,7 @@
 // Hex lattice → screen geometry. The tilt angle is selectable at runtime via
 // setRotation():
 //   verticalFreq — average log-frequency gradient is screen-vertical
-//                  (q-axis: log(2)·COLUMN_STEP/12 per step — log(2)/3 Euler,
+//                  (q-axis: log(2)·c/12 per step, c from LAYOUT — log(2)/3 Euler,
 //                  /6 Wicki-Hayden, /12 chromatic; r-axis: midpoint of 5-limit
 //                  log(3/2) and 7-limit log(3/2)-log(81/80)/6)
 //   lumatone     — the Lumatone case row (the (+7, −2) board step, posed by the
@@ -16,7 +16,7 @@
 // updates to every importer without re-importing.
 
 import type { Alignment, HexSize, Mapping, RotationMode } from '../state/persistence.js';
-import { COLUMN_STEP } from '@hkl/shared/mapping.js';
+import { LAYOUT } from '@hkl/shared/mapping.js';
 import { poseOffset } from './physical.js';
 
 /* Hex inradius (px) and derived axis pitches. `let` exports: setHexSize()
@@ -78,7 +78,7 @@ export function setRotation(mode: RotationMode, mapping: Mapping, pose: Alignmen
   switch (mode) {
     case 'lumatone': tiltAngle = caseLevelTilt(pose); break;
     case 'piano': tiltAngle = TILT_PIANO; break;
-    default: tiltAngle = verticalFreqTilt(Math.log(2) * COLUMN_STEP[mapping] / 12);
+    default: tiltAngle = verticalFreqTilt(Math.log(2) * LAYOUT[mapping].c / 12);
   }
   cosT = Math.cos(tiltAngle);
   sinT = Math.sin(tiltAngle);

@@ -7,10 +7,11 @@
 // `anchor` — the home band, the one band left unaltered — so every pitch
 // function takes the anchor explicitly (`anchorOf`). Banded, only S and Y read
 // it; unbanded (`banded` false, `UNBANDED` below), every mode counts its bands
-// from it. Coordinates are in `mapping`'s frame (mapping.ts); Wicki-Hayden and
-// chromatic cells resolve through their Euler-equivalent.
+// from it. Coordinates are in `mapping`'s frame (mapping.ts): every layout's
+// cell resolves through the chromatic cell it samples (`toChromatic`), and that
+// cell through its Euler-equivalent.
 
-import { eulerOf, bandOfCell, pitchBandOf, COLUMN_STEP, type Mapping } from './mapping.js';
+import { bandOfCell, chromaticEuler, chromaticBand, chromaticPitchBand, LAYOUT, type LayoutId } from './mapping.js';
 
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 
@@ -19,8 +20,8 @@ export const TUNING_MODES: ReadonlyArray<TuningMode> = ['E', '5', 'P', 'D', '7',
 /** The anchor (home band) for a reference cell: its band in its own frame.
  *  Syntonic / Polysyntonic leave this band unaltered (Pythagorean) and shift
  *  every other band by whole syntonic commas (`bandOffset`). */
-export function anchorOf(refQ: number, mapping: Mapping): number {
-  return bandOfCell(refQ, mapping);
+export function anchorOf(refQ: number, refR: number, mapping: LayoutId): number {
+  return bandOfCell(refQ, refR, mapping);
 }
 
 /** Whether a layout's pitch or spelling depends on the anchor: Syntonic /
@@ -82,11 +83,13 @@ export const MIDI_LOW = 21;
 export const MIDI_HIGH = 108;
 
 /** Nominal 12-TET MIDI note number for the lattice cell. Origin: A3 (MIDI 57)
- *  at (0, 0). Used to bound the retune search and to validate cells. A column
- *  step is COLUMN_STEP semitones (4 Euler, 2 Wicki-Hayden, 1 chromatic); a
- *  row step is a fifth in every mapping. */
-export function coordToMidi(q: number, r: number, mapping: Mapping): number {
-  return 57 + COLUMN_STEP[mapping] * q + 7 * r;
+ *  at (0, 0). Used to bound the retune search and to validate cells. It is the
+ *  sampled chromatic cell's, 57 + Q + 7R, plus 12 per exact octave: a column
+ *  step is c semitones (4 Euler, 2 Wicki-Hayden, 1 chromatic) and a row step is
+ *  s + 7, or s + 5 inverted (a fifth in those three). */
+export function coordToMidi(q: number, r: number, mapping: LayoutId): number {
+  const L = LAYOUT[mapping];
+  return 57 + L.c * q + (L.s + (L.invert ? 5 : 7)) * r;
 }
 
 /** Prime-exponent vector [e2, e3, e5, e7] of (q, r)'s frequency under a JI
@@ -113,22 +116,34 @@ export function coordToMidi(q: number, r: number, mapping: Mapping): number {
  *  Every other cell takes its Euler-equivalent's vector.
  *
  *  Unbanded (`banded` false) replaces both band terms with `UNBANDED`'s per-band
- *  comma, counted from `anchor` in every mode. */
-export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): Exps {
-  const c = eulerOf(q, r, mapping);
+ *  comma, counted from `anchor` in every mode.
+ *
+ *  Every layout computes this on the chromatic cell it samples (bands included)
+ *  and adds its exact octaves; Euler and Wicki-Hayden cells are chromatic ones. */
+export function coordExps(q: number, r: number, mode: TuningMode, mapping: LayoutId, anchor: number, banded: boolean): Exps {
+  const L = LAYOUT[mapping];
+  if (!L.invert) return chromaticExps(L.c * q + L.s * r, r, mode, anchor, banded);
+  const e = chromaticExps(L.c * q + L.s * r, 0 - r, mode, anchor, banded);
+  e[0] += r;                                                        /* one exact octave per row */
+  return e;
+}
+
+/** `coordExps` of chromatic cell (Q, R). */
+function chromaticExps(Q: number, R: number, mode: TuningMode, anchor: number, banded: boolean): Exps {
+  const c = chromaticEuler(Q, R);
   if (!banded) {
     const u = UNBANDED[mode];
     const e = eulerExps(c.q, c.r, u.base);
-    const d = (u.spatial ? bandOfCell(q, mapping) : pitchBandOf(q, mapping)) - anchor;
+    const d = (u.spatial ? chromaticBand(Q) : chromaticPitchBand(Q)) - anchor;
     for (let i = 0; i < 4; i++) e[i] += d * u.comma[i];
     return e;
   }
   const e = eulerExps(c.q, c.r, mode === 'V' ? 'D' : mode === 'S' || mode === 'Y' ? 'P' : mode);
   if (mode === 'V') {                                               /* ×schisma^band = (3⁸·5/2¹⁵)^band */
-    const b = bandOfCell(q, mapping);
+    const b = chromaticBand(Q);
     e[0] += -15 * b; e[1] += 8 * b; e[2] += b;
   }
-  const k = bandOffset(mode, pitchBandOf(q, mapping) - anchor);
+  const k = bandOffset(mode, chromaticPitchBand(Q) - anchor);
   if (k) { e[0] += -4 * k; e[1] += 4 * k; e[2] += -k; }             /* ×(81/80)^k */
   return e;
 }
@@ -154,7 +169,7 @@ function eulerExps(q: number, r: number, mode: TuningMode): Exps {
 /** Frequency in Hz of (q, r) under `mode` (and `anchor`, `banded`: see
  *  `coordExps`). JI modes multiply the canonical exponent vector into Hz once;
  *  Equal is 12-TET, banded or not, and returns directly. */
-export function freqAt(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): number {
+export function freqAt(q: number, r: number, mode: TuningMode, mapping: LayoutId, anchor: number, banded: boolean): number {
   if (mode === 'E') return 220 * Math.pow(2, (coordToMidi(q, r, mapping) - 57) / 12);
   const [e2, e3, e5, e7] = coordExps(q, r, mode, mapping, anchor, banded);
   return 220 * Math.pow(2, e2) * Math.pow(3, e3) * Math.pow(5, e5) * Math.pow(7, e7);

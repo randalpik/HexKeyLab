@@ -1994,7 +1994,8 @@ export class ComposerModel {
    *  from the key, never stored — a key-signature edit re-anchors its measures. */
   anchorAt(mi: number, mapping: Mapping = this.getLayoutReq().mapping): number {
     const tonic = keySigToTonic(this.keySigAt(mi), this.keyModeAt(mi));
-    return anchorOf(findTonicCoord(tonic, mapping).q, mapping);
+    const t = findTonicCoord(tonic, mapping);
+    return anchorOf(t.q, t.r, mapping);
   }
 
   /** anchorAt for the measure holding `note` (the head key outside any measure). */

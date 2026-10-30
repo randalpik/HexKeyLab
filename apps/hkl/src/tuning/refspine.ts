@@ -29,5 +29,5 @@
 import { bandWidth, posInBandOf, type Mapping } from '@hkl/shared/mapping.js';
 
 export function refSpine(refQ: number, refR: number, mapping: Mapping): { q: number; r: number } {
-  return { q: refQ - posInBandOf(refQ, mapping) + bandWidth(mapping) / 3, r: refR };
+  return { q: refQ - posInBandOf(refQ, refR, mapping) + bandWidth(mapping) / 3, r: refR };
 }

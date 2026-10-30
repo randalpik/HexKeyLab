@@ -10274,3 +10274,42 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - Isomorphic in pitch, spelling and HEJI: unbanded Pythagorean (= Syntonic = Polysyntonic) and Equal, in Euler and Wicki-Hayden, plus unbanded Euler Ptolemaic (one arrow per column, unbounded).
 - Pure (no commas): Pythagorean only.
 - No configuration has a constant hue step per vector: hue is the floor of a 12-TET octave count, so a fifth moves it 7/12 of a step.
+
+## Layout presets: the matrix model (2026-10-29/30, Max)
+
+**Picked** (Max):
+- **A layout samples the chromatic frame.** Cell (q, r) is the chromatic cell (c·q + s·r, r), or, inverted, (c·q + s·r, −r) raised r exact octaves. Every mode, the spelling, HEJI, color and the picker carry over through that cell, so no layout needs tunings of its own. `LAYOUT` (c, s, invert) replaces `COLUMN_STEP`.
+- **Nine presets**, in dropdown order: Euler, Wicki-Hayden, Chromatic, Janko, Accordion, Gerhard, Randal, Park, Bass.
+  - **Janko** (2, −6): Wicki-Hayden rows a semitone apart. Its duplicate row is Wicki-Hayden's isotone twin: comma alternatives 2 keys apart instead of 7.
+  - **Accordion** (3, −6), C-system: the missing band size, 4. Its rows are the ref duodene's diminished-seventh cycles. The C-system was picked for Janko consistency: the same s, so rows a semitone apart. The B-system is inverted (W 4, k 1).
+  - **Gerhard** (4, −4): Euler's cells re-coordinatized (Maupin, Gerhard & Park, "Isomorphic Tessellations for Musical Keyboards", SMC 2011).
+  - **Randal** (4, 0, inverted): Euler Fourths, named by Max as the one layout of worth nobody had named.
+  - **Park** (2, 0, inverted) and **Bass** (1, 0, inverted): Wicki-Hayden and Chromatic inverted, with an exact P4 axis. Their spine is the fourth, and their seams stay vertical.
+- **Invariants:** q and r always ascend (the row step is 1–12 semitones), and c | s (the pure line is a lattice vector; seams run along it).
+- **No mirror control.** Mirror (W, k) equals invert (W, W − 1 − k) in 5/P/D/7, so one switch suffices. Invert is kept: it decides which perfect interval is exact. Handedness, if ever wanted, is a physical pose.
+- **Builder** (later): band width W, shear k (keys per row, negative allowed) and invert, bounded by the row step. That gives 48 layouts, serialized as (W, k, invert).
+- **Accepted:** an older HKL rejects an `.hkr` recorded in a new layout.
+
+**Rejected:**
+- Hand-built per-mode Accordion bands. An all-6/5 band needs four 5-limit classes in one band, which no chromatic sampling reaches in any mode; Max prefers Pythagorean minor thirds anyway.
+- The shear forms of Park and Bass (s = −2, an exact P5 vector instead of the P4 axis).
+- The s = −5 Accordion, which has no exact fifth vector.
+- A mirror control.
+
+**Phase 1, the shared model (landed 2026-10-30).** My call: the six new layouts live in `LayoutId` / `LAYOUT_IDS`, and `Mapping`, `MAPPINGS` and `isMapping` keep the three exposed ones until Phase 2. Adding the new ids to `Mapping` now would force HKL's generated bounds tables, which need the generalized picker, and Composer's Setup list into Phase 1.
+
+**Where:**
+- `@hkl/shared/mapping.ts`: `LAYOUT`, `LayoutId`, `LAYOUT_IDS` and `toChromatic`; the chromatic-frame helpers `chromaticEuler`, `chromaticBand` and `chromaticPitchBand`.
+  - `bandOfCell`, `posInBandOf` and `pitchBandOf` take (q, r).
+  - `eulerOf`, `fromEuler`, `convertCell`, `octaveVector` and `vecFromEuler` go through the chromatic frame. `vecFromEuler` can return null for a `LayoutId`, but its overload for `Mapping` stays non-null.
+- `freq.ts`: `anchorOf(refQ, refR, …)`; `coordToMidi` and `coordExps` go through the sampled chromatic cell. `notes.ts`, `heji.ts` and `keycolor.ts` take `LayoutId`.
+- Apps: call sites pass r, and `COLUMN_STEP[m]` became `LAYOUT[m].c` (picker, resolve, tilt, MIDI import, Composer retune). That is exact for the three exposed mappings and gets generalized in Phase 2.
+
+**Cost:** `coordExps` + `coordToMidi` run about 1.08× the old time (median of 7 interleaved runs, 384,300 calls). The first version was 1.72×, from allocating the chromatic triple on every call; the hot paths now inline the matrix.
+
+**Gates:**
+- `test/layout-presets/oracle.mjs`: 471,335 checks, 0 failures.
+- Byte-identical to before: the color, Wicki-Hayden, chromatic, Syntonic and unbanded gates and the three bounds probes. `refbounds-table.ts` regenerates unchanged.
+- `pnpm typecheck`, `check:boundaries` and the HKL and Composer builds pass.
+
+**Status:** Phase 2 (HKL: reference spine, picker, tilt, transposes, bounds tables, dropdown) is next.

@@ -74,7 +74,7 @@ for (let Q = -41; Q <= 41; Q++) {
       for (const a of anchorsFor(m)) {
         const e0 = ex(Q, R, m, a);
         if (md(Q, 2)) {
-          const borrowed = m === 'V' && [1, 3].includes(posInBandOf(Q, CH));
+          const borrowed = m === 'V' && [1, 3].includes(posInBandOf(Q, R, CH));
           check(`A ${m} a${a} (${Q},${R}) new column = (Q−5,R−1) × 2${borrowed ? ' × schisma' : ''}`,
             sub(e0, ex(Q - 5, R - 1, m, a)).join(), (borrowed ? add(OCT, SCHISMA) : OCT).join());
         } else {
@@ -84,7 +84,7 @@ for (let Q = -41; Q <= 41; Q++) {
         let want;
         if (m === 'V') want = add(OCT, SCHISMA);
         else if (m === 'S' || m === 'Y') {
-          const pb = pitchBandOf(Q, CH) - a;
+          const pb = pitchBandOf(Q, R, CH) - a;
           want = add(OCT, SC, bandOffset(m, pb + 1) - bandOffset(m, pb));
         } else want = OCT;
         check(`A ${m} a${a} (${Q},${R}) +12,0 = band octave`, sub(ex(Q + 12, R, m, a), e0).join(), want.join());
@@ -166,8 +166,8 @@ for (const m of UNIFORM) {
 for (let Q = -30; Q <= 30; Q++) {
   for (let R = -6; R <= 6; R++) {
     const sp = refSpine(Q, R, CH);
-    check(`G (${Q},${R}) spine on qm0`, posInBandOf(sp.q, CH), 4);
-    check(`G (${Q},${R}) spine in the ref's band and row`, `${bandOfCell(sp.q, CH)},${sp.r}`, `${bandOfCell(Q, CH)},${R}`);
+    check(`G (${Q},${R}) spine on qm0`, posInBandOf(sp.q, sp.r, CH), 4);
+    check(`G (${Q},${R}) spine in the ref's band and row`, `${bandOfCell(sp.q, sp.r, CH)},${sp.r}`, `${bandOfCell(Q, R, CH)},${R}`);
     check(`G (${Q},${R}) ref ≤4 left / ≤7 right of the spine`, Q - sp.q >= -4 && Q - sp.q <= 7, true);
   }
 }
@@ -176,9 +176,9 @@ for (const [q, want] of [[0, 0], [1, 0], [3, 0], [-2, 0], [4, 6], [-3, -6]]) che
 
 /* ── H: pitch band ───────────────────────────────────────────────────────── */
 for (let Q = -41; Q <= 41; Q++) {
-  const lower = [1, 3].includes(posInBandOf(Q, CH));
-  check(`H (${Q}) pitchBandOf`, pitchBandOf(Q, CH), bandOfCell(Q, CH) - (lower ? 1 : 0));
-  for (const m of ['euler', 'wickiHayden']) check(`H ${m} (${Q}) pitchBandOf = bandOfCell`, pitchBandOf(Q, m), bandOfCell(Q, m));
+  const lower = [1, 3].includes(posInBandOf(Q, 0, CH));
+  check(`H (${Q}) pitchBandOf`, pitchBandOf(Q, 0, CH), bandOfCell(Q, 0, CH) - (lower ? 1 : 0));
+  for (const m of ['euler', 'wickiHayden']) check(`H ${m} (${Q}) pitchBandOf = bandOfCell`, pitchBandOf(Q, 0, m), bandOfCell(Q, 0, m));
 }
 
 /* ── I: anchor on a borrowed key ─────────────────────────────────────────── */
@@ -186,7 +186,7 @@ for (const m of ['S', 'Y']) {
   for (let b = -2; b <= 2; b++) {
     for (const pos of [1, 3]) {
       for (let R = -3; R <= 3; R++) {
-        const Q = 12 * b - 4 + pos, a = anchorOf(Q, CH);
+        const Q = 12 * b - 4 + pos, a = anchorOf(Q, R, CH);
         check(`I ${m} (${Q},${R}) anchor = clicked band`, a, b);
         check(`I ${m} (${Q},${R}) stays one comma below Pythagorean`, sub(ex(Q, R, m, a), ex(Q, R, 'P')).join(), sub(ZERO, SC).join());
       }
@@ -198,7 +198,7 @@ for (const m of ['S', 'Y']) {
 for (const map of MAPPINGS) {
   for (let q = -40; q <= 40; q++) {
     for (let r = -15; r <= 15; r++) {
-      check(`J ${map} (${q},${r})`, coordExps(q, r, 'V', map, 0, true).join(), add(coordExps(q, r, 'D', map, 0, true), SCHISMA, bandOfCell(q, map)).join());
+      check(`J ${map} (${q},${r})`, coordExps(q, r, 'V', map, 0, true).join(), add(coordExps(q, r, 'D', map, 0, true), SCHISMA, bandOfCell(q, r, map)).join());
     }
   }
 }
@@ -218,11 +218,11 @@ for (const m of ['P', 'S', 'Y']) {
     for (let Q = -40; Q <= 40; Q++) {
       for (let R = -12; R <= 12; R++) {
         const iv = sub(ex(Q, R, m, a), ex(Q + 2, R - 2, m, a));
-        const wrap = [3, 10].includes(posInBandOf(Q, CH));
+        const wrap = [3, 10].includes(posInBandOf(Q, R, CH));
         let want = OCT;
         if (wrap) {
-          check(`K (${Q},${R}) wrap crosses one pitch band`, pitchBandOf(Q + 2, CH) - pitchBandOf(Q, CH), 1);
-          const dk = m === 'P' ? 0 : bandOffset(m, pitchBandOf(Q + 2, CH) - a) - bandOffset(m, pitchBandOf(Q, CH) - a);
+          check(`K (${Q},${R}) wrap crosses one pitch band`, pitchBandOf(Q + 2, R, CH) - pitchBandOf(Q, R, CH), 1);
+          const dk = m === 'P' ? 0 : bandOffset(m, pitchBandOf(Q + 2, R, CH) - a) - bandOffset(m, pitchBandOf(Q, R, CH) - a);
           want = add(add(OCT, PC), SC, -dk);
           if (m === 'Y') check(`K Y a${a} (${Q},${R}) = 2/1·schisma`, iv.join(), add(OCT, SCHISMA).join());
           check(`K (${Q},${R}) spelled as an enharmonic pair`, noteName(Q, R, CH, 0, true)[0] !== noteName(Q + 2, R - 2, CH, 0, true)[0], true);

@@ -28,7 +28,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { TUNING_MODES, anchorOf } from '../../packages/shared/src/freq.ts';
-import { MAPPINGS, COLUMN_STEP, bandWidth } from '../../packages/shared/src/mapping.ts';
+import { MAPPINGS, LAYOUT, bandWidth } from '../../packages/shared/src/mapping.ts';
 import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +39,7 @@ const hexR = 16;
 const dxH = hexR * 1.78;
 const dyH = hexR * 1.54;
 
-/* qStep = average log-frequency per q step: log(2)·COLUMN_STEP/12 (log(2)/3 Euler,
+/* qStep = average log-frequency per q step: log(2)·c/12 (c from LAYOUT) (log(2)/3 Euler,
    /6 Wicki-Hayden, /12 chromatic) */
 function verticalFreqTilt(qStep) {
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
@@ -51,7 +51,7 @@ const TILT_LUMATONE = Math.atan(dyH / (3 * dxH));
 const TILT_PIANO = 0;
 
 const ROTATIONS = Object.fromEntries(MAPPINGS.map((m) => [m,
-  { verticalFreq: verticalFreqTilt(Math.log(2) * COLUMN_STEP[m] / 12), lumatone: TILT_LUMATONE, piano: TILT_PIANO }]));
+  { verticalFreq: verticalFreqTilt(Math.log(2) * LAYOUT[m].c / 12), lumatone: TILT_LUMATONE, piano: TILT_PIANO }]));
 
 /* Mirrors the actual rendering transform (src/render/draw.ts main draw
    loop). */
@@ -87,7 +87,7 @@ for (const row of qwertyRows) {
    band over sees the same relative layout. */
 function pianoCells(refQ, refR, mode = '5', mapping = 'euler', banded = true) {
   return pianoFootprint(refQ, refR, {
-    mode, mapping, anchor: anchorOf(refQ, mapping), banded,
+    mode, mapping, anchor: anchorOf(refQ, refR, mapping), banded,
     equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
   });
 }

@@ -100,7 +100,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 
 ### Chord transposition (5 axes)
 
-Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vectors; under the other mappings each goes through `vecFromEuler` (q scales by 4/`COLUMN_STEP`: Wicki-Hayden M3 (+2,0), P8 (+6,0), SC (−14,+4); chromatic M3 (+4,0), P8 (+12,0), SC (−28,+4)).
+Axes: P5 (0,+1), M3 (+1,0), m3 (−1,+1), P8 (+3,0), SC (−7,+4) — Euler vectors; under the other mappings each goes through `vecFromEuler` (q scales by 4/c, `c` from `LAYOUT`: Wicki-Hayden M3 (+2,0), P8 (+6,0), SC (−14,+4); chromatic M3 (+4,0), P8 (+12,0), SC (−28,+4)).
 
 - **Bounds check**: blocked if any note's screen center would leave canvas.
 - **Audio**: 100ms slide (`exponentialRampToValueAtTime`); sustained samples glide-and-fade; decaying instruments stop+retrigger.

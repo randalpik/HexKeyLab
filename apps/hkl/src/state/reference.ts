@@ -104,7 +104,8 @@ function recompute(notify = true): boolean {
 }
 
 function recomputeAnchor(): void {
-  const a = anchorOverride ?? anchorOf(homeRef().q, tuning.mapping);
+  const home = homeRef();
+  const a = anchorOverride ?? anchorOf(home.q, home.r, tuning.mapping);
   if (a === tuning.anchor) return;
   tuning.anchor = a;
   if (anchorListener === null || anchorNotifyQueued) return;

@@ -31,7 +31,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { TUNING_MODES, anchorOf } from '../../packages/shared/src/freq.ts';
 import { noteName, parseNote, accToVal } from '../../packages/shared/src/notes.ts';
-import { MAPPINGS, COLUMN_STEP } from '../../packages/shared/src/mapping.ts';
+import { MAPPINGS, LAYOUT } from '../../packages/shared/src/mapping.ts';
 import { pianoFootprint } from '../../apps/hkl/src/tuning/picker.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -40,13 +40,13 @@ const REPO = join(HERE, '..', '..');
 // ── picker + spelling: the real modules ───────────────────────────────────
 /* column step in semitones: a major third (Euler), a whole tone (Wicki-Hayden),
    a semitone (chromatic) */
-const colStep = (mapping) => COLUMN_STEP[mapping];
+const colStep = (mapping) => LAYOUT[mapping].c;
 
 /* A candidate ref is ranked as its own home band (Syntonic / Polysyntonic),
    as a Ctrl+click would make it — validateRefNoteCandidate does the same. */
 function pianoCells(refQ, refR, mode, mapping, banded) {
   return pianoFootprint(refQ, refR, {
-    mode, mapping, anchor: anchorOf(refQ, mapping), banded,
+    mode, mapping, anchor: anchorOf(refQ, refR, mapping), banded,
     equalEnabled: mode === 'E', septimalEnabled: mode === '7', septimalW: 3,
   });
 }
@@ -65,7 +65,7 @@ function validRef(q, r, mode, mapping, banded) {
   if (midi < 21 || midi > 108) return false;
   const cells = pianoCells(q, r, mode, mapping, banded);
   for (const [cq, cr] of cells) {
-    if (Math.abs(accToVal(parseNote(noteName(cq, cr, mapping, anchorOf(q, mapping), banded)).acc)) > 3) return false;
+    if (Math.abs(accToVal(parseNote(noteName(cq, cr, mapping, anchorOf(q, r, mapping), banded)).acc)) > 3) return false;
   }
   return true;
 }

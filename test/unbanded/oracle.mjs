@@ -106,7 +106,7 @@ for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(
 
 /* ── C: the anchor's band is banded; V is banded × schisma^−anchor ──────── */
 for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(map)) {
-  if (pitchBandOf(q, map) === a) {
+  if (pitchBandOf(q, r, map) === a) {
     check(`C name ${map} a${a} (${q},${r})`, noteName(q, r, map, a, false), noteName(q, r, map, a, true));
     check(`C octave ${map} a${a} (${q},${r})`, keyOctave(q, r, map, a, false), keyOctave(q, r, map, a, true));
     for (const m of ['5', 'P', 'D', '7', 'S', 'Y']) {
@@ -193,7 +193,7 @@ for (const map of MAPPINGS) {
 
 /* ── H: P unbanded = Y banded × schisma^(pitch band − anchor) ────────────── */
 for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(map)) {
-  check(`H ${map} a${a} (${q},${r})`, U(q, r, 'P', map, a).join(), add(B(q, r, 'Y', map, a), SCHISMA, pitchBandOf(q, map) - a).join());
+  check(`H ${map} a${a} (${q},${r})`, U(q, r, 'P', map, a).join(), add(B(q, r, 'Y', map, a), SCHISMA, pitchBandOf(q, r, map) - a).join());
 }
 
 /* ── I: Septimal 4:5:6:7 ─────────────────────────────────────────────────── */
@@ -246,7 +246,7 @@ for (const map of MAPPINGS) {
     check(`J ${m} ${map} a${a}`, [...d].join(' '), PER_BAND[m]);
   }
   for (const a of ANCHORS) for (const [q, r] of cells(map)) {
-    if (pitchBandOf(q, map) !== a) continue;
+    if (pitchBandOf(q, r, map) !== a) continue;
     for (const m of ['5', 'P', 'D', '7', 'S', 'Y']) {
       check(`J home ${m} ${map} a${a} (${q},${r})`, JSON.stringify(hejiCommasFor(m, q, r, map, a, false)), JSON.stringify(hejiCommasFor(m, q, r, map, a, true)));
     }
