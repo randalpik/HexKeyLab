@@ -24,7 +24,7 @@ Options for any mode (`node test/composer-test/run.mjs <mode> …`):
 - `--list` — print the selection (and `affected`'s report) and exit
 - `--update-baselines` — accept new visual output
 - `--coverage [path]` — record per-fixture coverage (default
-  `out/coverage-map.json`)
+  `out/coverage-map.json`); an unfiltered `full` run always records it
 - `HKL_INDEX_CHECK=1` — also verify every splice against an offscreen full
   render (the page-splice reference gate) and every VoiceIndex against the
   uncached computations; slower, catches what the plain run cannot
@@ -51,7 +51,9 @@ snapshot of every module as measured. `affected` diffs each module against
 its snapshot and selects every fixture that executed a touched line; a
 touched line at module scope selects every fixture that ran code in that
 module; type-only and comment lines select nothing. A fixture whose spec or
-assertions differ from `HEAD` is selected too. The report also names:
+assertions differ from `HEAD` is selected too, and so is every fixture the map
+has no complete record for: added since it was recorded, or failing when it
+was. The report also names:
 
 - **UNTESTED** changed lines — code no fixture executes. Usually a missing
   fixture.
@@ -59,12 +61,14 @@ assertions differ from `HEAD` is selected too. The report also names:
   runner changes — choose `--group` or the full suite for those.
 
 The line sets over-approximate (V8 leaves gaps after some expressions), so
-the selection errs toward running more. The map goes stale as code moves;
-regenerate it after large changes:
+the selection errs toward running more. Every unfiltered `full` run
+(`pnpm test:composer`) rewrites the map, at about 3 % of the run's time, so it
+is never older than the last full run. A stale map only over-selects: a
+module-scope edit to a widely loaded module (`main.ts`) selects every fixture.
+The fast tier is re-picked by hand, since `fast-tier.json` is committed:
 
 ```bash
-node test/composer-test/run.mjs full --coverage   # rewrites out/coverage-map.json
-node test/composer-test/select-fast.mjs           # re-picks the fast tier from it
+node test/composer-test/select-fast.mjs           # re-picks the fast tier from the map
 ```
 
 ### The fast tier

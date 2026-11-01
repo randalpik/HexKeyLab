@@ -10485,3 +10485,25 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - **`test/unbanded/oracle.mjs` K** had the old formula and now uses the new one. The unbanded, Wicki-Hayden, Syntonic and anchor gates pass.
 
 **Where:** `@hkl/shared/keycolor.ts`.
+
+## The coverage map refreshes itself; harnesses stop browsers deterministically (2026-11-01, Max)
+
+**Problem:** `affected` skipped the Park/Bass mapping fixtures. The coverage map was only written by `run.mjs full --coverage`, and `pnpm test:composer` doesn't pass that flag, so the map was four days old. A fixture committed after the map is neither in it nor changed against `HEAD`, so nothing selected it. Separately, every Composer run left an empty `/tmp/hkl-composer-test-*` profile behind.
+
+**Picked:**
+- **An unfiltered `full` run always records the map** (written to a temp file and renamed). Measured on 124 fixtures, recording costs about 3 % (120.6 s against 117.5 and 115.9 s), so no run has to remember the flag. The map is never older than the last full run.
+- **`affected` selects every fixture the map has no complete record for:** absent from the map, or failing when it was recorded. That holds however stale the map is: against the four-day-old map it added the 11 missing fixtures, all 19 mapping fixtures among the 737 selected. A stale map otherwise only over-selects: one module-scope line in `main.ts` selected all 726 it knew.
+- **`stopBrowser(proc, profileDir)`** (`test/composer-test/lib/chromium.mjs`) removes a profile only once no process runs on it. Every Chromium process names the profile on its command line (`--user-data-dir=<dir>`), as Firefox's main process does (`--profile <dir>`). It is synchronous, so the eleven harnesses that spawn their own browser call it from their existing `cleanup` with no call site changed, and `launchChromium()`'s `stop()` is built on it. `launchChromium()` also stops on SIGINT, SIGTERM and SIGHUP.
+
+**Rejected:**
+- A fixed wait after the main process exits (the old `stop()`): it only narrows the window.
+- Running Chromium in its own process group and waiting for the group to empty: deterministic too, but Ctrl-C and a tree kill would no longer reach the browser, and an orphaned browser costs more than an empty directory.
+- Re-measuring incrementally on every run: one source snapshot per module can't hold fixtures measured against different versions.
+- Re-picking the fast tier automatically: `fast-tier.json` is committed.
+
+**Gates:**
+- **12 launch → load Composer → stop cycles:** all 11 holders seen at SIGTERM each time, stop in 31–37 ms, nothing left 1.5 s later.
+- **Signals and Firefox:** SIGINT to a running launcher exits 130 with the profile gone. A headless Firefox stops in 9 ms with its profile gone.
+- **Full suite:** `pnpm test:composer` 737/737; it recorded the map and left no profile. `affected` then selects 0 fixtures beyond the 90-fixture fast tier.
+
+**Where:** `test/composer-test/{run.mjs, lib/chromium.mjs, lib/affected.mjs, select-fast.mjs, README.md}`, and the harnesses in `test/{composer-inspect, corpus, overlay-inspect, orchestrator-smoke, react-consumer, hkl-inspect}`.

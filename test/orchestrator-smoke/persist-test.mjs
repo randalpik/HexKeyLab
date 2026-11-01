@@ -6,7 +6,8 @@
 //   node test/orchestrator-smoke/persist-test.mjs    (dev server on :5176)
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { stopBrowser } from '../composer-test/lib/chromium.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,7 +16,7 @@ const DEBUG_PORT = 9522 + Math.floor(Math.random() * 400);
 const profileDir = mkdtempSync(join(tmpdir(), 'hklo-persist-'));
 const chromium = spawn('chromium', ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
   `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profileDir}`, 'about:blank'], { stdio: 'pipe' });
-const cleanup = (c) => { try { chromium.kill('SIGTERM'); } catch {} try { rmSync(profileDir, { recursive: true, force: true }); } catch {} process.exit(c); };
+const cleanup = (c) => { stopBrowser(chromium, profileDir); process.exit(c); };
 process.on('SIGINT', () => cleanup(130));
 
 async function waitEndpoint() {

@@ -18,7 +18,8 @@
 //   node test/overlay-inspect/flash-mirror.mjs
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync } from 'node:fs';
+import { stopBrowser } from '../composer-test/lib/chromium.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +42,7 @@ function cleanup(code) {
   if (exiting) return; exiting = true;
   /* Only PIDs this script spawned. */
   for (const p of procs) { try { p.kill('SIGTERM'); } catch {} }
-  try { rmSync(profileDir, { recursive: true, force: true }); } catch {}
+  stopBrowser(null, profileDir);    // waits out the Chromium signalled above
   process.exit(code);
 }
 process.on('SIGINT', () => cleanup(130));

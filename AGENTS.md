@@ -34,7 +34,7 @@ A pnpm monorepo (layout, exports map and build details: [docs/architecture.md](d
 
 ### Composer verification
 
-- **Test suite** (`test/composer-test/`, ~730 fixtures; needs `pnpm dev`): `pnpm test:composer:affected` for a scoped change (read its report — untested changed lines mean a missing fixture); `pnpm test:composer:fast` for breadth; `pnpm test:composer` (every fixture, ~7 min) once per broad change set. Flags, in-page hooks and debugging: `test/composer-test/README.md`.
+- **Test suite** (`test/composer-test/`, ~730 fixtures; needs `pnpm dev`): `pnpm test:composer:affected` for a scoped change (read its report — untested changed lines mean a missing fixture); `pnpm test:composer:fast` for breadth; `pnpm test:composer` (every fixture, ~7 min; it also refreshes the coverage map `affected` selects from) once per broad change set. Flags, in-page hooks and debugging: `test/composer-test/README.md`.
 - **Every Composer bug fix or feature lands with a fixture** in `fixtures/<category>.mjs` — with an `ASSERTIONS[name]` entry when the universal invariants don't cover the change, and `visualBaseline` for visual coverage.
 - **Screenshots come from `visualBaseline` fixtures**, never `inspect.mjs --screenshot` (it resizes the viewport before capturing, so the overlay is stale). `test/composer-inspect/inspect.mjs '<expr>'` is fine for DOM/state queries.
 - **Visual diffs** are presented as a heatmap (`test/composer-test/heatmap.py`), never a side-by-side; re-seed with `--update-baselines` only with the maintainer's approval.

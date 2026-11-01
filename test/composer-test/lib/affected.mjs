@@ -12,7 +12,9 @@
 // Changed lines that compile to code no fixture executes are reported — the
 // change is untested, which usually means a fixture is missing.
 //
-// Test side: a fixture whose spec or assertions differ from HEAD is selected.
+// Test side: a fixture whose spec or assertions differ from HEAD is selected, and
+// so is every fixture the map has no complete record for — absent from it (added
+// since it was recorded) or failing when it was (its lines stop at the failure).
 // A changed runner/lib file, or a changed source file the map does not know
 // (new module, CSS, HTML), is reported but selects nothing — run --group or
 // the full tier for those.
@@ -102,7 +104,7 @@ export async function affectedSelection(mapPath, fixtures, assertions) {
   const pick = (name, why) => { if (!fixtures[name]) return; if (!selected.has(name)) selected.set(name, []); selected.get(name).push(why); };
 
   if (!existsSync(mapPath)) {
-    report.push(`no coverage map at ${mapPath} — run \`node test/composer-test/run.mjs full --coverage\` once; selecting test-side changes only`);
+    report.push(`no coverage map at ${mapPath} — an unfiltered full run (pnpm test:composer) records it; selecting every fixture`);
   }
   const map = existsSync(mapPath) ? JSON.parse(readFileSync(mapPath, 'utf8')) : { files: {}, fixtures: {} };
   if (map.generated) report.push(`coverage map: ${map.generated.slice(0, 16).replace('T', ' ')} @ ${String(map.commit).slice(0, 8)}, ${Object.keys(map.fixtures).length} fixtures`);
@@ -150,6 +152,11 @@ export async function affectedSelection(mapPath, fixtures, assertions) {
   try { uncommitted = [...git('diff', '--name-only', 'HEAD').split('\n'), ...git('ls-files', '--others', '--exclude-standard').split('\n')].filter(Boolean); } catch {}
   const runner = [...new Set(uncommitted.filter((p) => /^test\/composer-test\/(lib\/|run\.mjs)/.test(p)))];
   if (runner.length) report.push(`runner changed (affects every fixture — consider the full tier): ${runner.join(', ')}`);
+
+  /* Fixtures without a complete coverage record: no grounds to skip them. */
+  const unmeasured = Object.keys(fixtures).filter((n) => !map.fixtures[n] || map.fixtures[n].ok === false);
+  for (const n of unmeasured) pick(n, map.fixtures[n] ? 'failed when the map was recorded' : 'not in the coverage map');
+  if (unmeasured.length) report.push(`fixtures without a complete coverage record (new since the map, or failing when it was made): ${unmeasured.length}`);
 
   /* Test-side changes. */
   const specChanged = await changedFixtureSpecs(fixtures, assertions);

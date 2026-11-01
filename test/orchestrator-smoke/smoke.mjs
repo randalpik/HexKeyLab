@@ -14,7 +14,8 @@
 // code bug; verify interactively in a real browser. The script reports clearly.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { stopBrowser } from '../composer-test/lib/chromium.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -31,8 +32,7 @@ const chromium = spawn('chromium', [
 ], { stdio: 'pipe' });
 
 const cleanup = (code) => {
-  try { chromium.kill('SIGTERM'); } catch {}
-  try { rmSync(profileDir, { recursive: true, force: true }); } catch {}
+  stopBrowser(chromium, profileDir);
   process.exit(code);
 };
 process.on('SIGINT', () => cleanup(130));

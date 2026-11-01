@@ -14,7 +14,8 @@
 //   --group a,b  restrict to fixture categories (fixtures/<category>.mjs)
 //   --only a,b   restrict to fixtures whose names start with a listed prefix
 //   --list       print the selection (and affected's report) without running
-//   --coverage   record per-fixture coverage to out/coverage-map.json (or path)
+//   --coverage   record per-fixture coverage to out/coverage-map.json (or path);
+//                an unfiltered `full` run (pnpm test:composer) always records it
 //
 // Requires: the dev proxy running (`pnpm dev`) at
 // COMPOSER_URL (default http://localhost:5170/composer/).
@@ -29,7 +30,7 @@ import { visualCheck } from './lib/visual.mjs';
 import { FIXTURES, FIXTURE_ASSERTIONS, CATEGORIES } from './fixtures/index.mjs';
 import { CoverageCollector } from './lib/coverage.mjs';
 import { affectedSelection } from './lib/affected.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -62,6 +63,10 @@ function parseArgs() {
     else throw new Error('unknown argument: ' + a);
   }
   if (groups) for (const g of groups) if (!CATEGORIES[g]) throw new Error('unknown group ' + g + '. Known: ' + Object.keys(CATEGORIES).join(', '));
+  /* The whole suite refreshes the coverage map `affected` selects from (≈3 %
+     slower, 2026-11-01): no run has to remember --coverage, and the map is
+     never older than the last full run. */
+  if (mode === 'full' && !groups && !only && !list && !coverage) coverage = join(__dirname, 'out', 'coverage-map.json');
   return { mode, scenarioName, keepOpen, updateBaselines, only, groups, list, coverage };
 }
 
@@ -398,7 +403,8 @@ async function main() {
       console.log(fmtResult(r));
     }
     if (cov) {
-      writeFileSync(coverage, JSON.stringify(cov));
+      writeFileSync(coverage + '.tmp', JSON.stringify(cov));
+      renameSync(coverage + '.tmp', coverage);
       console.log(`coverage map: ${Object.keys(cov.fixtures).length} fixtures → ${coverage}`);
     }
     const elapsedMs = Date.now() - startedAt;

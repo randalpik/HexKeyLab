@@ -14,7 +14,8 @@
 // randomized port — never by name.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { stopBrowser } from '../composer-test/lib/chromium.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,9 +79,8 @@ const preview = spawn(viteBin, ['preview', '--port', String(PORT), '--strictPort
 let chromium = null;
 const profileDir = mkdtempSync(join(tmpdir(), 'hkl-rc-'));
 const cleanup = (code) => {
-  try { chromium?.kill('SIGTERM'); } catch {}
+  stopBrowser(chromium, profileDir);
   try { preview.kill('SIGTERM'); } catch {}
-  try { rmSync(profileDir, { recursive: true, force: true }); } catch {}
   process.exit(code);
 };
 process.on('SIGINT', () => cleanup(130));

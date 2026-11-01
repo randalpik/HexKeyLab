@@ -20,7 +20,7 @@
 //      is left.
 // Fixtures that failed during the coverage run are not eligible.
 // Regenerate after a large change to the suite or the source:
-//   node test/composer-test/run.mjs full --coverage && node test/composer-test/select-fast.mjs
+//   pnpm test:composer && node test/composer-test/select-fast.mjs   (a full run records the map)
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
