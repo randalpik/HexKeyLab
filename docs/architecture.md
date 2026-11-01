@@ -676,13 +676,16 @@ Composer recolors notes with the same functions.
   teal → yellow … lowered) are all this one function.
 - **Inverted layouts** (Randal, Park, Bass: `LAYOUT` `invert`; Max, 2026-10-30): each row lifts
   an octave, so by pitch alone a band's hues would straddle octaves (Randal's home-band pink ran
-  G2–C#4). The banded-Ptolemaic base index b (which there reads MIDI octave − band minus the r
-  octaves the row lifts) is replaced by −(b + r), so the blocks read **band − MIDI octave**: on
+  G2–C#4). The banded-Ptolemaic base index b (which on an original column reads MIDI octave −
+  band minus the r octaves the row lifts, and r = −b3 there) is replaced by −(b − b3), so the
+  blocks read **band − MIDI octave**: on
   Randal's home band purple is C3–B♭3 and blue C♯4–B4, 7 or 8 keys a block (a fourths band holds
   ~7.2 keys per octave against Euler's ~5). Every other term keeps its sign: each mode's comma
   offsets, the unbanded per-band commas, the septimal half steps; Equal is untouched. A band step
-  still keeps the hue. Park and Bass mirror Wicki-Hayden's and chromatic's mixed blocks (their copy
-  columns). A pitch's color therefore differs between an inverted layout and the others; relative
+  still keeps the hue. Keyed off b3 rather than the row, a copy column in Park or Bass takes its
+  source's color although it sits rows away (2026-11-01), so they mirror Wicki-Hayden's and
+  chromatic's mixed blocks, and every inverted layout colors a pitch as Randal does, just as every
+  plain one colors it as Euler does. A pitch's color therefore differs between an inverted layout and the others; relative
   color within the layout is what carries comma identity.
 - **Septimal half steps**: each septimal factor turns the hue half a step warm (`hueCycleOrder`
   index − e7/2 on top of the formula above, signed), so an odd `e7` takes `.sl`/`.sd` (a 50% lerp

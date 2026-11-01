@@ -10469,3 +10469,19 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - **New `mapping` fixtures**, all failing on the unfixed code: a Setup round trip for each sheared / inverted preset, through Setup's form; the Setup list of all nine; the ottava band width. The two SC fixtures (`map_sc_janko`, `map_sc_accordion_blocked`) pin Phase 2's behavior and pass either way.
 - **Transcription round-trip:** Janko and Randal recordings come out as Janko and Randal scores with the same spelling, at the cells played. Those checks fail on the unfixed code.
 - **Full Composer suite:** 737/737. `pnpm typecheck`, `check:boundaries`, and the HKL and Composer builds pass.
+
+## Inverted copy columns take their source's color (2026-11-01, Max)
+
+**Picked (Max):** the inverted-layout mirror keys off the pitch, not the cell: the banded-Ptolemaic base b is replaced by −(b − b3), b3 being the base's fifths, where the 2026-10-30 rule used −(b + r).
+- **Why:** on an original column r = −b3, so Randal and every original column keep their color. A copy column sounds its source's pitch two rows away in Park (j = 2) and one or two in Bass (j = 1, 2, 3), so −(b + r) mirrored it by the wrong number of octaves. Max reported both symptoms in Park: the same name and tuning in two colors (A3 at (0,0) purple, at (−5,2) teal), and a syntonic comma in one color (B3 9/8 at (1,0) and 10/9 at (−4,2), both blue), its two hue steps cancelled by the copy's error.
+- **The rule now:** every inverted layout colors a pitch as Randal does, as every plain one colors it as Euler does. Color is one function of the pitch and the layout's orientation.
+- **What remains:** under Schismatic, Park and Bass still put two cells with one name a Pythagorean comma apart in one color (75 and 126 pairs over q ∈ [−16, 16], r ∈ [−8, 8]). That is the hue formula (Pythagorean comma = 7 ≡ 0), not the mirror; no plain layout has such pairs over that window.
+
+**Rejected:** keeping −(b + r) and calling the copies' colors part of the "mixed blocks". The blocks are only mixed in Wicki-Hayden because a copy takes its source's color, which −(b + r) broke.
+
+**Gates:**
+- **`test/layout-presets/oracle.mjs` L** now checks −(b − b3), plus a new check that each cell takes Euler's (plain) or Randal's (inverted) color at its Euler-equivalent. Both fail on the unfixed code (27,968 failures), and the oracle passes after the fix (707,542 checks).
+- **`test/color-gate/`** re-seeded with Max's approval: the only cells that change are Park's odd columns and Bass's j = 1, 2, 3 columns in the seven JI modes (56,700 of 472,392 cells). Equal and the other seven mappings are unchanged.
+- **`test/unbanded/oracle.mjs` K** had the old formula and now uses the new one. The unbanded, Wicki-Hayden, Syntonic and anchor gates pass.
+
+**Where:** `@hkl/shared/keycolor.ts`.

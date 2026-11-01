@@ -1,4 +1,4 @@
-// Key color — one function of the pitch (and, in an inverted layout, its row).
+// Key color — one function of the pitch (and the layout's orientation).
 //
 // Color belongs to the pitch, not to the layout: a tuning mode or note-name
 // mapping only decides which pitch sits on a cell, and the same pitch gets the
@@ -21,10 +21,13 @@
 //
 // An inverted layout (each row lifts an octave: LAYOUT invert) mirrors the
 // Ptolemaic base, so its octave blocks run the other way along the band (Max,
-// 2026-10-30). The base is the cell's banded Ptolemaic index, which there reads
-// MIDI octave − band minus the r octaves its row lifts; it is replaced by
-// −(base + r), i.e. band − MIDI octave. Every other term keeps its sign: each
-// mode's comma offsets, the unbanded per-band commas, the septimal half-steps.
+// 2026-10-30). The base is the cell's banded Ptolemaic index, which on an
+// original column reads MIDI octave − band minus the r octaves its row lifts,
+// and r = −b3 there; it is replaced by −(base − b3), i.e. band − MIDI octave.
+// Keyed off b3, not the row, a copy column (Park, Bass) takes its source's
+// color, rows away (2026-11-01): every inverted layout colors a pitch as Randal
+// does. Every other term keeps its sign: each mode's comma offsets, the unbanded
+// per-band commas, the septimal half-steps.
 //
 // Pure: callers pass the layout. HKL wraps these with its live tuning state
 // (apps/hkl/src/render/colors.ts); Composer can call them directly.
@@ -62,7 +65,7 @@ export function keyColor(q: number, r: number, mode: TuningMode, mapping: Mappin
   if (LAYOUT[mapping].invert) {
     const [, b3, b5] = coordExps(q, r, '5', mapping, anchor, true);
     const base = Math.floor((57 + 7 * b3 + 4 * b5) / 12) - 4;
-    idx += -(base + r) - base;
+    idx += -(base - b3) - base;
   }
   return { hue: hueCycleOrder[mod(idx, 7)], isW, half: mod(e7, 2) === 1, isSept: e7 !== 0 };
 }

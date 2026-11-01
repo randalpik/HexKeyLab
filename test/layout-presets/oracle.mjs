@@ -23,8 +23,10 @@
 //   K  the reference spine: every row holds a cell on its band's qm0 column (chromatic Q ≡ 0
 //      mod 12)
 //   L  color: one function of the pitch in plain layouts; an inverted layout mirrors the
-//      banded-Ptolemaic base (−(base + r)) and keeps every other term; 3-wide bands read
-//      ±(MIDI octave − band); a band step keeps the hue; Equal stays its octave cycle
+//      banded-Ptolemaic base (−(base − b3)) and keeps every other term; a pitch keeps its color
+//      across layouts of one orientation (Euler's plain, Randal's inverted, copy columns
+//      included); 3-wide bands read ±(MIDI octave − band); a band step keeps the hue; Equal
+//      stays its octave cycle
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/layout-presets/oracle.mjs
 
 import {
@@ -204,21 +206,26 @@ for (const L of MAPPINGS) for (let r = -9; r <= 9; r++) {
 }
 
 /* L — color. The hue index from a cell's exponents (keycolor.ts) is one function of the pitch
-   in a plain layout; an inverted layout replaces its banded-Ptolemaic base with −(base + r) and
-   keeps every other term (Max, 2026-10-30). Recomputed here from coordExps, not keyColor. */
+   in a plain layout; an inverted layout replaces its banded-Ptolemaic base with −(base − b3),
+   b3 the base's fifths (−r on an original column), and keeps every other term (Max,
+   2026-10-30; 2026-11-01). Recomputed here from coordExps, not keyColor. */
 {
   const mod7 = (x) => ((x % 7) + 7) % 7;
   const pitchIdx = (e) => Math.floor((57 + 7 * e[1] + 4 * e[2] + 10 * e[3]) / 12) - 4 - Math.floor(e[3] / 2);
   const idxOf = (q, r, mode, L, a, banded) => hueIdx[keyColor(q, r, mode, L, a, banded).hue];
   for (const L of MAPPINGS) {
-    const inv = LAYOUT[L].invert, W = bandWidth(L);
+    const inv = LAYOUT[L].invert, W = bandWidth(L), home = inv ? 'randal' : 'euler';
     for (const [q, r] of CELLS) {
-      const base = pitchIdx(coordExps(q, r, '5', L, 0, true));
+      const be = coordExps(q, r, '5', L, 0, true), base = pitchIdx(be);
       for (const banded of [true, false]) for (const mode of JI) for (const a of [0, 1]) {
         const p = pitchIdx(coordExps(q, r, mode, L, a, banded));
-        const want = inv ? mod7(p - base - (base + r)) : mod7(p);
+        const want = inv ? mod7(p - base - (base - be[1])) : mod7(p);
         check(`L ${L} ${mode} ${banded ? 'b' : 'u'} a${a} (${q},${r}) hue`, idxOf(q, r, mode, L, a, banded), want);
       }
+      /* a pitch keeps its color across one orientation: every cell takes Euler's (plain) or
+         Randal's (inverted) color at its Euler-equivalent — a copy column its source's */
+      const e = eulerOf(q, r, L), [hq, hr] = fromEuler(e.q, e.r, home);
+      for (const mode of UNIFORM) check(`L ${L} ${mode} (${q},${r}) colored as ${home} (${hq},${hr})`, idxOf(q, r, mode, L, 0, true), idxOf(hq, hr, mode, home, 0, true));
       /* the octave blocks: Euler-family bands read ±(MIDI octave − band), mirrored when inverted */
       if (W === 3) {
         const ob = Math.floor(coordToMidi(q, r, L) / 12) - bandOfCell(q, r, L) - 4;
