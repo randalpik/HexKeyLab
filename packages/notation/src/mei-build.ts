@@ -11,20 +11,6 @@
 
 import { tokenFromAlter, alterFromCount } from './accidentals.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import type { Mapping } from '@hkl/shared/mapping.js';
-
-/** The mappings a score (`<hkl:layoutReq mapping>`) can use: the three
- *  Composer's notation paths are verified in. HKL plays in all nine; until
- *  Composer is generalized for the sheared and inverted layouts (decisions.md
- *  2026-10-30, "Layout presets in HKL"), Composer's Setup and blank-score
- *  adopt offer only these, and HKL's transcription writes the others' notes
- *  converted to Euler. */
-export const SCORE_MAPPINGS: ReadonlyArray<Mapping> = ['euler', 'wickiHayden', 'chromatic'];
-
-/** The mapping a score takes for layout `m`: `m` where a score can use it, else `fallback`. */
-export function scoreMappingFor(m: Mapping, fallback: Mapping): Mapping {
-  return SCORE_MAPPINGS.includes(m) ? m : fallback;
-}
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 export const XML_NS = 'http://www.w3.org/XML/1998/namespace';

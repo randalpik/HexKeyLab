@@ -28,7 +28,74 @@ const HELPERS = `
   };
 `;
 
+/* Each sheared / inverted preset: Setup Euler → preset → Euler on the Ptolemaic chord A3 C4 C#4 E4.
+   Every note moves to its preset cell (convertCell) with its spelling unchanged and comes back
+   exactly. Cells precomputed with the real convertCell. */
+const PRESET_CELLS = {
+  janko: [[0, 0], [1, 1], [2, 0], [3, 1]],
+  accordion: [[0, 0], [1, 0], [1, 1], [2, 1]],
+  gerhard: [[0, 0], [0, 1], [1, 0], [1, 1]],
+  randal: [[0, 0], [2, -1], [1, 0], [3, -1]],
+  park: [[0, 0], [4, -1], [2, 0], [6, -1]],
+  bass: [[0, 0], [8, -1], [4, 0], [12, -1]],
+};
+const CHORD_NAMES = ['a//3', 'c//4', 'c/s/4', 'e//4'];
+const CHORD_EULER = ['0,0:a//3', '-1,1:c//4', '1,0:c/s/4', '0,1:e//4'];
+const PRESET_FIXTURES = Object.fromEntries(Object.keys(PRESET_CELLS).map((m) => [`map_retune_${m}_roundtrip`, {
+  setup: `
+    ${HELPERS}
+    m.setCursor(0, 1);
+    m.insertChordAtCursor({ notes: [RN(0, 0, 'a', '', 3, 57), RN(-1, 1, 'c', '', 4, 60), RN(1, 0, 'c', 's', 4, 61), RN(0, 1, 'e', '', 4, 64)], duration: '4', dots: 0 });
+    window.__mapSetupTo('${m}');
+    window.__mapPreset = window.__mapNotes();
+    window.__mapPresetReq = m.getLayoutReq().mapping;
+    window.__mapSetupTo('euler');
+    window.__mapBack = window.__mapNotes();
+    r();
+  `,
+}]));
+
 export const FIXTURES = {
+  ...PRESET_FIXTURES,
+  /* SC transpose in a sheared layout: Janko's SC-down vector is (−2, 4) (vecFromEuler(−7, 4)). */
+  map_sc_janko: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '5', mapping: 'janko' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [RN(0, 0, 'a', '', 3, 57)], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'ArrowLeft', alt: true }],
+  },
+  /* The Accordion has no syntonic-comma step (vecFromEuler null): SC transpose refuses, the note
+     stays where it is. */
+  map_sc_accordion_blocked: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '5', mapping: 'accordion' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [RN(0, 0, 'a', '', 3, 57)], duration: '4', dots: 0 });
+    `,
+    setupKeys: [{ key: 'ArrowLeft', alt: true }],
+  },
+  /* An 8va sounds one band up, (W, 0) in the score's mapping: (6, 0) for Wicki-Hayden's A3.
+     It used to add Euler's 3 columns in every mapping (a tritone in Wicki-Hayden). */
+  map_ottava_band_width: {
+    setup: `
+      ${HELPERS}
+      window.__bridgeMock.sendHklHello();
+      m.setLayoutReq({ tuningMode: '5', mapping: 'wickiHayden' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [RN(0, 0, 'a', '', 3, 57)], duration: '4', dots: 0 });
+      const doc = m.getDoc(), meas = doc.querySelector('measure');
+      const oct = doc.createElementNS(meas.namespaceURI, 'octave');
+      for (const [k, v] of [['dis', '8'], ['dis.place', 'above'], ['staff', '1'], ['data-hkl-t0', '0'], ['data-hkl-t1', '100000']]) oct.setAttribute(k, v);
+      meas.appendChild(oct);
+      m.setCursor(0, 1);
+      window.__bridgeMock.reset();
+    `,
+    setupKeys: [' '],
+  },
   /* Setup Euler → Wicki-Hayden → Euler on a Ptolemaic chord: every note moves
      to its original column (2q, r) with pitch and spelling unchanged, and comes
      back exactly. */
@@ -153,8 +220,8 @@ export const FIXTURES = {
       window.__bridgeMock.sendHeldKeys([RN(3, 1, 'e', '', 4, 64)], 'janko');
     `,
   },
-  /* Setup offers the mappings a score can use (SCORE_MAPPINGS), not all nine. */
-  map_setup_score_mappings: {
+  /* Setup offers every mapping, in the dropdown order. */
+  map_setup_lists_all_mappings: {
     setup: `
       ${HELPERS}
       document.getElementById('btnSetup').click();
@@ -166,7 +233,32 @@ export const FIXTURES = {
 const expect = (got, want) => (JSON.stringify(got) === JSON.stringify(want)
   ? { ok: true } : { ok: false, detail: 'got ' + JSON.stringify(got) + ' want ' + JSON.stringify(want) });
 
+const PRESET_ASSERTIONS = Object.fromEntries(Object.entries(PRESET_CELLS).map(([m, cells]) => [`map_retune_${m}_roundtrip`, [
+  { name: `Euler → ${m}: each note on its ${m} cell, spelling unchanged`,
+    expr: `(${expect.toString()})(window.__mapPreset, ${JSON.stringify(cells.map(([q, r], i) => q + ',' + r + ':' + CHORD_NAMES[i]))})` },
+  { name: `score records mapping="${m}"`, expr: `(${expect.toString()})(window.__mapPresetReq, '${m}')` },
+  { name: 'and back to Euler: the original cells', expr: `(${expect.toString()})(window.__mapBack, ${JSON.stringify(CHORD_EULER)})` },
+]]));
+
 export const ASSERTIONS = {
+  ...PRESET_ASSERTIONS,
+  map_sc_janko: [
+    { name: 'A3 lowers a syntonic comma to Janko (−2, 4)', expr: `(${expect.toString()})(window.__mapNotes ? window.__mapNotes().map((x) => x.split(':')[0]) : null, ['-2,4'])` },
+  ],
+  map_sc_accordion_blocked: [
+    { name: 'the Accordion A3 stays at (0, 0)', expr: `(${expect.toString()})(window.__mapNotes ? window.__mapNotes().map((x) => x.split(':')[0]) : null, ['0,0'])` },
+  ],
+  map_ottava_band_width: [
+    { name: 'the 8va plays Wicki-Hayden A3 at (6, 0), one band up',
+      expr: `(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(true)));
+        await Promise.resolve();
+        const ps = window.__bridgeMock.captured().find((c) => c.type === 'play-score');
+        if (!ps) return { ok: false, detail: 'no play-score: ' + JSON.stringify(window.__bridgeMock.captured().map((c) => c.type)) };
+        const ev = ps.events.find((e) => e.notes.length);
+        return (${expect.toString()})(ev ? ev.notes[0].q + ',' + ev.notes[0].r + ' ' + ps.mapping : null, '6,0 wickiHayden');
+      })()` },
+  ],
   map_setup_retune_roundtrip: [
     { name: 'Euler → Wicki-Hayden: each note on (2q, r), spelling unchanged',
       expr: `(${expect.toString()})(window.__mapWh, ['0,0:a//3', '-2,1:c//4', '2,0:c/s/4', '0,1:e//4'])` },
@@ -265,8 +357,8 @@ export const ASSERTIONS = {
         return (${expect.toString()})(held.map((k) => k.q + ',' + k.r + ':' + k.pname + '/' + k.accid + '/' + k.oct), ['0,1:e//4']);
       })()` },
   ],
-  map_setup_score_mappings: [
-    { name: 'the Setup mapping list is Euler, Wicki-Hayden, Chromatic',
-      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic'])` },
+  map_setup_lists_all_mappings: [
+    { name: 'the Setup mapping list is all nine, in dropdown order',
+      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'janko', 'accordion', 'gerhard', 'randal', 'park', 'bass'])` },
   ],
 };

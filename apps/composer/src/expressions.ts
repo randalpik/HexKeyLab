@@ -401,8 +401,10 @@ export interface OctaveRecord {
   startTick: number;
   endTick: number;
   staff: number;
-  /** q-shift to apply to spanned notes: +3 per octave above, −3 per below. */
-  qShift: number;
+  /** Octaves the spanned notes sound away from their written cells: +1 / +2
+   *  above, −1 / −2 below. Playback moves them that many bands, (W, 0) each in
+   *  the score's mapping. */
+  octaves: number;
 }
 
 /** Collect every <octave> as a tick-span record for playback pitch shifting. */
@@ -420,7 +422,7 @@ export function collectOctaves(doc: Document): OctaveRecord[] {
       startTick: t0,
       endTick: t1,
       staff,
-      qShift: (place === 'below' ? -3 : 3) * octaves,
+      octaves: (place === 'below' ? -1 : 1) * octaves,
     });
   }
   return out;

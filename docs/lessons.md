@@ -5611,6 +5611,8 @@ Widening `Mapping` to the nine presets surfaced the assumptions the compiler can
 
 Derive such facts from `LAYOUT` (`⌊4/c⌋`, `pitchBandOf`, `c`, `s`, `invert`): the rule AGENTS.md sets for app code applies to tests as well. A gate that names a mapping, or uses `W/3` or 7, is the same bug in a place no typecheck reaches.
 
+One survived in app code since before the presets: Composer's ottava playback added Euler's 3 columns per octave in every mapping, which is a tritone in Wicki-Hayden and three semitones in chromatic. Only a fixture in a new layout's mapping category caught it (`map_ottava_band_width`, 2026-10-30). Playback now shifts by `bandWidth` per octave.
+
 ## An unpinned dependency is an unreviewed change (2026-10-30)
 
 Composer loaded Verovio from `verovio.org/javascript/latest`. The morning 6.4.0 shipped, 62 of 63 visual baselines failed with nothing changed here.

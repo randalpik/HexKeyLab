@@ -10454,3 +10454,18 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - **Transcription round-trip:** passes, and fails on the committed emitter's colors.
 - **Layout shots:** 48/54 pixel-identical to before. Only the six Randal / Park / Bass shots changed.
 - **Composer affected tier:** 726/726; typecheck, boundaries, and the HKL and Composer builds pass.
+
+## Layout presets in Composer (2026-10-30, Max)
+
+**Picked** (Phase 3 of docs/local/layout-presets.md): a Composer score can use any of the nine mappings. Phase 2's gate is retired: `SCORE_MAPPINGS` / `scoreMappingFor` are gone.
+- **Setup** lists all nine, in dropdown order.
+- **A blank score** adopts whatever mapping HKL is in.
+- **HKL's transcription** writes the recording's own mapping, at the cells played. Notes are colored from the snapshot under that layout, inverted-layout colors included.
+- **The rest needed no new code:** Composer's notation paths already go through the shared primitives. That covers spelling, `fromEuler` for the key-tonic ref, `vecFromEuler` for SC shifts (the Accordion refuses, with a status message) and harmonics, and `convertCell` for retune, clipboard and bridge.
+
+**Found:** Composer's ottava playback shifted an 8va/8vb by Euler's 3 columns per octave in every mapping, which plays a tritone in Wicki-Hayden. `collectOctaves` now returns the octave count, and playback moves one band (`bandWidth`) per octave. This was a pre-existing bug in Wicki-Hayden and chromatic scores.
+
+**Gates:**
+- **New `mapping` fixtures**, all failing on the unfixed code: a Setup round trip for each sheared / inverted preset, through Setup's form; the Setup list of all nine; the ottava band width. The two SC fixtures (`map_sc_janko`, `map_sc_accordion_blocked`) pin Phase 2's behavior and pass either way.
+- **Transcription round-trip:** Janko and Randal recordings come out as Janko and Randal scores with the same spelling, at the cells played. Those checks fail on the unfixed code.
+- **Full Composer suite:** 737/737. `pnpm typecheck`, `check:boundaries`, and the HKL and Composer builds pass.

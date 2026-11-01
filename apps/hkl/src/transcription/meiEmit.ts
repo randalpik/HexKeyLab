@@ -25,10 +25,8 @@ import {
   type NoteSpec,
   type Duration,
   type Dots,
-  scoreMappingFor,
 } from '@hkl/notation/mei-build.js';
 import { noteName, keyOctave, parseNote, accToVal } from '@hkl/shared/notes.js';
-import { convertCell } from '@hkl/shared/mapping.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
 
@@ -39,30 +37,26 @@ export interface EmitMeiOpts {
 
 /** Spell a lattice cell into a NoteSpec, mirroring Composer's buildNoteElement
  *  input (count-form accidental of any magnitude — Composer collapses to the
- *  right glyph stack). Spelled as recorded; the coordinates are written in the
- *  score's mapping (scoreMappingFor; the same spelled note) and colored there,
- *  under the recording's own tuning, as Composer would color that cell. (An
- *  inverted recording's anchor is its own frame's band; it only reads in the
- *  anchor-reading modes, Syntonic / Polysyntonic and unbanded.) */
+ *  right glyph stack). The score is in the recording's mapping, so the cell is
+ *  written as played, spelled and colored under the recording's own layout
+ *  (the snapshot, not HKL's live tuning), as Composer would color it. */
 function noteSpecFromCoord(q: number, r: number, snapshot: LayoutSnapshot): NoteSpec {
   const { tuning: mode, mapping, anchor, banded } = snapshot;
   const parsed = parseNote(noteName(q, r, mapping, anchor, banded));
   const alter = accToVal(parsed.acc);
   const accid = alter === 0 ? '' : (alter > 0 ? 's' : 'f').repeat(Math.abs(alter));
-  const target = scoreMappingFor(mapping, 'euler');
-  const [sq, sr] = convertCell(q, r, mapping, target);
   return {
-    q: sq,
-    r: sr,
+    q,
+    r,
     pname: parsed.letter.toLowerCase() as NoteSpec['pname'],
     accid,
     oct: keyOctave(q, r, mapping, anchor, banded),
     midi: coordToMidi(q, r, mapping),
-    colorHex: inkColorHex(sq, sr, mode, target, anchor, banded),
+    colorHex: inkColorHex(q, r, mode, mapping, anchor, banded),
     /* Bake the bright "light source" variant too, so the transcribed .hkc
        renders correctly in dark theme (Composer's dark mode / HKL's Composer
        view) instead of falling back to a lossy hue-merging brightness filter. */
-    lightColorHex: lightSourceHex(sq, sr, mode, target, anchor, banded),
+    lightColorHex: lightSourceHex(q, r, mode, mapping, anchor, banded),
   };
 }
 
@@ -144,7 +138,7 @@ export function emitMei(
     meterCount: num,
     meterUnit: 4,
     tempoBpm: bpm,
-    layoutReq: { tuningMode: snapshot.tuning, mapping: scoreMappingFor(snapshot.mapping, 'euler'), banded: snapshot.banded },
+    layoutReq: { tuningMode: snapshot.tuning, mapping: snapshot.mapping, banded: snapshot.banded },
   });
   const doc = new DOMParser().parseFromString(skeleton, 'application/xml');
   const section = doc.querySelector('section');

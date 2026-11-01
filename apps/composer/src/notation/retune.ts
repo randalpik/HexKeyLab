@@ -131,8 +131,9 @@ interface Candidate { q: number; r: number; cents: number; taxi: number }
 
 function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout, anchor: number): Candidate {
   let best: Candidate = { q: origQ, r: origR, cents: Infinity, taxi: Infinity };
-  /* a Wicki-Hayden column is a whole tone, a chromatic one a semitone: the q
-     radius scales by 4/c (LAYOUT) to cover the same span */
+  /* a column is c semitones (LAYOUT; 4 Euler, 2 Wicki-Hayden, 1 chromatic,
+     3 Accordion): the q radius scales by 4/c to cover the same span, an
+     integer for every c since SEARCH_RADIUS is a multiple of 3 */
   const qRadius = (4 / LAYOUT[to.mapping].c) * SEARCH_RADIUS;
   for (let dq = -qRadius; dq <= qRadius; dq++) {
     for (let dr = -SEARCH_RADIUS; dr <= SEARCH_RADIUS; dr++) {

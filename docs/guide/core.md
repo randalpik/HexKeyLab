@@ -101,7 +101,7 @@ Three mappings put fourths up-right instead of fifths. The up-right fourth is pu
 
 On the Lumatone, Wicki-Hayden covers about 4½ octaves. Chromatic spans MIDI notes 12–102: each board covers about five octaves top to bottom, a fifth lower than the board to its left.
 
-A Composer score uses Euler, Wicki-Hayden or Chromatic for now. While HKL plays in another mapping, Composer converts what you play into the score's.
+A Composer score can use any mapping (its Setup). While HKL plays in another mapping than the score's, Composer converts what you play into the score's.
 
 Switching mapping keeps what you're holding. Mouse and MIDI-keyboard notes keep their pitch and move to that note's new key; Lumatone and computer-keyboard notes stay on their key and glide to its new pitch.
 

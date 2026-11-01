@@ -609,10 +609,11 @@ left neighbor.
 
 #### Sheared and inverted layouts
 
-The matrix defines six more layouts, selectable in HKL alongside the three (`MAPPINGS` lists all
-nine in dropdown order). A Composer score uses the first three (`SCORE_MAPPINGS`,
-`apps/composer/src/setupDialog.ts`) until Composer's notation paths are generalized; HKL
-coordinates in the others reach it converted (`convertCell`), like any mapping mismatch.
+The matrix defines six more layouts, selectable in HKL and in a Composer score's Setup alongside
+the three (`MAPPINGS` lists all nine in dropdown order). Composer's notation paths go through the
+shared primitives (spelling, `fromEuler` for the key-tonic ref, `vecFromEuler` for SC shifts and
+harmonics, `bandWidth` for an ottava's band per octave), so a score in any of the nine is
+first-class; HKL coordinates in another mapping reach it converted (`convertCell`).
 
 | layout | (c, s, invert) | q / r / (−1,1) | band W | pure line |
 |---|---|---|---|---|

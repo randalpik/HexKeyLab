@@ -27,8 +27,8 @@ const WAIT_MS = Number(process.env.WAIT_MS ?? 2500);
    across a bar line (→ a tie), and a trailing rest. bpmHint pins the tempo so
    the DP result is stable run-to-run. */
 /* mapping: the recording's layout; at: Euler (q, r) → that layout's cell (Janko
-   (2q + 3r, r) is the same note). A layout a score can't use (SCORE_MAPPINGS)
-   must come out in Euler, note for note. */
+   (2q + 3r, r), Randal (q + 3r, −r): the same note). A recording comes out in its
+   own mapping, at the cells it was played on. */
 const BUILD_AND_TRANSCRIBE = (mapping = 'euler', at = '(q, r) => [q, r]') => `
 (() => {
   const snapshot = { tuning:'5', septimalEnabled:false, equalEnabled:false,
@@ -131,15 +131,24 @@ async function main() {
       check('placeholder invariant', r.ph && r.ph.ok, r.ph && r.ph.detail);
       check('origin (0,0) spells A3', r.originOk !== false, 'origin note mis-spelled');
       check('serialize round-trip stable', r.roundtripStable === true, 'serialize drift');
-      /* Janko (sheared) and Randal (inverted) recordings: an Euler layoutReq, and the
-         Euler notes at the Euler cells, colored as Euler colors them */
-      const notesOf = (x) => (x.match(/<note\b[^>]*>/g) ?? []).map((t) => ['data-q', 'data-r', 'pname', 'accid', 'oct', 'color', 'data-light-color']
-        .map((a) => (t.match(new RegExp(' ' + a + '="([^"]*)"')) ?? [])[1] ?? '').join('/')).sort().join(' ');
-      for (const [name, x] of [['Janko', hkcJanko], ['Randal', hkcRandal]]) {
+      /* Janko (sheared) and Randal (inverted) recordings: a score in the recording's own
+         mapping, the same spelled notes as the Euler recording, at the cells played */
+      const fieldsOf = (x, fields) => (x.match(/<note\b[^>]*>/g) ?? []).map((t) => fields
+        .map((a) => (t.match(new RegExp(' ' + a + '="([^"]*)"')) ?? [])[1] ?? ''));
+      const spelled = (x) => fieldsOf(x, ['pname', 'accid', 'oct']).map((f) => f.join('/')).sort().join(' ');
+      const cellsOf = (x) => fieldsOf(x, ['data-q', 'data-r']).map((f) => f.join(',')).sort().join(' ');
+      const eulerCells = fieldsOf(hkc, ['data-q', 'data-r']).map(([q, r]) => [Number(q), Number(r)]);
+      for (const [name, x, mapping, at] of [
+        ['Janko', hkcJanko, 'janko', (q, r) => [2 * q + 3 * r, r]],
+        ['Randal', hkcRandal, 'randal', (q, r) => [q + 3 * r, -r]],
+      ]) {
         const lr = typeof x === 'string' ? (x.match(/<hkl:layoutReq\b[^>]*>/) ?? [''])[0] : '';
-        check(name + ' recording → Euler score (no mapping attribute)', lr !== '' && !lr.includes('mapping='), lr || JSON.stringify(x));
-        check(name + ' recording → the Euler notes and colors, note for note', typeof x === 'string' && notesOf(x) === notesOf(hkc),
-          typeof x === 'string' ? notesOf(x) + ' vs ' + notesOf(hkc) : JSON.stringify(x));
+        check(name + ' recording → a ' + name + ' score', lr.includes('mapping="' + mapping + '"'), lr || JSON.stringify(x));
+        check(name + ' recording → the same spelled notes', typeof x === 'string' && spelled(x) === spelled(hkc),
+          typeof x === 'string' ? spelled(x) + ' vs ' + spelled(hkc) : JSON.stringify(x));
+        const want = eulerCells.map(([q, r]) => at(q, r).join(',')).sort().join(' ');
+        check(name + ' recording → at the cells played', typeof x === 'string' && cellsOf(x) === want,
+          typeof x === 'string' ? cellsOf(x) + ' vs ' + want : JSON.stringify(x));
       }
       if (r.tieCount === 0) {
         console.warn('  ! warning: no ties in output — tie path not exercised this run');

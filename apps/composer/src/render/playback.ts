@@ -24,7 +24,7 @@ import { collectSlurs } from '../slurs.js';
 import { articulationsOn, type ArticKind } from '../articulations.js';
 import { realTicks, writtenTicks } from '../model/ticks.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import { vecFromEuler, type Mapping } from '@hkl/shared/mapping.js';
+import { bandWidth, vecFromEuler, type Mapping } from '@hkl/shared/mapping.js';
 
 /* Articulation playback shaping constants. Tuned by ear; all configurable
  * here so a future Setup-dialog control can expose them. */
@@ -556,12 +556,15 @@ function buildPlaybackCore(model: ComposerModel, startMs: number): { events: Pla
   const articCueAt = buildArticCueLookup(mei);
   const noteById = buildNoteIdIndex(mei);
   /* 8va/8vb spans: a note on the bracketed staff within the span sounds an
-     octave shifted (q ± 3 per octave). Returns the q-shift for (staff, tick). */
+     octave shifted, one band (W, 0) per octave in the score's mapping (3
+     columns Euler, 6 Wicki-Hayden, 12 chromatic). Returns the q-shift for
+     (staff, tick). */
   const octaves = collectOctaves(mei);
+  const W = bandWidth(model.getLayoutReq().mapping);
   const octaveQShift = (staff: number, tick: number): number => {
     let shift = 0;
     for (const o of octaves) {
-      if (o.staff === staff && tick >= o.startTick - 1e-6 && tick < o.endTick - 1e-6) shift += o.qShift;
+      if (o.staff === staff && tick >= o.startTick - 1e-6 && tick < o.endTick - 1e-6) shift += o.octaves * W;
     }
     return shift;
   };

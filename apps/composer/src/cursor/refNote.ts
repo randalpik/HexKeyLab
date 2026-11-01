@@ -48,12 +48,12 @@ const tonicCache: Map<string, RefCoord> = new Map(); /* key: tonic + '|' + mappi
  *  (54 and 66 are both 6 semitones out) and the half-open window resolves it
  *  DOWNWARD, to F#3.
  *
- *  Every one of the 18 reachable tonic coords passes HKL's
- *  validateRefNoteCandidate in every tuning mode under both mappings, so a key-derived ref is
- *  never silently rejected on arrival.
+ *  Every tonic coord lands in MIDI 54–65, inside HKL's piano range
+ *  (validateRefNoteCandidate), so a key-derived ref is never rejected on arrival.
  *
- *  Placed in Euler coordinates, then expressed in the score's `mapping` (under
- *  Wicki-Hayden: the spine's original column, with its copy to the right). */
+ *  Placed in Euler coordinates, then expressed in the score's `mapping` by
+ *  fromEuler (the cell with that Euler-equivalent; under Wicki-Hayden the
+ *  spine's original column, with its copy to the right). */
 export function findTonicCoord(tonic: string, mapping: Mapping): RefCoord {
   const key = tonic + '|' + mapping;
   const cached = tonicCache.get(key);

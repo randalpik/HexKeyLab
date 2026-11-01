@@ -980,11 +980,13 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   selection so the score-ref drives the anchor. The gate itself is a
   `window.confirm` at note entry (`hklLayoutMismatch`, `input.ts`) offering to
   apply the score's layout to HKL.
-- **Note-name mapping**: `<hkl:layoutReq mapping="wickiHayden|chromatic">` (absent =
-  Euler, so Euler scores serialize exactly as before) is the frame of every
+- **Note-name mapping**: `<hkl:layoutReq mapping="…">`, any of the nine (absent =
+  Euler, so Euler scores serialize exactly as before), is the frame of every
   `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
-  SC shifts and the performance matcher all read it; MusicXML import makes
-  Euler scores. The clipboard records its source mapping and a paste into a
+  SC shifts (none in the Accordion: refused with a status message), an
+  ottava's playback shift (one band, `bandWidth`, per octave) and the
+  performance matcher all read it; MusicXML import makes Euler scores, and an
+  HKL transcription writes the recording's own mapping. The clipboard records its source mapping and a paste into a
   score of another mapping converts coordinates (`selection/clipboard.ts`).
 - **Banding**: `<hkl:layoutReq banded="false">` (absent = banded, so banded
   scores serialize exactly as before) selects the unbanded layout
