@@ -244,7 +244,7 @@ const PAIRS: PairDecl[] = [
   { c1: '4,A', c2: '5,d', entries: [
     { s: -1,        name: 'greater augmented 4th' },  /* auto → 'lesser diminished 5th' */
     { s: -2,        name: 'lesser augmented 4th'  },  /* auto → 'greater diminished 5th' */
-    { s:  0, z: +1, name: 'septimal augmented 4th' }, /* 81:56 ≈ 638¢; auto → 'septimal diminished 5th' (112:81 ≈ 562¢). Most accessible septimal A4 on the Lumatone (dist=4 vs 10:7 at dist=7). */
+    { s: -1, z: +1, name: 'septimal augmented 4th' }, /* 10:7 ≈ 617¢; auto → 'septimal diminished 5th' (7:5 ≈ 583¢) */
   ]},
   { c1: '1,A', c2: '8,d',
     pythag1: 'apotome',

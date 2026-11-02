@@ -153,8 +153,8 @@ keeps seams clean).
 ### Short intervals mode
 
 `shortenInterval(name)` post-processor, three phases:
-1. Full-phrase specials (harmonic→7m, lesser/greater septimal tritones).
-2. Word-by-word abbreviations (P/m/M/d/A, ordinals→cardinals, comma terms SC/7C/PC/7D/A1/Ds/Sc/D/A/C).
+1. Multi-word phrases (syntonic/septimal/Pythagorean comma → SC/7C/PC, septimal diesis → 7D, chromatic semitone → A1, Pythagorean → P).
+2. Word-by-word abbreviations (P/m/M/d/A, harmonic→7m, septimal→7, ordinals→cardinals, Ds/Sc/D/A/C).
 3. Structural cleanup (strip spaces, re-insert around ±).
 
 Uses HTML entities for lesser/greater glyphs.
@@ -180,20 +180,18 @@ Every 5/7-limit interval is named `<base interval> ± commas`, where the **base 
 |---|---|
 | `lesser`/`greater` | The two 5-limit (z=0) variants of a quality, one SC apart, both 5-limit-common. `greater` = higher cents. e.g. lesser/greater augmented 4th. |
 | `acute`/`grave` | One-SC variant on the *opposite* side of a 5-limit-common interval (exotic). e.g. acute major 2nd (729:640 vs common 10:9), grave minor 7th (1280:729). |
-| `septimal` | One prime-7 factor vs the base; most sit one SC from the Pythagorean ref (9:7, 7:6). A few use the keyboard-accessible (s,z) tuple in Septimal mode (see below). |
+| `septimal` | One prime-7 factor vs the base: one septimal comma from the Pythagorean ref in the major/minor/perfect classes (9:7, 7:6), from the common 5-limit form in the augmented/diminished classes and the minor 2nd (15:14, 10:7, 21:20). |
 | `subminor`/`supermajor` | The (2,m)/(7,M) extension capturing 28:27 / 27:14. Explicit mirror required (word-boundary regex won't transform it). |
 | `wolf` | The narrowing 5-limit P-class variants: wolf 4th (27:20), wolf 5th (40:27). Widening-direction P-class has no override — surfaces as "perfect X + syntonic comma". |
 
-**Septimal ratio assignment** (HKL-specific): most follow xen-wiki (`septimal minor 3rd`=7:6, `septimal major 3rd`=9:7, `harmonic 7th`=7:4). Four exceptions bind to the most-accessible Lumatone cell pair in Septimal mode rather than the canonical ratio (→ rationale in `decisions.md`):
+**Septimal ratio assignment** (HKL-specific): most follow xen-wiki (`septimal minor 3rd`=7:6, `septimal major 3rd`=9:7, `harmonic 7th`=7:4, `septimal augmented 4th`=10:7, `septimal diminished 5th`=7:5). One pair departs from the canonical ratio, keeping the augmented/diminished classes' (s=∓1, z=±1) position (→ rationale in `decisions.md`):
 
 | Name | HKL ratio | Canonical (xen-wiki) |
 |---|---|---|
 | septimal augmented 2nd | 135:112 | 25:21 |
-| septimal augmented 4th | 81:56 | 10:7 |
-| septimal diminished 5th | 112:81 | 7:5 |
 | septimal diminished 7th | 224:135 | (mirror of 25:21) |
 
-Consequence: 10:7 reads as "greater augmented 4th + septimal comma", 7:5 as "lesser diminished 5th − septimal comma".
+The Pythagorean-plus-septimal-comma tritones decompose: 81:56 reads as "septimal augmented 4th + syntonic comma", 112:81 as "septimal diminished 5th − syntonic comma".
 
 **Notable spellings**: 9:8 = "Pythagorean major 2nd"; 10:9 = "major 2nd"; 16:9 = "Pythagorean minor 7th"; 9:5 = "minor 7th"; 4096:2187 = "Pythagorean diminished octave"; 531441:524288 = "Pythagorean comma" (via `pythag2` on the `(7,A)↔(2,d)` pair). Pure octave multiples: "perfect octave" (2:1), "perfect 15th" (4:1), "perfect 22nd" (8:1).
 

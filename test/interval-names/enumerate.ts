@@ -1,6 +1,6 @@
 // Enumerate every key pair on the 280-key Lumatone layout in a given tuning
 // mode, surface interval names, ratios, and (ord, qual, s, z, h) decomposition,
-// and group by minimum taxicab distance. Designed to identify naming gaps in
+// and group by minimum distance in key steps. Designed to identify naming gaps in
 // `src/tuning/intervals.ts` — i.e. (ord, qual, s, z) tuples that currently
 // produce comma-decomposition names but are reachable close to the keyboard
 // reference and deserve explicit overrides.
@@ -11,7 +11,7 @@
 //   --mode <E|5|P|D|7|V>    tuning mode (default '5')
 //   --q-min <n>             keep only cells with q ≥ n
 //   --q-max <n>             keep only cells with q ≤ n
-//   --max-dist <n>          keep only pairs with taxicab distance < n
+//   --max-dist <n>          keep only pairs fewer than n key steps apart
 //   --commas-only           filter to entries whose name contains comma/schisma/diesis or ± signs
 //   --by-class              group output by (ord, qual) instead of by min distance
 //   --include <regex>       additional substring/regex filter on name
@@ -111,7 +111,8 @@ for (let i = 0; i < N; i++) {
   for (let j = i + 1; j < N; j++) {
     const [q2, r2] = baseKeys[j];
     if (q2 < args.qMin || q2 > args.qMax) continue;
-    const dist = Math.abs(q2 - q1) + Math.abs(r2 - r1);
+    const dq = q2 - q1, dr = r2 - r1;
+    const dist = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2; /* key steps on the hex grid */
     if (dist >= args.maxDist) continue;
     const name = intervalNameFromCoords(q1, r1, q2, r2, state);
     if (args.commasOnly && !commaPattern(name)) continue;

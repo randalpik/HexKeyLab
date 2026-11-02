@@ -5618,3 +5618,9 @@ Composer loaded Verovio from `verovio.org/javascript/latest`. The morning 6.4.0 
 - **Foreseen in principle:** decisions.md 2026-09-02 had already called a model of Verovio's stacking "exact today and one release from wrong".
 - **The remedy is the pin:** `VEROVIO_URL` names an exact release (decisions.md "Pin Verovio").
 - **Triage when visuals drift uniformly with no local change:** check every runtime-fetched dependency's version first; Composer logs `Verovio <version>` at startup. Then bisect by pinning: the old version should pass everything, and the new one plus a fix should too.
+
+## Key distance on the lattice is not |Δq| + |Δr| (2026-11-01)
+
+The six neighbors of a cell are (±1, 0), (0, ±1) and (±1, ∓1), so the key steps between two cells are `(|Δq| + |Δr| + |Δq + Δr|) / 2` (`picker.ts`). |Δq| + |Δr| counts each step along the (−1, +1) diagonal twice: a minor third is one key, not two.
+- **What it cost:** the interval-names enumerate tool used |Δq| + |Δr| in 2026-05. Its "81:56 at 4, 10:7 at 7" bound the septimal tritone names to 81:56 / 112:81 for five months. In key steps the figures were 2 and 5, and the diminished 5ths ran the other way (decisions.md, "Septimal tritones are 10:7 and 7:5").
+- **Before a reach argument decides a name:** measure in key steps, fold octaves and complements, and compare both members of each complement pair. A single entry names both, so one side's distance is half the evidence.

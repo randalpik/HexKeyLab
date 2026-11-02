@@ -10551,3 +10551,23 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 **Gates:** the layout-presets oracle (631,847 checks), the unbanded (464,342), syntonic (1,855,883) and Wicki-Hayden (54,488) oracles, the alignment gate (50/50) and octave-consistency all pass. The color gate was re-seeded and the only change against HEAD is the eight Bass grids removed. `pnpm typecheck` and `check:boundaries` pass.
 
 **Where:** `@hkl/shared/mapping.ts`; the docs; `test/layout-presets/oracle.mjs`, `test/unbanded/oracle.mjs`, `test/composer-test/fixtures/mapping.mjs`, `test/hkl-midi/mapping-switch.mjs` and `test/hkl-inspect/layout-shots.mjs`.
+
+## Septimal tritones are 10:7 and 7:5 (2026-11-01, Max)
+
+**Picked (Max):** `septimal augmented 4th` / `septimal diminished 5th` name 10:7 / 7:5, the xen-wiki ratios: the `(4,A)` entry moves from `(s 0, z +1)` (81:56) back to `(s −1, z +1)`. This supersedes the tritone half of part (4) of "Interval naming: nearest-match base + named adjective hierarchy + Lumatone-accessibility-driven septimal ratios"; the A2/d7 pair keeps 135:112 / 224:135.
+
+**Why:**
+- **The reach figure behind (4) measured the wrong distance.** The enumerate tool (`test/interval-names/enumerate.ts`, then under `tools/`) counted |Δq| + |Δr|, not key steps. The Septimal layout was already today's uniform qm=2 rule: rerun on today's code, the tool reproduces the figure exactly (81:56 at 4, 10:7 at 7). In key steps they are 2 and 5.
+- **The comparison was one-sided.** Each family has one member on each shape: (−2, 2) gives 7:5 or 81:56 and (5, −2) gives 10:7 or 112:81, depending on which end is the septimal key. Comparing the diminished 5ths would have reversed the verdict, and one entry names both.
+- **Reach is even in every mapping.** From every septimal key in Septimal mode (banded), the nearest key forming {10:7, 7:5} and the nearest forming {81:56, 112:81} (octave- and complement-reduced) are equally far: 2 keys in Euler, Gerhard, the Accordion, Randal and Park; 3–4 in Wicki-Hayden and Janko; 1–3 in Chromatic.
+- **Function (Max):** 7:5 is the 3rd–7th of 4:5:6:7 and the root–5th of the half-diminished 5:6:7:9, and 10:7 is its inversion in each. 81:56 / 112:81 have no harmonic function and can decompose.
+- **Pattern:** every other augmented/diminished class puts its septimal entry at (s = ∓1, z = ±1), the common 5-limit form ± a septimal comma (15:14, 135:112, 15:7, …). The tritone was the lone (0, ±1).
+
+**Consequences:**
+- 81:56 reads "septimal augmented 4th + syntonic comma" and 112:81 "septimal diminished 5th − syntonic comma". Each is one comma from both the septimal entry and the Pythagorean default, and the tie goes to the override.
+- The A2 entry's comment ("dist=2 vs 25:21 unreachable") came from the same metric and was not re-measured; its position matches the pattern regardless.
+- `enumerate.ts` now measures key steps, `(|Δq| + |Δr| + |Δq + Δr|) / 2`, as the picker does.
+
+**Gates:** `enumerate.ts --mode 7 --by-class` on the A4/d5 classes, before and after: exactly four of 26 names change, 10:7, 7:5, 81:56 and 112:81, as above. `smoke.ts` output is unchanged. `pnpm typecheck`, `check:boundaries` and the HKL build pass.
+
+**Where:** `apps/hkl/src/tuning/intervals.ts` (`PAIRS`, `(4,A)`); `test/interval-names/enumerate.ts`; docs/architecture/hkl.md (interval naming, short intervals).
