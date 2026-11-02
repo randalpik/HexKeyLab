@@ -10507,3 +10507,22 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - **Full suite:** `pnpm test:composer` 737/737; it recorded the map and left no profile. `affected` then selects 0 fixtures beyond the 90-fixture fast tier.
 
 **Where:** `test/composer-test/{run.mjs, lib/chromium.mjs, lib/affected.mjs, select-fast.mjs, README.md}`, and the harnesses in `test/{composer-inspect, corpus, overlay-inspect, orchestrator-smoke, react-consumer, hkl-inspect}`.
+
+## The Accordion is Park sheared; Gerhard leads the sheared presets (2026-11-01, Max)
+
+**Picked (Max):** the Accordion preset becomes inverted (W 6, k 1), `(2, −2, −, 1)`, which is Park sheared one key per row (Accordion = Park(q − r, r)). It replaces the 4-wide C-system `(3, −6, +, 0)`. The dropdown order becomes Euler, Wicki-Hayden, Chromatic, Gerhard, Janko, Accordion, Randal, Park, Bass: the fifths layouts, then their sheared forms (Gerhard Euler's cells, Janko Wicki-Hayden's, the Accordion Park's), then the fourths layouts.
+
+**Why:**
+- **Ptolemaic didn't work on a 4-wide band.** The all-adjacent major scale crossed bands, unlike Janko's. Measured on the ref A3: the old Accordion's only all-adjacent path crossed bands 0–3 and gave 1, 10/9, 5/4, 4/3, 40/27, 5/3, 256/135 (spelled A♭), 160/81, with wolf fifths on I–V and IV–I. The new one's only path stays in band 0: 1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8, 2/1, the just major scale with its one wolf on ii–vi.
+- **Over the 37 tonics within 3 keys of the ref**, the major scale fits in one band 17 times and the minor 23 times, against 0 and 0 before (Janko: 19 and 11). Three or more of the scale's four fifths are pure on 17 / 23 / 17 / 29 tonics in 5 / D / 7 / Y, against 0 / 20 / 0 / 0.
+- **Same keyboard.** The step maps are rotations of each other: (1,0), (0,1), (−1,1) carry M2 / m3 / m2 against the old m3 / m2 / −M2. Posed Right, the new Accordion is the old one posed Vertical, key for key; Vertical is the old Left; Left is the old Right turned 180°. Lumatone spans (vertical / left / right) go from 97 / 55 / 74 to 55 / 74 / 97.
+
+**Consequences:**
+- **No preset has a 4-wide band**; the builder still will. The 2026-10-29 rejection of "Park/Bass shear forms (s = −2)" stands for Park; this is the same form taken as the Accordion.
+- **Every preset has every Euler vector.** The Accordion's M3, m3 and SC transposes and Composer's SC shift now work. Unbanded, it has a spelled octave, (3, 2). `vecFromEuler`'s null path remains for a c = 3 builder layout.
+- **Saved coordinates.** A `.hkc` or `.hkr` saved in the Accordion mapping before today would be read in the new frame. None was found in ~/Documents, ~/Downloads or ~/Desktop; the preset dated from 2026-10-30.
+- Composer's `map_sc_accordion_blocked` becomes `map_sc_accordion`, which asserts the step reaches (6, −4). The refused-SC path has no preset to test it until the builder.
+
+**Gates:** the three changed Composer fixtures failed against the new matrix with their old expectations and pass with the new ones; the mapping group passes 19/19. The layout-presets oracle passes 719,493 checks, the unbanded oracle 583,884 (it confirms (3, 2) as the spelled octave), the syntonic oracle 2,346,804 and the Wicki-Hayden oracle 54,488. The picker gates (footprint-extent, octave-consistency) and the alignment gate (52/52) pass. The color gate was re-seeded: only the eight Accordion grids changed. `pnpm typecheck`, `check:boundaries`, and the HKL and Composer builds pass.
+
+**Where:** `@hkl/shared/mapping.ts` (`LAYOUT`, `MAPPINGS`); the docs; `test/layout-presets/oracle.mjs` (SPEC, I, J), `test/unbanded/oracle.mjs`, `test/composer-test/fixtures/mapping.mjs`.

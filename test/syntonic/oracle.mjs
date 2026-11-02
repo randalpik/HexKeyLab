@@ -84,8 +84,8 @@ for (const mapping of MAPPINGS) {
       for (let b = anchor - 6; b <= anchor + 6; b++) {
         const q0 = b * W - Math.floor(4 / LAYOUT[mapping].c);  /* first column of band b (A3 sits in column ⌊4/c⌋ of band 0) */
         const step = sub(coordExps(q0 + W, 0, mode, mapping, anchor, true), coordExps(q0, 0, mode, mapping, anchor, true));
-        /* the offset each cell carries: its pitch band (an odd chromatic column, e.g. the
-           Accordion's first, carries the band five columns left) */
+        /* the offset each cell carries: its pitch band (an odd chromatic column carries the
+           band five columns left) */
         const kStep = bandOffset(mode, pitchBandOf(q0 + W, 0, mapping) - anchor) - bandOffset(mode, pitchBandOf(q0, 0, mapping) - anchor);
         const pStep = sub(coordExps(q0 + W, 0, 'P', mapping, anchor, true), coordExps(q0, 0, 'P', mapping, anchor, true));
         check(`C ${mode} ${mapping} a=${anchor} band ${b}→${b + 1}`, ratio(step), ratio(addK(pStep, kStep)));

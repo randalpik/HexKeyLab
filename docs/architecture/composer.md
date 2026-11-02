@@ -983,7 +983,8 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
 - **Note-name mapping**: `<hkl:layoutReq mapping="…">`, any of the nine (absent =
   Euler, so Euler scores serialize exactly as before), is the frame of every
   `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
-  SC shifts (none in the Accordion: refused with a status message), an
+  SC shifts (refused with a status message where a layout has no SC step; every
+  preset has one), an
   ottava's playback shift (one band, `bandWidth`, per octave) and the
   performance matcher all read it; MusicXML import makes Euler scores, and an
   HKL transcription writes the recording's own mapping. The clipboard records its source mapping and a paste into a

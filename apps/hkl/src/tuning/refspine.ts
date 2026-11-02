@@ -25,8 +25,8 @@
 //
 // One formula covers every layout: the spine is the ref band's qm0 chromatic
 // column (chromatic position 4), which sits in layout column ⌊4/c⌋ of the band
-// (c the band step: W/3 in Euler, Wicki-Hayden and chromatic; column 1 in the
-// Accordion's 4-wide bands). Every row samples it, since c divides the shear
+// (c the band step: W/3 in Euler, Wicki-Hayden and chromatic; column 1 in a
+// 4-wide band). Every row samples it, since c divides the shear
 // (docs/architecture.md → Sheared and inverted layouts).
 
 import { LAYOUT, posInBandOf, type Mapping } from '@hkl/shared/mapping.js';

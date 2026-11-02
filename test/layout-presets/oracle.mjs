@@ -19,7 +19,7 @@
 //   I  octave vectors: the band step and the unbanded spelled octave keep the name and raise the
 //      spelled octave by one; which layouts have an unbanded one
 //   J  Euler vectors: vecFromEuler moves every cell's Euler-equivalent by exactly that vector, or
-//      is null where the layout has none (the Accordion, an M3 count not a multiple of 3)
+//      exists in every preset (null only for a 4-wide band, c = 3: an M3 count not a multiple of 3)
 //   K  the reference spine: every row holds a cell on its band's qm0 column (chromatic Q ≡ 0
 //      mod 12)
 //   L  color: one function of the pitch in plain layouts; an inverted layout mirrors the
@@ -53,10 +53,10 @@ const rowStep = (L) => LAYOUT[L].s + (LAYOUT[L].invert ? 5 : 7);
 const pureLine = (L) => [-LAYOUT[L].s / LAYOUT[L].c, 1];
 
 /* The table itself */
-check('MAPPINGS (dropdown order)', MAPPINGS.join(), 'euler,wickiHayden,chromatic,janko,accordion,gerhard,randal,park,bass');
+check('MAPPINGS (dropdown order)', MAPPINGS.join(), 'euler,wickiHayden,chromatic,gerhard,janko,accordion,randal,park,bass');
 const SPEC = {
   euler: [4, 0, false], wickiHayden: [2, 0, false], chromatic: [1, 0, false], janko: [2, -6, false],
-  accordion: [3, -6, false], gerhard: [4, -4, false], randal: [4, 0, true], park: [2, 0, true], bass: [1, 0, true],
+  accordion: [2, -2, true], gerhard: [4, -4, false], randal: [4, 0, true], park: [2, 0, true], bass: [1, 0, true],
 };
 for (const L of MAPPINGS) {
   check(`table ${L}`, [LAYOUT[L].c, LAYOUT[L].s, LAYOUT[L].invert].join(), SPEC[L].join());
@@ -171,7 +171,7 @@ for (const from of MAPPINGS) for (const to of MAPPINGS) for (let q = -9; q <= 9;
 }
 
 /* I — octave vectors */
-const HAS_UNBANDED_OCTAVE = ['wickiHayden', 'chromatic', 'janko', 'park', 'bass'];
+const HAS_UNBANDED_OCTAVE = ['wickiHayden', 'chromatic', 'janko', 'accordion', 'park', 'bass'];
 for (const L of MAPPINGS) {
   check(`I ${L} has an unbanded spelled octave`, octaveVector(L, false) !== null, HAS_UNBANDED_OCTAVE.includes(L));
   for (const banded of [true, false]) {
@@ -190,7 +190,7 @@ for (const L of MAPPINGS) {
 const EULER_VECTORS = [[1, 0], [0, 1], [-1, 1], [3, 0], [1, -4], [-1, 4], [2, -1], [0, 2], [-2, 3]];
 for (const L of MAPPINGS) for (const [dq, dr] of EULER_VECTORS) {
   const v = vecFromEuler(dq, dr, L);
-  check(`J ${L} (${dq},${dr}) expressible`, v !== null, !(L === 'accordion' && dq % 3 !== 0));
+  check(`J ${L} (${dq},${dr}) expressible`, v !== null, true);
   if (!v) continue;
   for (const [q, r] of CELLS) {
     const e0 = eulerOf(q, r, L), e1 = eulerOf(q + v[0], r + v[1], L);

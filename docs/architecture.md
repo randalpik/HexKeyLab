@@ -377,8 +377,8 @@ every relative interval, and the ref's MIDI only slides the 88-note window.
 - **Anchor offset.** Composer's cursor ref (or recording playback, or the overlay) can sit d bands
   from the home band. Only banded Syntonic's footprint depends on d, with period 4: its band offset
   is the one that isn't linear in the band distance. So the runtime measures its four phases
-  (`footprintAnchorOffsets`), at four times the cost. In Gerhard, Park and Bass a phase other than
-  d = 0 is the tallest.
+  (`footprintAnchorOffsets`), at four times the cost. In Gerhard, Janko, Park and Bass a phase
+  other than d = 0 is the tallest.
 - **Gate:** `test/picker/footprint-extent.mjs` (reduction, heights against brute force, every
   anchor offset repeating a measured one). → decisions.md 2026-10-30 "Ref validity is the piano range; canvas heights at
   runtime".
@@ -617,9 +617,9 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 
 | layout | (c, s, invert) | q / r / (−1,1) | band W | pure line |
 |---|---|---|---|---|
-| Janko | 2, −6, no | M2 / ±semitone / ∓semitone | 6 | P5 at (3,1) |
-| Accordion (C-system) | 3, −6, no | m3 / m2 / −M2 | 4 | P5 at (2,1) |
 | Gerhard | 4, −4, no | M3 / m3 / −m2 | 3 | P5 at (1,1) |
+| Janko | 2, −6, no | M2 / ±semitone / ∓semitone | 6 | P5 at (3,1) |
+| Accordion (C-system) | 2, −2, yes | M2 / m3 / m2 | 6 | P4 at (1,1) |
 | Randal | 4, 0, yes | M3 / P4 / m2 | 3 | P4 axis |
 | Park | 2, 0, yes | M2 / P4 / m3 | 6 | P4 axis |
 | Bass | 1, 0, yes | m2 / P4 / M3 | 12 | P4 axis |
@@ -629,25 +629,31 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 - **Seams** slant `−s/c` keys per row, along the pure line, which therefore never crosses one.
 - **Inverted** layouts keep their fourth exact in every mode. Their fifth, the band step minus the
   fourth, is exact in 5/P/D/7 only: in V/S/Y it carries the band term.
-- **Cell sets**: Gerhard and Randal sample Euler's cells (Gerhard = Euler(q − r, r)), Janko and Park
-  Wicki-Hayden's (Park = WH(q, −r)·2^r), Bass the chromatic frame's, and the Accordion every third
-  chromatic column.
-- **Spelled octaves**: unbanded, `octaveVector` is (5, 2) Janko, (1, 2) Park and (2, 2) Bass; the
-  Accordion, Gerhard and Randal have none. Chromatic and Bass (c = 1) sample every chromatic
+- **Cell sets**: Gerhard and Randal sample Euler's cells (Gerhard = Euler(q − r, r)), Janko, Park
+  and the Accordion Wicki-Hayden's (Park = WH(q, −r)·2^r, Accordion = Park(q − r, r)), and Bass the
+  chromatic frame's. Each sheared preset is a fifths or fourths layout's cells, sheared one key per
+  row (Janko three): the dropdown lists them after the fifths layouts, before the fourths.
+- **The Accordion is Park sheared** (2026-11-01). It is the C-system button accordion turned 60°:
+  posed Right it is the old `(3, −6)` Accordion posed Vertical, key for key. Its 6-wide band holds a
+  diatonic scale: in Ptolemaic the all-adjacent major scale of the ref is the just one, in one band.
+  On the old 4-wide band the same scale crossed four bands and came out 1, 10/9, 5/4, 4/3, 40/27,
+  5/3, 256/135, 160/81.
+- **Spelled octaves**: unbanded, `octaveVector` is (5, 2) Janko, (3, 2) Accordion, (1, 2) Park and
+  (2, 2) Bass; Gerhard and Randal have none. Chromatic and Bass (c = 1) sample every chromatic
   column, so they have spelled twins; the others spell each note once.
-- **Transposes**: `vecFromEuler` returns null on the Accordion for Euler vectors whose M3 count
-  isn't a multiple of 3, so its M3, m3 and SC buttons are off (`syncBandedControls`).
+- **Transposes**: every preset has every Euler vector. `vecFromEuler` returns null only on a 4-wide
+  band (c = 3, from the builder) for an M3 count that isn't a multiple of 3, which turns its M3, m3
+  and SC buttons off (`syncBandedControls`).
 - **Reference spine** (`refSpine`): the ref band's qm0 chromatic column (chromatic position 4), in
-  the ref's row. That is layout column `⌊4/c⌋` of the band: `W/3` in the fifths layouts, column 1
-  in the Accordion. Every row samples it, since `c | s`.
+  the ref's row. That is layout column `⌊4/c⌋` of the band: `W/3` in every preset, column 1 in a
+  4-wide band. Every row samples it, since `c | s`.
 - **Vertical Freq tilt** (`layout/geometry.ts`): c semitones per column, and per row the fifths
   layouts' average fifth shifted by the row step's distance from 7 equal semitones.
 - **Piano picker**: candidates are the layout's own family `(q_N + ρk, r_N − c·k)`, ρ the row step
   (Piano canvas height, above).
 - **Syntonic / Polysyntonic**: a cell carries its pitch band's comma offset (`pitchBandOf`), and an
-  odd chromatic column carries the band five columns left. The Accordion starts each band on an odd
-  column (`Q = 12b − 3`), so its first column takes the previous band's offset, as the chromatic
-  layout's odd columns do.
+  odd chromatic column carries the band five columns left. Among the presets only Chromatic and
+  Bass (c = 1) have odd columns.
 - **MIDI import** (`midi-io/import.ts`): the index covers rows ±16 and, in each, the cells whose
   chromatic column, raised by its octaves, lies within ±120 of A3's: the same pitch span in every
   layout, and in the fifths layouts the old ±30-Euler-column box exactly.

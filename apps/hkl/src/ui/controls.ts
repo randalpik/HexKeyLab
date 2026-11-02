@@ -142,7 +142,7 @@ export function setBanded(): void {
 
 /** The controls banding and mapping decide: the checkbox itself, Show bands
  *  (nothing to show unbanded) and every transpose button (disabled where the
- *  frame has no such step: P8 / SC unbanded, and the Accordion's M3, m3 and
+ *  frame has no such step: P8 / SC unbanded, and a 4-wide band's M3, m3 and
  *  SC). Run at startup and on a banding or mapping change. */
 export function syncBandedControls(): void {
   (document.getElementById('cbBanded') as HTMLInputElement).checked = tuning.banded;
@@ -154,7 +154,7 @@ export function syncBandedControls(): void {
 
 /** A transpose button's Euler interval in the active layout's frame, or null
  *  where the layout has none. Banded, every button is its Euler vector, where
- *  one exists (vecFromEuler: the Accordion has none for M3, m3 and SC).
+ *  one exists (vecFromEuler: a 4-wide band has none for M3, m3 and SC).
  *  Unbanded, a band step is no octave: P8 (`kind` 'octave') takes the frame's
  *  spelled-octave vector (octaveVector; Euler has none), and SC ('comma') is
  *  off — Euler and Wicki-Hayden spell each note on one key, so there is no

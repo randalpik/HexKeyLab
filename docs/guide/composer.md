@@ -36,7 +36,7 @@ Each note remembers the HKL key you played, so its spelling, tuning and color st
 ### Chord notes and comma adjustments
 
 - `Alt+↑` / `Alt+↓` select one note of the chord at the cursor (`Alt+↑` starts from the bottom, `Alt+↓` from the top; repeat to step through). `Backspace` then deletes just that note and `=` ties just that note.
-- `Alt+→` / `Alt+←` move the selected note up or down by a syntonic comma: the same letter name with a different comma arrow, retuned to match. On a single note it is selected automatically. A score in the Accordion mapping has no comma step, so the note stays put.
+- `Alt+→` / `Alt+←` move the selected note up or down by a syntonic comma: the same letter name with a different comma arrow, retuned to match. On a single note it is selected automatically.
 
 ### Tuplets
 

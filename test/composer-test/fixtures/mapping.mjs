@@ -33,7 +33,7 @@ const HELPERS = `
    exactly. Cells precomputed with the real convertCell. */
 const PRESET_CELLS = {
   janko: [[0, 0], [1, 1], [2, 0], [3, 1]],
-  accordion: [[0, 0], [1, 0], [1, 1], [2, 1]],
+  accordion: [[0, 0], [3, -1], [2, 0], [5, -1]],
   gerhard: [[0, 0], [0, 1], [1, 0], [1, 1]],
   randal: [[0, 0], [2, -1], [1, 0], [3, -1]],
   park: [[0, 0], [4, -1], [2, 0], [6, -1]],
@@ -67,9 +67,10 @@ export const FIXTURES = {
     `,
     setupKeys: [{ key: 'ArrowLeft', alt: true }],
   },
-  /* The Accordion has no syntonic-comma step (vecFromEuler null): SC transpose refuses, the note
-     stays where it is. */
-  map_sc_accordion_blocked: {
+  /* SC transpose in an inverted, sheared layout: the Accordion (Park's cells, sheared) has the
+     Euler SC vector (−7, 4) at (6, −4). Until 2026-11-01 its 4-wide band had none, and the
+     transpose refused. */
+  map_sc_accordion: {
     setup: `
       ${HELPERS}
       m.setLayoutReq({ tuningMode: '5', mapping: 'accordion' });
@@ -245,8 +246,8 @@ export const ASSERTIONS = {
   map_sc_janko: [
     { name: 'A3 lowers a syntonic comma to Janko (−2, 4)', expr: `(${expect.toString()})(window.__mapNotes ? window.__mapNotes().map((x) => x.split(':')[0]) : null, ['-2,4'])` },
   ],
-  map_sc_accordion_blocked: [
-    { name: 'the Accordion A3 stays at (0, 0)', expr: `(${expect.toString()})(window.__mapNotes ? window.__mapNotes().map((x) => x.split(':')[0]) : null, ['0,0'])` },
+  map_sc_accordion: [
+    { name: 'A3 moves by the Euler SC vector to Accordion (6, −4)', expr: `(${expect.toString()})(window.__mapNotes ? window.__mapNotes().map((x) => x.split(':')[0]) : null, ['6,-4'])` },
   ],
   map_ottava_band_width: [
     { name: 'the 8va plays Wicki-Hayden A3 at (6, 0), one band up',
@@ -359,6 +360,6 @@ export const ASSERTIONS = {
   ],
   map_setup_lists_all_mappings: [
     { name: 'the Setup mapping list is all nine, in dropdown order',
-      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'janko', 'accordion', 'gerhard', 'randal', 'park', 'bass'])` },
+      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park', 'bass'])` },
   ],
 };

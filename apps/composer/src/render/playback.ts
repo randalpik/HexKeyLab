@@ -315,7 +315,7 @@ function harmonicParts(noteEls: Element[]): { diamond: Element | null; ref: Elem
  *     reference (q+6, r+1); anything else → +1 octave above the diamond.
  *  Coord deltas (Euler): octave = q+3 (band structure), P5 = r+1, M3 = q+1,
  *  P4 = octave−P5 = (q+3, r−1); expressed in the score's `mapping` via
- *  vecFromEuler, null where the layout has no such vector (the Accordion's M3),
+ *  vecFromEuler, null where the layout has no such vector (a 4-wide band's M3),
  *  which then doesn't match. Returns null if the diamond lacks coords. */
 function harmonicSoundingCoord(diamond: Element, ref: Element | null, mapping: Mapping): CoordRef | null {
   const d = extractCoords(diamond);

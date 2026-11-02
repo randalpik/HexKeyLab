@@ -33,11 +33,13 @@
 /** Every layout the matrix model defines. In Euler, Wicki-Hayden and Chromatic
  *  r is the fifths axis; the other six are sheared or inverted
  *  (docs/architecture.md → Sheared and inverted layouts). */
-export type Mapping = 'euler' | 'wickiHayden' | 'chromatic' | 'janko' | 'accordion' | 'gerhard' | 'randal' | 'park' | 'bass';
+export type Mapping = 'euler' | 'wickiHayden' | 'chromatic' | 'gerhard' | 'janko' | 'accordion' | 'randal' | 'park' | 'bass';
 
-/** Every mapping, in dropdown order (Max, 2026-10-30). */
+/** Every mapping, in dropdown order (Max, 2026-11-01): the fifths layouts, their
+ *  sheared forms (Gerhard Euler's cells, Janko Wicki-Hayden's, the Accordion
+ *  Park's), then the fourths layouts. */
 export const MAPPINGS: ReadonlyArray<Mapping> = [
-  'euler', 'wickiHayden', 'chromatic', 'janko', 'accordion', 'gerhard', 'randal', 'park', 'bass',
+  'euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park', 'bass',
 ];
 
 export function isMapping(x: unknown): x is Mapping {
@@ -48,9 +50,9 @@ export const MAPPING_LABELS: Readonly<Record<Mapping, string>> = {
   euler: 'Euler',
   wickiHayden: 'Wicki-Hayden',
   chromatic: 'Chromatic',
+  gerhard: 'Gerhard',
   janko: 'Janko',
   accordion: 'Accordion',
-  gerhard: 'Gerhard',
   randal: 'Randal',
   park: 'Park',
   bass: 'Bass',
@@ -72,9 +74,9 @@ export const LAYOUT: Readonly<Record<Mapping, LayoutMatrix>> = {
   euler: { c: 4, s: 0, invert: false },
   wickiHayden: { c: 2, s: 0, invert: false },
   chromatic: { c: 1, s: 0, invert: false },
-  janko: { c: 2, s: -6, invert: false },
-  accordion: { c: 3, s: -6, invert: false },
   gerhard: { c: 4, s: -4, invert: false },
+  janko: { c: 2, s: -6, invert: false },
+  accordion: { c: 2, s: -2, invert: true },
   randal: { c: 4, s: 0, invert: true },
   park: { c: 2, s: 0, invert: true },
   bass: { c: 1, s: 0, invert: true },
@@ -192,8 +194,8 @@ export function pitchBandOf(q: number, r: number, layout: Mapping): number {
  *  layout); the spelled octave is the vector whose chromatic image is the
  *  chromatic frame's (−2, 2) — or (2, −2) plus two octaves, inverted — where
  *  that is a lattice vector: (−1, 2) Wicki-Hayden, (−2, 2) chromatic, (5, 2)
- *  Janko, (1, 2) Park, (2, 2) Bass. Null where it isn't: Euler, Accordion,
- *  Gerhard, Randal. */
+ *  Janko, (3, 2) Accordion, (1, 2) Park, (2, 2) Bass. Null where it isn't:
+ *  Euler, Gerhard, Randal. */
 export function octaveVector(layout: Mapping, banded: boolean): readonly [number, number] | null {
   if (banded) return [bandWidth(layout), 0];
   const { c, s, invert } = LAYOUT[layout];
@@ -205,8 +207,8 @@ export function octaveVector(layout: Mapping, banded: boolean): readonly [number
  *  every cell's Euler-equivalent by exactly (dq, dr). It keeps the chromatic
  *  column type (Q mod 4), so the offset means the same Euler step from every
  *  column; in Euler, Wicki-Hayden and chromatic the q component just scales by
- *  4/c. Null where the layout has no such vector: the Accordion only has those
- *  whose dq is a multiple of 3. */
+ *  4/c. Null where the layout has no such vector: every preset has them all,
+ *  but a 4-wide band (c = 3) only has those whose dq is a multiple of 3. */
 export function vecFromEuler(dq: number, dr: number, layout: Mapping): [number, number] | null {
   const { c, s, invert } = LAYOUT[layout];
   const row = invert ? 0 - dr : dr;
