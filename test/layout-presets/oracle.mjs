@@ -53,10 +53,10 @@ const rowStep = (L) => LAYOUT[L].s + (LAYOUT[L].invert ? 5 : 7);
 const pureLine = (L) => [-LAYOUT[L].s / LAYOUT[L].c, 1];
 
 /* The table itself */
-check('MAPPINGS (dropdown order)', MAPPINGS.join(), 'euler,wickiHayden,chromatic,gerhard,janko,accordion,randal,park,bass');
+check('MAPPINGS (dropdown order)', MAPPINGS.join(), 'euler,wickiHayden,chromatic,gerhard,janko,accordion,randal,park');
 const SPEC = {
   euler: [4, 0, false], wickiHayden: [2, 0, false], chromatic: [1, 0, false], janko: [2, -6, false],
-  accordion: [2, -2, true], gerhard: [4, -4, false], randal: [4, 0, true], park: [2, 0, true], bass: [1, 0, true],
+  accordion: [2, -2, true], gerhard: [4, -4, false], randal: [4, 0, true], park: [2, 0, true],
 };
 for (const L of MAPPINGS) {
   check(`table ${L}`, [LAYOUT[L].c, LAYOUT[L].s, LAYOUT[L].invert].join(), SPEC[L].join());
@@ -171,7 +171,7 @@ for (const from of MAPPINGS) for (const to of MAPPINGS) for (let q = -9; q <= 9;
 }
 
 /* I — octave vectors */
-const HAS_UNBANDED_OCTAVE = ['wickiHayden', 'chromatic', 'janko', 'accordion', 'park', 'bass'];
+const HAS_UNBANDED_OCTAVE = ['wickiHayden', 'chromatic', 'janko', 'accordion', 'park'];
 for (const L of MAPPINGS) {
   check(`I ${L} has an unbanded spelled octave`, octaveVector(L, false) !== null, HAS_UNBANDED_OCTAVE.includes(L));
   for (const banded of [true, false]) {

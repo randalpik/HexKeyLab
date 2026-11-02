@@ -37,7 +37,6 @@ const PRESET_CELLS = {
   gerhard: [[0, 0], [0, 1], [1, 0], [1, 1]],
   randal: [[0, 0], [2, -1], [1, 0], [3, -1]],
   park: [[0, 0], [4, -1], [2, 0], [6, -1]],
-  bass: [[0, 0], [8, -1], [4, 0], [12, -1]],
 };
 const CHORD_NAMES = ['a//3', 'c//4', 'c/s/4', 'e//4'];
 const CHORD_EULER = ['0,0:a//3', '-1,1:c//4', '1,0:c/s/4', '0,1:e//4'];
@@ -359,7 +358,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   map_setup_lists_all_mappings: [
-    { name: 'the Setup mapping list is all nine, in dropdown order',
-      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park', 'bass'])` },
+    { name: 'the Setup mapping list is all eight, in dropdown order',
+      expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park'])` },
   ],
 };

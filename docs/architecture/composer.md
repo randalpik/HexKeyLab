@@ -980,7 +980,7 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   selection so the score-ref drives the anchor. The gate itself is a
   `window.confirm` at note entry (`hklLayoutMismatch`, `input.ts`) offering to
   apply the score's layout to HKL.
-- **Note-name mapping**: `<hkl:layoutReq mapping="…">`, any of the nine (absent =
+- **Note-name mapping**: `<hkl:layoutReq mapping="…">`, any of the eight (absent =
   Euler, so Euler scores serialize exactly as before), is the frame of every
   `data-q`/`data-r`. Spelling, MIDI, HEJI, accidental display, harmonics,
   SC shifts (refused with a status message where a layout has no SC step; every

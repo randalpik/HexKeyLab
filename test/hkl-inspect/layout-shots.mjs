@@ -51,7 +51,7 @@ for (const outline of ['lumatone', 'qwerty'])
       shots.push({ outline, rotation, extend: true, alignment, mapping: 'euler', clearRef: true });
 for (const outline of ['piano', 'none'])
   shots.push({ outline, rotation: 'lumatone', extend: true, alignment: 'right' });
-for (const mapping of ['janko', 'accordion', 'gerhard', 'randal', 'park', 'bass'])
+for (const mapping of ['gerhard', 'janko', 'accordion', 'randal', 'park'])
   for (const outline of ['lumatone', 'piano'])
     shots.push({ outline, rotation: 'verticalFreq', extend: true, alignment: 'vertical', mapping, clearRef: true });
 

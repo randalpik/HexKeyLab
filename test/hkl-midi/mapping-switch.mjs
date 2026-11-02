@@ -177,7 +177,7 @@ const SCRIPT = `(async () => {
      pitch, the anchor lands on the generalized spine (an integer cell, the
      Accordion's column ⌊4/3⌋ included), the Lumatone key keeps its (q,r), and
      its release leaves nothing behind */
-  for (const m of ['janko', 'accordion', 'gerhard', 'randal', 'park', 'bass']) {
+  for (const m of ['gerhard', 'janko', 'accordion', 'randal', 'park']) {
     reset();
     switchTo('euler');
     setRef(3, 0);

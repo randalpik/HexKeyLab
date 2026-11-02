@@ -19,7 +19,7 @@ The toolbar's tabs each show or hide a group of controls, and you can have sever
 
 The keyboard is an **isomorphic** hexagonal layout: each direction always steps by the same interval, so a chord or scale has the same shape in every key. In the default Euler mapping, a step to the right is a major third (5:4), a step up-right a perfect fifth (3:2), and a step up-left a minor third (6:5), so a major or minor triad is three touching keys.
 
-**A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors (in Randal, Park and Bass, whose rows climb in fourths, the colors step the other way as you go up a band: from the purple keys, the next octave's keys are blue rather than pink); a light or dark shade marks a white-key or black-key note name. In Equal tuning, three colors cycle by octave instead.
+**A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors (in the Accordion, Randal and Park, built on pure fourths, the colors step the other way as you go up a band: from the purple keys, the next octave's keys are blue rather than pink); a light or dark shade marks a white-key or black-key note name. In Equal tuning, three colors cycle by octave instead.
 
 In the Euler mapping the keyboard is divided into **bands** three keys wide, and every key sounds exactly an octave above the key three places to its left. The boundaries between bands are **seams**, drawn as dark wedges. Turning **Banded layout** off removes the bands (below).
 
@@ -94,10 +94,9 @@ Three mappings lean their rows, so the seams slant and the pure interval sits a 
 - **Janko**: rows of whole tones, a semitone up to the up-right and down to the up-left; bands are 6 keys wide. The pure fifth is three keys right and one up-right. Comma alternatives of a note sit only 2 keys apart.
 - **Accordion** (the chromatic button accordion, C-system): Park's keys leaned one key per row, so rows of whole tones, minor thirds up-right and a semitone up-left; bands are 6 keys wide. The pure interval is a fourth, one key right and one up-right, pure in every just tuning. A major scale is two runs of whole tones (three keys, then four) joined by semitones up-left, all in one band; on the reference, in Ptolemaic, it is the just major scale. With the Right alignment its key rows are minor thirds, with a semitone up-right.
 
-Three mappings put fourths up-right instead of fifths. The up-right fourth is pure in every just tuning; their fifths are pure in Ptolemaic, Pythagorean, Semiditonal and Septimal:
+Two mappings put fourths up-right instead of fifths. The up-right fourth is pure in every just tuning; their fifths are pure in Ptolemaic, Pythagorean, Semiditonal and Septimal:
 - **Randal**: rows of major thirds, fourths up-right, semitones up-left; bands are 3 keys wide (Euler with fourths for fifths).
 - **Park**: rows of whole tones, fourths up-right, minor thirds up-left; bands are 6 keys wide (Wicki-Hayden with fourths).
-- **Bass**: rows of semitones, fourths up-right, major thirds up-left; bands are 12 keys wide. Strings in fourths, as Chromatic is strings in fifths.
 
 On the Lumatone, Wicki-Hayden covers about 4½ octaves. Chromatic spans MIDI notes 12–102: each board covers about five octaves top to bottom, a fifth lower than the board to its left.
 
@@ -123,7 +122,7 @@ With Composer open, the score's key is the reference unless you've Ctrl+clicked 
 
 **Transpose** (Playback tab) slides the keys you have on along five axes, each with ▲ / ▼ buttons (hold to repeat): perfect fifth (**P5**), major third (**M3**), minor third (**m3**), octave (**P8**) and syntonic comma (**SC**). Sustained instruments glide to the new pitch; struck and plucked instruments and organs strike again. A step that would push a note off the canvas is refused.
 
-Without bands, **P8** moves by the mapping's spelled octave (Wicki-Hayden, Chromatic, Janko, Accordion, Park and Bass; Euler, Gerhard and Randal have none, so it is off there), and **SC** is off.
+Without bands, **P8** moves by the mapping's spelled octave (Wicki-Hayden, Chromatic, Janko, Accordion and Park; Euler, Gerhard and Randal have none, so it is off there), and **SC** is off.
 
 The **SC** step moves the chord to the keys a syntonic comma away. In Equal the pitch doesn't change. In the just tunings the result depends on the tuning and on where the chord sits, because the step crosses seams: in Ptolemaic it raises the chord by 81:80 (about 21.5 cents) or lowers it by about 19.6 cents.
 

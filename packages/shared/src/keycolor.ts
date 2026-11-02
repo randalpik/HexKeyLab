@@ -24,7 +24,7 @@
 // 2026-10-30). The base is the cell's banded Ptolemaic index, which on an
 // original column reads MIDI octave − band minus the r octaves its row lifts,
 // and r = −b3 there; it is replaced by −(base − b3), i.e. band − MIDI octave.
-// Keyed off b3, not the row, a copy column (Park, Bass) takes its source's
+// Keyed off b3, not the row, a copy column (Park, the Accordion) takes its source's
 // color, rows away (2026-11-01): every inverted layout colors a pitch as Randal
 // does. Every other term keeps its sign: each mode's comma offsets, the unbanded
 // per-band commas, the septimal half-steps.

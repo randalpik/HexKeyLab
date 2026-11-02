@@ -10526,3 +10526,28 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 **Gates:** the three changed Composer fixtures failed against the new matrix with their old expectations and pass with the new ones; the mapping group passes 19/19. The layout-presets oracle passes 719,493 checks, the unbanded oracle 583,884 (it confirms (3, 2) as the spelled octave), the syntonic oracle 2,346,804 and the Wicki-Hayden oracle 54,488. The picker gates (footprint-extent, octave-consistency) and the alignment gate (52/52) pass. The color gate was re-seeded: only the eight Accordion grids changed. `pnpm typecheck`, `check:boundaries`, and the HKL and Composer builds pass.
 
 **Where:** `@hkl/shared/mapping.ts` (`LAYOUT`, `MAPPINGS`); the docs; `test/layout-presets/oracle.mjs` (SPEC, I, J), `test/unbanded/oracle.mjs`, `test/composer-test/fixtures/mapping.mjs`.
+
+## Bass is removed (2026-11-01, Max)
+
+**Picked (Max):** drop the Bass preset, leaving eight: Euler, Wicki-Hayden, Chromatic, Gerhard, Janko, Accordion, Randal, Park. Its configuration, inverted (W 12, k 0), stays reachable once the layout builder exists.
+
+**Why (Max):**
+- **Polysyntonic is for octave consistency within a band.** It's the mode the 12-wide bands are meant for. Park manages it with octaves 3 keys apart and next-band unisons 5 keys away; Wicki-Hayden and Chromatic put octaves 2 keys apart. In Bass the nearest octave crosses the comma direction much of the time, and nothing fixes that while keeping the layout what it is.
+- **Measured from the spine:** the nearest 2/1 is 4 keys away while a 160/81 is 3, and a 40/27 is 3 keys away, as close as the 3/2.
+- **No uniform rule fixes it:**
+  - All twelve copy vectors within reach were tried. Each one either keeps the 3-key wolf (those that borrow from the left) or loses a 5-limit I and V within 6 keys (those that borrow from the right, or not at all).
+  - Mirroring the Polysyntonic sign in inverted layouts loses 5-limit everywhere, Park included.
+  - The cause: the sharp-side spellings sit in the band to the left, and in Bass the near side of that band is upward through the (−1,1) diagonal, which is flatward.
+- **Randal already covers it.** Bass is Randal mirrored, with wider bands: the same axes and the same pitch-class class, C(1,4,7). Randal turns the same octave arrangement into an asset in Ptolemaic: its comma arrangement puts both 5-limit and Pythagorean triads within reach in more situations, which is its edge over Euler in Ptolemaic. With Bass gone, the eight presets cover all eight classes for spines up to P5, once each.
+
+**Rejected:**
+- Lowering only the G# column: it keeps I and V within 3 keys in every inversion, but as an exception it is contrived (Max).
+- Mirrored borrowing on the C# and D# columns: I and V move to 4 keys.
+
+**Consequences:**
+- No preset now has odd chromatic columns in an inverted layout, so until the builder exists no gate exercises that path, including the c = 1 case of the copy-column color rule. Park still covers inverted copy columns at j = 2.
+- **Saved files:** none use the Bass mapping. If one did, an HKL preference would fall back to Euler and a `.hkr` would be refused with a parse error. A Composer score with `mapping="bass"` would be read as Euler (`expressions.ts`), so its pitches would come out wrong.
+
+**Gates:** the layout-presets oracle (631,847 checks), the unbanded (464,342), syntonic (1,855,883) and Wicki-Hayden (54,488) oracles, the alignment gate (50/50) and octave-consistency all pass. The color gate was re-seeded and the only change against HEAD is the eight Bass grids removed. `pnpm typecheck` and `check:boundaries` pass.
+
+**Where:** `@hkl/shared/mapping.ts`; the docs; `test/layout-presets/oracle.mjs`, `test/unbanded/oracle.mjs`, `test/composer-test/fixtures/mapping.mjs`, `test/hkl-midi/mapping-switch.mjs` and `test/hkl-inspect/layout-shots.mjs`.

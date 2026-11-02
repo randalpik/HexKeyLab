@@ -144,7 +144,7 @@ for (const map of MAPPINGS) {
       seen.set(id, (seen.get(id) ?? 0) + 1);
     }
     const dups = [...seen.values()].filter((n) => n > 1).length;
-    /* every chromatic column sampled (c = 1: chromatic, Bass) → spelled twins */
+    /* every chromatic column sampled (c = 1: chromatic) → spelled twins */
     if (LAYOUT[map].c === 1) check(`E ${map} a${a} has spelled twins`, dups > 0, true);
     else check(`E ${map} a${a} each spelled note once`, dups, 0);
   }
@@ -311,7 +311,7 @@ for (const a of [-1, 0, 1]) {
 /* ── N: octaveVector is the spelled-octave vector F, G and M found ─────── */
 for (const map of MAPPINGS) for (const banded of [true, false]) for (const a of [-1, 0, 1]) {
   const v = octaveVector(map, banded);
-  check(`N ${map} ${banded ? 'b' : 'u'} octaveVector`, v === null ? 'none' : v.join(), banded ? `${bandWidth(map)},0` : { euler: 'none', wickiHayden: '-1,2', chromatic: '-2,2', janko: '5,2', accordion: '3,2', gerhard: 'none', randal: 'none', park: '1,2', bass: '2,2' }[map]);
+  check(`N ${map} ${banded ? 'b' : 'u'} octaveVector`, v === null ? 'none' : v.join(), banded ? `${bandWidth(map)},0` : { euler: 'none', wickiHayden: '-1,2', chromatic: '-2,2', janko: '5,2', accordion: '3,2', gerhard: 'none', randal: 'none', park: '1,2' }[map]);
   if (v === null) continue;
   for (const [q, r] of cells(map)) {
     check(`N ${map} ${banded ? 'b' : 'u'} a${a} (${q},${r}) spelled P8`,

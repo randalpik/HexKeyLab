@@ -75,8 +75,8 @@ through the toolbar's own change events and the Composer bridge: every outline
 under Wicki-Hayden and chromatic (shots 0–27, which never touch Alignment),
 then the Lumatone and QWERTY outlines under every rotation with Alignment Left
 and Right, the Piano / None outlines with Right, then the Lumatone and Piano
-outlines under each of the six sheared and inverted presets (Janko, Accordion,
-Gerhard, Randal, Park, Bass) — 54 shots, with a `manifest.json`. Shots 0–41
+outlines under each of the five sheared and inverted presets (Gerhard, Janko,
+Accordion, Randal, Park) — 52 shots, with a `manifest.json`. Shots 0–41
 compare against a run from before the presets. One
 headless Chromium on a private overlay relay, stopped at the end.
 

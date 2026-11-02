@@ -377,8 +377,8 @@ every relative interval, and the ref's MIDI only slides the 88-note window.
 - **Anchor offset.** Composer's cursor ref (or recording playback, or the overlay) can sit d bands
   from the home band. Only banded Syntonic's footprint depends on d, with period 4: its band offset
   is the one that isn't linear in the band distance. So the runtime measures its four phases
-  (`footprintAnchorOffsets`), at four times the cost. In Gerhard, Janko, Park and Bass a phase
-  other than d = 0 is the tallest.
+  (`footprintAnchorOffsets`), at four times the cost. In Gerhard, Janko and Park a phase other
+  than d = 0 is the tallest.
 - **Gate:** `test/picker/footprint-extent.mjs` (reduction, heights against brute force, every
   anchor offset repeating a measured one). → decisions.md 2026-10-30 "Ref validity is the piano range; canvas heights at
   runtime".
@@ -609,10 +609,10 @@ left neighbor.
 
 #### Sheared and inverted layouts
 
-The matrix defines six more layouts, selectable in HKL and in a Composer score's Setup alongside
-the three (`MAPPINGS` lists all nine in dropdown order). Composer's notation paths go through the
+The matrix defines five more layouts, selectable in HKL and in a Composer score's Setup alongside
+the three (`MAPPINGS` lists all eight in dropdown order). Composer's notation paths go through the
 shared primitives (spelling, `fromEuler` for the key-tonic ref, `vecFromEuler` for SC shifts and
-harmonics, `bandWidth` for an ottava's band per octave), so a score in any of the nine is
+harmonics, `bandWidth` for an ottava's band per octave), so a score in any of the eight is
 first-class; HKL coordinates in another mapping reach it converted (`convertCell`).
 
 | layout | (c, s, invert) | q / r / (−1,1) | band W | pure line |
@@ -622,7 +622,6 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 | Accordion (C-system) | 2, −2, yes | M2 / m3 / m2 | 6 | P4 at (1,1) |
 | Randal | 4, 0, yes | M3 / P4 / m2 | 3 | P4 axis |
 | Park | 2, 0, yes | M2 / P4 / m3 | 6 | P4 axis |
-| Bass | 1, 0, yes | m2 / P4 / M3 | 12 | P4 axis |
 
 - **Pure line** `(−s/c, 1)`: a lattice vector because `c | s`. It is an exact 3/2 (4/3 inverted) in
   every JI mode, banded and unbanded.
@@ -630,17 +629,17 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 - **Inverted** layouts keep their fourth exact in every mode. Their fifth, the band step minus the
   fourth, is exact in 5/P/D/7 only: in V/S/Y it carries the band term.
 - **Cell sets**: Gerhard and Randal sample Euler's cells (Gerhard = Euler(q − r, r)), Janko, Park
-  and the Accordion Wicki-Hayden's (Park = WH(q, −r)·2^r, Accordion = Park(q − r, r)), and Bass the
-  chromatic frame's. Each sheared preset is a fifths or fourths layout's cells, sheared one key per
+  and the Accordion Wicki-Hayden's (Park = WH(q, −r)·2^r, Accordion = Park(q − r, r)). Each
+  sheared preset is a fifths or fourths layout's cells, sheared one key per
   row (Janko three): the dropdown lists them after the fifths layouts, before the fourths.
 - **The Accordion is Park sheared** (2026-11-01). It is the C-system button accordion turned 60°:
   posed Right it is the old `(3, −6)` Accordion posed Vertical, key for key. Its 6-wide band holds a
   diatonic scale: in Ptolemaic the all-adjacent major scale of the ref is the just one, in one band.
   On the old 4-wide band the same scale crossed four bands and came out 1, 10/9, 5/4, 4/3, 40/27,
   5/3, 256/135, 160/81.
-- **Spelled octaves**: unbanded, `octaveVector` is (5, 2) Janko, (3, 2) Accordion, (1, 2) Park and
-  (2, 2) Bass; Gerhard and Randal have none. Chromatic and Bass (c = 1) sample every chromatic
-  column, so they have spelled twins; the others spell each note once.
+- **Spelled octaves**: unbanded, `octaveVector` is (5, 2) Janko, (3, 2) Accordion and (1, 2) Park;
+  Gerhard and Randal have none. Chromatic (c = 1) samples every chromatic column, so it has spelled
+  twins; the others spell each note once.
 - **Transposes**: every preset has every Euler vector. `vecFromEuler` returns null only on a 4-wide
   band (c = 3, from the builder) for an M3 count that isn't a multiple of 3, which turns its M3, m3
   and SC buttons off (`syncBandedControls`).
@@ -652,13 +651,13 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 - **Piano picker**: candidates are the layout's own family `(q_N + ρk, r_N − c·k)`, ρ the row step
   (Piano canvas height, above).
 - **Syntonic / Polysyntonic**: a cell carries its pitch band's comma offset (`pitchBandOf`), and an
-  odd chromatic column carries the band five columns left. Among the presets only Chromatic and
-  Bass (c = 1) have odd columns.
+  odd chromatic column carries the band five columns left. Among the presets only Chromatic
+  (c = 1) has odd columns.
 - **MIDI import** (`midi-io/import.ts`): the index covers rows ±16 and, in each, the cells whose
   chromatic column, raised by its octaves, lies within ±120 of A3's: the same pitch span in every
   layout, and in the fifths layouts the old ±30-Euler-column box exactly.
 - Gates: `test/layout-presets/oracle.mjs`; `test/picker/`, `test/syntonic/`, `test/unbanded/`,
-  `test/color-gate/` and `test/alignment/` run over all nine.
+  `test/color-gate/` and `test/alignment/` run over all eight.
 
 ---
 
@@ -680,7 +679,7 @@ Composer recolors notes with the same functions.
   Wicki-Hayden copy's "its column's color", a chromatic borrowed column's "its source band's
   hue" under S/Y, and Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised,
   teal → yellow … lowered) are all this one function.
-- **Inverted layouts** (Randal, Park, Bass: `LAYOUT` `invert`; Max, 2026-10-30): each row lifts
+- **Inverted layouts** (the Accordion, Randal, Park: `LAYOUT` `invert`; Max, 2026-10-30): each row lifts
   an octave, so by pitch alone a band's hues would straddle octaves (Randal's home-band pink ran
   G2–C#4). The banded-Ptolemaic base index b (which on an original column reads MIDI octave −
   band minus the r octaves the row lifts, and r = −b3 there) is replaced by −(b − b3), so the
@@ -688,9 +687,9 @@ Composer recolors notes with the same functions.
   Randal's home band purple is C3–B♭3 and blue C♯4–B4, 7 or 8 keys a block (a fourths band holds
   ~7.2 keys per octave against Euler's ~5). Every other term keeps its sign: each mode's comma
   offsets, the unbanded per-band commas, the septimal half steps; Equal is untouched. A band step
-  still keeps the hue. Keyed off b3 rather than the row, a copy column in Park or Bass takes its
-  source's color although it sits rows away (2026-11-01), so they mirror Wicki-Hayden's and
-  chromatic's mixed blocks, and every inverted layout colors a pitch as Randal does, just as every
+  still keeps the hue. Keyed off b3 rather than the row, a copy column in Park or the Accordion takes
+  its source's color although it sits rows away (2026-11-01), so they mirror Wicki-Hayden's mixed
+  blocks, and every inverted layout colors a pitch as Randal does, just as every
   plain one colors it as Euler does. A pitch's color therefore differs between an inverted layout and the others; relative
   color within the layout is what carries comma identity.
 - **Septimal half steps**: each septimal factor turns the hue half a step warm (`hueCycleOrder`

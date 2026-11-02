@@ -31,15 +31,15 @@
 // A3 sits at (0,0) — the qm0 column, chromatic position 4 — in every layout.
 
 /** Every layout the matrix model defines. In Euler, Wicki-Hayden and Chromatic
- *  r is the fifths axis; the other six are sheared or inverted
+ *  r is the fifths axis; the other five are sheared or inverted
  *  (docs/architecture.md → Sheared and inverted layouts). */
-export type Mapping = 'euler' | 'wickiHayden' | 'chromatic' | 'gerhard' | 'janko' | 'accordion' | 'randal' | 'park' | 'bass';
+export type Mapping = 'euler' | 'wickiHayden' | 'chromatic' | 'gerhard' | 'janko' | 'accordion' | 'randal' | 'park';
 
 /** Every mapping, in dropdown order (Max, 2026-11-01): the fifths layouts, their
  *  sheared forms (Gerhard Euler's cells, Janko Wicki-Hayden's, the Accordion
  *  Park's), then the fourths layouts. */
 export const MAPPINGS: ReadonlyArray<Mapping> = [
-  'euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park', 'bass',
+  'euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park',
 ];
 
 export function isMapping(x: unknown): x is Mapping {
@@ -55,7 +55,6 @@ export const MAPPING_LABELS: Readonly<Record<Mapping, string>> = {
   accordion: 'Accordion',
   randal: 'Randal',
   park: 'Park',
-  bass: 'Bass',
 };
 
 export interface LayoutMatrix {
@@ -79,7 +78,6 @@ export const LAYOUT: Readonly<Record<Mapping, LayoutMatrix>> = {
   accordion: { c: 2, s: -2, invert: true },
   randal: { c: 4, s: 0, invert: true },
   park: { c: 2, s: 0, invert: true },
-  bass: { c: 1, s: 0, invert: true },
 };
 
 /** The chromatic cell [Q, R] that cell (q, r) of `layout` samples, and the exact
@@ -194,7 +192,7 @@ export function pitchBandOf(q: number, r: number, layout: Mapping): number {
  *  layout); the spelled octave is the vector whose chromatic image is the
  *  chromatic frame's (−2, 2) — or (2, −2) plus two octaves, inverted — where
  *  that is a lattice vector: (−1, 2) Wicki-Hayden, (−2, 2) chromatic, (5, 2)
- *  Janko, (3, 2) Accordion, (1, 2) Park, (2, 2) Bass. Null where it isn't:
+ *  Janko, (3, 2) Accordion, (1, 2) Park. Null where it isn't:
  *  Euler, Gerhard, Randal. */
 export function octaveVector(layout: Mapping, banded: boolean): readonly [number, number] | null {
   if (banded) return [bandWidth(layout), 0];

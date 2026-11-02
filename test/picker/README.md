@@ -11,7 +11,7 @@ Run them one at a time.
 | Script | Checks |
 |---|---|
 | `octave-consistency.mjs` | MIDI N and N+12 get the same spelling, one spelled octave apart (where the octave sits is the picker's choice, nearest the ref). Exits non-zero on any break outside Syntonic / Polysyntonic; those are reported (availability: a spelling's 5-limit pitch can exist in one octave's band and not the next), as is the unbanded layout (Euler has no spelled octave there). |
-| `footprint-extent.mjs` | The canvas-height reduction (`footprintExtents`, `footprintHalfHeight`): every ref's footprint is its band position's window, cell for cell; the runtime heights equal brute force over every (position, ref MIDI); every ref-to-anchor offset reproduces one the runtime measures (`footprintAnchorOffsets`: 0–3 in banded Syntonic, 0 elsewhere). About 8 minutes over the nine layouts. |
+| `footprint-extent.mjs` | The canvas-height reduction (`footprintExtents`, `footprintHalfHeight`): every ref's footprint is its band position's window, cell for cell; the runtime heights equal brute force over every (position, ref MIDI); every ref-to-anchor offset reproduces one the runtime measures (`footprintAnchorOffsets`: 0–3 in banded Syntonic, 0 elsewhere). About 8 minutes over the eight layouts. |
 
 Both iterate every `MAPPINGS` layout × `TUNING_MODES` value × banding.
 
