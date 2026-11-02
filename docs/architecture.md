@@ -117,9 +117,12 @@ ratios, HEJI arrows and color all derive from it. Selector order:
 Octave-invariant (shares `qmod3`). Every qm0 spine cell has its harmonic 7th (7/4) two rows up in
 qm2 at the same `r`, so dominant 7 (4:5:6:7) is reachable from any qm0 root and half-diminished 7
 (5:6:7:9) from any qm1 root; major triads stay 5-limit-pure. Key-symmetric (the "root" is the ref
-note, not tuning state). **Trade**: 5-limit minor (10:12:15) is unreachable — minor becomes
-Pythagorean (32:27) or septimal subminor (7:6); use `'5'` for 5-limit minor. The same trade applies
-to `'D'`/`'V'`.
+note, not tuning state). **Trade**: 5-limit minor (10:12:15) is unreachable from the ref column.
+A qm0 root's minor third is the qm2 cell, and its 5-limit 6/5 is the Pythagorean 32/27 raised a
+syntonic comma; the septimal column replaces exactly those notes, so minor there becomes septimal
+subminor (7:6) or Pythagorean (32:27, from farther keys). A minor triad on a qm1 root keeps
+10:12:15, since its third lies in qm0. Use `'5'` for 5-limit minor everywhere. The same trade
+applies to `'D'`/`'V'`, whose qm2 is Pythagorean.
 
 **Syntonic / Polysyntonic (`'S'`/`'Y'`)** — 5-limit for the Wicki-Hayden mapping. Each band is
 internally Pythagorean (pure octaves and scales within a band) and whole bands are shifted by
