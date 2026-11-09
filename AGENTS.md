@@ -70,7 +70,7 @@ Non-negotiable constraints. Protocol detail (commands, LED throughput, pedal cal
 - **Lumatone is 5 boards × 56 keys = 280 keys.**
 - **Some units have boards 3 and 4 physically swapped** — a runtime toggle (*Calibrate Keys → "Swap boards 3 ↔ 4"*, pref `swapBoards34`, off by default). All SysEx board bytes go through `sysexBoardFor(group)` (`apps/hkl/src/lumatone/protocol.ts`); never hardcode a board map at a call site. The tools under `tools/` take `--swap-boards-34` for the same purpose.
 - **The MIDI channel map is 0-indexed in SysEx**: `fixedMidiChannelMap = [0,1,2,3,4]`, independent of the board swap.
-- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. When LED updates are pending, prefer another board over the same one — interleaving boards is ~3× faster.
+- **SysEx envelope**: `F0 00 21 50 <board> <cmd> <data1-4> F7`. When LED updates are pending, prefer another board over the same one — interleaving boards was ~3× faster (measured on firmware 1.4.0; 1.5.0's changes are listed in hkl.md → Lumatone internals).
 - **A3 = 220 Hz** is the central reference of the tuning system.
 - **Pedals**: the expression jack is Roland-wired and fixed to CC 4; the sustain jack is CC 64 (binary). Neither is remappable via SysEx. Korg-style expression pedals read as noise — a wiring mismatch, not a software bug.
 - **Power-off emits a burst of protocol-valid spurious note-ons**; the liveness heartbeat (`apps/hkl/src/midi/heartbeat.ts`) clears it rather than filtering it — don't re-propose filters (decisions.md 2026-10-02).

@@ -1,6 +1,6 @@
 # Lumatone per-key calibration guide
 
-This guide describes **numeric per-key calibration** of a Lumatone: reading and setting each key's thresholds as numbers, rather than letting the firmware learn them from touch. It is the only way to see or set these values directly, so it serves any unit that needs finer or reproducible control than the built-in routine gives — and it is the only option on a unit whose macro buttons don't work. It edits the Lumatone's internal calibration state directly, via SSH plus a small set of Python scripts in `tools/lumatone-cal/`.
+This guide describes **numeric per-key calibration** of a Lumatone: reading and setting each key's thresholds as numbers, rather than letting the firmware learn them from touch. It is the only way to see or set these values directly, so it serves any unit that needs finer or reproducible control than the built-in routine gives. Through firmware 1.4.x it was also the only option on a unit whose macro buttons don't work; 1.5.0's SysEx `0x52` can complete the built-in routine without them. It edits the Lumatone's internal calibration state directly, via SSH plus a small set of Python scripts in `tools/lumatone-cal/`.
 
 This is a **developer/maintenance** document, separate from the user-facing HKL guide. If you're not the keyboard's owner, don't run any of this — it modifies firmware state on a connected device.
 
@@ -10,7 +10,7 @@ This is a **developer/maintenance** document, separate from the user-facing HKL 
 
 The Lumatone firmware ships a built-in calibration routine triggered by SysEx `0x24` (sysexCallibrateKeys). The user enters cal mode, plays through every key, and signals "done" by pressing the two macro buttons on each octave board. The firmware's per-key learning is committed and persisted at that point.
 
-That routine learns by touch: it never shows the values it settles on, and you can't set or adjust one key's thresholds by number. It also depends on the macro buttons — if they don't work (mechanical failure, disconnected wires from a prior repair), the PIC microcontroller on the affected octave board waits for the hardware macro signal forever; nothing the host sends over MIDI or SysEx can substitute, so cal mode for that board never completes.
+That routine learns by touch: it never shows the values it settles on, and you can't set or adjust one key's thresholds by number. Through firmware 1.4.x it also depends on the macro buttons — if they don't work (mechanical failure, disconnected wires from a prior repair), the PIC microcontroller on the affected octave board waits for the hardware macro signal forever; nothing the host sends over MIDI or SysEx can substitute, so cal mode for that board never completes. Firmware 1.5.0 adds SysEx `0x52` (ConfirmCalibration), which sends the PICs a software button press (new PIC command `0x6a`), so the routine can now finish without the buttons. That path is read from the binary and not yet exercised on a button-less unit. Finishing the routine commits its touch-learned values over the per-key numbers this guide sets, so back up `files/` first.
 
 The approach in this guide writes per-key calibration values directly to the Lumatone's filesystem and to its running firmware's memory, with iterative tuning support so each key can be dialed in by ear in seconds — and, as a side effect, it doesn't need the macro buttons at all.
 
@@ -20,11 +20,13 @@ The approach in this guide writes per-key calibration values directly to the Lum
 
 The Lumatone is, internally, a **BeagleBone Black running Debian** plus **five PIC microcontrollers** (one per octave board). Communication: UART `/dev/ttyO1`. MIDI to/from host: USB. The Lumatone exposes itself as a USB-ethernet gadget; the BBB has an IP on that interface (`192.168.6.2` for Linux hosts, `192.168.7.2` for Mac/Windows hosts).
 
-The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/TerpstraController/TerpstraController`, launched in an infinite respawn loop by `/home/debian/TerpstraController/lmtn_launcher.sh`. The binary is **not stripped** and includes full DWARF debug info, which is why this calibration approach is even possible — we can find symbol addresses by name.
+The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/LumatoneController/LumatoneController` (statically linked, non-PIE), launched in an infinite respawn loop by `/home/debian/LumatoneController/lmtn_launcher.sh`. This guide calls it **TC**. The binary is **not stripped** and includes full DWARF debug info, which is why this calibration approach is even possible — we can find symbol addresses by name.
+
+> **Through firmware 1.4.x** the folder and the program were both `TerpstraController` (a dynamically linked PIE binary). 1.5.0's installer moves the folder, keeping `files/` intact, and leaves `/home/debian/TerpstraController` as a symlink to the new one, so old paths still resolve. The scripts in `tools/lumatone-cal/` were written against 1.4.0: they look for a `TerpstraController` process (and exit "not running" on 1.5.0) and hardcode 1.4.0's symbol offsets added to a PIE load base. Re-derive the offsets from the new binary before using them; never just rename the process they look for. 1.5.0 also adds SysEx `0x52`, which completes the built-in 0x24 routine without macro buttons (lessons.md).
 
 ### Per-key state lives in two places
 
-1. **On disk**: `/home/debian/TerpstraController/files/KeyData_1..5`. One file per octave board, plain text, comma-separated. Four sections per file (separated by newlines), 56 values per section (one per key):
+1. **On disk**: `/home/debian/LumatoneController/files/KeyData_1..5`. One file per octave board, plain text, comma-separated. Four sections per file (separated by newlines), 56 values per section (one per key):
 
    | Section | Meaning | Direction | Range |
    |---|---|---|---|
@@ -35,7 +37,7 @@ The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/Terp
 
    These get loaded at every TC boot via `loadKeySetting`/`loadKeyThresholds`, and pushed to the PICs over UART as part of bootSequence.
 
-2. **In running memory**: a `kbd_preset_params` struct in TC's `.bss`. Stride 638 bytes per board. Same four sections at offsets `+0x118`, `+0x150`, `+0x1c0`, `+0x1fe` relative to that board's slot. Slot `i` (0..4) corresponds to `KeyData_(i+1)`.
+2. **In running memory**: the `boardId[5]` array in TC's `.bss` (`board_properties`, 638 bytes per board; same layout in 1.4.0 and 1.5.0, different address). Earlier notes called it `kbd_preset_params`, which is really a 5-byte flags struct. Same four sections at offsets `+0x118`, `+0x150`, `+0x1c0`, `+0x1fe` relative to that board's slot. Slot `i` (0..4) corresponds to `KeyData_(i+1)`.
 
 ### Indexing quirk: spatial vs PIC
 
@@ -93,7 +95,7 @@ scp tools/lumatone-cal/lmtncal-read.py debian@192.168.6.2:/home/debian/
 
 # 4. Snapshot the current KeyData files into a persistent backup
 #    (the /tmp dir on the BBB is tmpfs — wiped at every reboot, so use $HOME).
-ssh debian@192.168.6.2 'mkdir -p ~/keydata-backup-$(date +%Y%m%d) && cp /home/debian/TerpstraController/files/KeyData_? ~/keydata-backup-$(date +%Y%m%d)/'
+ssh debian@192.168.6.2 'mkdir -p ~/keydata-backup-$(date +%Y%m%d) && cp /home/debian/LumatoneController/files/KeyData_? ~/keydata-backup-$(date +%Y%m%d)/'
 ```
 
 That's it. From here on, all calibration work uses these scripts.
@@ -112,7 +114,7 @@ Inspects a local copy of KeyData files. Given a lattice (q, r), prints which fil
 python3 tools/lumatone-cal/keydata-locate.py <q> <r> [PATH/TO/files/dir]
 ```
 
-If you've copied the KeyData files to a local mirror of the device (e.g. `<mirror>/TerpstraController/files/`), point at that. Useful for offline exploration without an SSH session.
+If you've copied the KeyData files to a local mirror of the device (e.g. `<mirror>/LumatoneController/files/`), point at that. Useful for offline exploration without an SSH session.
 
 ### `keydata-live.py` (run on the Lumatone via SSH)
 
@@ -162,7 +164,7 @@ sudo python3 /home/debian/lmtncal-read.py
 
 ### `lmtncal-poke.py` (obsolete, kept for diagnostic reference)
 
-An earlier attempt at spoofing the macro-button signal at the BBB level. **Doesn't work** for stuck-PIC boards because the PIC firmware blocks at its own hardware-event level, not at the BBB level. See `docs/lessons.md` for the full diagnosis. Don't use this for calibration; use `keydata-live.py` instead.
+An earlier attempt at spoofing the macro-button signal at the BBB level. **Doesn't work** for stuck-PIC boards because the PIC firmware blocks at its own hardware-event level, not at the BBB level. See `docs/lessons.md` for the full diagnosis. Don't use this for calibration; use `keydata-live.py` instead. On firmware 1.5.0 the supported way to send that signal is SysEx `0x52`.
 
 ---
 
@@ -177,7 +179,7 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
    ```bash
    # Copy the project's default (MAX=70 / MIN=0 / valid=1 / AT_MAX=200) to all 5 boards:
    scp tools/lumatone-cal/KeyData_default debian@192.168.6.2:/tmp/
-   ssh debian@192.168.6.2 'for n in 1 2 3 4 5; do sudo cp /tmp/KeyData_default /home/debian/TerpstraController/files/KeyData_$n; done && sudo reboot'
+   ssh debian@192.168.6.2 'for n in 1 2 3 4 5; do sudo cp /tmp/KeyData_default /home/debian/LumatoneController/files/KeyData_$n; done && sudo reboot'
    ```
    After reboot, every key is at a permissive baseline that gets onsets working everywhere.
 
@@ -255,7 +257,7 @@ Diagnose the hardware envelope first, then choose between hardware MAX-raising (
 
 **Future piano-realism factors** (filed; not gain-curve work): velocity → low-pass cutoff (for hammer-brightness simulation), velocity → attack-time modulation, soft-clipping at extreme-high velocities. See `docs/decisions.md` → "Future piano-realism factors."
 
-**Persistence caveat**: CMD 0x20 and CMD 0x08's EEPROM behavior is unverified. After a Lumatone power cycle, the firmware may revert to factory defaults — if so, click both **Push to Lumatone** buttons again. `localStorage` retains your curve parameters across browser sessions, so re-pushing is two clicks. (If KMI confirms CMD 0x09 SAVE applies to 0x20, we can drop this caveat.)
+**Persistence**: CMD 0x20 and CMD 0x08 change the controller's RAM only. CMD `0x09` (SaveVelocityConfig), or `0x02` (StoreProgram, which saves a whole preset), writes **both** tables, with fsync, to a preset slot's `files/VelocityLookUp_N` (one file per slot 0–9; line 1 = the 128-entry 0x08 LUT, line 2 = the 127-entry 0x20 intervals). Read from the firmware, same in 1.4.0 and 1.5.0. HKL never sends 0x09, so a power cycle or preset change reloads whatever was last saved: click both **Push to Lumatone** buttons again (`localStorage` keeps your curve parameters, so that's two clicks).
 
 ### Phase 3 — MIN tuning for high-end reach (independent of Phase 2 path)
 
@@ -282,7 +284,7 @@ If you have a known-good calibration on one board and want to use it as the base
 
 ```bash
 # On the Lumatone:
-sudo cp /home/debian/TerpstraController/files/KeyData_2 /home/debian/TerpstraController/files/KeyData_1
+sudo cp /home/debian/LumatoneController/files/KeyData_2 /home/debian/LumatoneController/files/KeyData_1
 sudo reboot
 ```
 
@@ -300,20 +302,20 @@ Power-cycle the Lumatone. TC restarts, reads `KeyData_N` from disk, pushes those
 
 ```bash
 # On the Lumatone:
-sudo cp /home/debian/TerpstraController/files/KeyData_1.bak /home/debian/TerpstraController/files/KeyData_1
+sudo cp /home/debian/LumatoneController/files/KeyData_1.bak /home/debian/LumatoneController/files/KeyData_1
 sudo reboot
 ```
 
 ### Full restore from the dated backup taken during install
 
 ```bash
-sudo cp ~/keydata-backup-<date>/KeyData_? /home/debian/TerpstraController/files/
+sudo cp ~/keydata-backup-<date>/KeyData_? /home/debian/LumatoneController/files/
 sudo reboot
 ```
 
 ### TC crashed / device unresponsive
 
-The launcher script (`lmtn_launcher.sh`) is `while :; do sudo TerpstraController; done`. If TC dies, it restarts automatically. No on-disk state is damaged by a TC crash. Power-cycle (unplug, wait 5 seconds, replug) if anything looks weird — that's a clean reset.
+The launcher script (`lmtn_launcher.sh`) ends in `while :; do sudo <controller>; done` (`LumatoneController` from 1.5.0; `TerpstraController` before, or if an older package was reinstalled). If TC dies, it restarts automatically. No on-disk state is damaged by a TC crash. Power-cycle (unplug, wait 5 seconds, replug) if anything looks weird — that's a clean reset, **provided nothing was written to the device just before**: after a `--commit`, a `cp` or an upload, run `sync` (or `sudo reboot`) first, or the new file can come back zero-filled (lessons.md, 2026-11-08).
 
 ### Lumatone factory reset
 
@@ -334,4 +336,4 @@ Beyond what's in this guide, the Lumatone supports a full factory reset via SysE
 - The 4-bit clamp on per-board SysEx commands (`0x29`/`0x2A` for max/min thresholds) does NOT apply to the per-key writes in `KeyData_N` — those are 8-bit (0–254). Don't confuse the two; Calibrate Keys works with the 4-bit per-board values, this tool with the 8-bit per-key.
 - The PIC firmware has no per-key velocity LUT or per-key gain knob. Beyond MIN/MAX threshold tuning, residual per-key loudness differences must be corrected in HKL via per-key gain in `velocityCal.ts`.
 - Sensor swing is a physical floor. A key whose ADC barely moves on full press will never have the dynamic range of a healthy key, no matter how the thresholds are tuned. The combination of (a) compressed-but-functional hardware thresholds, plus (b) HKL per-key gain to normalize loudness, is the realistic ceiling.
-- `lmtn_launcher.sh`'s firmware-update hook runs only when a `Lumatone-v*.tgz` file is found at `/home/debian/` at boot. As long as you don't put one there, your `KeyData_N` edits will not be overwritten.
+- `lmtn_launcher.sh`'s firmware-update hook runs only when a `Lumatone-v*.tgz` file is found at `/home/debian/` at boot, and the installer leaves `files/` alone (the 1.5.0 install kept every file byte-identical). Every boot also deletes any other `.tgz` in `/home/debian`, so don't keep backups there as tarballs. A package that fails to unpack is deleted and the application still starts under the 1.5.0 launcher; the 1.4.0 launcher aborted instead, leaving the boards frozen in their boot animation on every boot until the package was removed (lessons.md, 2026-11-08).

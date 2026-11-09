@@ -127,6 +127,42 @@ decay; on a loop cut it is 80 ms). Where aubio finds the last attack the two
 agree to within a few ms; on the takes where it doesn't, aubio is 0.4–3.1 s
 early.
 
+## Camera shift
+
+A webcam reaches OBS later than the overlay's browser source, so a press shows
+on camera several frames after the overlay lights the key — and, since the
+overlay already leads the audio (above), after the note sounds.
+`--cam-shift N` takes the camera part of every frame from N frames later; the
+overlay and anything else below it stay as recorded. The overlay is the
+reference because it is what the audio is heard against, and it can't be moved
+without re-breaking that.
+
+- **The camera part** is, per column, everything above the overlay's white
+  outline: the topmost pixel inside the lattice crop that is white (min RGB ≥
+  200) in eight frames sampled across the cut. The lattice's top edge zigzags,
+  so the boundary follows it rather than a straight line; three rows above the
+  outline, and ±2 columns along its slopes, stay unshifted so its antialiased
+  edge never mixes two frames. Columns past the lattice's ends take the
+  nearest column's boundary (the backdrop there is static). The scene has to
+  have the camera above the lattice, as both presets do.
+- **Frame-exact.** Both branches of one decode are rebased to a one-frame
+  timebase and the camera branch is delayed by exactly N frames
+  (`trim` + `setpts`), then merged through the mask (`maskedmerge`); a
+  dropped source frame stays a gap rather than shifting everything after it.
+  On a 4 s test cut the camera band matched the source N frames later on every
+  frame where the camera moved, the lattice band matched it unshifted, and the
+  clip kept its exact frame count and duration.
+- **The source must extend N frames past the cut end** (it is refused
+  otherwise) and be `yuv420p`.
+- **Measuring N.** HKL turns on the Lumatone's light-on-keystroke, so a pressed
+  key lights in firmware with no round trip through HKL. On a single note after
+  a rest, step frames (mpv `.`) from the frame where the overlay lights the key
+  to the first camera frame where the physical key turns whiter: that count is
+  N. Hand motion is a poor marker: the finger's descent peaks about two frames
+  before the flash. On one rig N was 9–11 frames at 60 fps (150–183 ms) across
+  ten sessions, stable within a session; its webcam delivered 30 fps, so any
+  single reading is ±1 frame. Default 0 (off).
+
 ## Notes
 
 - **A rest of more than `--gap` seconds (2 s) of digital silence inside one

@@ -8,6 +8,8 @@ Hard-won truths that aren't obvious from reading the code. Anti-patterns that bu
 
 ## Hardware
 
+**Firmware baseline.** The Lumatone firmware facts in this file were established on firmware 1.4.0. 1.5.0 (installed 2026-11-08) kept every SysEx and PIC command code, the per-board memory layout and the `files/` formats; entries whose behavior it changed carry a 1.5.0 note, and the full list is in architecture/hkl.md → Lumatone internals.
+
 ### The Lumatone expression jack is wired Roland-style
 
 The expression jack expects the wiper signal on the **ring** of a TRS plug. Korg-style pedals (DS-1H, DS-2H, switch sustain pedals) put the pot between tip and sleeve and leave the ring unconnected. Plugged into the Lumatone, those pedals look like a floating ADC pin — slow capacitive drift downward, mechanical perturbations spiking to rail, no actual position information.
@@ -80,7 +82,7 @@ Don't "fix" the clamp upward without first verifying empirically on the device �
 
 ### Per-KEY thresholds (via cmdSetMax/cmdSetMin) ARE full 8-bit
 
-The 4-bit clamp above applies *only* to the per-board SysEx commands. The per-key threshold writes that happen at TC startup (`setMaxPic` / `setMinPic` / `setAftertouchMaxPic` sending PIC commands `cmdSetMax`=67, `cmdSetMin`=68, `cmdSetAftertouchMax`=89) are full 0..254. Values in the `KeyData_N` files routinely reach 70+ and work fine. Don't conflate the two layers.
+The 4-bit clamp above applies *only* to the per-board SysEx commands. The per-key threshold writes that happen when the controller starts (`setMaxPic` / `setMinPic` / `setAftertouchMaxPic` sending PIC commands `cmdSetMax`=67, `cmdSetMin`=68, `cmdSetAftertouchMax`=89) are full 0..254. Values in the `KeyData_N` files routinely reach 70+ and work fine. Don't conflate the two layers.
 
 ### MAX threshold direction: HIGH = stricter, not more permissive
 
@@ -92,23 +94,27 @@ For dead/weak keys, lower MAX. To recover compressed velocity range on weak-swin
 
 ### The PIC's calibration mode (0x24) can't be exited without hardware macro buttons
 
-`sysexCallibrateKeys` (0x24) puts each PIC microcontroller into cal mode. The PIC commits and exits cal mode only on its own hardware macro-button signal — not on anything the BBB sends over UART. There is no PIC command for "end calibration" in the firmware's command enum. We verified this exhaustively (full disassembly of `decodePicMessage`, `setKeyboardMode`, `writeToPic`). When macro buttons are broken or disconnected, 0x24 calibration is unusable for that board and any subsequent SysEx threshold query for that board returns `STATE` (0x04) error until power-cycle.
+`sysexCallibrateKeys` (0x24) puts each PIC microcontroller into cal mode. Through firmware 1.4.x the PIC commits and exits cal mode only on its own hardware macro-button signal — not on anything the BBB sends over UART. There was no PIC command for "end calibration" in that firmware's command enum (1.5.0 adds one; see below). We verified this exhaustively (full disassembly of `decodePicMessage`, `setKeyboardMode`, `writeToPic`). When macro buttons are broken or disconnected, 0x24 calibration is unusable for that board and any subsequent SysEx threshold query for that board returns `STATE` (0x04) error until power-cycle.
 
 Path forward when macro buttons are broken: skip 0x24 entirely. Edit per-key calibration directly via `tools/lumatone-cal/keydata-live.py`. See `docs/lumatone-calibration.md`.
 
-### In-memory `kbd_preset_params` is indexed by PIC number, NOT spatial board
+**Firmware 1.5.0 (2026-11-08)** adds SysEx `0x52` (ConfirmCalibration), which sends the PICs a new UART command `0x6a` (`cmdCalibrationButton`): a macro-button press in software. With 1.5.0 on both the BBB and the PICs, 0x24 calibration can be completed without the buttons (read from the binary; not yet exercised on hardware here). Completing the built-in routine commits touch-learned values over hand-set KeyData, so back up `files/` first.
+
+### In-memory per-board state (`boardId[5]`) is indexed by PIC number, NOT spatial board
 
 Two related quirks compound:
-1. Boards 3 and 4 are physically swapped on Max's unit, so spatial position ≠ PIC number. The swapped mapping `[1, 2, 3, 5, 4]` translates spatial→PIC (in HKL, gated by the `swapBoards34` toggle; these Python scripts assume it for Max's unit).
-2. TC's in-memory per-board state and on-disk `KeyData_N` files are indexed by **PIC number** (the BBB doesn't know about the physical swap; it only sees electrical wiring). Memory slot `i` (0..4) corresponds to `KeyData_(i+1)` and to PIC `i+1`.
+1. Boards 3 and 4 are physically swapped on Max's unit, so spatial position ≠ PIC number. The swapped mapping `[1, 2, 3, 5, 4]` translates spatial→PIC (in HKL, gated by the `swapBoards34` toggle; the Python scripts take `--swap-boards-34`).
+2. The controller's in-memory per-board state (`boardId[5]`, one 638-byte `board_properties` each; earlier notes called it `kbd_preset_params`, which is really a 5-byte flags struct) and the on-disk `KeyData_N` files are indexed by **PIC number** (the BBB doesn't know about the physical swap; it only sees electrical wiring). Memory slot `i` (0..4) corresponds to `KeyData_(i+1)` and to PIC `i+1`.
 
 When poking memory for a key at HKL coords (q, r): compute `sysex_board = [1,2,3,5,4][board_group]`, then memory slot = `sysex_board - 1`. Using `board_group` as the slot index reads the WRONG board (the one physically swapped with the intended one).
 
 ### `writeToPic` doesn't clear bits — clearing happens in AckBitClear, and only for SET commands
 
-TC's `writeToPic` dispatches based on bits in `picMessage0Flag[board]` but never clears them. Bit-clearing happens when the PIC acks the command, dispatched by `AckBitClear` keyed on the cmd byte. For GET commands (`cmdGetMax`=76, `cmdGetMin`=77, `cmdGetAftertouchMax`=96), `AckBitClear`'s case is the default no-op — the GET response is data, not a simple ack, and is handled by a different path in `decodePicMessage`.
+The controller's `writeToPic` dispatches based on bits in `picMessage0Flag[board]` but never clears them. Bit-clearing happens when the PIC acks the command, dispatched by `AckBitClear` keyed on the cmd byte. For GET commands (`cmdGetMax`=76, `cmdGetMin`=77, `cmdGetAftertouchMax`=96), `AckBitClear`'s case is the default no-op — the GET response is data, not a simple ack, and is handled by a different path in `decodePicMessage`.
 
 Practical consequence: setting bit `0x4000000` (the cmdGetAftertouchMax dispatch bit) to spoof "calibration complete" causes the BBB to send the query repeatedly until something else clears it. Don't assume bit persistence means writeToPic isn't running; check by other means.
+
+**Firmware 1.5.0:** one more path clears bits. `markBoardNotResponding` drops every pending bit of a board it marks dead (> 3 s with commands pending and no reply, or a data line stuck high), after answering the host's in-flight `0x00`/`0x01` with ERROR (3).
 
 ### Velocity randomness is NOT a noise-floor problem
 
@@ -146,6 +152,12 @@ When raising MAX globally to widen the velocity range, *some* keys (with small p
 Typical sequence: `--bulk-raise 1 100` → play → rescue ~10 keys → `--bulk-raise 1 130` → play → rescue ~3-5 keys → `--bulk-raise 1 160` → play → fewer rescues. Stop when further raises stop helping the "Can't play quiet" outlier list. ~1 hour total, vs. days of per-key bottom-up.
 
 Do NOT use `--bulk` (without `-raise`) once you have rescues — it's unconditional and will clobber them.
+
+### Cutting the Lumatone's power right after a write can leave the file zero-filled (2026-11-08)
+
+The BBB's root filesystem is ext4 on eMMC with ordinary writeback: a file written over SSH sits in the page cache until the kernel flushes it. On 2026-11-08 the 1.5.0 firmware package was `scp`'d to `/home/debian/` and the Lumatone power-cycled seconds later; the file came back at its full 562,805 bytes, every one of them zero. The installed 1.4.0 `lmtn_launcher.sh` runs under `sh -e`, so its `tar` failure aborted the launcher before it started the application, and every boot stalled with all five boards frozen mid-rainbow (the PICs never got their init). The same package re-uploaded and followed by `sync` on the device survived the identical power cycle and installed cleanly.
+
+Before cutting power after any write to the device — a firmware package, `keydata-live.py --commit` (which doesn't fsync), a hand-copied KeyData file — run `sync` over SSH (no sudo needed) or use `sudo reboot`, which flushes. The firmware's own settings writes (`storeKeySetting`, `storeKeyThresholds`) fsync.
 
 ---
 
@@ -378,7 +390,7 @@ The apparent ~100-key/s LED limit was not a global transport ceiling. Standalone
 USB MIDI measurements reached ~121 changed-key updates/s on one board and ~318/s
 with interleaving. Two boards already provide the full gain; more boards are not
 required. Max repeated the benchmark while playing and observed the same timing.
-These are measured ACK rates on his unit, not proof of the ultimate hardware limit.
+These are measured ACK rates on his unit under firmware 1.4.0, not proof of the ultimate hardware limit; 1.5.0's changed BBB→PIC write path has not been re-measured.
 
 Always serve a different board when another useful update is pending. Interleaving
 even makes the next visit to the original board faster than immediately repeating
@@ -799,13 +811,13 @@ Sources: `TerpstraSysEx.2014/Source/TerpstraMidiDriver.cpp:366–380` (the Lumat
 
 (Corrects an earlier-and-now-deleted lesson that claimed the BBB was a pure MIDI proxy.)
 
-The architecture, verified by disassembling the firmware binary (`TerpstraController/TerpstraController`, from a local mirror of the device) (offsets `0x11d30 binary_search`, `0x11e78 SendMidiKeyStroke`, `0x9c84 decodePicMessage`, `0x15f00 setMyVelocityInterval`):
+The architecture, verified by disassembling the firmware binary (`TerpstraController/TerpstraController` 1.4.0, from a local mirror of the device) (1.4.0 offsets `0x11d30 binary_search`, `0x11e78 SendMidiKeyStroke`, `0x9c84 decodePicMessage`, `0x15f00 setMyVelocityInterval`; the same functions, with the same callees, in 1.5.0's `LumatoneController` at other addresses):
 
 1. **PIC** (5 per-board microcontrollers) measures press-time as a 12-bit tick count and emits a UART message `[0x30, cmd, key, hi_byte, lo_nibble_byte, 0xFF]` to the BBB. `press_time = (hi_byte << 4) | (lo_nibble_byte & 0x0F)`.
-2. **BBB** (`TerpstraController`) decodes the message, then in `SendMidiKeyStroke`:
+2. **BBB** (the controller program) decodes the message, then in `SendMidiKeyStroke`:
    - Runs `binary_search(myVelocityInterval, press_time, 0, 126)` → bin index 0..127.
    - Reads `myVelocityTable[bin]` → MIDI velocity 0..127.
-   - Looks up per-key channel/note from `kbd_preset_params` (per-board × 638-byte stride).
+   - Looks up per-key channel/note from `boardId[board-1]` (`board_properties`, 638 bytes per board).
    - Sends the 3-byte MIDI message via `writeToMidi`.
 3. **Host** (HKL) receives the final 3-byte MIDI note-on.
 
@@ -4838,11 +4850,12 @@ witness, or a reformulation that can't be satisfied by emptiness.
 
 ## The Lumatone's PIC→BBB link is terminator-framed with no integrity check (2026-09-21)
 
-Reverse-engineered from `TerpstraController` (ARM, unstripped, full DWARF — `gdb -batch -ex "disassemble X"`
+Reverse-engineered from `TerpstraController` 1.4.0 (in 1.5.0's `LumatoneController`, `extractPicmsg` keeps the same callees; ARM, unstripped, full DWARF — `gdb -batch -ex "disassemble X"`
 works; Arch's binutils has no ARM target so `objdump -d` does not). Source file `MidiPicCommunication.c`.
 
 `readFromPic(pic)` waits on a per-board GPIO (P8 pins 12–16 for PICs 1–5), flushes the tty, asserts CTS, spins
-until the PIC drops the line, clears CTS, sleeps 10µs, then `extractPicmsg`. `extractPicmsg` reads **one byte at
+until the PIC drops the line, clears CTS, sleeps 10µs, then `extractPicmsg`. (Since 1.5.0 that spin is bounded;
+see "`readFromPic` spins on a GPIO with no timeout" below. The framing is unchanged.) `extractPicmsg` reads **one byte at
 a time** into a global `fromPicBuffer`; **the instant a byte reads `0xFF` it calls `decodePicMessage(pic, len)`
 and resets the index**. There is no checksum, no length field and no sync word — `0xFF` is purely a terminator.
 
@@ -4853,8 +4866,8 @@ So a note-on frame is exactly `30 90 <key> <b3> <b4> FF`.
 
 **Velocity is not transmitted.** `SendMidiKeyStroke` reconstructs it from a 12-bit key-travel timing value,
 `raw = (b3 << 4) | (b4 & 0x0F)` (0–4095), through `binary_search` against the 127-entry ascending threshold table
-in `files/VelocityLookUp_N`. Channel and note come from `kbd_preset_params[638*(board-1) + key]` — `&0x0F` for the
-channel, `+56` for the note. Note that `b3`/`b4` can never be `0xFF` in a decoded frame, since that byte would
+in `files/VelocityLookUp_N`. Channel and note come from `boardId[board-1]` — `channel[key] & 0x0F` and `note[key]`
+(the `note` array sits 56 bytes after `channel`). Note that `b3`/`b4` can never be `0xFF` in a decoded frame, since that byte would
 have terminated it early and failed the length gate.
 
 **Consequence: the power-off note burst cannot be filtered after the fact.** Faking a spurious note would need
@@ -4910,8 +4923,10 @@ Two corollaries found alongside it:
 
 - **No SysEx command can test whether the octave boards are alive.** `getMaxPic`/`getMinPic`/`getValidPic`
   are reachable only from `writeToPic`, which only `main`'s poll loop calls; every `sysexResponse*` handler
-  answers from the BBB's own `kbd_preset_params`. A probe only ever proves the BBB's MIDI thread is running,
-  and the BBB can outlive the keybed.
+  answers from the BBB's own memory (`boardId[]`). A probe only ever proves the BBB's MIDI thread is running,
+  and the BBB can outlive the keybed. **Firmware 1.5.0** adds a partial exception: SysEx addressed to a board
+  the BBB has marked not-responding is answered ERROR (3). The mark needs a data line stuck high or > 3 s of
+  unanswered pending commands, though, so a dead board with nothing pending still answers ACK from memory.
 - **Polyphonic aftertouch is the only PIC-sourced liveness signal** — it originates at the octave board, not
   the BBB — but there is a **~250ms engagement window** between key-down and the first aftertouch, so it
   cannot confirm anything inside a low-latency window.
@@ -4933,6 +4948,11 @@ no timeout. A PIC browning out with that line stuck high stalls the BBB's entire
 probe responses degraded to ~18ms shortly before the device stopped answering altogether: the device does not
 fall off a cliff, it gets progressively slower first. That made "response latency as a continuous health
 signal" look attractive — until the main-thread lesson above showed we cannot measure it from HKL anyway.
+
+**Fixed in firmware 1.5.0.** The spin now times out after 50 ms: the BBB drops CTS, flushes, marks the board
+not-responding ("RTS stuck high") and moves on. A board already marked is re-probed at most every 5 s with a
+5 ms limit, so a stuck line costs the main loop at most 50 ms once, then 5 ms every 5 s. Read from the
+1.5.0 binary; the brownout timing above was measured on 1.4.0 and has not been re-measured.
 
 ## Verovio ties avoid nothing outside their own note (2026-09-22)
 

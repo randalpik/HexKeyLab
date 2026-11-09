@@ -322,6 +322,79 @@ def video_onsets(src, audio_track, crop, onset, seg_end, workdir, thr=CELL_THR, 
                      lag_p25=q(0.25), lag_p75=q(0.75))
 
 
+# Camera shift. A webcam reaches OBS later than the overlay's browser source, so a press
+# shows on camera some frames after the overlay lights its key. --cam-shift N takes the
+# camera part of every frame from N frames later. The camera part is, per column, every
+# row above the overlay's white outline (the lattice's top edge zigzags, so the boundary
+# is not a straight line); below it the overlay and the rest of the scene stay as recorded.
+WHITE = 200          # min(R, G, B) of an outline pixel, in every sampled frame
+MASK_SAMPLES = 8     # frames sampled across the cut to find the outline
+MASK_MARGIN = 3      # rows above the outline left unshifted: its antialiased edge
+MASK_SPREAD = 2      # columns each side: on a steep edge the antialiasing sits beside the line
+
+
+def probe_video(path):
+    r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height,pix_fmt,r_frame_rate,color_range,color_space,color_primaries,color_transfer",
+             "-of", "default=nw=1", path])
+    return dict(line.split("=", 1) for line in r.stdout.strip().splitlines() if "=" in line)
+
+
+def camera_limits(src, crop, times, width):
+    """Per frame column, the first row that is not camera: the top of the overlay's outline
+    (the topmost pixel inside the lattice crop that is white in every sampled frame; the
+    crop's non-hex area is static dark, and camera never reaches into it) minus MASK_MARGIN,
+    min-filtered over ±MASK_SPREAD columns. Columns with no outline (past the lattice's ends,
+    over static backdrop) take the nearest column's value. Returns (limits, n_extrapolated)."""
+    cw, ch, cx, cy = (int(v) for v in crop.split(":"))
+    table = bytes(1 if v >= WHITE else 0 for v in range(256))
+    acc = None
+    for t in times:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.6f}", "-i", src,
+                            "-frames:v", "1", "-an", "-vf", f"crop={crop},format=rgb24", "-f", "rawvideo", "-"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if r.returncode != 0 or len(r.stdout) != cw * ch * 3:
+            die(f"outline sample at {t:.3f}s failed: " + r.stderr.decode(errors="replace").strip()[-200:])
+        b = r.stdout.translate(table)     # 0/1 per byte; ANDing the planes as big ints is bytewise
+        w = int.from_bytes(b[0::3], "big") & int.from_bytes(b[1::3], "big") & int.from_bytes(b[2::3], "big")
+        acc = w if acc is None else acc & w
+    white = acc.to_bytes(cw * ch, "big")
+    top = [None] * width
+    for y in range(ch):
+        row = white[y * cw:(y + 1) * cw]
+        x = row.find(1)
+        while x != -1:
+            if top[cx + x] is None:
+                top[cx + x] = cy + y
+            x = row.find(1, x + 1)
+    found = [x for x in range(width) if top[x] is not None]
+    if len(found) < 0.9 * width:
+        die(f"overlay outline found in only {len(found)} of {width} columns of the lattice crop {crop}; "
+            "check --lattice, or encode with --cam-shift 0")
+    filled, j = list(top), 0
+    for x in range(width):                # nearest found column
+        while j + 1 < len(found) and abs(found[j + 1] - x) <= abs(found[j] - x):
+            j += 1
+        filled[x] = top[found[j]]
+    lim = [min(filled[max(0, x - MASK_SPREAD):x + MASK_SPREAD + 1]) - MASK_MARGIN for x in range(width)]
+    return lim, width - len(found)
+
+
+def write_mask(path, lim, width, height):
+    """Raw yuv420p frame for maskedmerge: 255 = camera (take the shifted frame), 0 = keep.
+    A chroma sample is camera only when all four of its luma pixels are."""
+    yp = bytearray(width * height)
+    for y in range(min(max(lim), height)):
+        yp[y * width:(y + 1) * width] = bytes(255 if y < v else 0 for v in lim)
+    w2, h2 = width // 2, height // 2
+    lim2 = [min(lim[2 * i], lim[2 * i + 1]) for i in range(w2)]
+    cp = bytearray(w2 * h2)
+    for j in range(min((max(lim2) + 1) // 2, h2)):
+        cp[j * w2:(j + 1) * w2] = bytes(255 if 2 * j + 1 < v else 0 for v in lim2)
+    with open(path, "wb") as f:
+        f.write(yp + cp + cp)
+
+
 def fade_filter(L, fi, fo, curve, tail_silence=0.0):
     """Declick ramps; afade t=out holds gain 0 after the ramp, which is the tail silence."""
     parts = []
@@ -361,6 +434,8 @@ def main():
     ap.add_argument("--no-play", action="store_true", help="with --preview: write the wavs but do not play")
     ap.add_argument("--seam", type=float, default=1.0, help="seconds of tail and head in the preview (default 1.0)")
     ap.add_argument("--loops", type=int, default=4, help="preview repetitions (default 4)")
+    ap.add_argument("--cam-shift", type=int, default=0, help="take the camera (everything above the overlay's outline) "
+                    "from N frames later, to match a webcam that lags the overlay (default 0 = off)")
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--preset", default="medium")
     ap.add_argument("--abr", default="256k", help="AAC bitrate (default 256k)")
@@ -493,14 +568,52 @@ def main():
         return
 
     # --- encode --------------------------------------------------------------
-    run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-stats",
-         "-ss", f"{cut_start:.6f}", "-t", f"{L:.6f}", "-i", a.src,
-         "-map", "0:v:0", "-map", f"0:a:{a.audio_track}",
-         "-vf", "setpts=PTS-STARTPTS", "-fps_mode", "cfr",
-         "-af", af,
-         "-c:v", "libx264", "-preset", a.preset, "-crf", str(a.crf), "-pix_fmt", "yuv420p",
-         "-c:a", "aac", "-b:a", a.abr,
-         "-movflags", "+faststart", a.out], capture=False)
+    codec = ["-c:v", "libx264", "-preset", a.preset, "-crf", str(a.crf), "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", a.abr, "-movflags", "+faststart", a.out]
+    if a.cam_shift <= 0:
+        run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-stats",
+             "-ss", f"{cut_start:.6f}", "-t", f"{L:.6f}", "-i", a.src,
+             "-map", "0:v:0", "-map", f"0:a:{a.audio_track}",
+             "-vf", "setpts=PTS-STARTPTS", "-fps_mode", "cfr",
+             "-af", af, *codec], capture=False)
+    else:
+        S = a.cam_shift
+        vid = probe_video(a.src)
+        W, H = int(vid["width"]), int(vid["height"])
+        if vid.get("pix_fmt") != "yuv420p":
+            die(f"--cam-shift needs a yuv420p source (this one is {vid.get('pix_fmt')})")
+        num, _, den = vid["r_frame_rate"].partition("/")
+        den = den or "1"
+        fps = float(num) / float(den)
+        if cut_start + L + S / fps > total:
+            die(f"--cam-shift {S}: the camera needs {S / fps:.3f}s of source past the cut end, but the file ends "
+                f"at {total:.3f}")
+        crop = a.lattice or LAYOUTS.get((W, H))
+        if not crop:
+            die("no lattice preset for this frame size; pass --lattice W:H:X:Y")
+        lim, extra = camera_limits(a.src, crop, [cut_start + L * (i + 0.5) / MASK_SAMPLES for i in range(MASK_SAMPLES)], W)
+        mask = os.path.join(workdir, "cammask.yuv")
+        write_mask(mask, lim, W, H)
+        print(f"camera shift {S} frames ({S / fps * 1000:.0f} ms): outline top y {min(lim) + MASK_MARGIN}-"
+              f"{max(lim) + MASK_MARGIN}, {extra} columns past the outline extrapolated")
+        # Frame-exact: rebase to a 1-frame timebase so both branches carry integer frame
+        # indices (the mkv's millisecond timestamps would otherwise differ by 1 ms between them
+        # and make maskedmerge emit extra frames). A dropped source frame stays a gap.
+        params = ":".join(f"{k}={vid[p]}" for k, p in (("range", "color_range"), ("colorspace", "color_space"),
+                                                       ("color_primaries", "color_primaries"),
+                                                       ("color_trc", "color_transfer"))
+                          if vid.get(p) not in (None, "unknown"))
+        fc = (f"[0:v]setpts=PTS-STARTPTS,settb={den}/{num},split[base][cam];"
+              f"[cam]trim=start_pts={S},setpts=PTS-{S}[late];"
+              f"[1:v]{'setparams=' + params if params else 'null'}[m];"
+              f"[base][late][m]maskedmerge[v]")
+        run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-stats",
+             "-ss", f"{cut_start:.6f}", "-t", f"{L + (S + 2) / fps:.6f}", "-i", a.src,
+             "-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", f"{W}x{H}", "-framerate", f"{num}/{den}",
+             "-i", mask,
+             "-filter_complex", fc, "-map", "[v]", "-map", f"0:a:{a.audio_track}",
+             "-t", f"{L:.6f}", "-fps_mode", "cfr",
+             "-af", af, *codec], capture=False)
     print(f"wrote {a.out}  ({probe_duration(a.out):.3f}s)")
 
 

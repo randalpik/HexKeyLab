@@ -3,6 +3,9 @@
 Standalone Python/RtMidi scratch harness. No HKL app, dev server, firmware edits,
 or shared repo dependencies. Run on the computer connected to the Lumatone by
 **USB MIDI**. Requires Python 3.10+ and Lumatone firmware 1.0.11+ with 56 keys/board.
+The findings below were measured on firmware 1.4.0. 1.5.0 changed the BBB→PIC write
+path and adds a batched whole-keyboard colour frame (SysEx `0x55`); neither has been
+measured here, and the harness still sends per-key `0x01` updates.
 
 ```sh
 cd tools/lumatone-bench
