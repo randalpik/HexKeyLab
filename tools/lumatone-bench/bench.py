@@ -18,7 +18,8 @@ MANUFACTURER = (0, 0x21, 0x50)
 ALL_KEYS = [(board, key) for board in range(1, 6) for key in range(56)]
 BASELINE_PHASES = ('single', 'board', 'grouped', 'interleaved', 'unchanged')
 ROTATION_PHASES = ('board', 'interleaved2', 'interleaved3', 'interleaved')
-PHASES = (*BASELINE_PHASES, 'interleaved2', 'interleaved3')
+PHASES = (*BASELINE_PHASES, 'interleaved2', 'interleaved3', 'frame')
+FRAME_FIRMWARE = (1, 5, 0)  # SysEx 55h SetOctaveColours
 
 
 def packet(board, command, payload=(0, 0, 0, 0)):
@@ -27,6 +28,21 @@ def packet(board, command, payload=(0, 0, 0, 0)):
 
 def color_packet(board, key, rgb):
     return packet(board, 1, (key, *(n for v in rgb for n in (v >> 4, v & 15))))
+
+
+def frame_packet(colors):
+    """One 55h frame for all five boards (847 bytes with F0/F7; the firmware checks the
+    length exactly). `colors[board, key]` is a 7-bit (r, g, b); the firmware stores each
+    value << 1, and ACKs only once every responding board's PIC has taken its colors."""
+    payload = tuple(v for k in ALL_KEYS for v in colors[k])
+    if len(payload) != 840 or any(not 0 <= v <= 127 for v in payload):
+        raise ValueError('A 55h frame needs 280 RGB triples of 7-bit values')
+    return packet(0, 0x55, payload)
+
+
+def frame_stored(rgb7):
+    # What 13h/14h/15h read back after a 55h frame.
+    return tuple(v << 1 for v in rgb7)
 
 
 def decode_rgb_channel(payload):
@@ -66,7 +82,9 @@ def schedule_for(args):
         reverse_boards = (repeat // 2) % 2 == 1
         for phase in ordered:
             board = args.boards[0] if args.suite == 'rotation' else args.board
-            if phase in ('single', 'board', 'unchanged'):
+            if phase == 'frame':
+                boards = [0]
+            elif phase in ('single', 'board', 'unchanged'):
                 boards = [board]
             elif phase == 'grouped':
                 boards = list(range(1, 6))
@@ -113,10 +131,11 @@ class Client:
             except queue.Empty:
                 break
         start = time.perf_counter_ns()
+        shown = ' '.join(f'{b:02x}' for b in data[:12]) + (f' … ({len(data)} bytes)' if len(data) > 12 else '')
         row = {'phase': self.phase, 'run_id': self.run_id, 'board': data[3], 'command': data[4],
                'key': data[5] if data[4] == 1 else '',
                'sent_ns': start, 'received_ns': '', 'rtt_ms': '',
-               'status': 'send_error', 'packet': ' '.join(f'{b:02x}' for b in data)}
+               'status': 'send_error', 'packet': shown}
         self.rows.append(row)
         self.send(data)
         deadline = start / 1e9 + self.timeout
@@ -217,10 +236,52 @@ def timing_breakdown(rows):
             'host_ack_to_next_send_ms': distribution(host_gaps)}
 
 
+def run_frame_phase(client, state, spec, args, stopped, summary):
+    """Whole-keyboard 55h frames back to back, alternating black and white."""
+    white7 = args.white >> 1
+    begin = time.perf_counter()
+    row_start = len(client.rows)
+    count = 0
+    try:
+        while time.perf_counter() - begin < args.seconds and not stopped():
+            level = white7 if count % 2 == 0 else 0
+            colors = {k: (level,) * 3 for k in ALL_KEYS}
+            client.exchange(frame_packet(colors))
+            for k in ALL_KEYS:
+                state[k] = frame_stored(colors[k])
+            count += 1
+        summary['completed'] = not stopped()
+    finally:
+        elapsed = time.perf_counter() - begin
+        rows = client.rows[row_start:]
+        latencies = [r['rtt_ms'] for r in rows if r['status'] == 1]
+        gaps = [(b['sent_ns'] - a['received_ns']) / 1e6 for a, b in zip(rows, rows[1:])
+                if a['status'] == 1 and b['status'] == 1]
+        summary.update(elapsed_s=elapsed, acked=count, frames_per_s=count / elapsed if elapsed else 0,
+                       key_updates_per_s=280 * count / elapsed if elapsed else 0,
+                       updates_per_s=count / elapsed if elapsed else 0,
+                       rtt_p50_ms=percentile(latencies, .5), rtt_p95_ms=percentile(latencies, .95),
+                       rtt_p99_ms=percentile(latencies, .99), rtt_max_ms=max(latencies, default=None),
+                       rtt_ms=distribution(latencies), host_ack_to_next_send_ms=distribution(gaps),
+                       statuses=dict(Counter(str(r['status']) for r in rows)))
+
+
 def run_phase(client, state, spec, args, stopped, summaries):
     phase = spec['phase']
     client.phase = phase
     client.run_id = spec['run_id']
+    if phase == 'frame':
+        summary = {**spec, 'completed': False, 'readback_verified': False}
+        summaries.append(summary)
+        run_frame_phase(client, state, spec, args, stopped, summary)
+        client.phase = phase + ':verify'
+        client.verify(state)
+        summary['readback_verified'] = True
+        print(f"  {client.run_id:18} {summary['frames_per_s']:8.1f} frames/s "
+              f"({summary['key_updates_per_s']:.0f} key colours/s)  "
+              f"p50 {summary['rtt_p50_ms'] or 0:.2f} ms  p95 {summary['rtt_p95_ms'] or 0:.2f} ms  "
+              f"max {summary['rtt_max_ms'] or 0:.2f} ms  RGB verified", flush=True)
+        return
     keys = keys_for(phase, spec['boards'][0], args.key, spec['boards'])
     begin = time.perf_counter()
     row_start = len(client.rows)
@@ -301,6 +362,10 @@ def main():
     parser.add_argument('--restore', type=Path, help='Restore snapshot.json from an earlier run, then exit')
     parser.add_argument('--animation', type=Path, help='Play a converted animation instead of benchmark phases')
     parser.add_argument('--duration', type=float, help='Limit animation playback seconds (default full movie)')
+    parser.add_argument('--frames', action='store_true',
+                        help='Play a 2/4-level animation as whole-keyboard 55h frames (8-bit gray movies always do)')
+    parser.add_argument('--gamma', type=float, default=2.2,
+                        help='Gray-to-LED exponent for 55h frame playback (default 2.2; 1 = linear)')
     parser.add_argument('--swap-boards-34', action='store_true', help='Use HKL swapped physical-board routing (a unit whose boards 3 and 4 are swapped)')
     args = parser.parse_args()
     if (not math.isfinite(args.seconds) or args.seconds <= 0
@@ -311,6 +376,8 @@ def main():
         parser.error('boards must be a permutation of 1 2 3 4 5; repeats must be positive')
     if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0):
         parser.error('duration must be finite and positive')
+    if not math.isfinite(args.gamma) or args.gamma <= 0:
+        parser.error('gamma must be finite and positive')
     if args.animation and args.restore:
         parser.error('--animation and --restore are mutually exclusive')
     movie = None
@@ -361,6 +428,10 @@ def main():
                 report['firmware'] = '.'.join(map(str, firmware))
                 if tuple(firmware) < (1, 0, 11):
                     raise RuntimeError('Requires firmware >= 1.0.11 (8-bit RGB protocol)')
+                uses_frames = (any(s['phase'] == 'frame' for s in schedule)
+                               or (movie is not None and (args.frames or movie.get('levels') == 256)))
+                if uses_frames and tuple(firmware) < FRAME_FIRMWARE:
+                    raise RuntimeError('Whole-keyboard frames (SysEx 55h) need firmware >= 1.5.0')
                 if args.restore:
                     snapshot = json.loads(args.restore.read_text())
                     if snapshot.get('format') != 'hkl-lumatone-rgb-v1':

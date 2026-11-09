@@ -1,5 +1,22 @@
 # test/hkl-midi
 
+## Whole-keyboard frame sync (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/frame-sync.mjs
+```
+
+Drives the real `lumatone/sync.ts` and `lumatone/sysex.ts` against a scripted
+device that ACKs on command, the way firmware 1.5.0 defers a `55h` frame's ACK.
+Checks that firmware below 1.5.0 keeps the per-key path (no hover mirror); that
+the connect sequence (version answered after the first sync was queued) keeps
+all layout setup and sends one frame; the frame's payload under both board
+maps; latest-wins; that hover returning to the in-flight state drops the stale
+queued frame; that a control query survives a re-sync; that an ERROR frame is
+not counted and is resent. No dev server or MIDI device is needed. **Run it
+before declaring any change to `lumatone/sync.ts`, `lumatone/sysex.ts` or the
+frame builder done.**
+
 ## Color sync ordering (hardware-free)
 
 ```sh

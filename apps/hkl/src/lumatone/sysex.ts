@@ -49,11 +49,35 @@ function updateUI(): void {
 }
 
 function finish(ok: boolean): void {
+  const silent = pushSilent;
   pushInProgress = false;
   pushSilent = false;
   updateUI();
-  if (ok) console.log('Sync complete: ' + pushSent + ' messages sent');
-  else console.warn('Sync aborted');
+  if (ok && !silent) console.log('Sync complete: ' + pushSent + ' messages sent');
+  else if (!ok) console.warn('Sync aborted');
+}
+
+/* Color messages are superseded by a newer sync; anything else (setup, control
+   queries, calibration) must still go out when the queue is replaced. */
+function isColorMessage(m: SysexMessage): boolean {
+  return m.keyIdx !== undefined || m.frameColors !== undefined;
+}
+
+/* Device-state bookkeeping for a color message the device has taken. */
+function applyColors(m: SysexMessage): void {
+  if (!lumatone.deviceColors) return;
+  if (m.frameColors) lumatone.deviceColors = m.frameColors.slice();
+  else if (m.keyIdx !== undefined) lumatone.deviceColors[m.keyIdx] = m.color ?? null;
+}
+
+/* Recent whole-keyboard frame timings (diagnostic; lumaprobe.frames()). */
+const FRAME_TIMING_KEEP = 2000;
+const frameTimings: { rtt: number; sinceCause: number; cause: 'hover' | 'sync' }[] = [];
+function recordFrame(m: SysexMessage, now: number): void {
+  if (!m.frameColors || m.sentAt === undefined) return;
+  frameTimings.push({ rtt: now - m.sentAt, sinceCause: now - (m.causeAt ?? m.sentAt),
+                      cause: m.cause ?? 'sync' });
+  if (frameTimings.length > FRAME_TIMING_KEEP) frameTimings.splice(0, frameTimings.length - FRAME_TIMING_KEEP);
 }
 
 function sendNext(): void {
@@ -64,6 +88,7 @@ function sendNext(): void {
   }
   waiting = queue.shift()!;
   if (!midi.midiOut) { waiting = null; if (pushInProgress) finish(false); return; }
+  waiting.sentAt = performance.now();
   midi.midiOut.send(waiting);
   pushSent++;
   updateUI();
@@ -71,9 +96,7 @@ function sendNext(): void {
   if (!midi.midiIn) {
     ackTimer = window.setTimeout(function () {
       ackTimer = null;
-      if (waiting && waiting.keyIdx !== undefined && lumatone.deviceColors) {
-        lumatone.deviceColors[waiting.keyIdx] = waiting.color ?? null;
-      }
+      if (waiting) applyColors(waiting);
       waiting = null;
       sendNext();
     }, NOINPUT_DELAY_MS);
@@ -115,14 +138,18 @@ export const sysex: SysexQueueModule = {
     return true;
   },
 
-  /* Replace the queue with a new batch (visible push). The in-flight
-     message completes naturally; the new queue takes over after that.
-     Counters reset so progress reflects the new sync. */
+  /* Replace the queued colors with a new batch. The in-flight message
+     completes naturally; unsent non-color messages (setup, control queries)
+     keep their place ahead of the new batch, so a re-sync never drops them.
+     A frame-only batch runs silently: a 55h frame takes ~17ms, and showing
+     1/1 at hover rate would only flicker the status badge. Counters reset so
+     progress reflects the new sync. */
   replaceQueue(messages: SysexMessage[]): void {
-    queue = messages;
-    pushTotal = messages.length;
+    const kept = queue.filter((m) => !isColorMessage(m));
+    queue = kept.concat(messages);
+    pushTotal = queue.length;
     pushSent = 0;
-    pushSilent = false;
+    pushSilent = kept.length === 0 && messages.every((m) => m.frameColors !== undefined);
     if (!pushInProgress) {
       pushInProgress = true;
       updateUI();
@@ -172,22 +199,26 @@ export const sysex: SysexQueueModule = {
       }, BUSY_DELAY_MS);
     } else {
       /* ACK, NACK, ERROR, STATE — move on (don't retry NACK/ERROR forever) */
-      if (status === SYSEX_ACK && waiting.keyIdx !== undefined && lumatone.deviceColors) {
-        lumatone.deviceColors[waiting.keyIdx] = waiting.color ?? null;
+      if (status === SYSEX_ACK) {
+        applyColors(waiting);
+        recordFrame(waiting, performance.now());
       }
       waiting = null;
       sendNext();
     }
   },
 
-  /* Silent firmware revision query at connect time. Logs the result. */
-  queryFirmware(): void {
+  /* Silent firmware revision query at connect time. Logs the result, keeps it in
+     lumatone.firmware (it decides per-key vs frame color sync), then calls onKnown. */
+  queryFirmware(onKnown?: () => void): void {
     if (!midi.midiOut) return;
     const msg = buildRequestSysEx(SYSEX_CMD_GET_FIRMWARE_REVISION);
     msg.onResponse = function (data: Uint8Array): void {
       /* Response: F0 00 21 50 00 31 <ack> <major> <minor> <revision> F7 */
       if (data[6] === SYSEX_ACK && data.length >= 11) {
+        lumatone.firmware = [data[7], data[8], data[9]];
         console.log('Lumatone firmware: v' + data[7] + '.' + data[8] + '.' + data[9]);
+        if (onKnown) onKnown();
       } else if (data[6] === SYSEX_NACK) {
         console.log('Lumatone firmware query: not acknowledged (pre-1.0.8 firmware?)');
       } else {
@@ -196,4 +227,6 @@ export const sysex: SysexQueueModule = {
     };
     sysex.enqueueControl(msg);
   },
+
+  frameTimings() { return frameTimings; },
 };

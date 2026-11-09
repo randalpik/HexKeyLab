@@ -119,6 +119,16 @@ class Device:
         self.callback = None
         self.signals = {}
         self.recovery = False
+        self.firmware = (1, 0, 12)
+        self.frames = 0
+        self.frame_delay = 0
+        self.fired = False  # each injected failure happens once per run
+
+    def inject(self, kind, count):
+        if count == 3 and self.failure == kind and not self.fired:
+            self.fired = True
+            return True
+        return False
 
     def __enter__(self):
         return self
@@ -132,7 +142,28 @@ class Device:
         payload = ()
         status = 1
         if cmd == 0x31:
-            payload = (1, 0, 12)
+            payload = self.firmware
+        elif cmd == 0x55:
+            # Firmware 1.5.0: exact length (845 bytes between F0 and F7 for board 0),
+            # 7-bit values stored << 1, one ACK once every board has taken the frame.
+            assert (self.out / 'snapshot.json').exists(), 'Frame before recovery snapshot'
+            assert self.firmware >= (1, 5, 0), '55h sent to pre-1.5.0 firmware'
+            self.frames += 1
+            if board != 0 or len(data) != 845:
+                status = 3
+            elif self.inject('nack', self.frames):
+                status = 3
+            else:
+                values = data[5:]
+                for i, key in enumerate(bench.ALL_KEYS):
+                    rgb = tuple(v << 1 for v in values[3 * i:3 * i + 3])
+                    self.changed.append(rgb != self.colors[key])
+                    self.colors[key] = rgb
+                if self.inject('timeout', self.frames):
+                    return
+                if self.inject('interrupt', self.frames):
+                    self.signals[signal.SIGINT](signal.SIGINT, None)
+                time.sleep(self.frame_delay)
         elif cmd in (0x13, 0x14, 0x15):
             if self.failure == 'bad_snapshot':
                 payload = (0,) * 56
@@ -149,13 +180,13 @@ class Device:
             key = board, data[5]
             rgb = tuple((data[i] << 4) | data[i + 1] for i in (6, 8, 10))
             self.changed.append(rgb != self.colors[key])
-            if self.writes == 3 and self.failure == 'nack':
+            if self.inject('nack', self.writes):
                 status = 0
             else:
                 self.colors[key] = rgb
-            if self.writes == 3 and self.failure == 'timeout':
+            if self.inject('timeout', self.writes):
                 return  # Applied, but no ACK: restoration must re-read actual state.
-            if self.writes == 3 and self.failure == 'interrupt':
+            if self.inject('interrupt', self.writes):
                 self.signals[signal.SIGINT](signal.SIGINT, None)
         else:
             raise AssertionError(f'Unexpected write command: {cmd}')
@@ -223,6 +254,42 @@ class LifecycleTests(unittest.TestCase):
             kind = 'same_board' if phase['phase'] == 'board' else 'different_board'
             self.assertEqual(phase['rtt_by_transition_ms'][kind]['n'], phase['acked'] - 1)
         self.assertTrue(all(device.changed))
+
+    def test_frame_packet_layout_and_bounds(self):
+        colors = {(b, k): (b, k, 7) for b, k in bench.ALL_KEYS}
+        data = bench.frame_packet(colors)
+        self.assertEqual(len(data) + 2, 847)  # + F0/F7: the length the firmware requires
+        self.assertEqual(data[:5], (0, 0x21, 0x50, 0, 0x55))
+        self.assertEqual(data[5:8], (1, 0, 7))           # board 1 key 0 first
+        self.assertEqual(data[5 + 3 * 57:8 + 3 * 57], (2, 1, 7))  # then board-major, key-minor
+        self.assertEqual(bench.frame_stored((127, 1, 0)), (254, 2, 0))
+        with self.assertRaises(ValueError):
+            bench.frame_packet({k: (128, 0, 0) for k in bench.ALL_KEYS})
+
+    def test_frame_phase_measures_frames_verifies_and_restores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'run'
+            device = Device(out)
+            device.firmware = (1, 5, 0)
+            args = ['bench.py', '--seconds', '.02', '--timeout', '.05', '--out', str(out), '--phases', 'frame']
+            with patch.object(sys, 'argv', args), patch.dict(sys.modules, mido=device.module()), \
+                    patch('signal.signal'), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = bench.main()
+            report = json.loads((out / 'report.json').read_text())
+        self.assertEqual(code, 0)
+        [phase] = report['phases']
+        self.assertTrue(phase['readback_verified'])
+        self.assertGreater(phase['acked'], 1)
+        self.assertEqual(phase['acked'], device.frames)
+        self.assertEqual(device.writes, 280)  # 8-bit originals restored key by key with 01h
+        self.assertTrue(report['restored'])
+        self.assertEqual(device.colors, device.original)
+
+    def test_frame_phase_refuses_pre_150_firmware_before_any_write(self):
+        code, device, report = self.run_device(extra_args=('--phases', 'frame'))
+        self.assertEqual(code, 1)
+        self.assertEqual((device.writes, device.frames), (0, 0))
+        self.assertIn('1.5.0', report['error'])
 
     def test_unreadable_snapshot_prevents_all_color_writes(self):
         code, device, report = self.run_device('bad_snapshot')

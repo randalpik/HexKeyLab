@@ -246,6 +246,39 @@ is controller state, not optical verification: watch or film the board as well.
 The changed-write PIC-ACK path was identified in the local firmware binary;
 firmware versions may differ. No-op ACK/s must not be interpreted as LED throughput.
 
+### Whole-keyboard frames (firmware 1.5.0, SysEx 55h)
+
+Firmware 1.5.0 adds `F0 00 21 50 <board> 55 <data> F7`: board `0` with 840 data
+bytes (all five boards, 847 bytes on the wire) or boards `1`–`5` with 168. Data is
+56 keys × R, G, B per board, boards 1→5, each value **7-bit**; the firmware stores
+`value << 1` and pushes the colors through its normal PIC write path. The length
+is checked exactly (anything else is answered ERROR, 03h). The ACK is **deferred**
+until every responding board's PIC has taken its colors, so one ACK = one frame on
+the LEDs. A new frame sent before that ACK replaces the pending one and its ACK is
+never sent, so the harness keeps one frame in flight. (Read from the 1.5.0 binary:
+`setOctaveColours`, `colourFrameStarted`, `colourFrameBoardDone`.)
+
+```sh
+# Frame-rate probe: whole-keyboard black/white frames back to back
+.venv/bin/python bench.py --phases frame --seconds 10
+
+# 8-bit gray conversion, then frame playback
+.venv/bin/python animation.py convert out/assets/bad-apple.mp4 --vertical-scale .75 \
+  --levels 256 --out out/assets/bad-apple-gray.luma.json
+.venv/bin/python bench.py --animation out/assets/bad-apple-gray.luma.json \
+  --swap-boards-34 --white 254 --gamma 2.2
+```
+
+Gray playback sends the newest due source frame after each ACK and drops any it
+fell behind on, so the video clock never slows; frames identical to the last one
+sent are skipped. `--white` is the 8-bit full-white level (7-bit on the wire, so
+`--white 254` gives all 128 levels) and `--gamma` maps source gray to LED level.
+`--frames` plays an existing 2/4-level movie the same way. The report's
+`animation` block gives `sent_fps`, `frames_dropped`, `frame_rtt_ms` and
+`display_lateness_ms` (ACK time minus the frame's place on the video clock);
+`frames-trace.json` has every frame. `simulate` and `replay.html` cover only the
+per-key 01h path.
+
 ## Suggested runs
 
 For longer rotation measurements (four minutes timed work):

@@ -123,6 +123,33 @@ class QueueTests(unittest.TestCase):
         self.assertGreater(report['canceled'], 0)
 
 
+def gray_movie(frames, fps=30):
+    return {'format': animation.FORMAT, 'fps': fps, 'levels': animation.GRAY, 'frames': frames,
+            'points': animation.geometry(), 'mapping': {'vertical_scale': .75}}
+
+
+class GrayFrameTests(unittest.TestCase):
+    def test_gray_movies_load_and_reject_bad_frames(self):
+        good = gray_movie([bytes(i % 256 for i in range(280)).hex()])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'m.json'
+            path.write_text(json.dumps(good))
+            self.assertEqual(animation.gray_frame(animation.load_movie(path), 0)[:3], [0, 1, 2])
+            for bad in ('zz' * 280, '00' * 279, '0' * 280):
+                path.write_text(json.dumps(gray_movie([bad])))
+                with self.assertRaises(ValueError):
+                    animation.load_movie(path)
+
+    def test_led_levels_scale_white_and_gamma(self):
+        self.assertEqual(animation.led_levels([0, 255], 254, 2.2), [0, 127])
+        self.assertEqual(animation.led_levels(list(range(0, 256, 2)), 254, 1), list(range(128)))
+        curved = animation.led_levels(list(range(256)), 254, 2.2)
+        self.assertEqual(curved, sorted(curved))
+        self.assertLess(curved[128], 64)  # mid-gray sits below half power
+        self.assertEqual(animation.led_levels([255], 96, 1), [48])
+        self.assertEqual(animation.gray_frame(movie([frame(3)]), 0)[2:5], [0, 255, 0])
+
+
 class LightingDevice(Device):
     def __init__(self, out, failure=None):
         super().__init__(out, failure)
@@ -177,6 +204,56 @@ class PlaybackTests(unittest.TestCase):
                     self.assertEqual(report['animation']['rgb_channel_palette'], expected)
                     self.assertEqual(set(device.sent_colors) - {(17, 34, 51)},
                                      {(v, v, v) for v in expected})
+
+    def run_frames(self, m, failure=None, extra=(), delay=0):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'movie.json'
+            path.write_text(json.dumps(m))
+            out = Path(directory)/'run'
+            device = LightingDevice(out, failure)
+            device.firmware = (1, 5, 0)
+            device.frame_delay = delay
+            args = ['bench.py', '--animation', str(path), '--out', str(out), '--timeout', '.2',
+                    '--swap-boards-34', '--white', '254', *extra]
+            with patch.object(sys, 'argv', args), patch.dict(sys.modules, mido=device.module()), \
+                    patch('signal.signal', side_effect=lambda s, f: device.signals.__setitem__(s, f)), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                result = bench.main()
+            return result, device, json.loads((out/'report.json').read_text())
+
+    def test_gray_frames_play_route_verify_and_restore(self):
+        f0 = bytes(280).hex()
+        f1 = bytes(255 if i == 168 else 0 for i in range(280)).hex()  # logical key 168
+        for failure in (None, 'nack', 'timeout', 'interrupt'):
+            with self.subTest(failure=failure):
+                result, device, report = self.run_frames(gray_movie([f0, f1, f0, f1, f0]), failure)
+                self.assertEqual(result, 0 if failure is None else 130 if failure == 'interrupt' else 1)
+                self.assertTrue(report['restored'])
+                self.assertTrue(report['lighting_restored'])
+                self.assertEqual(device.colors, device.original)
+                self.assertTrue(device.saw_lights_off)
+                if failure is None:
+                    a = report['animation']
+                    self.assertEqual(a['mode'], 'hardware-55h-frames')
+                    self.assertTrue(a['readback_verified'])
+                    self.assertGreaterEqual(device.frames, 2)
+                    self.assertEqual(a['frames_sent'] + 1, device.frames)  # + preroll
+                    self.assertEqual(a['distinct_led_levels'], 2)
+
+    def test_frames_flag_plays_digit_movies_as_frames(self):
+        result, device, report = self.run_frames(movie([frame(), frame(140), frame()]), extra=('--frames',))
+        self.assertEqual(result, 0)
+        self.assertEqual(report['animation']['mode'], 'hardware-55h-frames')
+        self.assertEqual(device.colors, device.original)
+
+    def test_slow_device_drops_frames_and_keeps_the_video_clock(self):
+        frames = [bytes([i * 9 % 256] * 280).hex() for i in range(24)]
+        result, device, report = self.run_frames(gray_movie(frames, fps=120), delay=.03)
+        a = report['animation']
+        self.assertEqual(result, 0)
+        self.assertGreater(a['frames_dropped'], 0)
+        self.assertLess(a['frames_sent'], len(frames))
+        self.assertLess(a['duration_s'], .3)
 
 
 if __name__ == '__main__':

@@ -11,8 +11,11 @@ export const lumatone: {
   deviceColors: (string | null)[] | null;
   /** true after CHANGE_KEY_NOTE × 280 + flags sent this connection */
   fixedLayoutSent: boolean;
+  /** [major, minor, revision] from the connect-time firmware query; null until it answers */
+  firmware: number[] | null;
 } = {
   autoSyncEnabled: false,
   deviceColors: null,
   fixedLayoutSent: false,
+  firmware: null,
 };

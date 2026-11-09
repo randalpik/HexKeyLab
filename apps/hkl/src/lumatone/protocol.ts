@@ -22,6 +22,22 @@ export const SYSEX_CMD_GET_FIRMWARE_REVISION = 0x31;
    never touches the PICs or key state — and echoes the 4 data bytes back:
    F0 00 21 50 00 33 01 <d1 d2 d3 d4> F7. Used as the liveness heartbeat. */
 export const SYSEX_CMD_PING = 0x33;
+/* Firmware 1.5.0 whole-keyboard colour frame (SetOctaveColours): board 0 + 280 keys
+   × 7-bit R, G, B, boards 1→5 then keys 0→55; 847 bytes, length checked exactly.
+   The firmware stores each value << 1 and defers the ACK until every responding
+   board's PIC has the colours. A frame sent before that ACK replaces the pending
+   one and swallows its ACK, so keep exactly one frame in flight. */
+export const SYSEX_CMD_SET_OCTAVE_COLOURS = 0x55;
+export const FRAME_FIRMWARE = [1, 5, 0] as const;
+
+/* True when [major, minor, revision] is at least `min`. */
+export function firmwareAtLeast(v: readonly number[] | null, min: readonly number[]): boolean {
+  if (!v) return false;
+  for (let i = 0; i < min.length; i++) {
+    if ((v[i] ?? 0) !== min[i]) return (v[i] ?? 0) > min[i];
+  }
+  return true;
+}
 
 /* v0.9 pedal calibration commands (Terpstra firmware reference) */
 export const SYSEX_CMD_SET_FOOT_CONTROLLER_SENSITIVITY = 0x03;
@@ -89,6 +105,26 @@ export function buildNoteSysEx(board: number, keyIdx: number, note: number, chan
     note, channel, typeByte,
     0xF7,
   ]) as SysexMessage;
+}
+
+/* One 55h frame setting all 280 keys. `colors` is '#RRGGBB' in baseKeys order (group =
+   index / 56); each group lands in its SysEx board's slot, so the board swap applies.
+   8-bit channels are sent as 7-bit (the firmware doubles them back). */
+export function buildFrameSysEx(colors: readonly string[]): SysexMessage {
+  const msg = new Uint8Array(847) as SysexMessage;
+  msg[0] = 0xF0;
+  msg[1] = SYSEX_MANU[0]; msg[2] = SYSEX_MANU[1]; msg[3] = SYSEX_MANU[2];
+  msg[4] = 0; msg[5] = SYSEX_CMD_SET_OCTAVE_COLOURS;
+  for (let i = 0; i < 280; i++) {
+    const at = 6 + ((sysexBoardFor(Math.floor(i / 56)) - 1) * 56 + (i % 56)) * 3;
+    const hex = colors[i];
+    msg[at] = parseInt(hex.slice(1, 3), 16) >> 1;
+    msg[at + 1] = parseInt(hex.slice(3, 5), 16) >> 1;
+    msg[at + 2] = parseInt(hex.slice(5, 7), 16) >> 1;
+  }
+  msg[846] = 0xF7;
+  msg.frameColors = colors.slice();
+  return msg;
 }
 
 export function buildColorSysEx(board: number, keyIdx: number, hexCol: string, deviceIdx: number): SysexMessage {

@@ -251,6 +251,23 @@ export function dump(): void {
   console.log(out.join('\n'));
 }
 
+/* Whole-keyboard 55h frame timings (firmware 1.5.0 color sync): send→ACK is the
+   device's frame time; hover→ACK runs from the canvas hover that caused the frame to
+   the ACK saying every board has it, so it includes any wait behind a frame in flight. */
+export function frames(): void {
+  const t = sysex.frameTimings();
+  if (!t.length) { console.log('[lumaprobe] no 55h frames yet (needs firmware 1.5.0+ and Auto-sync)'); return; }
+  const stat = (xs: number[]): string => {
+    if (!xs.length) return 'n=0';
+    const s = xs.slice().sort((a, b) => a - b);
+    const at = (f: number): number => s[Math.max(0, Math.ceil(s.length * f) - 1)];
+    return `n=${s.length}  p50 ${at(0.5).toFixed(1)}  p95 ${at(0.95).toFixed(1)}  max ${s[s.length - 1].toFixed(1)} ms`;
+  };
+  const hover = t.filter((x) => x.cause === 'hover');
+  console.log('[lumaprobe] 55h frames (last ' + t.length + ')\n  send→ACK   ' + stat(t.map((x) => x.rtt))
+    + '\n  hover→ACK  ' + stat(hover.map((x) => x.sinceCause)));
+}
+
 interface ProbeWindow extends Window { lumaprobe?: Record<string, unknown> }
-(window as ProbeWindow).lumaprobe = { latency, watch, watchGuard, stop, dump, probeOnce };
-console.log('%c[lumaprobe] lumaprobe.latency() · lumaprobe.watchGuard() · lumaprobe.dump()', 'color:#0ff;font-weight:bold');
+(window as ProbeWindow).lumaprobe = { latency, watch, watchGuard, stop, dump, probeOnce, frames };
+console.log('%c[lumaprobe] lumaprobe.latency() · lumaprobe.watchGuard() · lumaprobe.dump() · lumaprobe.frames()', 'color:#0ff;font-weight:bold');

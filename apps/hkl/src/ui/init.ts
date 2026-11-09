@@ -55,7 +55,7 @@ import '../input/keyboard-notes.js';
 import {
   togglePedalCalibration, resetPedalBounds,
 } from '../lumatone/calibration.js';
-import { toggleAutoSync } from '../lumatone/sync.js';
+import { toggleAutoSync, syncLumatoneHover } from '../lumatone/sync.js';
 import { setBoards34Swapped } from '../lumatone/protocol.js';
 import {
   ensureLumaDiag, setLumaDiagVisible, setLumaDiagHotkeyCallback,
@@ -280,10 +280,10 @@ function flashInfoLine(text: string, ms = 2000): void {
 cv.addEventListener('mousemove', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
   const key = hexAtPoint(e.clientX - rect.left, e.clientY - rect.top);
-  if (key !== selection.hoverKey) { selection.hoverKey = key; draw(); }
+  if (key !== selection.hoverKey) { selection.hoverKey = key; draw(); syncLumatoneHover(); }
 });
 cv.addEventListener('mouseleave', function () {
-  if (selection.hoverKey !== null) { selection.hoverKey = null; draw(); }
+  if (selection.hoverKey !== null) { selection.hoverKey = null; draw(); syncLumatoneHover(); }
 });
 
 // ── Toolbar wiring ──

@@ -12,7 +12,7 @@ import { lumatoneCell } from '../layout/physical.js';
 import { syncAudio } from '../audio/engine.js';
 import { syncPianoOut } from './piano-out.js';
 import { sysex } from '../lumatone/sysex.js';
-import { syncLumatoneColors } from '../lumatone/sync.js';
+import { syncLumatoneColors, frameSyncActive } from '../lumatone/sync.js';
 import { buildPingSysEx, isPingReply } from '../lumatone/protocol.js';
 import type { KeyId } from '../types.js';
 
@@ -112,6 +112,7 @@ export function markLumatoneGone(reason: string): void {
   sysex.cancel();
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
+  lumatone.firmware = null;
   pendingReconnect = true;
   /* Port state has already changed, so the badge must reflect it NOW — before
      the voice release, which is the part with any chance of failing. Ordering
@@ -171,6 +172,7 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     sysex.cancel();
     lumatone.deviceColors = null;
     lumatone.fixedLayoutSent = false;
+    lumatone.firmware = null;
     if (deviceLostHandler) {
       try { deviceLostHandler(); }
       catch (e) { console.error('Lumatone: releasing held input on departure failed', e); }
@@ -199,8 +201,14 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     pendingReconnect = false;
     if (oldOutId !== newOutId) {
       /* Silent firmware probe, then (only if user opted in) sync colors.
-         We DO NOT auto-configure the device without Auto-sync checked. */
-      sysex.queryFirmware();
+         We DO NOT auto-configure the device without Auto-sync checked. The
+         probe goes out first; when it reports 1.5.0+, re-sync so the per-key
+         colors queued meanwhile become one 55h frame (replaceQueue keeps the
+         queued layout setup). */
+      lumatone.firmware = null;
+      sysex.queryFirmware(() => {
+        if (lumatone.autoSyncEnabled && frameSyncActive()) syncLumatoneColors();
+      });
       if (lumatone.autoSyncEnabled) syncLumatoneColors();
     }
   }

@@ -9,10 +9,11 @@ import re
 import subprocess
 import time
 
-from bench import color_packet, distribution, write_json
+from bench import ALL_KEYS, color_packet, distribution, frame_packet, frame_stored, write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 FORMAT = 'hkl-lumatone-animation-v1'
+GRAY = 256  # levels value of an 8-bit gray movie: each frame is 280 two-digit hex bytes
 
 
 def palette(movie, white=96):
@@ -58,10 +59,11 @@ def load_movie(path):
     if not isinstance(fps, (int, float)) or not math.isfinite(fps) or not 0 < fps <= 120:
         raise ValueError('Invalid animation FPS')
     levels = movie.get('levels', 2)  # Existing binary files omit this field.
-    if type(levels) is not int or levels not in (2, 4):
-        raise ValueError('Animation levels must be 2 or 4')
-    digits = set(map(str, range(levels)))
-    if (not movie['frames'] or any(len(f) != 280 or set(f) - digits for f in movie['frames'])
+    if type(levels) is not int or levels not in (2, 4, GRAY):
+        raise ValueError('Animation levels must be 2, 4 or 256')
+    digits = set('0123456789abcdef') if levels == GRAY else set(map(str, range(levels)))
+    width = 560 if levels == GRAY else 280
+    if (not movie['frames'] or any(len(f) != width or set(f) - digits for f in movie['frames'])
             or len(movie['points']) != 280
             or any(len(p) != 2 or any(not math.isfinite(v) for v in p) for p in movie['points'])):
         raise ValueError('Invalid animation frames/geometry')
@@ -169,7 +171,105 @@ def simulate(movie, same_ms=8.2, other_ms=3.1, duration=None):
     return report, events, initial
 
 
+def gray_frame(movie, index):
+    """Frame `index` as 280 source grays 0–255, in HKL physical key order."""
+    frame = movie['frames'][index]
+    levels = movie.get('levels', 2)
+    if levels == GRAY:
+        return list(bytes.fromhex(frame))
+    return [round(255 * int(c) / (levels - 1)) for c in frame]
+
+
+def led_levels(grays, white, gamma):
+    """Source gray → 7-bit 55h value. `white` is the 8-bit full-white intensity (stored as
+    value << 1); `gamma` makes equal source steps look roughly equal on the LEDs."""
+    top = white >> 1
+    return [round(top * (g / 255) ** gamma) for g in grays]
+
+
+def frame_colors(levels, addresses):
+    colors = {}
+    for i, address in enumerate(addresses):
+        colors[address] = (levels[i],) * 3
+    return colors
+
+
+def play_frames(client, movie, state, args, stopped, report, out):
+    """Whole-keyboard 55h playback. One frame in flight (the firmware drops the pending ACK
+    of a frame overtaken by the next one); after each ACK, send the newest due source frame,
+    dropping any the device fell behind on. The video clock never slows."""
+    addresses = routing(args.swap_boards_34)
+    fps = movie['fps']
+    total = len(movie['frames'])
+    duration = min(args.duration or math.inf, total / fps)
+    levels_of = lambda i: led_levels(gray_frame(movie, i), args.white, args.gamma)
+
+    def send(levels):
+        colors = frame_colors(levels, addresses)
+        client.exchange(frame_packet(colors))
+        for k in ALL_KEYS:
+            state[k] = frame_stored(colors[k])
+
+    client.phase = client.run_id = 'frames-preroll'
+    send(levels_of(0))
+    if stopped():
+        return
+    client.verify(state)
+    client.phase = client.run_id = 'frames'
+    events = []  # [source frame, sent s, acked s, frames dropped before it]
+    last_index, last_levels, identical = 0, levels_of(0), 0
+    start = time.perf_counter()
+    next_progress = 5
+    try:
+        while not stopped():
+            now = time.perf_counter() - start
+            if now >= duration:
+                break
+            due = min(int(now * fps), total - 1)
+            if due <= last_index:
+                time.sleep(min(.005, max(0, (last_index + 1) / fps - now)))
+                continue
+            levels = levels_of(due)
+            dropped = due - last_index - 1
+            last_index = due
+            if levels == last_levels:
+                identical += 1
+                continue
+            sent = time.perf_counter() - start
+            send(levels)
+            acked = client.rows[-1]['received_ns'] / 1e9 - start
+            events.append([due, sent, acked, dropped])
+            last_levels = levels
+            if now >= next_progress:
+                print(f'  {now:.1f}/{duration:.1f}s: {len(events) / now:.1f} frames/s sent, '
+                      f'source frame {due}', flush=True)
+                next_progress = now + 5
+    finally:
+        elapsed = min(time.perf_counter() - start, duration)
+        source = min(total, math.floor(elapsed * fps) + 1)
+        rtts = [(a - s) * 1000 for _, s, a, _ in events]
+        lateness = [(a - i / fps) * 1000 for i, _, a, _ in events]
+        report['animation'] = {
+            'mode': 'hardware-55h-frames', 'duration_s': elapsed, 'source_fps': fps,
+            'source_frames_elapsed': source, 'frames_sent': len(events),
+            'sent_fps': len(events) / elapsed if elapsed else 0,
+            'frames_dropped': sum(e[3] for e in events), 'identical_frames_skipped': identical,
+            'frame_rtt_ms': distribution(rtts),
+            'display_lateness_ms': distribution(lateness),
+            'levels': movie.get('levels', 2), 'white': args.white, 'gamma': args.gamma,
+            'distinct_led_levels': len({v for i in {e[0] for e in events} for v in levels_of(i)}),
+            'swap_boards_34': args.swap_boards_34,
+            'movie_sha256': hashlib.sha256(args.animation.read_bytes()).hexdigest()}
+        write_json(out / 'frames-trace.json', {'columns': ['source_frame', 'sent_s', 'acked_s', 'dropped_before'],
+                                               'events': events})
+    client.phase = 'frames:verify'
+    client.verify(state)
+    report['animation']['readback_verified'] = True
+
+
 def play(client, movie, state, args, stopped, report, out):
+    if movie.get('levels', 2) == GRAY or getattr(args, 'frames', False):
+        return play_frames(client, movie, state, args, stopped, report, out)
     addresses = routing(args.swap_boards_34)
     intensities = palette(movie, args.white)
     initial = list(map(int, movie['frames'][0]))
@@ -270,11 +370,13 @@ def convert(args):
                 break
             if len(raw) != width*height:
                 raise RuntimeError('Truncated decoded video frame')
+            means = [sum(raw[i] for i in sample)/len(sample) if sample else 0 for sample in samples]
+            if args.levels == GRAY:
+                frames.append(bytes(min(255, round(m)) for m in means).hex())
+                continue
             previous = list(map(int, frames[-1])) if frames else [None] * 280
-            frames.append(''.join(str(quantize(
-                sum(raw[i] for i in sample)/len(sample) if sample else 0,
-                args.levels, previous[key], args.hysteresis, args.threshold))
-                for key, sample in enumerate(samples)))
+            frames.append(''.join(str(quantize(m, args.levels, previous[key], args.hysteresis, args.threshold))
+                                  for key, m in enumerate(means)))
         if process.wait() != 0:
             raise RuntimeError('Video decode failed')
     if not frames:
@@ -288,7 +390,8 @@ def convert(args):
                          'orientation': 'lumatone', 'order': 'HKL baseKeys logical physical index'}}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.out, movie)
-    preview(args.out.with_suffix('.html'), movie)
+    if args.levels != GRAY:  # replay.html draws digit frames only
+        preview(args.out.with_suffix('.html'), movie)
     print(f'{len(frames)} frames, {len(frames)/args.fps:.2f}s -> {args.out}')
 
 
@@ -303,7 +406,8 @@ def main():
     conv.add_argument('--zoom', type=float, default=1)
     conv.add_argument('--y-offset', type=float, default=0, help='Source-height fraction; positive samples lower')
     conv.add_argument('--threshold', type=float, default=128)
-    conv.add_argument('--levels', type=int, choices=(2, 4), default=2)
+    conv.add_argument('--levels', type=int, choices=(2, 4, GRAY), default=2,
+                      help='2 or 4 quantized levels, or 256 for 8-bit gray (played as 55h frames)')
     conv.add_argument('--hysteresis', type=float,
                       help='Source-gray threshold margin, 0–42; default 6 for four levels, otherwise 0')
     sim = sub.add_parser('simulate')
@@ -329,6 +433,8 @@ def main():
         if min(args.same_ms, args.other_ms) <= 0:
             parser.error('Latencies must be positive')
         movie = load_movie(args.movie)
+        if movie.get('levels', 2) == GRAY:
+            parser.error('simulate models per-key 01h scheduling; 8-bit gray movies play as 55h frames')
         report, events, initial = simulate(movie, args.same_ms, args.other_ms)
         args.out.mkdir(parents=True, exist_ok=False)
         write_json(args.out / 'report.json', report)
