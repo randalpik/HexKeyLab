@@ -13,9 +13,12 @@ export const lumatone: {
   fixedLayoutSent: boolean;
   /** [major, minor, revision] from the connect-time firmware query; null until it answers */
   firmware: number[] | null;
+  /** user's Hover checkbox: light the key under the canvas pointer (frame sync only) */
+  hoverMirror: boolean;
 } = {
   autoSyncEnabled: false,
   deviceColors: null,
   fixedLayoutSent: false,
   firmware: null,
+  hoverMirror: false,
 };

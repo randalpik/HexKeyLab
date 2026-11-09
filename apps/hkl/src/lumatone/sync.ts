@@ -15,7 +15,9 @@ import { lumatone } from '../state/lumatone.js';
 import { selection } from '../state/selection.js';
 import { savePrefs } from '../state/persistence.js';
 import { lumatoneCell } from '../layout/physical.js';
-import { keyColorHex } from '../render/colors.js';
+/* The LED color is the same hueC variant the canvas lightens on hover, so applying
+   HOVER_LIGHTEN here changes the device key exactly as the screen key changes. */
+import { keyColorHex, lightenHex, HOVER_LIGHTEN } from '../render/colors.js';
 import {
   sysexBoardFor, fixedMidiChannelMap,
   SYSEX_CMD_SET_AFTERTOUCH_FLAG, SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES,
@@ -32,20 +34,19 @@ export function frameSyncActive(): boolean {
   return firmwareAtLeast(lumatone.firmware, FRAME_FIRMWARE);
 }
 
-/* The hovered cell's key, on the frame path: the key's own color mixed halfway to
-   white, so it reads on any hue. */
-function hoverColor(hex: string): string {
-  const mix = (at: number): number => {
-    const v = parseInt(hex.slice(at, at + 2), 16);
-    return Math.round(v + (255 - v) / 2);
-  };
-  return '#' + [1, 3, 5].map((at) => mix(at).toString(16).padStart(2, '0')).join('');
+/* Canvas hover changed (ui/init.ts mousemove/mouseleave). Mirrored onto the device
+   only with the Hover checkbox on, and only on the frame path. */
+export function syncLumatoneHover(): void {
+  if (lumatone.hoverMirror && frameSyncActive()) syncLumatoneColors('hover');
 }
 
-/* Canvas hover changed (ui/init.ts mousemove/mouseleave). Only the frame path
-   mirrors hover onto the device. */
-export function syncLumatoneHover(): void {
-  if (frameSyncActive()) syncLumatoneColors('hover');
+/* Hover checkbox handler. Re-syncs at once, so turning it off clears a highlight
+   the device is showing and turning it on shows the current hover. */
+export function toggleLumatoneHover(): void {
+  const cb = document.getElementById('cbLumaHover') as HTMLInputElement;
+  lumatone.hoverMirror = cb.checked;
+  savePrefs({ lumatoneHover: lumatone.hoverMirror });
+  syncLumatoneColors();
 }
 
 /* Unified sync entry point. Builds the full queue (setup if needed + color diff),
@@ -58,13 +59,14 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' = 'sync'): void {
   /* Compute target colors for all 280 physical keys: the color of the cell
      each key plays (layout/physical.ts). The Lumatone outline is statically
      positioned on screen; the lattice underneath shifts by kbAnchor (only
-     updated by user-driven ref changes). On the frame path the hovered cell's
-     key is highlighted too. */
+     updated by user-driven ref changes). On the frame path, with Hover on, the
+     hovered cell's key is lightened as on the canvas. */
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
     const [q, r] = lumatoneCell(i);
     const color = keyColorHex(q, r);
-    target.push(frames && selection.hoverKey === q + ',' + r ? hoverColor(color) : color);
+    const hovered = frames && lumatone.hoverMirror && selection.hoverKey === q + ',' + r;
+    target.push(hovered ? lightenHex(color, HOVER_LIGHTEN) : color);
   }
   if (!lumatone.deviceColors) lumatone.deviceColors = new Array<string | null>(280).fill(null);
 

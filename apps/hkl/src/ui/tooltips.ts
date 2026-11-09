@@ -61,6 +61,7 @@ export const TOOLTIPS: Record<string, string> = {
 
   // ── Lumatone ────────────────────────────────────────────────────────
   cbAutoSync: 'Automatically push key colors to the connected Lumatone whenever the layout changes.',
+  cbLumaHover: 'Light up the Lumatone key under the mouse pointer, as the screen does (needs Auto-sync and Lumatone firmware 1.5.0 or later).',
   pedalMode: 'Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.',
   btnCalibPedal: 'Calibrate the expression pedal jack.',
   cbCalibrateKeys: 'Per-board key calibration overlay (Shift+\\ also toggles)',

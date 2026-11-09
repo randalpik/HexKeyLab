@@ -34,3 +34,14 @@ export function keyColorHex(q: number, r: number): string {
 export function lightSourceHex(q: number, r: number): string {
   return sharedLightSourceHex(q, r, tuning.mode, tuning.mapping, tuning.anchor, tuning.banded);
 }
+
+/* How much the key under the pointer is lightened — on the canvas (render/draw.ts)
+   and, with Hover on, on the Lumatone (lumatone/sync.ts), so both change alike. */
+export const HOVER_LIGHTEN = 30;
+
+/* Add `amt` to each RGB channel (clamped). */
+export function lightenHex(hex: string, amt: number): string {
+  let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  r = Math.min(255, r + amt); g = Math.min(255, g + amt); b = Math.min(255, b + amt);
+  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}

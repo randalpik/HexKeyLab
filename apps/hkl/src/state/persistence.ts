@@ -118,6 +118,8 @@ export interface PrefsV1 {
   waveform: string;
   pedalMode: PedalMode;
   autoSync: boolean;
+  /** Mirror the canvas hover onto the Lumatone (firmware 1.5.0+ frame sync only). */
+  lumatoneHover: boolean;
   toolbars: ToolbarVisibility;
   showDiagnostics: boolean;
   calibrateKeys: boolean;
@@ -198,6 +200,7 @@ export const DEFAULT_PREFS: PrefsV1 = {
   waveform: "splendid_piano",
   pedalMode: "sustain",
   autoSync: false,
+  lumatoneHover: false,
   /* Layout + Playback cover the core single-keyboard workflow; Analysis,
      Recording, and Lumatone are opt-in for users who care about those. */
   toolbars: {
@@ -325,6 +328,8 @@ export function loadPrefs(): PrefsV1 {
     pedalMode: isPedalMode(o.pedalMode) ? o.pedalMode : DEFAULT_PREFS.pedalMode,
     autoSync:
       typeof o.autoSync === "boolean" ? o.autoSync : DEFAULT_PREFS.autoSync,
+    lumatoneHover:
+      typeof o.lumatoneHover === "boolean" ? o.lumatoneHover : DEFAULT_PREFS.lumatoneHover,
     toolbars: loadToolbars(o.toolbars),
     showDiagnostics:
       typeof o.showDiagnostics === "boolean"

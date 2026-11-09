@@ -55,7 +55,7 @@ import '../input/keyboard-notes.js';
 import {
   togglePedalCalibration, resetPedalBounds,
 } from '../lumatone/calibration.js';
-import { toggleAutoSync, syncLumatoneHover } from '../lumatone/sync.js';
+import { toggleAutoSync, syncLumatoneHover, toggleLumatoneHover } from '../lumatone/sync.js';
 import { setBoards34Swapped } from '../lumatone/protocol.js';
 import {
   ensureLumaDiag, setLumaDiagVisible, setLumaDiagHotkeyCallback,
@@ -115,6 +115,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('waveform').value = p.waveform;
   $<HTMLSelectElement>('pedalMode').value = p.pedalMode;
   $<HTMLInputElement>('cbAutoSync').checked = p.autoSync;
+  $<HTMLInputElement>('cbLumaHover').checked = p.lumatoneHover;
   $<HTMLInputElement>('cbShowDiag').checked = p.showDiagnostics;
   $<HTMLInputElement>('cbCalibrateKeys').checked = p.calibrateKeys;
 }
@@ -435,6 +436,7 @@ $<HTMLSelectElement>('pedalMode').addEventListener('change', function (e) {
 $<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
 $<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
 $<HTMLInputElement>('cbAutoSync').addEventListener('change', toggleAutoSync);
+$<HTMLInputElement>('cbLumaHover').addEventListener('change', toggleLumatoneHover);
 
 // Diagnostics toggles
 $<HTMLInputElement>('cbShowDiag').addEventListener('change', (e) => {
@@ -474,6 +476,7 @@ function resetToDefaults(): void {
   if (audio.audioEnabled !== p.audioEnabled) toggleAudio();
   if (audio.activeWaveform !== p.waveform) changeWaveform();
   if (lumatone.autoSyncEnabled !== p.autoSync) toggleAutoSync();
+  if (lumatone.hoverMirror !== p.lumatoneHover) toggleLumatoneHover();
 
   /* View-toggle checkboxes have no handler we fired above — drive their
      side effects directly so cbNotes/cbBands/cbExtend/cbCoords/cbFactors/cbShortIvl
@@ -512,6 +515,7 @@ if (prefs.manualRef) {
 }
 setOutline();
 if (prefs.audioEnabled) toggleAudio();
+lumatone.hoverMirror = prefs.lumatoneHover; /* before Auto-sync's first push */
 if (prefs.autoSync) toggleAutoSync();
 /* Apply showDiagnostics now that audio is initialized — the loop overlay
    needs audioCtx, which exists after the toggleAudio() / initAudio() path

@@ -10595,3 +10595,15 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/frame-sync.mjs` (9 checks; each of the two queue fixes, reverted in a scratch copy, fails its check), `sync-order.mjs`, `departure.mjs` (56/56), typecheck, boundaries, HKL build.
 
 **Where:** `apps/hkl/src/lumatone/{protocol,sysex,sync,probe}.ts`, `state/lumatone.ts` (`firmware`), `midi/engine.ts` (connect re-sync), `ui/init.ts` (hover); docs/architecture/hkl.md → Lumatone output, SysEx queue.
+
+## Lumatone hover mirror: a checkbox, and the canvas's own hover color (2026-11-09, Max)
+
+**Amends** the 2026-11-08 frame-sync entry, which mirrored hover unconditionally and mixed the key halfway to white.
+
+**Picked (Max):** the hover mirror is a real behavior behind a **Hover** checkbox beside Auto-sync (pref `lumatoneHover`, off by default; reset by Reset), and the device key changes exactly as the canvas key does: `lightenHex(color, HOVER_LIGHTEN)`, +30 per channel. Frame sync itself stays unconditional on firmware 1.5.0+.
+
+**Why:** halfway to white was too aggressive next to the subtle on-screen change. The LED color (`keyColorHex`) is the same `hueC` variant the canvas lightens on hover, so one rule gives the same change on both; `HOVER_LIGHTEN` moved to `render/colors.ts` with `lightenHex`, and `draw.ts` uses it too (one authority).
+
+**Gates:** `test/hkl-midi/frame-sync.mjs` (10 checks, now including the checkbox gating and the re-sync on toggling both ways), `sync-order.mjs`, `fresh-profile.mjs` (12/12), typecheck, boundaries, HKL build.
+
+**Where:** `apps/hkl/src/lumatone/sync.ts` (`toggleLumatoneHover`, `syncLumatoneHover`), `render/colors.ts`, `render/draw.ts`, `state/{lumatone,persistence}.ts`, `ui/init.ts`, `ui/tooltips.ts`, `index.html`; docs/architecture/hkl.md, docs/guide/core.md.

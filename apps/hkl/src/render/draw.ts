@@ -20,7 +20,7 @@ import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
-import { whiteSet, hueC, keyColorVariant } from './colors.js';
+import { whiteSet, hueC, keyColorVariant, lightenHex, HOVER_LIGHTEN } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
@@ -475,11 +475,6 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
 
 // ── drawing helpers ────────────────────────────────────────────────────────
 function drawHexPath(cx: number, cy: number, r: number): void { ctx.beginPath(); for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); } ctx.closePath(); }
-function lightenHex(hex: string, amt: number): string {
-  let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-  r = Math.min(255, r + amt); g = Math.min(255, g + amt); b = Math.min(255, b + amt);
-  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
-}
 function drawNoteName(
   cx: number,
   cy: number,
@@ -1110,7 +1105,7 @@ export function draw(): void {
           ? hueC[hv.hue].l
           : hueC[hv.hue].d;
       drawHexPath(hk.ux, hk.uy, hexR - 0.5);
-      ctx.fillStyle = lightenHex(hCol, 30);
+      ctx.fillStyle = lightenHex(hCol, HOVER_LIGHTEN);
       ctx.fill();
     }
   }

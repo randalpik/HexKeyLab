@@ -23,7 +23,7 @@ const { syncLumatoneColors, syncLumatoneHover, frameSyncActive } = await import(
 const { setBoards34Swapped, sysexBoardFor, buildFrameSysEx, buildBoardRequestSysEx, firmwareAtLeast } =
   await import('../../apps/hkl/src/lumatone/protocol.ts');
 const { lumatoneCell } = await import('../../apps/hkl/src/layout/physical.ts');
-const { keyColorHex } = await import('../../apps/hkl/src/render/colors.ts');
+const { keyColorHex, lightenHex, HOVER_LIGHTEN } = await import('../../apps/hkl/src/render/colors.ts');
 
 let sent = [];
 midi.midiOut = { send: (m) => sent.push(m) };
@@ -37,9 +37,7 @@ const cmds = (list) => list.map((m) => m[5]);
 const isFrame = (m) => m[5] === 0x55;
 const keyOf = (i) => { const [q, r] = lumatoneCell(i); return q + ',' + r; };
 const base = () => Array.from({ length: 280 }, (_, i) => { const [q, r] = lumatoneCell(i); return keyColorHex(q, r); });
-const half = (hex) => '#' + [1, 3, 5].map((a) => {
-  const v = parseInt(hex.slice(a, a + 2), 16); return Math.round(v + (255 - v) / 2).toString(16).padStart(2, '0');
-}).join('');
+const lit = (hex) => lightenHex(hex, HOVER_LIGHTEN); // the canvas hover rule
 
 function fresh(firmware) {
   sysex.cancel(); sent = [];
@@ -48,6 +46,7 @@ function fresh(firmware) {
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
   lumatone.firmware = firmware;
+  lumatone.hoverMirror = true;
 }
 
 function checkFrame(m, colors) {
@@ -118,16 +117,16 @@ selection.hoverKey = keyOf(k2); syncLumatoneHover();
 selection.hoverKey = keyOf(k3); syncLumatoneHover();
 assert.equal(sent.length, 1, 'nothing else on the wire while a frame is in flight');
 const f1 = ackInFlight();
-assert.equal(lumatone.deviceColors[k1], half(base()[k1]), 'device state = acked frame');
+assert.equal(lumatone.deviceColors[k1], lit(base()[k1]), 'device state = acked frame');
 assert.equal(sent.length, 2, 'one queued frame after the ACK');
-const want3 = base(); want3[k3] = half(want3[k3]);
+const want3 = base(); want3[k3] = lit(want3[k3]);
 checkFrame(sent[1], want3);
 assert.equal(sent[1].cause, 'hover');
 ackInFlight();
 assert.equal(sysex.inFlight, null, 'k2 frame was superseded, never sent');
 assert.deepEqual(lumatone.deviceColors, want3);
 assert.notEqual(f1, sent[1]);
-ok('latest wins: k2 frame superseded; hover key mixed halfway to white');
+ok('latest wins: k2 frame superseded; hover key lightened by the canvas rule');
 
 // ── D: hover returns to the in-flight state — the stale queued frame must not go out ──
 sent = [];
@@ -137,7 +136,7 @@ selection.hoverKey = keyOf(k1); syncLumatoneHover();           // back to A befo
 ackInFlight();
 assert.equal(sysex.inFlight, null, 'queued B dropped');
 assert.equal(sent.length, 1);
-const wantA = base(); wantA[k1] = half(wantA[k1]);
+const wantA = base(); wantA[k1] = lit(wantA[k1]);
 assert.deepEqual(lumatone.deviceColors, wantA);
 ok('return to in-flight state drops the stale queued frame');
 
@@ -163,10 +162,27 @@ assert.deepEqual(lumatone.deviceColors, before, 'ERROR leaves device state alone
 syncLumatoneColors();
 assert(isFrame(sysex.inFlight), 'resent');
 ackInFlight();
-assert.equal(lumatone.deviceColors[k3], half(base()[k3]));
+assert.equal(lumatone.deviceColors[k3], lit(base()[k3]));
 ok('ERROR (03h) frame is not counted and is resent');
 
-// ── G: timings, Auto-sync off ──
+// ── G: Hover checkbox off — no hover frames, and normal syncs still go out as frames ──
+fresh([1, 5, 0]);
+lumatone.hoverMirror = false;
+syncLumatoneColors(); drain(); sent = [];
+selection.hoverKey = keyOf(k1); syncLumatoneHover();
+assert.equal(sent.length, 0, 'hover is not mirrored with the checkbox off');
+syncLumatoneColors();
+assert.equal(sent.length, 0, 'a sync while hovering shows no highlight either');
+lumatone.hoverMirror = true;
+syncLumatoneColors();                                          // what toggleLumatoneHover does
+assert(isFrame(sysex.inFlight)); ackInFlight();
+assert.equal(lumatone.deviceColors[k1], lit(base()[k1]), 'turning it on shows the current hover');
+lumatone.hoverMirror = false;
+syncLumatoneColors(); ackInFlight();
+assert.deepEqual(lumatone.deviceColors, base(), 'turning it off clears the highlight');
+ok('Hover checkbox gates the mirror; toggling re-syncs both ways');
+
+// ── H: timings, Auto-sync off ──
 const t = sysex.frameTimings();
 assert(t.length >= 5 && t.every((x) => x.rtt >= 0 && x.sinceCause >= x.rtt - 1e-9));
 assert(t.some((x) => x.cause === 'hover') && t.some((x) => x.cause === 'sync'));
