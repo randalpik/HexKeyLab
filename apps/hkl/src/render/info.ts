@@ -51,7 +51,7 @@ export function updateInfo(): void {
   ).checked;
   if (selection.selectedKeys.size === 0 || !showAnalysis) {
     el.innerHTML =
-      '<span class="hint">Click any key to select · shift+click for exclusive select</span>';
+      '<span class="hint">Click any key to select · Shift+click for exclusive select · Ctrl+click to recenter</span>';
     return;
   }
   const keys: InfoKey[] = [];
