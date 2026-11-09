@@ -13,7 +13,12 @@ the connect sequence (version answered after the first sync was queued) keeps
 all layout setup and sends one frame; the frame's payload under both board
 maps; latest-wins; that hover returning to the in-flight state drops the stale
 queued frame; that a control query survives a re-sync; that an ERROR frame is
-not counted and is resent. No dev server or MIDI device is needed. **Run it
+not counted and is resent; the Hover checkbox gating; the barycentric sampler
+(exact cells, edges, the m3 diagonal, partition of unity, linear reproduction);
+and the ref slide on a hand-driven clock — no jump at the start, the mid frame
+equal to the field at the eased anchor, an exact landing, a redirect continuing
+from the interpolated anchor, a snap mid-slide, hover riding the field, and no
+slide below 1.5.0. No dev server or MIDI device is needed. **Run it
 before declaring any change to `lumatone/sync.ts`, `lumatone/sysex.ts` or the
 frame builder done.**
 

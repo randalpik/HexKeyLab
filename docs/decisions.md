@@ -10607,3 +10607,29 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/frame-sync.mjs` (10 checks, now including the checkbox gating and the re-sync on toggling both ways), `sync-order.mjs`, `fresh-profile.mjs` (12/12), typecheck, boundaries, HKL build.
 
 **Where:** `apps/hkl/src/lumatone/sync.ts` (`toggleLumatoneHover`, `syncLumatoneHover`), `render/colors.ts`, `render/draw.ts`, `state/{lumatone,persistence}.ts`, `ui/init.ts`, `ui/tooltips.ts`, `index.html`; docs/architecture/hkl.md, docs/guide/core.md.
+
+## Lumatone ref slide: each key samples the sliding field (2026-11-09, Max)
+
+**Picked (Max):** on the frame path, a Ctrl+click slide plays on the Lumatone too: every key shows what the screen shows beneath it, the barycentric blend of the three cells around its fractional lattice position, eased on the canvas tween's own clock, duration and smoothstep. The landing frame is exact; snaps stay snaps.
+
+**Why this over the alternatives:** stepping whole lattice translations turns a typical 1–3 step Ctrl+click into 1–3 jumps; a per-key crossfade is a dissolve with no motion. Barycentric weights are affine-invariant, so sampling in (q, r) equals sampling the physical layout under every alignment and mapping, with no special cases. LED values are PWM duty, linear in light, so the blend is linear in them (not sRGB). At ~17 ms a frame, a 500 ms slide is ~28 frames, latest-wins.
+
+**Shape:** the device keeps its own fractional anchor (`lumatone/sync.ts` `beginLumatoneSlide` / `cancelLumatoneSlide`), driven by its own raf tick rather than the canvas loop, and a redirect starts from the interpolated anchor. `onRefChanged` now decides slide-or-snap (from `animation.isAnimating` after `syncViewToOutline`) before the voice remap, so the remap's color sync sends the slide's first frame — identical to what the device shows — rather than the final layout. `smoothstep` is exported from `render/animation.ts` (one easing for screen and device). `sampleField` returns a cell's own color string on a cell center (the diff compares strings; blends are uppercase like the palette).
+
+**Future:** an alignment change is an exact 60° lattice rotation about the outline center; the same sampler with a rotating sample point animates it, at about a second for 120° (Max wants at least a second for rotations anyway).
+
+**Gates:** `test/hkl-midi/frame-sync.mjs` (16 checks; a no-slide mutant fails "no jump"), the ref-change gates `held-inputs`, `ref-centering`, `anchor`, typecheck, HKL build.
+
+**Where:** `apps/hkl/src/lumatone/sync.ts`, `effects/onRefChanged.ts`, `render/animation.ts`; docs/architecture/hkl.md (Ref-driven layout animation; Lumatone output → Ref slide), docs/guide/core.md (Ctrl+click).
+
+## Lumatone ref slide blends in OKLab, not LED values (2026-11-09, Max)
+
+**Amends** "Lumatone ref slide: each key samples the sliding field", whose claim that LED values are PWM duty, linear in light, was stated without being checked, and whose linear blend in LED values made the slide pulse.
+
+**Picked (Max):** `sampleField` blends the three cells in OKLab, treating LED values as linear light (`lumatone/oklab.ts`). Cell centers still return the cell's own string, so whole-step and landing frames are exact.
+
+**Why:** Max saw the board's brightness pulse during a slide, worst between dark and light keys. A barycentric blend redistributes light exactly (every key shares one fractional offset and each cell's weights sum to 1), but perception is compressive, so light spread over two or three keys reads brighter than the same light on one: the peak is where key centers sit on cell boundaries, and a slide across *n* steps pulses *n* times. Every dark variant tops out at 0x59 against 255 for its light partner; with LED light linear in value, the linear halfway blend read +3 to +5 L* (4–10%) above the resting pair, worst for PK and PU. Per-channel gamma-2.2 blending over-corrected PK/PU to −2.4 L*; OKLab holds every hue at 0.0 (its L tracks L*). The linearity premise was then checked: neither octave-board image (1.4.0, 1.5.0) holds a brightness lookup table (no RETLW table; no rising byte run longer than 7), so the value most likely drives the PWM directly; a computed curve isn't ruled out.
+
+**Gates:** `test/hkl-midi/frame-sync.mjs` (16 checks; a gray midpoint halves OKLab L, every palette color round-trips, each hue's dark/light halfway blend keeps the mean L, and every mid-slide key keeps the weighted mean L of its cells — worst error 0.0016; a linear-blend mutant fails).
+
+**Where:** `apps/hkl/src/lumatone/{oklab,sync}.ts`; docs/architecture/hkl.md (Lumatone output → Ref slide), docs/lessons.md.

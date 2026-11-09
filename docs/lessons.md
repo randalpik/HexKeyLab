@@ -153,6 +153,12 @@ Typical sequence: `--bulk-raise 1 100` → play → rescue ~10 keys → `--bulk-
 
 Do NOT use `--bulk` (without `-raise`) once you have rescues — it's unconditional and will clobber them.
 
+### Blending LED colors linearly makes a moving pattern pulse; blend in OKLab (2026-11-09)
+
+The Lumatone ref slide first blended each key's three neighboring cell colors linearly in LED values. That conserves the board's total light exactly, yet Max saw the brightness pulse, worst where dark and light keys meet. Perception is compressive: the same light spread over two or three mid-level keys reads brighter than one bright key beside a dark one, so every moment the key centers sat on cell boundaries read as a flash, once per lattice step crossed. The palette makes it large: dark variants top out at 0x59 against 255, and the halfway blend read +3 to +5 L* above the resting pair. It was not the LEDs being brightest at key centers — each key's light shape never changes; only the number of keys sharing the light does.
+
+Blend in a perceptual space: OKLab, treating LED values as linear light, held every hue at 0.0 L* (per-channel gamma 2.2 over-corrected pink and purple to −2.4). Whether LED values are linear in light was an assumption until checked: neither octave-board PIC image has a brightness lookup table. Any future animation that blends LED colors (rotations, fades) should use the same OKLab blend (`apps/hkl/src/lumatone/oklab.ts`).
+
 ### Cutting the Lumatone's power right after a write can leave the file zero-filled (2026-11-08)
 
 The BBB's root filesystem is ext4 on eMMC with ordinary writeback: a file written over SSH sits in the page cache until the kernel flushes it. On 2026-11-08 the 1.5.0 firmware package was `scp`'d to `/home/debian/` and the Lumatone power-cycled seconds later; the file came back at its full 562,805 bytes, every one of them zero. The installed 1.4.0 `lmtn_launcher.sh` runs under `sh -e`, so its `tar` failure aborted the launcher before it started the application, and every boot stalled with all five boards frozen mid-rainbow (the PICs never got their init). The same package re-uploaded and followed by `sync` on the device survived the identical power cycle and installed cleanly.

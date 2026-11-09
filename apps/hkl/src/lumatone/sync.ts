@@ -14,7 +14,9 @@ import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
 import { selection } from '../state/selection.js';
 import { savePrefs } from '../state/persistence.js';
-import { lumatoneCell } from '../layout/physical.js';
+import { view } from '../state/view.js';
+import { lumatoneCell, lumatoneCells } from '../layout/physical.js';
+import { animation, smoothstep } from '../render/animation.js';
 /* The LED color is the same hueC variant the canvas lightens on hover, so applying
    HOVER_LIGHTEN here changes the device key exactly as the screen key changes. */
 import { keyColorHex, lightenHex, HOVER_LIGHTEN } from '../render/colors.js';
@@ -25,6 +27,7 @@ import {
   buildNoteSysEx, buildColorSysEx, buildToggleSysEx, buildFrameSysEx,
 } from './protocol.js';
 import { sysex } from './sysex.js';
+import { hexToOklab, oklabToHex, type Oklab } from './oklab.js';
 import { orderColorSync } from './sync-order.js';
 import type { SysexMessage } from '../types.js';
 
@@ -49,9 +52,91 @@ export function toggleLumatoneHover(): void {
   syncLumatoneColors();
 }
 
+/* Color of lattice cell (q, r) as the frame path shows it: the key color, lightened
+   like the canvas when it is the hovered cell and Hover is on. */
+function frameCellColor(q: number, r: number): string {
+  const c = keyColorHex(q, r);
+  return lumatone.hoverMirror && selection.hoverKey === q + ',' + r ? lightenHex(c, HOVER_LIGHTEN) : c;
+}
+
+/* Barycentric weights of fractional lattice point (q, r) over the three cell
+   centers around it. Hex centers form a triangular lattice that splits each unit
+   rhombus along its m3 diagonal (1,0)–(0,1); barycentric weights are affine-
+   invariant, so this equals interpolating on the physical layout, under any
+   alignment or mapping. An integer point is its own cell with weight 1. */
+export function barycentric(q: number, r: number): [number, number, number][] {
+  const q0 = Math.floor(q), r0 = Math.floor(r);
+  const a = q - q0, b = r - r0;
+  if (a + b <= 1) return [[q0, r0, 1 - a - b], [q0 + 1, r0, a], [q0, r0 + 1, b]];
+  return [[q0 + 1, r0 + 1, a + b - 1], [q0 + 1, r0, 1 - b], [q0, r0 + 1, 1 - a]];
+}
+
+/* The color field at a fractional lattice point: the barycentric blend of the
+   three cells' colors, in OKLab (LED values as linear light; lumatone/oklab.ts).
+   Blending the LED values directly redistributes light exactly but reads brighter
+   whenever it is spread over several keys (perception is compressive), so a slide
+   pulsed at every half-step; OKLab lightness tracks perceived lightness, and its
+   blend keeps the board's perceived brightness constant. */
+export function sampleField(q: number, r: number, color: (q: number, r: number) => string): string {
+  const ws = barycentric(q, r);
+  /* On a cell center, return the cell's own string: the diff compares strings, and
+     an exact cell must match the non-sliding target byte for byte. */
+  const solo = ws.find(([, , w]) => w === 1);
+  if (solo) return color(solo[0], solo[1]);
+  const mix: Oklab = [0, 0, 0];
+  for (const [cq, cr, w] of ws) {
+    if (w === 0) continue;
+    const lab = hexToOklab(color(cq, cr));
+    mix[0] += w * lab[0]; mix[1] += w * lab[1]; mix[2] += w * lab[2];
+  }
+  return oklabToHex(mix);
+}
+
+/* Device-side ref slide (frame path). While the canvas slides the lattice under
+   the static outline, each Lumatone key shows what the screen shows beneath it:
+   the color field at its cell offset plus a fractional anchor, eased from where
+   the device was to kbAnchor on the canvas tween's clock (Date.now), duration and
+   easing. Its own raf tick builds one target per animation frame; the queue sends
+   the newest at each ACK (latest wins), and the landing frame is exact. */
+interface Slide { fromQ: number; fromR: number; toQ: number; toR: number; start: number }
+let slideState: Slide | null = null;
+let slideRaf: number | null = null;
+
+function slideAnchor(s: Slide, now: number): [number, number] {
+  const e = smoothstep(Math.min(1, (now - s.start) / animation.duration));
+  return [s.fromQ + (s.toQ - s.fromQ) * e, s.fromR + (s.toR - s.fromR) * e];
+}
+
+function slideTick(): void {
+  slideRaf = null;
+  if (!slideState) return;
+  if (Date.now() - slideState.start >= animation.duration) slideState = null; /* land exactly */
+  syncLumatoneColors('slide');
+  if (slideState) slideRaf = requestAnimationFrame(slideTick);
+}
+
+/* The anchor moved by (dq, dr) and the canvas is sliding (effects/onRefChanged):
+   slide the device too, from what it shows now — mid-slide, its interpolated
+   anchor, so a redirect never jumps. Older firmware keeps the snap. */
+export function beginLumatoneSlide(dq: number, dr: number): void {
+  if (!frameSyncActive()) { cancelLumatoneSlide(); return; }
+  const now = Date.now();
+  const [fromQ, fromR] = slideState
+    ? slideAnchor(slideState, now)
+    : [view.kbAnchorQ - dq, view.kbAnchorR - dr];
+  slideState = { fromQ, fromR, toQ: view.kbAnchorQ, toR: view.kbAnchorR, start: now };
+  if (slideRaf === null) slideRaf = requestAnimationFrame(slideTick);
+}
+
+/* The canvas snapped, so the device snaps: the next sync sends the exact layout. */
+export function cancelLumatoneSlide(): void {
+  slideState = null;
+  if (slideRaf !== null) { cancelAnimationFrame(slideRaf); slideRaf = null; }
+}
+
 /* Unified sync entry point. Builds the full queue (setup if needed + color diff),
    then either starts sending or swaps the queue if a push is already running. */
-export function syncLumatoneColors(cause: 'hover' | 'sync' = 'sync'): void {
+export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): void {
   if (!midi.midiOut || !lumatone.autoSyncEnabled) return;
   const causeAt = performance.now();
   const frames = frameSyncActive();
@@ -60,13 +145,18 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' = 'sync'): void {
      each key plays (layout/physical.ts). The Lumatone outline is statically
      positioned on screen; the lattice underneath shifts by kbAnchor (only
      updated by user-driven ref changes). On the frame path, with Hover on, the
-     hovered cell's key is lightened as on the canvas. */
+     hovered cell's key is lightened as on the canvas; mid-slide, each key samples
+     the field at its cell offset plus the slide's fractional anchor. */
+  const anchor = frames && slideState ? slideAnchor(slideState, Date.now()) : null;
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
+    if (anchor) {
+      const [u, v] = lumatoneCells[i];
+      target.push(sampleField(u + anchor[0], v + anchor[1], frameCellColor));
+      continue;
+    }
     const [q, r] = lumatoneCell(i);
-    const color = keyColorHex(q, r);
-    const hovered = frames && lumatone.hoverMirror && selection.hoverKey === q + ',' + r;
-    target.push(hovered ? lightenHex(color, HOVER_LIGHTEN) : color);
+    target.push(frames ? frameCellColor(q, r) : keyColorHex(q, r));
   }
   if (!lumatone.deviceColors) lumatone.deviceColors = new Array<string | null>(280).fill(null);
 

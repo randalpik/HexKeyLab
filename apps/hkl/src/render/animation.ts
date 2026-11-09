@@ -15,6 +15,12 @@ import type { AnimationModule } from '../types.js';
 
 const ANIM_DURATION = 500;
 
+/** The tween's easing: smoothstep. Shared with the Lumatone's frame-sync slide
+ *  (lumatone/sync.ts) so the device moves on the same curve as the screen. */
+export function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
 let startQ = 0, startR = 0;
 let targetQ = 0, targetR = 0;
 let animStart = 0;
@@ -59,7 +65,7 @@ export const animation: AnimationModule = {
       animStart = 0;
       return false;
     }
-    const e = t * t * (3 - 2 * t); /* smoothstep ease */
+    const e = smoothstep(t);
     view.viewQ = startQ + (targetQ - startQ) * e;
     view.viewR = startR + (targetR - startR) * e;
     return true;

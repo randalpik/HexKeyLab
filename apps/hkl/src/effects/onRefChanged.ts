@@ -13,11 +13,13 @@
 // the lattice cell they were clicked on.
 //
 // The view snaps to the active outline's center; a Ctrl+click slides there
-// instead (withRefSlide).
+// instead (withRefSlide), and on firmware 1.5.0+ the Lumatone's colors slide with
+// it (lumatone/sync.ts beginLumatoneSlide).
 
 import { migrateHeldQwertyVoices } from '../input/keyboard-notes.js';
 import { migrateHeldLumatoneVoices } from '../midi/handler.js';
-import { syncLumatoneColors } from '../lumatone/sync.js';
+import { syncLumatoneColors, beginLumatoneSlide, cancelLumatoneSlide } from '../lumatone/sync.js';
+import { animation } from '../render/animation.js';
 import { broadcastAllToComposer } from '../bridge/hkl-side.js';
 import { draw, invalidatePianoOutline } from '../render/draw.js';
 import { syncViewToOutline, outlineFromDom } from '../render/controls-core.js';
@@ -45,12 +47,19 @@ export function remapPhysicalInputs(): void {
 }
 
 export function onRefChanged(dq: number, dr: number): void {
-  /* kbAnchor is already advanced. */
-  if (dq !== 0 || dr !== 0) remapPhysicalInputs();
-  /* The piano footprint tracks the ref; the view centers on the ref (piano)
-     or the keyboard anchor (every other outline). */
+  /* kbAnchor is already advanced. The piano footprint tracks the ref; the view
+     centers on the ref (piano) or the keyboard anchor (every other outline). */
   invalidatePianoOutline();
   syncViewToOutline(outlineFromDom(), !slide);
+  if (dq !== 0 || dr !== 0) {
+    /* The Lumatone follows the screen: its colors slide while the canvas slides
+       (a Ctrl+click, or a re-center redirecting a slide in flight) and snap when
+       it snaps. Decided before the remap, whose color sync then sends the slide's
+       first frame instead of the final layout. */
+    if (animation.isAnimating) beginLumatoneSlide(dq, dr);
+    else cancelLumatoneSlide();
+    remapPhysicalInputs();
+  }
   draw();
   /* Resolved spelling/oct/midi of every held key changes when the lattice
      slides, and the footprint + layout-state track the ref even when the

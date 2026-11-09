@@ -9,6 +9,13 @@ import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
 globalThis.document = { getElementById: () => null };
+// The slide runs on Date.now and requestAnimationFrame: both are driven by hand.
+let now = 1_000_000;
+Date.now = () => now;
+let rafCb = null;
+globalThis.requestAnimationFrame = (cb) => { rafCb = cb; return 1; };
+globalThis.cancelAnimationFrame = () => { rafCb = null; };
+const tick = () => { const cb = rafCb; rafCb = null; if (cb) cb(); };
 const storage = new Map();
 globalThis.localStorage = {
   getItem: (k) => (storage.has(k) ? storage.get(k) : null),
@@ -19,11 +26,15 @@ const { midi } = await import('../../apps/hkl/src/state/midi.ts');
 const { lumatone } = await import('../../apps/hkl/src/state/lumatone.ts');
 const { selection } = await import('../../apps/hkl/src/state/selection.ts');
 const { sysex } = await import('../../apps/hkl/src/lumatone/sysex.ts');
-const { syncLumatoneColors, syncLumatoneHover, frameSyncActive } = await import('../../apps/hkl/src/lumatone/sync.ts');
+const { syncLumatoneColors, syncLumatoneHover, frameSyncActive, barycentric, sampleField,
+        beginLumatoneSlide, cancelLumatoneSlide } = await import('../../apps/hkl/src/lumatone/sync.ts');
+const { view } = await import('../../apps/hkl/src/state/view.ts');
 const { setBoards34Swapped, sysexBoardFor, buildFrameSysEx, buildBoardRequestSysEx, firmwareAtLeast } =
   await import('../../apps/hkl/src/lumatone/protocol.ts');
-const { lumatoneCell } = await import('../../apps/hkl/src/layout/physical.ts');
+const { lumatoneCell, lumatoneCells } = await import('../../apps/hkl/src/layout/physical.ts');
 const { keyColorHex, lightenHex, HOVER_LIGHTEN } = await import('../../apps/hkl/src/render/colors.ts');
+const { hexToOklab, oklabToHex } = await import('../../apps/hkl/src/lumatone/oklab.ts');
+const { hueC } = await import('../../packages/shared/src/colors.ts');
 
 let sent = [];
 midi.midiOut = { send: (m) => sent.push(m) };
@@ -40,6 +51,7 @@ const base = () => Array.from({ length: 280 }, (_, i) => { const [q, r] = lumato
 const lit = (hex) => lightenHex(hex, HOVER_LIGHTEN); // the canvas hover rule
 
 function fresh(firmware) {
+  cancelLumatoneSlide();
   sysex.cancel(); sent = [];
   selection.hoverKey = null;
   lumatone.autoSyncEnabled = true;
@@ -181,6 +193,137 @@ lumatone.hoverMirror = false;
 syncLumatoneColors(); ackInFlight();
 assert.deepEqual(lumatone.deviceColors, base(), 'turning it off clears the highlight');
 ok('Hover checkbox gates the mirror; toggling re-syncs both ways');
+
+// ── I: barycentric sampling on the hex lattice ──
+const weights = (q, r) => Object.fromEntries(barycentric(q, r).filter(([, , w]) => w > 1e-12)
+  .map(([a, b, w]) => [a + ',' + b, w]));
+assert.deepEqual(weights(3, -2), { '3,-2': 1 }, 'an integer point is its own cell');
+assert.deepEqual(weights(0.5, 0), { '0,0': 0.5, '1,0': 0.5 }, 'edge midpoint');
+assert.deepEqual(weights(0.5, 0.5), { '1,0': 0.5, '0,1': 0.5 }, 'the m3 diagonal is a triangle edge');
+assert.deepEqual(weights(0.75, 0.75), { '1,1': 0.5, '1,0': 0.25, '0,1': 0.25 }, 'upper triangle');
+let seed = 7;
+const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32) * 20 - 10;
+for (let n = 0; n < 2000; n++) {
+  const q = rnd(), r = rnd(), ws = barycentric(q, r);
+  assert(ws.every(([, , w]) => w >= -1e-12), 'weights are non-negative');
+  assert(Math.abs(ws.reduce((a, [, , w]) => a + w, 0) - 1) < 1e-12, 'weights sum to 1');
+  const lin = (a, b) => 3 * a - 2 * b + 5;
+  assert(Math.abs(ws.reduce((acc, [a, b, w]) => acc + w * lin(a, b), 0) - lin(q, r)) < 1e-9,
+         'a linear field is reproduced exactly');
+}
+for (const [q, r] of [[0.3, 0.7], [-1.2, 2.2], [4.9, -3.9]]) {
+  const lo = weights(q - 1e-9, r), hi = weights(q + 1e-9, r);
+  for (const k of new Set([...Object.keys(lo), ...Object.keys(hi)])) {
+    assert(Math.abs((lo[k] ?? 0) - (hi[k] ?? 0)) < 1e-6, 'continuous across the diagonal');
+  }
+}
+const two = (q, r) => (q === 0 && r === 0 ? '#000000' : '#c8c8c8');
+const ch = (h) => [1, 3, 5].map((a) => parseInt(h.slice(a, a + 2), 16));
+const near = (a, b, tol) => ch(a).every((v, i) => Math.abs(v - ch(b)[i]) <= tol);
+assert(near(sampleField(0.5, 0, two), '#191919', 1), 'gray midpoint halves OKLab lightness (200 / 8 = 25)');
+const palette = Object.values(hueC).flatMap((h) => [h.l, h.d, h.sl, h.sd]);
+for (const hex of palette) assert(near(oklabToHex(hexToOklab(hex)), hex, 1), `OKLab round trip ${hex}`);
+for (const h of Object.values(hueC)) {
+  for (const [l, d] of [[h.l, h.d], [h.sl, h.sd]]) {
+    const mid = sampleField(0.5, 0, (q, r) => (q === 0 && r === 0 ? l : d));
+    const want = (hexToOklab(l)[0] + hexToOklab(d)[0]) / 2;
+    assert(Math.abs(hexToOklab(mid)[0] - want) < 0.004, `dark/light halfway keeps mean lightness ${l}/${d}`);
+  }
+}
+assert.equal(sampleField(2, 3, () => '#abcDEF'), '#abcDEF', 'a cell center returns the cell string verbatim');
+ok('barycentric weights: exact cells, edges, diagonal, partition of unity, linear reproduction; OKLab blend keeps lightness');
+
+// ── J: Ctrl+click slide on the frame path ──
+const plain = (q, r) => keyColorHex(q, r);
+const fieldAt = (aq, ar, color = plain) =>
+  lumatoneCells.map(([u, v]) => sampleField(u + aq, v + ar, color));
+fresh([1, 5, 0]);
+syncLumatoneColors(); drain(); sent = [];
+const [q0, r0] = [view.kbAnchorQ, view.kbAnchorR];
+const setAnchor = (q, r) => { view.kbAnchorQ = q; view.kbAnchorR = r; }; // what reference.ts does first
+const old = base();
+setAnchor(q0 + 1, r0 + 1);                                     // M3 + P5: not an octave, so colors change
+assert(base().filter((c, i) => c !== old[i]).length > 100, 'the move changes most keys');
+beginLumatoneSlide(1, 1);
+syncLumatoneColors();                                          // the remap's sync
+assert.equal(sent.length, 0, 'the slide starts where the device is: no jump to the final layout');
+assert(rafCb, 'slide tick scheduled');
+now += 250; tick();                                            // smoothstep(0.5) = 0.5 → anchor + (0.5, 0.5)
+assert(isFrame(sysex.inFlight));
+assert.equal(sysex.inFlight.cause, 'slide');
+assert.deepEqual(sysex.inFlight.frameColors, fieldAt(q0 + 0.5, r0 + 0.5), 'mid-slide frame = field at the eased anchor');
+assert(sysex.inFlight.frameColors.filter((c, i) => c !== old[i] && c !== base()[i]).length > 100,
+       'mid-slide colors are blends');
+{
+  // perceived lightness is redistributed, not created: each key's OKLab L is the
+  // weighted mean of its cells' L (8-bit rounding and gamut clamping aside)
+  let worst = 0;
+  lumatoneCells.forEach(([u, v], i) => {
+    const want = barycentric(u + q0 + 0.5, v + r0 + 0.5)
+      .reduce((acc, [cq, cr, w]) => acc + w * hexToOklab(keyColorHex(cq, cr))[0], 0);
+    worst = Math.max(worst, Math.abs(hexToOklab(sysex.inFlight.frameColors[i])[0] - want));
+  });
+  console.log(`    worst per-key OKLab L error mid-slide: ${worst.toFixed(4)}`);
+  assert(worst < 0.01, 'every key keeps the weighted mean OKLab lightness of its cells');
+}
+ackInFlight();
+now += 100; tick(); ackInFlight();                             // t = 350 ms
+now += 200; tick();                                            // t = 550 ms: landed
+assert.equal(rafCb, null, 'tick stops after landing');
+drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'lands exactly on the new layout');
+ok('slide: no jump at start, field-sampled mid frame, exact landing');
+
+// redirect mid-slide: a second Ctrl+click starts from the interpolated anchor
+sent = [];
+setAnchor(q0 + 2, r0 + 2);
+beginLumatoneSlide(1, 1);                                      // from (q0+1, r0+1) to (q0+2, r0+2)
+now += 250; tick();                                            // anchor (q0+1.5, r0+1.5), in flight
+const shown = sysex.inFlight.frameColors;
+assert.deepEqual(shown, fieldAt(q0 + 1.5, r0 + 1.5));
+setAnchor(q0 + 2, r0 + 3);
+beginLumatoneSlide(0, 1);                                      // redirect at the same instant
+syncLumatoneColors();
+ackInFlight();
+assert.equal(sysex.inFlight, null, 'a redirect starts from what the device shows: nothing new to send');
+now += 600; tick(); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'the redirected slide lands exactly');
+ok('redirect mid-slide continues from the interpolated anchor');
+
+// a snap mid-slide sends the exact layout
+setAnchor(q0, r0);
+beginLumatoneSlide(-2, -3);
+now += 200; tick(); ackInFlight();
+cancelLumatoneSlide();
+assert.equal(rafCb, null);
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'snap lands exactly');
+ok('cancel (snap) mid-slide sends the exact layout');
+
+// hover rides the field: the hovered cell's lightening moves with it
+selection.hoverKey = keyOf(140);
+syncLumatoneColors(); drain();
+const hcell = lumatoneCell(140);
+setAnchor(q0 + 1, r0);
+beginLumatoneSlide(1, 0);
+now += 250; tick();
+const lightened = (q, r) => (q + ',' + r === hcell.join(',') ? lit(keyColorHex(q, r)) : keyColorHex(q, r));
+assert.deepEqual(sysex.inFlight.frameColors, fieldAt(q0 + 0.5, r0, lightened), 'hover cell blended like any cell');
+cancelLumatoneSlide(); drain(); selection.hoverKey = null;
+setAnchor(q0, r0);
+ok('hover highlight slides with the field');
+
+// older firmware never slides
+fresh([1, 4, 0]);
+syncLumatoneColors(); drain(); sent = [];
+setAnchor(q0 + 1, r0);
+beginLumatoneSlide(1, 0);
+assert.equal(rafCb, null, 'no slide on the per-key path');
+syncLumatoneColors(); drain();
+assert(!sent.some(isFrame) && sent.length > 0, 'per-key snap as before');
+assert.deepEqual(lumatone.deviceColors, base());
+setAnchor(q0, r0);
+ok('firmware < 1.5.0: no slide, per-key snap');
 
 // ── H: timings, Auto-sync off ──
 const t = sysex.frameTimings();

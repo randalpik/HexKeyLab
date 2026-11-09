@@ -72,7 +72,7 @@ function applyColors(m: SysexMessage): void {
 
 /* Recent whole-keyboard frame timings (diagnostic; lumaprobe.frames()). */
 const FRAME_TIMING_KEEP = 2000;
-const frameTimings: { rtt: number; sinceCause: number; cause: 'hover' | 'sync' }[] = [];
+const frameTimings: { rtt: number; sinceCause: number; cause: 'hover' | 'sync' | 'slide' }[] = [];
 function recordFrame(m: SysexMessage, now: number): void {
   if (!m.frameColors || m.sentAt === undefined) return;
   frameTimings.push({ rtt: now - m.sentAt, sinceCause: now - (m.causeAt ?? m.sentAt),
