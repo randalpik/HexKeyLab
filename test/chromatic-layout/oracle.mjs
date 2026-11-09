@@ -1,7 +1,7 @@
 // Chromatic mapping oracle (docs/architecture.md → Note-name mapping).
 //
 // Pure Node gate — no dev server, no browser. Imports the REAL modules
-// (@hkl/shared primitives, HKL's refSpine) through the repo's TS loader and
+// (@hkl/shared primitives) through the repo's TS loader and
 // checks every rule of the chromatic mapping against them:
 //   A  construction, every JI mode (S/Y at anchors −2…2):
 //        closed-form eulerOf = the recursive definition (odd Q = (Q−5, R−1) up
@@ -15,7 +15,6 @@
 //   C  spelling and nominal MIDI along the ref's row
 //   E  frame conversion: Euler / Wicki-Hayden → chromatic exact in every
 //      mode; chromatic → Euler pitch-exact in 5/P/D/7; round trips
-//   G  reference spine: the qm0 of the ref's own band, same row
 //   H  pitchBandOf: one band lower at positions 1 and 3, own band elsewhere;
 //      identity under Euler / Wicki-Hayden
 //   I  anchor on a borrowed key: its spatial band becomes home and it stays
@@ -35,7 +34,6 @@ import { readFileSync } from 'node:fs';
 import { coordExps, coordToMidi, anchorOf, bandOffset } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 import { eulerOf, convertCell, bandOfCell, pitchBandOf, posInBandOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
-import { refSpine } from '../../apps/hkl/src/tuning/refspine.ts';
 
 const CH = 'chromatic';
 const JI = ['5', 'P', 'D', '7', 'V', 'S', 'Y'];
@@ -161,18 +159,6 @@ for (const m of UNIFORM) {
     }
   }
 }
-
-/* ── G: reference spine ──────────────────────────────────────────────────── */
-for (let Q = -30; Q <= 30; Q++) {
-  for (let R = -6; R <= 6; R++) {
-    const sp = refSpine(Q, R, CH);
-    check(`G (${Q},${R}) spine on qm0`, posInBandOf(sp.q, sp.r, CH), 4);
-    check(`G (${Q},${R}) spine in the ref's band and row`, `${bandOfCell(sp.q, sp.r, CH)},${sp.r}`, `${bandOfCell(Q, R, CH)},${R}`);
-    check(`G (${Q},${R}) ref ≤4 left / ≤7 right of the spine`, Q - sp.q >= -4 && Q - sp.q <= 7, true);
-  }
-}
-for (const [q, want] of [[0, 0], [1, 0], [2, 3], [-1, 0], [3, 3]]) check(`G euler refSpine(${q},0)`, refSpine(q, 0, 'euler').q, want);
-for (const [q, want] of [[0, 0], [1, 0], [3, 0], [-2, 0], [4, 6], [-3, -6]]) check(`G WH refSpine(${q},0)`, refSpine(q, 0, 'wickiHayden').q, want);
 
 /* ── H: pitch band ───────────────────────────────────────────────────────── */
 for (let Q = -41; Q <= 41; Q++) {

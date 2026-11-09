@@ -334,7 +334,7 @@ Hex/text canvases are rebuilt on dirty flags (layout extent, septimal shift, not
 
 The offscreen canvases are built at a fixed reference (`gridRef`) with padding covering layout travel distances. A small-range layout shift (e.g. the old ♭/♮/♯ system's `(±7, ∓4)` travel) is just a blit offset; no rebuild.
 
-The ref-driven shift (§ refSpine) can move the view to ANY (q, r) — well beyond the static pad's coverage. For those shifts, `buildHexLayerForTween(startQ, startR, endQ, endR)` is called BEFORE the tween fires; `sizeGridCanvases` then sets `gridRef` at the midpoint of the tween range and adds half the tween distance to the pad. The hex layer covers both endpoints, no cut-off borders mid-tween. Applies to all outline modes (piano has always done this; Lumatone / QWERTY now do too because refSpine can move them anywhere).
+The ref-driven shift can move the view to ANY (q, r) — well beyond the static pad's coverage. For those shifts, `buildHexLayerForTween(startQ, startR, endQ, endR)` is called BEFORE the tween fires; `sizeGridCanvases` then sets `gridRef` at the midpoint of the tween range and adds half the tween distance to the pad. The hex layer covers both endpoints, no cut-off borders mid-tween. Applies to all outline modes (piano has always done this; Lumatone / QWERTY now do too because the ref-driven shift can move them anywhere).
 
 That layer is the bounding box of both views, so its cost grows with the slide's length, and nothing shrank it afterward: `draw()` rebuilds only when a layer is dirty, and building the tween layer clears both flags. Once refs could sit hundreds of keys out (2026-10-30, the ±3-accidental rule dropped), clearing one built a 6958×791 layer, and every frame blitted from it until the next mode change: a lag spike, then a low framerate. Now a target beyond one canvas width or height snaps, and a landed tween marks both layers dirty (`syncViewToOutline`, `animateLayout`; gated by `test/hkl-midi/ref-centering.mjs` C15–C16).
 
@@ -506,7 +506,7 @@ Surfaces when refactoring an inline initializer into a dynamic-import-bound modu
 
 ### Voice migration: physical inputs follow the lattice, mouse clicks anchor
 
-When the lattice shifts under the outline (refSpine ref change, layout change in the old system, etc.), voices originating from PHYSICAL inputs migrate with the shift. Mouse-click voices stay where they were clicked.
+When the lattice shifts under the outline (ref change, layout change in the old system, etc.), voices originating from PHYSICAL inputs migrate with the shift. Mouse-click voices stay where they were clicked.
 
 The distinction is input identity: a Lumatone key has a persistent `(ch, note)` identity that survives the lattice shift; the user is still pressing the same physical key, so they expect the same physical-key-relative pitch. Same for QWERTY (`e.code` is the identity). A mouse click is one-shot — the click event has no identity beyond the lattice cell it produced.
 
@@ -516,11 +516,15 @@ The fan-out in `src/effects/onRefChanged.ts` calls `migrateHeldQwertyVoices()` +
 
 ### Outline polygon stays static; the lattice slides
 
-The Lumatone/QWERTY/none outline polygons are precomputed from `baseKeys` and `qwertyKeys` at fixed lattice coords. They never translate on screen. The lattice cells underneath them translate when refSpine changes.
+The Lumatone/QWERTY/none outline polygons are precomputed from `baseKeys` and `qwertyKeys` at fixed lattice coords. They never translate on screen. The lattice cells underneath them translate when kbAnchor changes.
 
-Canvas bounds depend on the outline's pixel extent, NOT on refSpine's possible range. The ref-driven shift adds zero bounds dependency. If you find yourself recomputing canvas bounds on ref change for a non-piano outline, you're doing something wrong — the outline is visually static.
+Canvas bounds depend on the outline's pixel extent, NOT on kbAnchor's possible range. The ref-driven shift adds zero bounds dependency. If you find yourself recomputing canvas bounds on ref change for a non-piano outline, you're doing something wrong — the outline is visually static.
 
 Piano outline is the exception: it's computed per-ref via `compute88PianoCoords` and IS recomputed on ref change.
+
+### Collapsing N mechanisms into one: enumerate what each old state reached
+
+The 2026-05-22 ref-driven shift replaced the ♭/♮/♯ layout buttons, and its deprecation table said `refSpine` "fully subsumes" them. It did not: their shifts were `(±7, ∓4)`, and 7 ≡ 1 (mod 3), so each button put the band seams on a different physical column, while `refSpine` always centered a qm0 cell and so pinned one **seam alignment**. The loss went unnoticed until 2026-11-09, by which time the fixed seams read as a design choice the record never argued for (decisions.md 2026-11-09). When one mechanism replaces several, list every distinct state the old ones could reach, including invariants nobody named (here, position modulo the band width), and check the new one reaches each.
 
 ### `midi-file` library conventions: pitch bend is signed, channel is 0-indexed
 

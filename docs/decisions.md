@@ -10633,3 +10633,19 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/frame-sync.mjs` (16 checks; a gray midpoint halves OKLab L, every palette color round-trips, each hue's dark/light halfway blend keeps the mean L, and every mid-slide key keeps the weighted mean L of its cells — worst error 0.0016; a linear-blend mutant fails).
 
 **Where:** `apps/hkl/src/lumatone/{oklab,sync}.ts`; docs/architecture/hkl.md (Lumatone output → Ref slide), docs/lessons.md.
+
+## Banded layout centers the ref exactly; `refSpine` removed (2026-11-09, Max)
+
+**Picked (Max):** the keyboard anchor is the home ref itself in the banded layout too, as it already was unbanded (`state/reference.ts`); `refSpine` is deleted. A ref's position in its band now picks where the seams fall under the physical keyboard, and a banding toggle never moves the keyboard.
+
+**Why (Max):** the spine rule was strictly a loss on the physical keyboard. A ref off its band's spine column got the same anchor as the spine cell beside it, so centering it exactly loses no distinct behavior, and it makes every seam alignment within one mapping reachable, which the spine rule had made impossible.
+
+**History** (read-only forensics, asked for by Max): from the first commit (210d8d5, the v0.9 port) the band came from lattice `q` (`bandOf(q)` in `keyFreq`), and the ♭/♮/♯ layouts were `(0,0)`, `(+7,−4)`, `(−7,+4)`. Since 7 ≡ 1 (mod 3), each put the seams on a different physical column, so the three buttons were the three Euler seam alignments. `refSpine` (c8eecc9, "Ref-driven layout shift via refSpine", 2026-05-22) pinned one. That entry weighed only which way qm2 normalizes, never exact centering, and its "fully subsumes" claim missed the alignment (lessons.md). Max's hypothesis that the spine rule was a holdout from seams fixed to the outline found no support in the repo; Max recalls such a fixed-seam system from before it, around the time of the septimal regions, and the port's note that septimal A/B regions are "determined by lattice r (not physical rPhys)" is the only trace.
+
+**Supersedes:** the centering rule of 2026-05-22 (Ref-driven layout shift via refSpine), and the accepted toggle-slide cost (`W/3 − posInBand` columns) of 2026-10-29 (Unbanded layout in HKL: the toggle). **Rejected:** keeping the spine banded, my recommendation, withdrawn once the history showed the old layouts reached all three alignments.
+
+**Behavior changes:** a Ctrl+click on a key off its band's spine column centers that key (before: its spine neighbor, at most 1 column away in Euler, 3 in Wicki-Hayden, 7 in chromatic). A persisted off-spine Ctrl+click (`prefs.manualRef`) therefore opens with the seams one or more columns over. A banding toggle leaves held physical keys on their cells and retunes them in place. `setBanded` no longer recomputes the ref.
+
+**Gates:** `test/hkl-midi/ref-centering.mjs` expects `view = kbAnchor = ref` banded; C15a (a far ref off the spine) and the new C17a/b (Ctrl+clicks either side of a spine) failed under the old rule (26/26 now). `banded-toggle.mjs` B2 now checks that a toggle never moves the keyboard and the held key keeps its cell; B2b–d failed under the old rule (39/39 now). `mapping-switch.mjs` M8c expects the converted ref; it passes under both rules, since A4 converts onto a spine in every preset. The chromatic and Wicki-Hayden oracles lose section G (`refSpine`). Every other hkl-midi gate passes, as do the rest of both oracles.
+
+**Where:** `apps/hkl/src/state/reference.ts`, `apps/hkl/src/ui/controls.ts` (`setBanded`), `apps/hkl/src/tuning/refspine.ts` (deleted); docs/architecture.md (Ref-driven layout shift, Wicki-Hayden, chromatic, layout matrix), docs/architecture/hkl.md, docs/guide/core.md, docs/lessons.md.

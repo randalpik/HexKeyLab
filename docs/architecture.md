@@ -305,13 +305,13 @@ reference is unbanded `'P'` with the same anchor (*Unbanded layout*).
 ### Ref-driven layout shift
 
 The reference note (Ctrl+click any hex, or set from Composer) slides the lattice under the static
-outline so the ref's spine cell lands at the outline center.
+outline so the ref lands exactly at the outline center, banded or unbanded.
 
 **One authority** (`state/reference.ts`). The tiers are a selection — two slots, the user's
 Ctrl+click and Composer's cursor note — then the score-ref, then A3. The *home ref* is Ctrl+click ??
 score-ref ?? A3; the *effective ref* is the home ref, except in the piano outline, where the cursor
 note is the ref when it is newer than the Ctrl+click (elsewhere the cursor note is ignored and never
-displaces a Ctrl+click). The keyboard anchor `kbAnchor` = `refSpine(home ref)` — where the
+displaces a Ctrl+click). The keyboard anchor `kbAnchor` = the home ref itself — where the
 Lumatone/QWERTY layout sits and where every non-piano view centers — and the S/Y `tuning.anchor` are
 derived there and nowhere else (the overlay mirror alone copies the publisher's). A physical key
 (Lumatone key, QWERTY code) plays its lattice offset + `kbAnchor` — the offset is its physical
@@ -327,12 +327,10 @@ one canvas width and height); a farther target snaps, as everything else does, a
 slide is in flight redirects the slide rather than letting it drag the view back to its old target. Handlers only
 mutate tiers — none can move a ref without re-centering (decisions.md 2026-10-27).
 
-```ts
-// apps/hkl/src/tuning/refspine.ts
-refSpine(refQ, refR) = qmod3 0 → (refQ,   refR)      // Pythag spine
-                       qmod3 1 → (refQ−1, refR)      // 5-limit M3 above qm0
-                       qmod3 2 → (refQ+1, refR)      // same-row Pythag spine
-```
+Because the anchor is the ref, banded or not, the seams fall wherever the ref puts them: the ref's
+position in its band picks the seam alignment under the physical keyboard, and toggling the banding
+never moves the keyboard. (Until 2026-11-09 the banded layout centered `refSpine(ref)`, the qm0
+column of the ref's band in its row, which pinned one alignment: decisions.md 2026-11-09.)
 
 Applies in all outline modes (`lumatone`/`qwerty`/`none`) and all tuning modes; ref changes tween
 via `apps/hkl/src/render/animation.ts`. Piano outline is the exception — it uses
@@ -446,11 +444,8 @@ occupies the middle four columns.
   (every coordinate-bearing message carries its `mapping`; receivers convert on use), and
   cross-score paste. Lattice *vectors* (transpose buttons, SC shifts, harmonics) map via `vecFromEuler`
   (q doubles — parity-preserving, so the step means the same interval from originals and copies).
-- **Reference**: `refSpine` centers the qm0 *original* column of the ref's own 6-band, in the ref's
-  row (at most 3 columns away), so the spine has its copy qm0′ to the right and the ref stays where
-  it sits in its band — Euler's rule (`qm1 → q−1`, `qm2 → q+1`) with 6-wide bands; the anchor is
-  that cell. (A first rule moved a copy ref to its same-name original one board away, `(Q−7, R+2)`;
-  that misaligned the ref horizontally and was replaced.) **Picker / resolver**: candidates satisfy
+- **Reference**: centered exactly, copy or original, as in every mapping (Ref-driven layout shift).
+  **Picker / resolver**: candidates satisfy
   `c·q + ρ·r = N` (c = 4 Euler, 2 Wicki-Hayden, 1 chromatic; ρ the row step, 7 in all three),
   stepping along the isotone `(ρ, −c)` over ±⌈80/c⌉ steps centered on the ref's row (the same
   ±80-row span in every mapping); projection `ρΔq − c·Δr`; copies are candidates like any cell.
@@ -518,7 +513,7 @@ F F# G G# A Bb B C C# D D# E.
   - adjacent-column copies give remote spellings and wolf intervals.
 
 **Two band functions.**
-- `bandOfCell` is the spatial band. It drives seams, position in band, `refSpine`, the anchor,
+- `bandOfCell` is the spatial band. It drives seams, position in band, the anchor,
   the Schismatic schisma and the schismatic-chord check.
 - `pitchBandOf` is the band whose Syntonic/Polysyntonic offset a cell carries. It equals
   `bandOfCell(Q−5)` at the two positions whose source is in the band to the left (1 and 3:
@@ -529,9 +524,7 @@ F F# G G# A Bb B C C# D D# E.
   borrowed columns therefore keep 5/6 and 15/16, and a new column against `(Q−5, R−1)` is
   2/1 × schisma at those two positions.
 
-**Spine and conversion.**
-- `refSpine` centers the qm0 of the ref's own band, in its row, so the ref sits ≤4 columns left
-  or ≤7 right of center.
+**Conversion.**
 - The frames nest, so `convertCell` maps a cell that exists in the target frame to that same cell,
   exact in every mode. Euler / Wicki-Hayden → chromatic therefore always is exact. Other cells
   go through their Euler-equivalent.
@@ -646,9 +639,9 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 - **Transposes**: every preset has every Euler vector. `vecFromEuler` returns null only on a 4-wide
   band (c = 3, from the builder) for an M3 count that isn't a multiple of 3, which turns its M3, m3
   and SC buttons off (`syncBandedControls`).
-- **Reference spine** (`refSpine`): the ref band's qm0 chromatic column (chromatic position 4), in
-  the ref's row. That is layout column `⌊4/c⌋` of the band: `W/3` in every preset, column 1 in a
-  4-wide band. Every row samples it, since `c | s`.
+- **Spine column**: a band's qm0 chromatic column (chromatic position 4), layout column `⌊4/c⌋` of
+  the band: `W/3` in every preset, column 1 in a 4-wide band. Every row samples it, since `c | s`.
+  (It no longer sets the centering: the ref itself is centered, Ref-driven layout shift.)
 - **Vertical Freq tilt** (`layout/geometry.ts`): c semitones per column, and per row the fifths
   layouts' average fifth shifted by the row step's distance from 7 equal semitones.
 - **Piano picker**: candidates are the layout's own family `(q_N + ρk, r_N − c·k)`, ρ the row step

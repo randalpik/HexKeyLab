@@ -28,8 +28,8 @@
 //
 // The HOME ref is manual ?? scoreRef ?? A3 — the effective ref minus the
 // cursor slot. Two anchors are derived from it here and nowhere else:
-//   • the keyboard anchor `view.kbAnchorQ/R` = refSpine(home) banded, home
-//     itself unbanded: where the Lumatone / QWERTY layout sits, and the center
+//   • the keyboard anchor `view.kbAnchorQ/R` = home itself, banded or not
+//     (decisions.md 2026-11-09): where the Lumatone / QWERTY layout sits, and the center
 //     of every non-piano outline's view. The cursor's prior note never moves it — entering a
 //     note must not shift the physical layout.
 //   • `tuning.anchor`, the Syntonic / Polysyntonic home band (every mode's,
@@ -46,7 +46,6 @@
 import { tuning } from './tuning.js';
 import { view } from './view.js';
 import { anchorOf } from '@hkl/shared/freq.js';
-import { refSpine } from '../tuning/refspine.js';
 
 interface RefCoord {
   q: number;
@@ -90,15 +89,13 @@ function effectiveRef(): RefCoord {
 function recompute(notify = true): boolean {
   recomputeAnchor();
   const home = homeRef();
-  /* unbanded centers the ref itself: no band offset in a layout without bands */
-  const sp = tuning.banded ? refSpine(home.q, home.r, tuning.mapping) : home;
-  const dq = sp.q - view.kbAnchorQ, dr = sp.r - view.kbAnchorR;
+  const dq = home.q - view.kbAnchorQ, dr = home.r - view.kbAnchorR;
   const eff = effectiveRef();
   if (eff.q === referenceNote.q && eff.r === referenceNote.r && dq === 0 && dr === 0) return false;
   referenceNote.q = eff.q;
   referenceNote.r = eff.r;
-  view.kbAnchorQ = sp.q;
-  view.kbAnchorR = sp.r;
+  view.kbAnchorQ = home.q;
+  view.kbAnchorR = home.r;
   if (notify) refListener?.(dq, dr);
   return true;
 }
@@ -135,8 +132,7 @@ export function setAnchorOverride(a: number | null): void {
 
 /** Recompute after a change to an input other than the tiers: the outline
  *  (the cursor slot applies only in the piano outline, so the effective ref may
- *  change) or the banding (the keyboard anchor is the band's spine banded, the
- *  ref itself unbanded). */
+ *  change). */
 export function recomputeReference(): boolean {
   return recompute();
 }

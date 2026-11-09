@@ -229,7 +229,7 @@ function kbCells(): ReadonlyArray<Cell> {
    The 88 cells that an A0..C8 MIDI piano resolves to under the current
    reference note. Unlike Lumatone/QWERTY (static cell sets pre-shifted to
    draw screen-stationary), the piano outline tracks lattice cells: it scrolls
-   with the lattice on refSpine shifts, and recomputes on refNote / tuning-mode
+   with the lattice on ref-driven shifts, and recomputes on refNote / tuning-mode
    change. Cache keyed by (refQ, refR, tuningMode). */
 let pianoOutlinePaths: Point[][] = [];
 let pianoFootprintSet: Set<KeyId> = new Set();
@@ -1432,7 +1432,7 @@ export function draw(): void {
     ctx.rotate(-tiltAngle);
 
     /* Lumatone/QWERTY outlines stay screen-stationary across ref-driven
-       shifts: the lattice underneath translates (refSpine offset) while the
+       shifts: the lattice underneath translates (kbAnchor offset) while the
        outline polygon stays at its lumatoneCells-origin coordinates.
        Piano outline differs: its 88 cells are anchored to refNote in absolute
        lattice space (see compute88PianoCoords). We translate by the lattice

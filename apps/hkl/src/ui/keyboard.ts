@@ -1,5 +1,5 @@
 // Window-level keyboard shortcuts. The legacy ♭/♮/♯ layout cycle and
-// seam-shift on arrow keys are gone (refSpine took over layout positioning
+// seam-shift on arrow keys are gone (the ref-driven shift took over layout positioning
 // and uniform septimal mode dropped the shift parameter). What lives here
 // now is global modifier-key state for transient UI cues — currently just
 // Ctrl, used by the render layer to dim everything outside the valid-ref

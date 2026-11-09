@@ -8,10 +8,9 @@
 // render/animation.ts during a layout-switch tween; read by the draw pipeline.
 //
 // kbAnchorQ/kbAnchorR are the lattice anchor for the static Lumatone / QWERTY
-// outlines — the spine cell that lands at the outline's center. Updated only
-// by user-driven ref changes (Ctrl+click in src/ui/init.ts) so Composer-driven
-// ref changes leave the
-// physical Lumatone / QWERTY layout untouched. Piano-mode view geometry is
+// outlines — the home ref, which lands at the outline's center. Derived only in
+// state/reference.ts; Composer's cursor note never moves it, so entering a note
+// leaves the physical Lumatone / QWERTY layout untouched. Piano-mode view geometry is
 // ref-coupled by design and reads `referenceNote` directly, not kbAnchor.
 //
 // hexDirty/textDirty signal that the offscreen layers need rebuild on the next

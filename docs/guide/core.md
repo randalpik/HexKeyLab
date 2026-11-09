@@ -27,7 +27,7 @@ In the Euler mapping the keyboard is divided into **bands** three keys wide, and
 
 - **Hex size**: Small, Medium or Large.
 - **Note names**: the note name on each key. Turn on **HEJI accidentals** (Analysis tab) for the exact just spelling, with comma arrows and septimal accidentals.
-- **Banded layout** (on by default): turn it off to remove the octave bands. Every seam is retuned to one of the tuning's own steps, so no interval exists only at a seam, and each band is spelled twelve fifths away from its neighbor (A becomes G𝄪 one band to the right). Bands count from the reference note's band (as in Syntonic), and the reference sits exactly at the center. Syntonic and Polysyntonic become Pythagorean, Schismatic keeps its pitches, Equal keeps 12-TET; Septimal's octaves become 1207.7¢, with a closed 4:5:6:7 from every key to the right of a 9:7 step. Keys stay where they are: only their pitch, name and color change, and held notes retune. Chromatic + Pythagorean is the intended playing layout.
+- **Banded layout** (on by default): turn it off to remove the octave bands. Every seam is retuned to one of the tuning's own steps, so no interval exists only at a seam, and each band is spelled twelve fifths away from its neighbor (A becomes G𝄪 one band to the right). Bands count from the reference note's band (as in Syntonic). Syntonic and Polysyntonic become Pythagorean, Schismatic keeps its pitches, Equal keeps 12-TET; Septimal's octaves become 1207.7¢, with a closed 4:5:6:7 from every key to the right of a 9:7 step. Keys stay where they are: only their pitch, name and color change, and held notes retune. Chromatic + Pythagorean is the intended playing layout.
 - **Show bands**: draw the seams (banded layout only).
 - **Extend pattern**: color the whole canvas rather than only the area inside the outline.
 - **Outline**: the keyboard footprint drawn in white: **Lumatone** (280 keys), **QWERTY**, **Piano** (88 keys around the reference note), or **None**.
@@ -110,7 +110,7 @@ Switching mapping keeps what you're holding. Mouse and MIDI-keyboard notes keep 
 
 The reference note is the key the outline (Lumatone, QWERTY or Piano) is centered on: **A3** by default.
 
-- **Ctrl+click** a key (**Cmd+click** on a Mac) to make it the reference. The keyboard slides so it sits at the center of the outline (it jumps instead when the new position is more than a screen away); with Auto-sync on Lumatone firmware 1.5.0 or later, the Lumatone's lights slide with it. Lumatone and computer-keyboard notes you're holding move with it, so a held chord keeps its shape; mouse notes stay on their keys.
+- **Ctrl+click** a key (**Cmd+click** on a Mac) to make it the reference. The keyboard slides so it sits exactly at the center of the outline (it jumps instead when the new position is more than a screen away), so the key you pick also sets where the band seams fall under your hands; with Auto-sync on Lumatone firmware 1.5.0 or later, the Lumatone's lights slide with it. Lumatone and computer-keyboard notes you're holding move with it, so a held chord keeps its shape; mouse notes stay on their keys.
 - While Ctrl is held, keys that can't be the reference are dimmed: a reference must be in the 88-key piano range, A0–C8. **Valid ref bounds** (Piano tab) outlines the allowed area permanently.
 - Ctrl+click the current reference again to clear it. It goes back to the score's key if Composer is open, otherwise to A3. Switching tuning or banding keeps your reference.
 

@@ -14,8 +14,9 @@
 //       pitches are unchanged, the band to its right rises by a PC), Show bands
 //       and Euler's P8 / SC transposes disable, the pref persists, the
 //       snapshot records it
-//   B2  centering: a ref off its band's spine sits at the center unbanded and
-//       back on the spine banded; held Lumatone keys follow their key
+//   B2  centering: a ref off its band's spine is centered exactly in both
+//       layouts, so the toggle never moves the keyboard; a held Lumatone key
+//       keeps its cell (decisions.md 2026-11-09)
 //   B3  Wicki-Hayden unbanded: P8 transposes by (−1, 2), an exact octave
 //   B4  chromatic unbanded: P8 by (−2, 2), an exact octave; SC stays off
 //   B5  a recording snapshot restores the banding it was made in
@@ -114,7 +115,7 @@ const SCRIPT = `(async () => {
   check('B1c: Show bands disabled', $('cbBands').disabled, true);
   check('B1d: Euler P8 disabled (no spelled octave)', btn('octave').disabled, true);
   check('B1e: SC disabled', btn('comma').disabled, true);
-  check('B1f: A3 is on its spine, so the keyboard stays', anchorStr(), '0,0');
+  check('B1f: the keyboard stays on the ref', anchorStr(), '0,0');
   check('B1g: held key keeps its (q,r)', held.heldKey('lumatone', '1,21'), K0);
   check('B1h: held key still sounding', selection.selectedKeys.has(K0), true);
   check('B1i: mouse note keeps its (q,r)', selection.selectedKeys.has('1,0'), true);
@@ -133,14 +134,14 @@ const SCRIPT = `(async () => {
   deliver(0x90, 21, 100);
   const K1 = held.heldKey('lumatone', '1,21');
   setBanded(true);
-  check('B2b: banded centers the band spine', anchorStr(), '0,0');
-  check('B2c: the held key followed its key', held.heldKey('lumatone', '1,21'), eng.fixedMidiToKey(1, 21));
-  check('B2d: … to a different cell', held.heldKey('lumatone', '1,21') !== K1, true);
+  check('B2b: banded centers the ref itself too', anchorStr(), '1,0');
+  check('B2c: the held key keeps its cell', held.heldKey('lumatone', '1,21'), K1);
+  check('B2d: … which is still where its key plays', eng.fixedMidiToKey(1, 21), K1);
   check('B2e: Show bands enabled again', $('cbBands').disabled, false);
   deliver(0x80, 21, 0);
   check('B2f: release clears it', held.heldCount('lumatone'), 0);
   setBanded(false);
-  check('B2g: and back to the ref', anchorStr(), '1,0');
+  check('B2g: unbanded again, still on the ref', anchorStr(), '1,0');
 
   /* B3: Wicki-Hayden unbanded — P8 is (−1, 2), an exact octave */
   reset();

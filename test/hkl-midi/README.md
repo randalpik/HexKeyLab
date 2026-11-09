@@ -131,13 +131,13 @@ node test/hkl-midi/mapping-switch.mjs   # requires `pnpm dev`; exits non-zero on
 ```
 
 Behavioral gate for `setMapping()` (docs/architecture.md → Note-name mapping). With the
-reference at A4 — its spine has q ≠ 0, so the anchor moves on a switch — a held
+reference at A4 — q ≠ 0, so the anchor moves on a switch — a held
 Lumatone key keeps its `(q,r)` and retunes in place, a held mouse note converts
 with its pitch kept, release leaves nothing behind, both directions, and with a
 reference change between switch and release; then the same switch into each
-sheared and inverted preset, the anchor landing on the generalized spine.
+sheared and inverted preset, the anchor landing on the converted ref.
 **Run it before declaring any change to `setMapping`, the held-input registry,
-`refSpine`, or ref anchoring done.**
+or ref anchoring done.**
 
 ## Syntonic / Polysyntonic anchor
 
@@ -166,7 +166,7 @@ Ctrl+click on the canvas and Composer's `set-reference-note` / `set-score-ref` /
 `composer-bye` / `apply-layout` on the live bridge channel, Sync on and off,
 outline and mapping switches — and checks after each that the effective ref is
 what the tiers call for and the view is centered on it (`view = kbAnchor =
-refSpine(ref)` outside the piano outline). Includes a snap landing mid-slide,
+ref` outside the piano outline, banded or not). Includes a snap landing mid-slide,
 a far ref change (beyond one canvas) snapping instead of sliding, and the
 slide's expanded offscreen layer rebuilt at normal size when it lands.
 **Run it before declaring any change to `state/reference.ts`,
@@ -197,8 +197,8 @@ Behavioral gate for `setBanded()` (docs/architecture.md → Unbanded layout): wi
 keys held, turning Banded layout off keeps every cell's `(q,r)` and retunes in
 place (the ref band unchanged, the band to its right a Pythagorean comma up);
 Show bands and the P8 / SC transposes follow; the pref and the snapshot record
-it; unbanded centers the ref itself and banded the band's spine, held Lumatone
-keys following their key; P8 is (−1, 2) in Wicki-Hayden and (−2, 2) in chromatic,
+it; both layouts center the ref itself, so the toggle never moves the keyboard
+and a held Lumatone key keeps its cell; P8 is (−1, 2) in Wicki-Hayden and (−2, 2) in chromatic,
 exact octaves; a recording snapshot restores its banding. **Run it before
 declaring any change to `setBanded`, the keyboard anchor, transpose, or
 `applySnapshot` done.**

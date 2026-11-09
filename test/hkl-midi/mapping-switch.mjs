@@ -3,7 +3,7 @@
 //
 // Same harness as held-inputs.mjs (live modules resolved through their
 // importers; Lumatone messages through a simulated MIDIInput). The reference
-// is A4 — its spine has q ≠ 0, so the anchor MOVES on a switch (Euler (3,0) →
+// is A4 — q ≠ 0, so the anchor MOVES on a switch (Euler (3,0) →
 // Wicki-Hayden (6,0)); at the default A3 every key keeps its KeyId and the
 // release bug this guards against would be invisible.
 //
@@ -19,7 +19,7 @@
 //   M4  a reference change between the switch and the release
 //   M5  the reference note keeps its pitch across the switch
 //   M8  into each sheared / inverted preset: ref and mouse note keep their pitch,
-//       the anchor lands on the generalized spine, held keys keep their (q,r)
+//       the anchor lands on the converted ref, held keys keep their (q,r)
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -42,7 +42,7 @@ const SCRIPT = `(async () => {
   const handlerUrl = await depUrl(refUrl, '/src/midi/handler.ts');
   const heldUrl = await depUrl(handlerUrl, '/src/input/held.ts');
   const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
-  const [controls, handler, held, eng, viewMod, selMod, audioMod, midiMod, tuningMod, refState, freqMod, heartbeat, sx, spineMod] =
+  const [controls, handler, held, eng, viewMod, selMod, audioMod, midiMod, tuningMod, refState, freqMod, heartbeat, sx] =
     await Promise.all([
       import(controlsUrl), import(handlerUrl), import(heldUrl), import(engineUrl),
       depUrl(engineUrl, '/src/layout/physical.ts').then((u) => depUrl(u, '/src/state/view.ts')).then((u) => import(u)),
@@ -54,7 +54,6 @@ const SCRIPT = `(async () => {
       depUrl(heldUrl, '/src/tuning/frequency.ts').then((u) => import(u)),
       depUrl(handlerUrl, '/src/midi/heartbeat.ts').then((u) => import(u)),
       depUrl(handlerUrl, '/src/lumatone/sysex.ts').then((u) => import(u)),
-      depUrl(controlsUrl, '/src/state/reference.ts').then((u) => depUrl(u, '/src/tuning/refspine.ts')).then((u) => import(u)),
     ]);
   const { view } = viewMod, { selection } = selMod, { audio } = audioMod;
   const { midi } = midiMod, { tuning } = tuningMod, { keyFreq } = freqMod;
@@ -174,8 +173,8 @@ const SCRIPT = `(async () => {
 
   /* M8: into each sheared / inverted preset from Euler, ref A4, holding a
      Lumatone key and a mouse note: the ref and the mouse note keep their
-     pitch, the anchor lands on the generalized spine (an integer cell, the
-     Accordion's column ⌊4/3⌋ included), the Lumatone key keeps its (q,r), and
+     pitch, the anchor lands on the converted ref itself (banded, as
+     unbanded), the Lumatone key keeps its (q,r), and
      its release leaves nothing behind */
   for (const m of ['gerhard', 'janko', 'accordion', 'randal', 'park']) {
     reset();
@@ -187,11 +186,9 @@ const SCRIPT = `(async () => {
     const hz8 = keyFreq(1, 0), refHz8 = keyFreq(3, 0);
     switchTo(m);
     const ref8 = refState.referenceNote;
-    const sp8 = spineMod.refSpine(ref8.q, ref8.r, m);
     check('M8a ' + m + ': mapping switched', tuning.mapping, m);
     check('M8b ' + m + ': reference keeps its pitch', near(keyFreq(ref8.q, ref8.r), refHz8), true);
-    check('M8c ' + m + ': anchor on the ref spine, an integer cell', view.kbAnchorQ + ',' + view.kbAnchorR,
-      Number.isInteger(sp8.q) ? sp8.q + ',' + sp8.r : 'non-integer spine ' + sp8.q);
+    check('M8c ' + m + ': anchor on the converted ref', view.kbAnchorQ + ',' + view.kbAnchorR, ref8.q + ',' + ref8.r);
     check('M8d ' + m + ': held key keeps its (q,r)', held.heldKey('lumatone', '1,21'), K8);
     check('M8e ' + m + ': mouse note converted, pitch kept',
       [...selection.selectedKeys].filter((k) => k !== K8).some((k) => { const [q, r] = k.split(',').map(Number); return near(keyFreq(q, r), hz8); }), true);

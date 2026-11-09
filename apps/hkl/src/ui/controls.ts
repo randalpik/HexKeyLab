@@ -127,15 +127,13 @@ export function setMapping(): void {
 
 /** Switch between the banded and the unbanded layout (docs/architecture.md →
  *  Unbanded layout). The lattice stays static: every cell keeps its (q, r) and
- *  retunes and respells in place, held voices included. Unbanded centers the
- *  ref exactly, so the keyboard anchor leaves the band's spine and held
- *  Lumatone / QWERTY keys follow their key (onRefChanged). */
+ *  retunes and respells in place, held voices included. Both layouts center
+ *  the ref exactly, so the keyboard anchor never moves on a toggle. */
 export function setBanded(): void {
   const val = (document.getElementById('cbBanded') as HTMLInputElement).checked;
   if (val === tuning.banded) return;
   tuning.banded = val;
   syncBandedControls();
-  recomputeReference(); /* the keyboard anchor: the band's spine ↔ the ref */
   onTuningChanged();
   savePrefs({ banded: val });
 }

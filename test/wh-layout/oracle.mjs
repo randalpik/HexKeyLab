@@ -25,7 +25,6 @@ import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 import { eulerOf, convertCell } from '../../packages/shared/src/mapping.ts';
 import { tuning } from '../../apps/hkl/src/state/tuning.ts';
 import { keyColorVariant } from '../../apps/hkl/src/render/colors.ts';
-import { refSpine } from '../../apps/hkl/src/tuning/refspine.ts';
 
 const JI = ['5', 'P', 'D', '7', 'V'];
 const PR = [2, 3, 5, 7];
@@ -153,21 +152,6 @@ for (const m of JI) {
 }
 check('E Equal frame conversion keeps pitch',
   freqAt(7, -2, 'E', WH, 0, true).toFixed(9), freqAt(...convertCell(7, -2, WH, 'euler'), 'E', 'euler', 0, true).toFixed(9));
-
-/* ── G: reference spine ───────────────────────────────────────────────────
-   The qm0 ORIGINAL column of the ref's own 6-band, same row: (Q+2) mod 6 = 2,
-   within the band, at most 3 columns away; Euler unchanged. */
-for (let Q = -30; Q <= 30; Q++) {
-  for (let R = -6; R <= 6; R++) {
-    const sp = refSpine(Q, R, WH);
-    const pos = (s) => (((s + 2) % 6) + 6) % 6;
-    check(`G (${Q},${R}) spine on a qm0 original`, pos(sp.q), 2);
-    check(`G (${Q},${R}) spine in the ref's band and row`, Math.floor((sp.q + 2) / 6) + ',' + sp.r, Math.floor((Q + 2) / 6) + ',' + R);
-  }
-}
-for (const [q, want] of [[0, 0], [1, 0], [2, 3], [-1, 0], [3, 3]]) {
-  check(`G euler refSpine(${q},0)`, refSpine(q, 0, 'euler').q, want);
-}
 
 /* ── F: Lumatone footprint ────────────────────────────────────────────────── */
 const src = readFileSync(new URL('../../apps/hkl/src/layout/baseKeys.ts', import.meta.url), 'utf8');

@@ -6,8 +6,8 @@
 // Ctrl+click on the canvas, and Composer's messages posted on the live bridge
 // channel — and checks after each that the effective ref is the one the tiers
 // call for and the view is centered on it: in a non-piano outline view =
-// kbAnchor = refSpine(ref); in the piano outline view = the piano center for
-// the ref, with kbAnchor where the step says.
+// kbAnchor = the ref, banded or not; in the piano outline view = the piano
+// center for the ref, with kbAnchor where the step says.
 //
 // Requires `pnpm dev` running (umbrella proxy at :5170). The page is pinned to
 // a private overlay relay (never the live :5190).
@@ -35,6 +35,8 @@
 //   C15 clearing a far ref (214 keys out) snaps instead of sliding, layer at
 //       normal size; C16 a nearby Ctrl+click still slides and the layer is
 //       rebuilt at normal size when it lands
+//   C17 banded: a Ctrl+click off its band's spine (either side) is centered
+//       exactly, not on the spine (decisions.md 2026-11-09)
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -55,11 +57,10 @@ const SCRIPT = `(async () => {
   const root = '/src/ui/init.ts';
   const drawUrl = await depUrl(root, '/src/render/draw.ts');
   const refStateUrl = await depUrl(root, '/src/state/reference.ts');
-  const [viewMod, tuningMod, refState, spineMod, drawMod, canvasMod, animMod, geo] = await Promise.all([
+  const [viewMod, tuningMod, refState, drawMod, canvasMod, animMod, geo] = await Promise.all([
     import(await depUrl(root, '/src/state/view.ts')),
     import(await depUrl(root, '/src/state/tuning.ts')),
     import(refStateUrl),
-    import(await depUrl(refStateUrl, '/src/tuning/refspine.ts')),
     import(drawUrl),
     import(await depUrl(drawUrl, '/src/render/canvas.ts')),
     import(await depUrl(drawUrl, '/src/render/animation.ts')),
@@ -98,15 +99,14 @@ const SCRIPT = `(async () => {
       const [vQ, vR] = canvasMod.computePianoViewCenter(ref.q, ref.r, m64Q, m64R);
       return Math.abs(view.viewQ - vQ) < 1e-9 && Math.abs(view.viewR - vR) < 1e-9;
     }
-    const sp = spineMod.refSpine(ref.q, ref.r, tuning.mapping);
-    return view.kbAnchorQ === sp.q && view.kbAnchorR === sp.r && view.viewQ === sp.q && view.viewR === sp.r;
+    return view.kbAnchorQ === ref.q && view.kbAnchorR === ref.r && view.viewQ === ref.q && view.viewR === ref.r;
   };
-  /* wantKb: the expected kbAnchor (piano outline); elsewhere it must be the ref's spine */
+  /* wantKb: the expected kbAnchor (piano outline); elsewhere it must be the ref itself */
   const expect = (name, wantRef, wantKb) => {
     const got = { ref: ref.q + ',' + ref.r, kbAnchor: view.kbAnchorQ + ',' + view.kbAnchorR,
       view: (+view.viewQ.toFixed(3)) + ',' + (+view.viewR.toFixed(3)), centered: centered() };
     const ok = got.ref === wantRef && got.centered && (wantKb === undefined || got.kbAnchor === wantKb);
-    results.push({ name, ok, got, want: { ref: wantRef, kbAnchor: wantKb ?? 'spine(ref)', centered: true } });
+    results.push({ name, ok, got, want: { ref: wantRef, kbAnchor: wantKb ?? 'ref', centered: true } });
   };
   const EU = 'euler';
 
@@ -145,7 +145,7 @@ const SCRIPT = `(async () => {
 
   sel('selMapping', 'wickiHayden'); await wait(150);
   const whOk = centered();
-  results.push({ name: 'C13a Wicki-Hayden: centered after the switch', ok: whOk, got: { ref: ref.q + ',' + ref.r, kbAnchor: view.kbAnchorQ + ',' + view.kbAnchorR, view: view.viewQ + ',' + view.viewR }, want: 'view = kbAnchor = spine(ref)' });
+  results.push({ name: 'C13a Wicki-Hayden: centered after the switch', ok: whOk, got: { ref: ref.q + ',' + ref.r, kbAnchor: view.kbAnchorQ + ',' + view.kbAnchorR, view: view.viewQ + ',' + view.viewR }, want: 'view = kbAnchor = ref' });
   sel('selMapping', EU); await wait(150);                           expect('C13b back to Euler: same ref, centered', '0,1');
 
   await post({ type: 'apply-layout', tuningMode: 'S', mapping: EU }); expect('C14 Syntonic layout drops the Ctrl+click', '6,-3');
@@ -175,6 +175,9 @@ const SCRIPT = `(async () => {
   push('C16a a nearby Ctrl+click still slides', animMod.animation.isAnimating, animMod.animation.isAnimating, true);
   await wait(SLIDE);                                                expect('C16b ...and lands centered', '-3,3');
   const n16 = layerNormal(); push('C16c ...with the layer rebuilt at normal size', n16.ok, n16.got, n16.want);
+  /* C17: (-3,3) is its band's spine; its neighbours (-2,3) and (-4,3) are not */
+  await ctrlClick('C17a', -2, 3);                                   expect('C17a banded: a Ctrl+click right of the spine is centered exactly', '-2,3', '-2,3');
+  await ctrlClick('C17b', -4, 3);                                   expect('C17b banded: a Ctrl+click left of the spine is centered exactly', '-4,3', '-4,3');
   refState.clearSelection(); await wait(SLIDE);
   return { pass: results.every((r) => r.ok), results };
 })()`;
