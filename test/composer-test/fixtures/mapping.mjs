@@ -228,6 +228,35 @@ export const FIXTURES = {
       window.__mapOptions = [...document.getElementById('setupMapping').options].map((o) => o.value);
     `,
   },
+  /* Notehead color in an inverted layout is the fourths spine's (docs/architecture.md → Color
+     scheme): Randal, the chord A3 C#4 A4 C#5, the upper pair one band up. Ptolemaic's band step
+     is 2:1, so each pair shares a color. Schismatic's is 2:1 × a schisma (3⁸·5/2¹⁵): 8 fourths
+     down the spine and a major third up, 3 octaves, so the upper pair turns 3 hues (purple →
+     yellow, blue → orange). Until 2026-11-09 the inverted branch added the schisma's fifths-spine
+     step instead and gave teal and green. Hexes computed from the shared functions. */
+  map_randal_schismatic_recolors: {
+    setup: `
+      ${HELPERS}
+      const N = (q, r, pname, accid, oct, midi, ink, light) => ({ q, r, pname, accid, oct, midi, colorHex: ink, lightColorHex: light, velocity: 80 });
+      window.__mapCols = () => {
+        const by = {};
+        for (const n of m.getDoc().querySelectorAll('note')) by[n.getAttribute('data-q') + ',' + n.getAttribute('data-r')] = [n.getAttribute('color'), n.getAttribute('data-light-color')];
+        return ['0,0', '1,0', '3,0', '4,0'].map((k) => by[k] ?? null);
+      };
+      m.setLayoutReq({ tuningMode: '5', mapping: 'randal' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        N(0, 0, 'a', '', 3, 57, '#9405d1', '#C94CFF'), N(1, 0, 'c', 's', 4, 61, '#9405d1', '#C94CFF'),
+        N(3, 0, 'a', '', 4, 69, '#9405d1', '#C94CFF'), N(4, 0, 'c', 's', 5, 73, '#9405d1', '#C94CFF'),
+      ], duration: '4', dots: 0 });
+      m.recolorNotes();
+      window.__mapColPtolemaic = window.__mapCols();
+      m.setLayoutReq({ tuningMode: 'V', mapping: 'randal' });
+      m.recolorNotes();
+      window.__mapColSchismatic = window.__mapCols();
+      r();
+    `,
+  },
 };
 
 const expect = (got, want) => (JSON.stringify(got) === JSON.stringify(want)
@@ -360,5 +389,11 @@ export const ASSERTIONS = {
   map_setup_lists_all_mappings: [
     { name: 'the Setup mapping list is all eight, in dropdown order',
       expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park'])` },
+  ],
+  map_randal_schismatic_recolors: [
+    { name: 'Ptolemaic: A3 and A4 purple, C#4 and C#5 blue (a band step keeps the color)',
+      expr: `(${expect.toString()})(window.__mapColPtolemaic, [['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF'], ['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF']])` },
+    { name: 'Schismatic: the band above turns 3 hues on the fourths spine (A4 yellow, C#5 orange)',
+      expr: `(${expect.toString()})(window.__mapColSchismatic, [['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF'], ['#bd890f', '#FFF94C'], ['#eb6200', '#FF884C']])` },
   ],
 };
