@@ -77,6 +77,7 @@ import { initRecorderUI } from './recorder.js';
 import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { initInstrumentBundlesUi } from './instrumentBundles.js';
+import { initAboutUi } from './about.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -130,6 +131,7 @@ function applyPrefsToDom(p: PrefsV1): void {
 await InstrumentRegistry.init();
 await CdnConfigRegistry.init();
 initInstrumentBundlesUi();
+initAboutUi();
 
 const prefs = loadPrefs();
 applyPrefsToDom(prefs);

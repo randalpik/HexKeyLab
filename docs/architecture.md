@@ -45,7 +45,9 @@ packages/
   analysis/   @hkl/analysis — DOM-free sample-analysis DSP (Analyzer + Orchestrator) → analyzer.md
 test/         composer-test, composer-inspect, picker, interval-names, engine-smoke, orchestrator-smoke, *-check.mjs
 tools/        lumatone-cal, reset-calibration.sh   (hardware/ops)
-vite/         dev-proxy.mjs + middleware (the dev umbrella)
+vite/         dev-proxy.mjs + middleware (the dev umbrella); assemble-dist.mjs (the publish dir,
+              `pnpm assemble`) + third-party-notices.mjs (its THIRD-PARTY-NOTICES.txt: the license
+              notices of the apps' runtime npm dependency closure, written at the site root)
 ```
 
 Dependency DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, plus `@hkl/analysis` (zero deps)

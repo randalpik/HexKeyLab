@@ -10666,3 +10666,18 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** both rewritten oracles failed on the old code first (layout-presets: 29,564 failures). `test/layout-presets/oracle.mjs` section L recomputes the rule from `coordExps` for every JI mode × mapping × banding and checks unbanded Ptolemaic's octave stripes on the 3-wide layouts (633,956 checks); `test/unbanded/oracle.mjs` K (476,042); `test/syntonic/oracle.mjs` unchanged and passing. `test/color-gate/` re-seeded: 3 of 64 grids changed, Schismatic × the three inverted layouts, no hex changes (it runs banded only). Composer had no fixture coloring a note in an inverted layout; `map_randal_schismatic_recolors` (added after the fix) recolors a Randal chord from Ptolemaic to Schismatic. The pre-fix function gives teal and green where it expects yellow and orange (computed from the old file, not run against the old code), and the fixture fails when given those as its expectation.
 
 **Where:** `packages/shared/src/keycolor.ts`; `test/composer-test/fixtures/mapping.mjs`; docs/architecture.md (Color scheme, Unbanded layout), AGENTS.md, docs/lessons.md.
+
+## Credits, third-party notices, and the unused pianos (2026-11-09, Max)
+
+**Context:** the About modal (HKL 1.3) prompted an audit of what HKL owes third parties before public release. Upstream license texts were read on this date.
+
+**Picked:**
+- **Credits in the About modal**, as two small-print lines: sound samples (FluidR3_GM CC BY 3.0 and FatBoy CC BY-SA 3.0 via gleitz/midi-js-soundfonts, Sonatina Symphonic Orchestra CC Sampling Plus 1.0, jRhodes3d CC BY-NC 4.0, tonejs-instruments CC BY 3.0) and notation (Verovio; Bravura and Leipzig, SIL OFL 1.1). Sources that need no credit are left out: VCSL and VSCO-2-CE (CC0), the Splendid Grand Piano (public domain per its README).
+- **jRhodes3d stays**: its samples are CC BY-NC when distributed in an application, and HKL will remain free (Max).
+- **The MusiQuest-derived bundles in `public/samples/` are Max's to use** (Max).
+- **`maestro_piano`, `headroom_piano_close` and `headroom_piano_decca` are deleted from the registry.** No `#waveform` option had pointed at them since 2026-07-11, when the menu's "Piano" became `splendid_piano`, and Composer resolves instruments against that menu, so nothing could load them. The Maestro samples are also "all rights reserved" (Mats Helgesson, 2003), published by sfzinstruments with his permission; re-adding it needs that question answered first. The earlier entry *Default instrument pref: `maestro_piano`* is superseded: the default is `splendid_piano`.
+- **npm notices are one generated file**, `THIRD-PARTY-NOTICES.txt` at the site root, written by `vite/assemble-dist.mjs` from the apps' runtime dependency closure (`vite/third-party-notices.mjs`). The minified bundles carried no MIT notices.
+
+**Rejected:** a per-app Vite plugin reading the bundle's module graph (exact, but each app's `vite.config.ts` would import from `vite/`, which `check:boundaries` forbids: five exceptions). The closure can list a package the bundler tree-shook away; a notice too many is harmless.
+
+**Where:** `apps/hkl/index.html` (`#aboutDialog`), `apps/hkl/src/ui/about.ts`, `apps/hkl/src/audio/samples-data.ts`, `vite/{assemble-dist,third-party-notices}.mjs`; docs/architecture.md (Repo layout), docs/guide/core.md (About), docs/lessons.md.

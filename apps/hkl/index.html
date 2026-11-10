@@ -186,6 +186,8 @@ body.composer-view #composerFrame{display:flex}
 .t-pu-d{color:#8838B8}.t-pu-l{color:#C94CFF}
 .t-bl-d{color:#2868B8}.t-bl-l{color:#4C96FF}
 .title-bar .subtitle{font-size:11px;color:#888;margin-top:1px}
+a.hkl-link{color:#C94CFF;text-decoration:underline;cursor:pointer}
+a.hkl-link:hover{color:#DD8CFF}
 .tpax{display:inline-flex;flex-direction:column;align-items:center}
 .tpab{background:#222;border:1px solid #555;color:#999;font-size:11px;padding:0 6px;cursor:pointer;border-radius:2px;line-height:1.4;font-family:inherit}
 .tpab:hover{border-color:#888}
@@ -263,8 +265,22 @@ body.composer-view #composerFrame{display:flex}
 .rec-stack .push-btn{width:100% !important}
 .rec-stack label{align-self:flex-start;height:16px;line-height:16px}
 #tb-group-lumatone:not(.lumatone-connected) .luma-conn-only{display:none !important}
-dialog.hkl-dialog{background:#1a1a1a;color:#ccc;border:1px solid #444;border-radius:8px;padding:16px;font-family:system-ui,sans-serif;min-width:380px}
+/* Modals are trays: hung from the top edge of the viewport, horizontally centered, sliding down on
+   open. `margin:0 auto` is load-bearing: the `*{margin:0}` reset zeroes the UA's `margin:auto`, which
+   would otherwise leave a modal <dialog> at the top-left. */
+dialog.hkl-dialog{background:#1a1a1a;color:#ccc;border:1px solid #444;border-top:none;border-radius:0 0 8px 8px;padding:16px;font-family:system-ui,sans-serif;min-width:380px;margin:0 auto;top:0;bottom:auto}
 dialog.hkl-dialog::backdrop{background:rgba(0,0,0,0.6)}
+dialog.hkl-dialog[open]{animation:hkl-tray-in 160ms cubic-bezier(0.2,0.9,0.3,1)}
+dialog.hkl-dialog[open]::backdrop{animation:hkl-backdrop-in 160ms ease-out}
+@keyframes hkl-tray-in{from{transform:translateY(-100%)}}
+@keyframes hkl-backdrop-in{from{opacity:0}}
+@media (prefers-reduced-motion:reduce){dialog.hkl-dialog[open],dialog.hkl-dialog[open]::backdrop{animation:none}}
+dialog.hkl-dialog.wide{width:640px;max-width:calc(100vw - 32px)}
+dialog.hkl-dialog p{font-size:13px;line-height:1.55;margin-bottom:10px}
+dialog.hkl-dialog dl.facts{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;font-size:12px;margin-top:14px}
+dialog.hkl-dialog dl.facts dt{color:#999}
+dialog.hkl-dialog p.credits-head{margin:14px 0 2px}
+dialog.hkl-dialog p.credits{font-size:11px;line-height:1.5;color:#999;margin:0}
 dialog.hkl-dialog h3{color:#fff;font-size:14px;margin-bottom:10px;font-family:system-ui,sans-serif}
 dialog.hkl-dialog .row{display:flex;gap:8px;align-items:center;margin:8px 0}
 dialog.hkl-dialog label{color:#999;font-size:12px;min-width:130px}
@@ -281,7 +297,8 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <div class="wrap">
 <div class="title-bar">
 <div class="title"><span class="t-pk-d">H</span><span class="t-pk-l">e</span><span class="t-pk-l">x</span><span class="t-pu-d">K</span><span class="t-pu-l">e</span><span class="t-pu-l">y</span><span class="t-bl-d">L</span><span class="t-bl-l">a</span><span class="t-bl-l">b</span></div>
-<div class="subtitle">version 1.2 · by Max Randal</div>
+<!-- the version number also appears in #aboutDialog -->
+<div class="subtitle">version 1.3 · by Max Randal · <a class="hkl-link" id="aboutLink" href="#about">About</a></div>
 </div>
 <div class="ctrls toolbar-selector">
 <span class="ts-label">Toolbars:</span>
@@ -545,6 +562,22 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button type="submit" id="cmpDownloadBtn">Download .hkc</button>
 </div>
 </form>
+</dialog>
+<dialog id="aboutDialog" class="hkl-dialog wide">
+<h3>About HexKeyLab</h3>
+<p>HexKeyLab is a hexagonal keyboard for exploring and analyzing isomorphic just intonation layouts. It's also a <a class="hkl-link" href="https://www.lumatone.io/" target="_blank" rel="noopener">Lumatone</a> interface, synth, score editor, performance recorder and virtual instrument creator. For detailed information on all its components, see <a class="hkl-link" href="/guide/" target="_blank" rel="noopener">the Guide</a>.</p>
+<p>About the author: <a class="hkl-link" href="https://maxrandalmusic.com/" target="_blank" rel="noopener">Max Randal</a> is a pianist and software engineer. You can see his Lumatone performances on <a class="hkl-link" href="https://www.youtube.com/channel/UCERWiKOZ-r4BWBl4rcCsyJQ/" target="_blank" rel="noopener">YouTube</a> or <a class="hkl-link" href="mailto:max.randal.music@gmail.com">contact him directly</a> for inquiries. Max also created the just intonation ear training app <a class="hkl-link" href="https://intonalogy.com/" target="_blank" rel="noopener">Intonalogy</a>.</p>
+<dl class="facts">
+<dt>Version number</dt><dd>1.3 (2026-11-09)</dd>
+<dt>Lumatone firmware target</dt><dd>1.5.0 and below</dd>
+<dt>Browser compatibility</dt><dd>Requires Web MIDI for external input</dd>
+</dl>
+<p class="credits-head">Credits</p>
+<p class="credits">Sound samples: <a class="hkl-link" href="https://github.com/gleitz/midi-js-soundfonts/tree/gh-pages/FluidR3_GM" target="_blank" rel="noopener">FluidR3_GM</a> (CC BY 3.0), <a class="hkl-link" href="https://github.com/gleitz/midi-js-soundfonts/tree/gh-pages/FatBoy" target="_blank" rel="noopener">FatBoy</a> (CC BY-SA 3.0), <a class="hkl-link" href="https://github.com/peastman/sso" target="_blank" rel="noopener">Sonatina Symphonic Orchestra</a> (CC Sampling Plus 1.0), <a class="hkl-link" href="https://github.com/jlearman/jRhodes3d-wav" target="_blank" rel="noopener">jRhodes3d</a> (CC BY-NC 4.0), <a class="hkl-link" href="https://github.com/nbrosowsky/tonejs-instruments" target="_blank" rel="noopener">tonejs-instruments</a> (CC BY 3.0).</p>
+<p class="credits">Notation: <a class="hkl-link" href="https://www.verovio.org/" target="_blank" rel="noopener">Verovio</a> with the Bravura and Leipzig fonts (SIL OFL 1.1).</p>
+<div class="actions">
+<button type="button" id="aboutClose" autofocus>Close</button>
+</div>
 </dialog>
 <script type="module" src="/src/main.ts"></script>
 </body>

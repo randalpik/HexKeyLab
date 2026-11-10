@@ -224,3 +224,9 @@ These run at the same address as HKL, and the tab row links to each one and to t
 - **HKL Analyzer** (`/analyzer/`): builds sampled instruments from audio files. See the [Analyzer guide](analyzer.md).
 - **HKL Orchestrator** (`/orchestrator/`): samples a MIDI instrument into an HKL instrument. See the [Orchestrator guide](orchestrator.md).
 - **OBS overlay**: shows the live keyboard, and the Composer score, over video in OBS. See the [Overlay guide](overlay.md).
+
+---
+
+## About
+
+**About**, next to the version number under the title, shows HKL's version, the Lumatone firmware it targets, and how to reach the author.

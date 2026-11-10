@@ -12,9 +12,13 @@
 // Asset URLs are already base-prefixed by each app's build, so this is a pure
 // copy — no path rewriting. Same origin is preserved, which the HKL<->Composer
 // BroadcastChannel bridge and the per-origin IndexedDB registry require.
-import { cpSync, rmSync, existsSync } from 'node:fs';
+//
+// It also writes dist/THIRD-PARTY-NOTICES.txt: the license notices of every
+// npm package the apps bundle (third-party-notices.mjs).
+import { cpSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { thirdPartyNotices } from './third-party-notices.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -42,4 +46,7 @@ for (const { name, dest } of apps) {
   cpSync(src, dest, { recursive: true });
   console.log(`assemble-dist: ${path.relative(repoRoot, src)} -> ${path.relative(repoRoot, dest) || '.'}`);
 }
+const notices = thirdPartyNotices(apps.map(({ name }) => path.join(repoRoot, 'apps', name)));
+writeFileSync(path.join(out, 'THIRD-PARTY-NOTICES.txt'), notices.text);
+console.log(`assemble-dist: THIRD-PARTY-NOTICES.txt (${notices.packages.length} packages)`);
 console.log(`assemble-dist: publish dir ready at ${path.relative(repoRoot, out)}/`);
