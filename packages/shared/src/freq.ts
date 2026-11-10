@@ -11,7 +11,7 @@
 // cell resolves through the chromatic cell it samples (`toChromatic`), and that
 // cell through its Euler-equivalent.
 
-import { bandOfCell, chromaticEuler, chromaticBand, chromaticPitchBand, LAYOUT, type Mapping } from './mapping.js';
+import { bandOfCell, chromaticEuler, chromaticBand, chromaticPitchBand, layoutOf, type Mapping } from './mapping.js';
 
 export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 
@@ -88,7 +88,7 @@ export const MIDI_HIGH = 108;
  *  step is c semitones (4 Euler, 2 Wicki-Hayden, 1 chromatic) and a row step is
  *  s + 7, or s + 5 inverted (a fifth in those three). */
 export function coordToMidi(q: number, r: number, mapping: Mapping): number {
-  const L = LAYOUT[mapping];
+  const L = layoutOf(mapping);
   return 57 + L.c * q + (L.s + (L.invert ? 5 : 7)) * r;
 }
 
@@ -121,7 +121,7 @@ export function coordToMidi(q: number, r: number, mapping: Mapping): number {
  *  Every layout computes this on the chromatic cell it samples (bands included)
  *  and adds its exact octaves; Euler and Wicki-Hayden cells are chromatic ones. */
 export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): Exps {
-  const L = LAYOUT[mapping];
+  const L = layoutOf(mapping);
   if (!L.invert) return chromaticExps(L.c * q + L.s * r, r, mode, anchor, banded);
   const e = chromaticExps(L.c * q + L.s * r, 0 - r, mode, anchor, banded);
   e[0] += r;                                                        /* one exact octave per row */

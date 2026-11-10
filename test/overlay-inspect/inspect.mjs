@@ -28,7 +28,7 @@ for (let i = 0; i < args.length; i++) if (args[i] === '--screenshot') screenshot
 const DEBUG_PORT = 9222 + Math.floor(Math.random() * 1000);
 const profileDir = mkdtempSync(join(tmpdir(), 'hkl-overlay-'));
 const chromium = spawn('chromium', [
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
+  '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--mute-audio',
   `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profileDir}`,
   '--window-size=1600,1200', 'about:blank',
 ], { stdio: 'pipe' });

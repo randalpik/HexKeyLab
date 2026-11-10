@@ -14,7 +14,7 @@ import { openSignatureModal } from './sigDialog.js';
 import { openInstrumentsModal, instrEditsFromModel, summarizeInstrEdits, reconcileInstruments, type InstrEdit } from './instrumentsDialog.js';
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
-import { MAPPINGS, MAPPING_LABELS, isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { MAPPINGS, MAPPING_LABELS, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { planRetune, summarizePlan, applyRetune } from './notation/retune.js';
 import type { HistoryManager } from './history.js';
 
@@ -88,7 +88,7 @@ function readForm(model: ComposerModel): {
   const tuningRaw = $<HTMLSelectElement>('setupTuningMode')?.value ?? '5';
   const tuningMode: TuningMode = isTuningMode(tuningRaw) ? tuningRaw : '5';
   const mappingRaw = $<HTMLSelectElement>('setupMapping')?.value ?? 'euler';
-  const mapping: Mapping = isMapping(mappingRaw) ? mappingRaw : 'euler';
+  const mapping: Mapping = isPresetMapping(mappingRaw) ? mappingRaw : 'euler';
   /* Setup has no banding control: a score keeps its own. */
   const layoutReq: LayoutReq = { tuningMode, mapping, banded: model.getLayoutReq().banded };
   const hejiEnabled = $<HTMLInputElement>('setupHeji')?.checked ?? true;

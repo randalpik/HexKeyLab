@@ -11,7 +11,7 @@ import { type ComposerModel, type Voice, MEI_NS } from '../model/index.js';
 import type { SelectionState, Staff } from './selection.js';
 import { beatBoundariesInVoice } from './selection.js';
 import { realTicks, isGrace } from '../model/ticks.js';
-import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { convertCell, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 
 const HKL_NS = 'https://hexkeylab.com/ns/mei';
 const CLIPBOARD_LOCAL = 'clipboard';
@@ -261,7 +261,7 @@ export function parseClipboard(text: string, destMapping: Mapping): ClipboardCon
   const root = doc.documentElement;
   if (!root || root.namespaceURI !== HKL_NS || root.localName !== CLIPBOARD_LOCAL) return null;
   const srcRaw = root.getAttribute('mapping');
-  const srcMapping: Mapping = isMapping(srcRaw) ? srcRaw : 'euler';
+  const srcMapping: Mapping = isPresetMapping(srcRaw) ? srcRaw : 'euler';
   if (srcMapping !== destMapping) {
     for (const n of Array.from(root.getElementsByTagNameNS(MEI_NS, 'note'))) {
       const qs = n.getAttribute('data-q'), rs = n.getAttribute('data-r');

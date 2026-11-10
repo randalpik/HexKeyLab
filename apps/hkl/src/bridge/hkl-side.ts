@@ -45,8 +45,8 @@ import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComp
 import { publishComposerScore, publishComposerPlayback, publishComposerZoom } from './overlay-publish.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote, isSelectionManual } from '../state/reference.js';
-import { setTuning, setMapping } from '../ui/controls.js';
-import { convertCell, isMapping, MAPPING_LABELS, type Mapping } from '@hkl/shared/mapping.js';
+import { setTuning, applyMapping } from '../ui/controls.js';
+import { convertCell, isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
 import { TUNING_MODES } from '@hkl/shared/freq.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
@@ -1166,7 +1166,7 @@ function layoutMatches(req: ComposerLayoutReq): boolean {
 }
 
 function layoutLabelFor(req: ComposerLayoutReq): string {
-  return tuningLabelFor(req.tuningMode) + (req.mapping === 'euler' ? '' : ' · ' + MAPPING_LABELS[req.mapping]);
+  return tuningLabelFor(req.tuningMode) + (req.mapping === 'euler' ? '' : ' · ' + mappingLabel(req.mapping));
 }
 
 /** Most-recently-broadcast layout requirement from Composer's `<hkl:layoutReq>`.
@@ -1301,13 +1301,9 @@ function applyLayoutFromComposer(req: ComposerLayoutReq): void {
     selTuning.value = req.tuningMode;
     setTuning();
   }
-  /* Mapping likewise through its toolbar select (setMapping converts the ref,
-     anchor and held notes into the score's frame). */
-  const selMapping = document.getElementById('selMapping') as HTMLSelectElement | null;
-  if (selMapping && selMapping.value !== req.mapping) {
-    selMapping.value = req.mapping;
-    setMapping();
-  }
+  /* Mapping through the one switch path (applyMapping converts the ref, anchor
+     and held notes into the score's frame). */
+  applyMapping(req.mapping);
   /* Syntonic / Polysyntonic: the anchor must be the score's, which reaches HKL
      through the score-ref tier below. A manual Ctrl+click selection is the one
      tier that overrides it, so applying the score's layout drops it (the same

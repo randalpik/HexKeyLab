@@ -12,7 +12,7 @@
 // the screen-space lookup table.
 
 import { lumatoneCells, qwertyCells, outlineCells, outlinePose, type Cell } from '../layout/physical.js';
-import { bandOfCell, LAYOUT, type Mapping } from '@hkl/shared/mapping.js';
+import { bandOfCell, layoutOf, type Mapping } from '@hkl/shared/mapping.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { hexR, dxH, dyH, hexScale, tiltAngle, cosT, sinT } from '../layout/geometry.js';
 import { tuning } from '../state/tuning.js';
@@ -259,7 +259,7 @@ function validRefPaths(): Point[][] {
   const r0 = Math.round(view.viewR);
   const s = validRefStrip;
   if (s && s.mapping === tuning.mapping && s.rLo <= r0 - reach && s.rHi >= r0 + reach) return s.paths;
-  const { c } = LAYOUT[tuning.mapping];
+  const { c } = layoutOf(tuning.mapping);
   const rho = coordToMidi(0, 1, tuning.mapping) - 57;
   const cells: Array<[number, number]> = [];
   for (let r = r0 - 2 * reach; r <= r0 + 2 * reach; r++) {

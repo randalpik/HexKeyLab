@@ -12,7 +12,8 @@ import { audio } from '../state/audio.js';
 import { recomputeReference, convertReferenceFrame, manualSelection } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { Alignment, HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
-import { eulerOf, fromEuler, vecFromEuler, octaveVector } from '@hkl/shared/mapping.js';
+import { eulerOf, fromEuler, vecFromEuler, octaveVector, isMapping, isPresetMapping, MAPPINGS, MAPPING_LABELS } from '@hkl/shared/mapping.js';
+import { openLayoutBuilder, syncLayoutBuilder } from './layoutBuilder.js';
 import { dxH, dyH, cosT, sinT, currentRotationMode } from '../layout/geometry.js';
 import { view } from '../state/view.js';
 import { keyFreq } from '../tuning/frequency.js';
@@ -62,19 +63,62 @@ export function setTuning(): void {
   savePrefs({ tuning: val });
 }
 
-/** Switch the note-name mapping (docs/architecture.md → Note-name mapping). Every
- *  coordinate is in the active mapping's frame, so the switch re-expresses the
- *  reference, the keyboard anchor, and held mouse / piano-input / pedal-
- *  sustained notes in the new frame — same pitch (a Schismatic copy moves by
- *  one schisma). Held Lumatone / QWERTY voices keep their (q, r) and retune in
- *  place, as on a tuning-mode change; they release through the key they
- *  struck (input/held.ts), so the converted anchor cannot orphan them. */
+/* #selMapping holds the eight presets plus two values that are not layouts. A
+   layout is its (division, shear, invert), so most layouts have no preset
+   name; the select shows those as "Custom…". */
+/** "Custom…", last in the list: choosing it opens the layout builder. */
+const CUSTOM_OPEN = 'custom';
+/** The selected option while the layout is custom. Hidden from the list, so
+ *  choosing "Custom…" again is still a change and reopens the builder. */
+const CUSTOM_SHOWN = 'custom-shown';
+
+/** Fill #selMapping: the presets from the one list (dropdown order, labels),
+ *  then the two builder entries. */
+export function buildMappingSelect(): void {
+  const shown = new Option('Custom…', CUSTOM_SHOWN);
+  shown.hidden = true;
+  (document.getElementById('selMapping') as HTMLSelectElement).replaceChildren(
+    ...MAPPINGS.map((m) => new Option(MAPPING_LABELS[m], m)), shown, new Option('Custom…', CUSTOM_OPEN));
+}
+
+/** Show `mapping` in #selMapping. The select is a view of `tuning.mapping`,
+ *  never its source: a custom id has no option of its own, and a select set
+ *  to a value without an option silently reads back '' (docs/lessons.md). */
+export function showMappingInSelect(mapping: Mapping): void {
+  (document.getElementById('selMapping') as HTMLSelectElement).value = isPresetMapping(mapping) ? mapping : CUSTOM_SHOWN;
+}
+
+/** #selMapping's change handler: a preset switches to it; "Custom…" opens the
+ *  layout builder on the current layout and changes nothing. */
 export function setMapping(): void {
   const sel = document.getElementById('selMapping') as HTMLSelectElement;
-  const val = sel.value as Mapping;
-  const prev = tuning.mapping;
+  const val = sel.value;
   sel.blur();
-  if (val === prev) return;
+  if (!isMapping(val)) {
+    showMappingInSelect(tuning.mapping);
+    if (val === CUSTOM_OPEN) openLayoutBuilder();
+    return;
+  }
+  applyMapping(val);
+}
+
+/** Switch the note-name mapping (docs/architecture.md → Note-name mapping) to
+ *  any layout, preset or custom: the one path every writer takes (the toolbar
+ *  select, the layout builder, a recording's snapshot, Composer's layout
+ *  request, Reset). Every coordinate is in the active mapping's frame, so the
+ *  switch re-expresses the reference, the keyboard anchor, and held mouse /
+ *  piano-input / pedal-sustained notes in the new frame — same pitch (a
+ *  Schismatic copy moves by one schisma). Held Lumatone / QWERTY voices keep
+ *  their (q, r) and retune in place, as on a tuning-mode change; they release
+ *  through the key they struck (input/held.ts), so the converted anchor cannot
+ *  orphan them. */
+export function applyMapping(val: Mapping): void {
+  const prev = tuning.mapping;
+  if (val === prev) {
+    showMappingInSelect(prev);
+    syncLayoutBuilder();
+    return;
+  }
   const convert = (q: number, r: number): [number, number] => {
     const e = eulerOf(q, r, prev);
     return fromEuler(e.q, e.r, val);
@@ -122,6 +166,8 @@ export function setMapping(): void {
   onTuningChanged();
   onSelectionChanged();
   syncBandedControls(); /* the unbanded octave step is per mapping */
+  showMappingInSelect(val);
+  syncLayoutBuilder();
   savePrefs({ mapping: val });
 }
 

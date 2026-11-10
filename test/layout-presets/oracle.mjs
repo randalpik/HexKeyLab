@@ -1,7 +1,12 @@
 // Layout-presets oracle (docs/architecture.md → Note-name mapping → The layout matrix).
 //
 // Pure Node gate — no dev server, no browser. Imports the REAL @hkl/shared modules through the
-// repo's TS loader and checks the matrix model on every layout in MAPPINGS:
+// repo's TS loader and checks the matrix model on EVERY layout the bound allows — all 48: the
+// eight presets (MAPPINGS) and every other valid (division, shear, invert), which only the layout
+// builder reaches (docs/local/layout-presets.md §6):
+//   T  the ids and the bound: the presets' values; the 48 layouts, each with exactly one id that
+//      round-trips; the shear ranges and row steps per division and orientation; malformed,
+//      out-of-bound and preset-aliasing ids rejected; shear clamping
 //   A  semitone map: coordToMidi = 57 + c·q + (row step)·r = the sampled chromatic cell's MIDI
 //      + 12·oct
 //   B  Euler, Wicki-Hayden and Chromatic are unchanged: every primitive against the closed forms
@@ -19,7 +24,7 @@
 //   I  octave vectors: the band step and the unbanded spelled octave keep the name and raise the
 //      spelled octave by one; which layouts have an unbanded one
 //   J  Euler vectors: vecFromEuler moves every cell's Euler-equivalent by exactly that vector, or
-//      exists in every preset (null only for a 4-wide band, c = 3: an M3 count not a multiple of 3)
+//      is null — only on a 4-wide band (c = 3), for an M3 count that is not a multiple of 3
 //   K  the reference spine: every row holds a cell on its band's qm0 column (chromatic Q ≡ 0
 //      mod 12)
 //   L  color: the spine rule in every JI mode, banded and unbanded — the spine of fifths (of
@@ -31,8 +36,10 @@
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/layout-presets/oracle.mjs
 
 import {
-  LAYOUT, MAPPINGS, MAPPING_LABELS, toChromatic, eulerOf, fromEuler, bandOfCell, posInBandOf,
+  layoutOf, MAPPINGS, MAPPING_LABELS, toChromatic, eulerOf, fromEuler, bandOfCell, posInBandOf,
   pitchBandOf, bandWidth, octaveVector, vecFromEuler, convertCell,
+  allMappings, specOf, mappingOf, isMapping, isPresetMapping, isValidSpec, shearRange, clampShear,
+  mappingLabel, DIVISIONS,
 } from '../../packages/shared/src/mapping.ts';
 import { coordExps, coordToMidi, anchorOf, TUNING_MODES } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
@@ -50,8 +57,8 @@ const k = (e) => e.join(',');
 const sub = (a, b) => a.map((x, i) => x - b[i]);
 const P5 = '-1,1,0,0', P4 = '2,-1,0,0', OCT = '1,0,0,0';
 const CELLS = []; for (let q = -18; q <= 18; q++) for (let r = -9; r <= 9; r++) CELLS.push([q, r]);
-const rowStep = (L) => LAYOUT[L].s + (LAYOUT[L].invert ? 5 : 7);
-const pureLine = (L) => [-LAYOUT[L].s / LAYOUT[L].c, 1];
+const rowStep = (L) => layoutOf(L).s + (layoutOf(L).invert ? 5 : 7);
+const pureLine = (L) => [-layoutOf(L).s / layoutOf(L).c, 1];
 
 /* The table itself */
 check('MAPPINGS (dropdown order)', MAPPINGS.join(), 'euler,wickiHayden,chromatic,gerhard,janko,accordion,randal,park');
@@ -60,16 +67,70 @@ const SPEC = {
   accordion: [2, -2, true], gerhard: [4, -4, false], randal: [4, 0, true], park: [2, 0, true],
 };
 for (const L of MAPPINGS) {
-  check(`table ${L}`, [LAYOUT[L].c, LAYOUT[L].s, LAYOUT[L].invert].join(), SPEC[L].join());
+  check(`table ${L}`, [layoutOf(L).c, layoutOf(L).s, layoutOf(L).invert].join(), SPEC[L].join());
   check(`label ${L}`, typeof MAPPING_LABELS[L], 'string');
-  check(`${L} c | s`, LAYOUT[L].s % LAYOUT[L].c, 0);
-  check(`${L} row step ascends within an octave`, rowStep(L) >= 1 && rowStep(L) <= 12, true);
+  check(`label ${L} via mappingLabel`, mappingLabel(L), MAPPING_LABELS[L]);
 }
 
+/* T — the ids and the bound (docs/local/layout-presets.md §6: the presets in (W, k, invert), the
+   shear ranges and their row steps) */
+const ALL = allMappings();
+const PRESET_VALUES = {
+  euler: [3, 0, false], randal: [3, 0, true], gerhard: [3, 1, false], wickiHayden: [6, 0, false],
+  park: [6, 0, true], janko: [6, 3, false], accordion: [6, 1, true], chromatic: [12, 0, false],
+};
+const RANGES = {            /* [lowest shear, highest shear, row steps from lowest to highest] */
+  '3,false': [-1, 1, [11, 7, 3]], '3,true': [-1, 1, [9, 5, 1]],
+  '4,false': [-1, 2, [10, 7, 4, 1]], '4,true': [-2, 1, [11, 8, 5, 2]],
+  '6,false': [-2, 3, [11, 9, 7, 5, 3, 1]], '6,true': [-3, 2, [11, 9, 7, 5, 3, 1]],
+  '12,false': [-5, 5, [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2]], '12,true': [-7, 3, [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2]],
+};
+check('T 48 layouts', ALL.length, 48);
+check('T ids are unique', new Set(ALL).size, ALL.length);
+check('T the presets come first, in dropdown order', ALL.slice(0, MAPPINGS.length).join(), MAPPINGS.join());
+check('T divisions', DIVISIONS.join(), '3,4,6,12');
+for (const L of MAPPINGS) {
+  const p = specOf(L);
+  check(`T ${L} values`, [p.division, p.shear, p.invert].join(), PRESET_VALUES[L].join());
+}
+for (const L of ALL) {
+  const p = specOf(L), M = layoutOf(L);
+  check(`T ${L} is a mapping`, isMapping(L), true);
+  check(`T ${L} id round trip`, mappingOf(p), L);
+  check(`T ${L} is a preset iff named`, isPresetMapping(L), MAPPINGS.includes(L));
+  check(`T ${L} label`, mappingLabel(L), MAPPINGS.includes(L) ? MAPPING_LABELS[L] : 'Custom');
+  check(`T ${L} matrix`, [M.c, M.s, M.invert].join(), [12 / p.division, -p.shear * (12 / p.division) + 0, p.invert].join());
+  check(`T ${L} c | s`, M.s % M.c, 0);
+  check(`T ${L} row step ascends within an octave`, rowStep(L) >= 1 && rowStep(L) <= 12, true);
+  check(`T ${L} row step differs from the column step`, rowStep(L) !== M.c, true);
+}
+for (const division of DIVISIONS) for (const invert of [false, true]) {
+  const [lo, hi, steps] = RANGES[`${division},${invert}`];
+  check(`T (${division}, ${invert}) shear range`, shearRange(division, invert).join(), `${lo},${hi}`);
+  const got = [];
+  for (let shear = lo; shear <= hi; shear++) got.push(coordToMidi(0, 1, mappingOf({ division, shear, invert })) - 57);
+  check(`T (${division}, ${invert}) row steps`, got.join(), steps.join());
+  for (let shear = -20; shear <= 20; shear++) {
+    check(`T (${division}, ${shear}, ${invert}) valid iff in range`, isValidSpec({ division, shear, invert }), shear >= lo && shear <= hi);
+    check(`T (${division}, ${shear}, ${invert}) clamps into range`, clampShear(division, shear, invert), Math.min(hi, Math.max(lo, shear)));
+  }
+}
+check('T Bass is inverted (12, 0)', mappingOf({ division: 12, shear: 0, invert: true }), '12:0:i');
+check('T Janko inverted clamps to shear 2', clampShear(6, 3, true), 2);
+const NOT_IDS = [
+  '3:0', '6:0', '12:0', '3:1', '6:3', '6:1:i', '3:0:i', '6:0:i',     /* a preset's values: only its name is its id */
+  '6:+1', '6:01', '6:-0', '6:1.0', ' 6:2', '6:2 ', '6:2:I', '6:2:', '6', ':2', '6:2:i:i',   /* not the canonical form */
+  '5:0', '2:0', '1:0', '24:0',                                         /* not an octave division */
+  '12:6', '12:4:i',                                                    /* row step = column step */
+  '12:-6', '6:3:i', '4:2:i', '3:2', '6:-3',                            /* row step outside 1…12 */
+  'bass', '', 6, null, undefined,
+];
+for (const x of NOT_IDS) check(`T ${JSON.stringify(x)} is not a layout id`, isMapping(x), false);
+
 /* A — semitone map */
-for (const L of MAPPINGS) for (const [q, r] of CELLS) {
+for (const L of ALL) for (const [q, r] of CELLS) {
   const [Q, R, oct] = toChromatic(q, r, L);
-  check(`A ${L} (${q},${r}) closed form`, coordToMidi(q, r, L), 57 + LAYOUT[L].c * q + rowStep(L) * r);
+  check(`A ${L} (${q},${r}) closed form`, coordToMidi(q, r, L), 57 + layoutOf(L).c * q + rowStep(L) * r);
   check(`A ${L} (${q},${r}) = sampled chromatic cell + octaves`, coordToMidi(q, r, L), coordToMidi(Q, R, 'chromatic') + 12 * oct);
 }
 
@@ -115,8 +176,8 @@ for (const m of OLD) {
 }
 
 /* C — the pure line, every JI mode, banded and unbanded */
-for (const L of MAPPINGS) {
-  const [a, b] = pureLine(L), want = LAYOUT[L].invert ? P4 : P5;
+for (const L of ALL) {
+  const [a, b] = pureLine(L), want = layoutOf(L).invert ? P4 : P5;
   for (const banded of [true, false]) for (const anchor of [0, 1]) for (const m of JI) for (const [q, r] of CELLS) {
     const d = sub(coordExps(q + a, r + b, m, L, anchor, banded), coordExps(q, r, m, L, anchor, banded));
     check(`C ${L} ${m} ${banded ? 'banded' : 'unbanded'} a${anchor} (${q},${r}) pure line (${a},${b})`, k(d), want);
@@ -124,13 +185,13 @@ for (const L of MAPPINGS) {
 }
 
 /* D — the band step */
-for (const L of MAPPINGS) for (const m of UNIFORM) for (const [q, r] of CELLS) {
+for (const L of ALL) for (const m of UNIFORM) for (const [q, r] of CELLS) {
   const W = bandWidth(L);
   check(`D ${L} ${m} (${q},${r}) band step (${W},0)`, k(sub(coordExps(q + W, r, m, L, 0, true), coordExps(q, r, m, L, 0, true))), OCT);
 }
 
 /* E — seams run along the pure line; position in band stays in range */
-for (const L of MAPPINGS) {
+for (const L of ALL) {
   const [a, b] = pureLine(L), W = bandWidth(L);
   for (const [q, r] of CELLS) {
     check(`E ${L} (${q},${r}) pure line stays in its band`, bandOfCell(q + a, r + b, L), bandOfCell(q, r, L));
@@ -141,7 +202,7 @@ for (const L of MAPPINGS) {
 }
 
 /* F — Euler-equivalents and the fromEuler round trip */
-for (const L of MAPPINGS) {
+for (const L of ALL) {
   for (const [q, r] of CELLS) {
     const e = eulerOf(q, r, L);
     check(`F ${L} (${q},${r}) MIDI = Euler-equivalent's`, coordToMidi(q, r, L), coordToMidi(e.q, e.r, 'euler'));
@@ -156,8 +217,8 @@ for (const L of MAPPINGS) {
 }
 
 /* G — invert vs mirror: inverted (W, k) = plain (W, W−1−k) mirrored, (q, r) ↔ (q + r, −r) */
-for (const L of MAPPINGS.filter((x) => LAYOUT[x].invert)) {
-  const { c, s } = LAYOUT[L], W = bandWidth(L), kk = -s / c, s2 = -(W - 1 - kk) * c;
+for (const L of ALL.filter((x) => layoutOf(x).invert)) {
+  const { c, s } = layoutOf(L), W = bandWidth(L), kk = -s / c, s2 = -(W - 1 - kk) * c;
   for (const m of UNIFORM) for (const [q, r] of CELLS) {
     const partner = coordExps(c * (q + r) + s2 * -r, -r, m, 'chromatic', 0, true);
     check(`G ${L} ${m} (${q},${r}) = mirrored plain (${W},${W - 1 - kk})`, k(coordExps(q, r, m, L, 0, true)), k(partner));
@@ -166,15 +227,15 @@ for (const L of MAPPINGS.filter((x) => LAYOUT[x].invert)) {
 }
 
 /* H — frame conversion keeps the pitch */
-for (const from of MAPPINGS) for (const to of MAPPINGS) for (let q = -9; q <= 9; q++) for (let r = -5; r <= 5; r++) {
+for (const from of ALL) for (const to of ALL) for (let q = -9; q <= 9; q++) for (let r = -5; r <= 5; r++) {
   const [q2, r2] = convertCell(q, r, from, to);
   for (const m of UNIFORM) check(`H ${from}→${to} ${m} (${q},${r})`, k(coordExps(q2, r2, m, to, 0, true)), k(coordExps(q, r, m, from, 0, true)));
 }
 
 /* I — octave vectors */
 const HAS_UNBANDED_OCTAVE = ['wickiHayden', 'chromatic', 'janko', 'accordion', 'park'];
-for (const L of MAPPINGS) {
-  check(`I ${L} has an unbanded spelled octave`, octaveVector(L, false) !== null, HAS_UNBANDED_OCTAVE.includes(L));
+for (const L of ALL) {
+  if (isPresetMapping(L)) check(`I ${L} has an unbanded spelled octave`, octaveVector(L, false) !== null, HAS_UNBANDED_OCTAVE.includes(L));
   for (const banded of [true, false]) {
     const v = octaveVector(L, banded);
     if (!v) continue;
@@ -189,9 +250,9 @@ for (const L of MAPPINGS) {
 
 /* J — Euler vectors */
 const EULER_VECTORS = [[1, 0], [0, 1], [-1, 1], [3, 0], [1, -4], [-1, 4], [2, -1], [0, 2], [-2, 3]];
-for (const L of MAPPINGS) for (const [dq, dr] of EULER_VECTORS) {
+for (const L of ALL) for (const [dq, dr] of EULER_VECTORS) {
   const v = vecFromEuler(dq, dr, L);
-  check(`J ${L} (${dq},${dr}) expressible`, v !== null, true);
+  check(`J ${L} (${dq},${dr}) expressible`, v !== null, bandWidth(L) !== 4 || dq % 3 === 0);
   if (!v) continue;
   for (const [q, r] of CELLS) {
     const e0 = eulerOf(q, r, L), e1 = eulerOf(q + v[0], r + v[1], L);
@@ -200,7 +261,7 @@ for (const L of MAPPINGS) for (const [dq, dr] of EULER_VECTORS) {
 }
 
 /* K — the reference spine's column exists in every row */
-for (const L of MAPPINGS) for (let r = -9; r <= 9; r++) {
+for (const L of ALL) for (let r = -9; r <= 9; r++) {
   let found = false;
   for (let q = -24; q <= 24 && !found; q++) found = ((toChromatic(q, r, L)[0] % 12) + 12) % 12 === 0;
   check(`K ${L} row ${r} holds a qm0 cell`, found, true);
@@ -222,8 +283,8 @@ for (const L of MAPPINGS) for (let r = -9; r <= 9; r++) {
     return (inv ? -oct : oct) - Math.floor(e[3] / 2);
   };
   const idxOf = (q, r, mode, L, a, banded) => hueIdx[keyColor(q, r, mode, L, a, banded).hue];
-  for (const L of MAPPINGS) {
-    const inv = LAYOUT[L].invert, W = bandWidth(L), home = inv ? 'randal' : 'euler';
+  for (const L of ALL) {
+    const inv = layoutOf(L).invert, W = bandWidth(L), home = inv ? 'randal' : 'euler';
     for (const [q, r] of CELLS) {
       for (const banded of [true, false]) for (const mode of JI) for (const a of [0, 1]) {
         const want = mod7(spineIdx(coordExps(q, r, mode, L, a, banded), inv));

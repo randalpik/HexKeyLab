@@ -26,7 +26,7 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '@hkl/shared/freq.js';
-import { convertCell, LAYOUT, MAPPING_LABELS, type Mapping } from '@hkl/shared/mapping.js';
+import { convertCell, layoutOf, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
 import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { pruneDanglingSlurs } from '../slurs.js';
@@ -131,10 +131,10 @@ interface Candidate { q: number; r: number; cents: number; taxi: number }
 
 function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout, anchor: number): Candidate {
   let best: Candidate = { q: origQ, r: origR, cents: Infinity, taxi: Infinity };
-  /* a column is c semitones (LAYOUT; 4 Euler, 2 Wicki-Hayden, 1 chromatic,
+  /* a column is c semitones (layoutOf; 4 Euler, 2 Wicki-Hayden, 1 chromatic,
      3 a 4-wide band): the q radius scales by 4/c to cover the same span, an
      integer for every c since SEARCH_RADIUS is a multiple of 3 */
-  const qRadius = (4 / LAYOUT[to.mapping].c) * SEARCH_RADIUS;
+  const qRadius = (4 / layoutOf(to.mapping).c) * SEARCH_RADIUS;
   for (let dq = -qRadius; dq <= qRadius; dq++) {
     for (let dr = -SEARCH_RADIUS; dr <= SEARCH_RADIUS; dr++) {
       const q = origQ + dq;
@@ -192,7 +192,7 @@ function labelForMode(m: TuningMode): string {
 }
 
 function labelForLayout(l: RetuneLayout): string {
-  return MODE_LABELS[l.tuningMode] + ', ' + MAPPING_LABELS[l.mapping] + ' mapping';
+  return MODE_LABELS[l.tuningMode] + ', ' + mappingLabel(l.mapping) + ' mapping';
 }
 
 /** Apply the plan to the model in-place. Rewrites lattice attrs for non-dropped

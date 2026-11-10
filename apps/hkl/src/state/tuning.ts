@@ -12,7 +12,7 @@ export const tuning = {
   mode: '5' as TuningMode,
   /* Note-name mapping, orthogonal to `mode`: the coordinate frame every
      KeyId / (q, r) is interpreted in (@hkl/shared/mapping.js). Set by
-     setMapping() in ui/controls.ts. */
+     applyMapping() in ui/controls.ts. */
   mapping: 'euler' as Mapping,
   /* Home band for Syntonic / Polysyntonic (anchorOf in @hkl/shared/freq.js):
      the band of the anchor reference (manual selection ?? score-ref ??

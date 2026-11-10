@@ -42,8 +42,9 @@ function applySnapshot(s: OverlaySnapshot): void {
   $<HTMLInputElement>('cbExtend').checked = s.extendPattern;
   $<HTMLInputElement>('cbHeji').checked = s.heji;
   $<HTMLSelectElement>('selTuning').value = s.tuning;
+  /* no select to prime: nothing in the overlay reads #selMapping, and a custom
+     layout has no option in it */
   const mapping: Mapping = isMapping(s.mapping) ? s.mapping : 'euler';
-  $<HTMLSelectElement>('selMapping').value = mapping;
   $<HTMLSelectElement>('selOutline').value = s.outline;
   $<HTMLSelectElement>('selRotation').value = s.rotation;
   const alignment: Alignment = s.alignment === 'left' || s.alignment === 'right' ? s.alignment : 'vertical';

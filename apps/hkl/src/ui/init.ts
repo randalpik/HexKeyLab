@@ -18,7 +18,6 @@
 import { onRefChanged, withRefSlide } from '../effects/onRefChanged.js';
 import { getComposerRequiredLayout, applyComposerLayout, reconcileSelectionOnSyncEnable, preloadComposerInstruments } from '../bridge/hkl-side.js';
 import { tuning } from '../state/tuning.js';
-import { MAPPINGS, MAPPING_LABELS } from '@hkl/shared/mapping.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
 import { pedal } from '../state/pedal.js';
@@ -45,7 +44,7 @@ import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
 import {
-  setTuning, setMapping, setBanded, syncBandedControls, setOutline, clearSelection,
+  setTuning, setMapping, applyMapping, buildMappingSelect, showMappingInSelect, setBanded, syncBandedControls, setOutline, clearSelection,
   applyRotation, setRotationFromDom,
   applyAlignment, setAlignmentFromDom,
   applyHexSize, setHexSizeFromDom,
@@ -78,6 +77,7 @@ import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { initInstrumentBundlesUi } from './instrumentBundles.js';
 import { initAboutUi } from './about.js';
+import { initLayoutBuilderUi } from './layoutBuilder.js';
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -108,9 +108,8 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('selRotation').value = p.rotation;
   $<HTMLSelectElement>('selAlignment').value = p.alignment;
   $<HTMLSelectElement>('selTuning').value = p.tuning;
-  /* the options come from the one list (dropdown order, labels) */
-  $<HTMLSelectElement>('selMapping').replaceChildren(...MAPPINGS.map((m) => new Option(MAPPING_LABELS[m], m)));
-  $<HTMLSelectElement>('selMapping').value = p.mapping;
+  buildMappingSelect();
+  showMappingInSelect(p.mapping);
   $<HTMLSelectElement>('selHexSize').value = p.hexSize;
   $<HTMLInputElement>('cbAudio').checked = p.audioEnabled;
   $<HTMLSelectElement>('waveform').value = p.waveform;
@@ -132,6 +131,7 @@ await InstrumentRegistry.init();
 await CdnConfigRegistry.init();
 initInstrumentBundlesUi();
 initAboutUi();
+initLayoutBuilderUi();
 
 const prefs = loadPrefs();
 applyPrefsToDom(prefs);
@@ -468,7 +468,7 @@ function resetToDefaults(): void {
   pedal.mode = p.pedalMode;
 
   setTuning();
-  setMapping();  /* back to Euler: a real switch, so held notes convert */
+  applyMapping(p.mapping);  /* back to Euler: a real switch, so held notes convert */
   setBanded();   /* back to banded, if it was off */
   setOutline();  /* user-initiated path; tween view to new home position */
   setAlignmentFromDom();  /* held keys follow, LEDs resync, if it changed */

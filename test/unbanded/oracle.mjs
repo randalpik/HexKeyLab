@@ -41,7 +41,7 @@
 
 import { coordExps, coordToMidi, freqAt, TUNING_MODES } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave, fifthName, parseNote, accToVal } from '../../packages/shared/src/notes.ts';
-import { bandOfCell, pitchBandOf, bandWidth, octaveVector, LAYOUT, MAPPINGS } from '../../packages/shared/src/mapping.ts';
+import { bandOfCell, pitchBandOf, bandWidth, octaveVector, layoutOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOrder } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain, SEPT_DOWN_1, SEPT_UP_1, SEPT_DOWN_2, SEPT_UP_2 } from '../../packages/shared/src/heji.ts';
@@ -146,7 +146,7 @@ for (const map of MAPPINGS) {
     }
     const dups = [...seen.values()].filter((n) => n > 1).length;
     /* every chromatic column sampled (c = 1: chromatic) → spelled twins */
-    if (LAYOUT[map].c === 1) check(`E ${map} a${a} has spelled twins`, dups > 0, true);
+    if (layoutOf(map).c === 1) check(`E ${map} a${a} has spelled twins`, dups > 0, true);
     else check(`E ${map} a${a} each spelled note once`, dups, 0);
   }
 }
@@ -268,7 +268,7 @@ for (const map of MAPPINGS) {
     return inv ? -oct : oct;
   };
   for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(map)) {
-    const inv = LAYOUT[map].invert;
+    const inv = layoutOf(map).invert;
     /* 12 fifths span 7 octaves, a whole turn of the 7 hues, so on the fifths spine the
        Pythagorean comma each band carries leaves the hue alone; 12 fourths span 5 */
     const pu = keyColor(q, r, 'P', map, a, false).hue;

@@ -98,6 +98,13 @@ Two mappings put fourths up-right instead of fifths. The up-right fourth is pure
 - **Randal**: rows of major thirds, fourths up-right, semitones up-left; bands are 3 keys wide (Euler with fourths for fifths).
 - **Park**: rows of whole tones, fourths up-right, minor thirds up-left; bands are 6 keys wide (Wicki-Hayden with fourths).
 
+**Custom…**, at the bottom of the dropdown, opens the **layout builder**: a tray along the top of the window that leaves the keyboard in view and playable, so every change shows at once. A layout is three choices:
+- **Octave division**: how many keys along a row make an octave (3, 4, 6 or 12). This is the band width.
+- **Shear**: how many keys each row leans to the right of the row below; a negative value leans left. Its range depends on the other two choices, and a value that no longer fits moves to the nearest one that does.
+- **Invert**: puts the pure fourth where the pure fifth was.
+
+The Mapping dropdown stays in view below the tray: choosing a named mapping there shows its three values in the tray, and the dropdown names the mapping whenever your values match one; otherwise it reads Custom…. Next to the controls are the intervals of the three key directions: **Rows** (one key to the right), **Columns** (up-right in the default view) and **Diagonal** (up-left). **Close** or Esc puts the tray away and keeps the layout. A custom layout is remembered between visits and saved with a recording.
+
 On the Lumatone, Wicki-Hayden covers about 4½ octaves. Chromatic spans MIDI notes 12–102: each board covers about five octaves top to bottom, a fifth lower than the board to its left.
 
 A Composer score can use any mapping (its Setup). While HKL plays in another mapping than the score's, Composer converts what you play into the score's.

@@ -26,13 +26,13 @@
 // Exits non-zero on any mismatch.
 
 import { TUNING_MODES, anchorOf, coordToMidi } from '../../packages/shared/src/freq.ts';
-import { MAPPINGS, LAYOUT, posInBandOf } from '../../packages/shared/src/mapping.ts';
+import { MAPPINGS, layoutOf, posInBandOf } from '../../packages/shared/src/mapping.ts';
 import { pianoFootprint, footprintAnchorOffsets, footprintExtents, footprintHalfHeight } from '../../apps/hkl/src/tuning/picker.ts';
 
 const hexR = 16, dxH = hexR * 1.78, dyH = hexR * 1.54;
 const sy = (q, r, t) => -((q * dxH + r * dxH * 0.5) * Math.sin(t) + r * dyH * Math.cos(t));
 function tilts(mapping) {
-  const qStep = Math.log(2) * LAYOUT[mapping].c / 12;
+  const qStep = Math.log(2) * layoutOf(mapping).c / 12;
   const avgR = Math.log(3 / 2) - Math.log(81 / 80) / 12;
   const verticalFreq = Math.PI / 2 - Math.atan2((avgR - qStep / 2) / dyH, qStep / dxH);
   return [verticalFreq, Math.atan(dyH / (3 * dxH)), 0, 0.7];
@@ -43,7 +43,7 @@ const stateOf = (mapping, mode, banded) => ({
 });
 /* a ref at `midi` in band position `pos`, on the row nearest r0 */
 function refAt(mapping, pos, midi, r0) {
-  const { c } = LAYOUT[mapping];
+  const { c } = layoutOf(mapping);
   const rho = coordToMidi(0, 1, mapping) - 57;
   for (let a = 0; a < 60; a++) for (const r of a ? [r0 + a, r0 - a] : [r0]) {
     const n = midi - 57 - rho * r;

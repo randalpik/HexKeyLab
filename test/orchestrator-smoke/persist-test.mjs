@@ -14,7 +14,7 @@ import { join } from 'node:path';
 const url = process.env.HKLO_URL ?? 'http://localhost:5176/orchestrator/';
 const DEBUG_PORT = 9522 + Math.floor(Math.random() * 400);
 const profileDir = mkdtempSync(join(tmpdir(), 'hklo-persist-'));
-const chromium = spawn('chromium', ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
+const chromium = spawn('chromium', ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--mute-audio',
   `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profileDir}`, 'about:blank'], { stdio: 'pipe' });
 const cleanup = (c) => { stopBrowser(chromium, profileDir); process.exit(c); };
 process.on('SIGINT', () => cleanup(130));

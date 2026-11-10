@@ -24,7 +24,7 @@
 //   MAPPING=chromatic TUNING=7 BANDED=0 node test/hkl-inspect/console-scan-firefox.mjs
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HR, printConsole } from './report.mjs';
@@ -46,6 +46,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   const port = 9500 + Math.floor(Math.random() * 400);
   const profile = mkdtempSync(join(tmpdir(), 'hkl-ff-scan-'));
+  /* never let a gate reach the machine's audio output (Firefox has no mute flag) */
+  writeFileSync(join(profile, 'user.js'), 'user_pref("media.volume_scale", "0.0");\n');
   const proc = spawn('firefox', [
     '--headless', '--no-remote', '--new-instance',
     '--profile', profile, `--remote-debugging-port=${port}`,

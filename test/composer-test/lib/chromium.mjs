@@ -16,6 +16,9 @@ export async function launchChromium({ windowSize = '1600,1200', extraArgs = [] 
     '--disable-gpu',
     '--no-sandbox',
     '--no-first-run',
+    /* never let a gate reach the machine's audio output: this mutes the output
+       device only, the page's audio graph still runs (AGENTS.local.md) */
+    '--mute-audio',
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profileDir}`,
     `--window-size=${windowSize}`,

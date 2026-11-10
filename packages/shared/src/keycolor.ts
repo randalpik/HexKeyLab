@@ -2,7 +2,7 @@
 // spine rule (Max, 2026-11-09).
 //
 // The Pythagorean spine is the chain of pure fifths from A3 — of pure fourths
-// in an inverted layout (LAYOUT invert). It holds one color per nominal octave,
+// in an inverted layout (`layoutOf(mapping).invert`). It holds one color per nominal octave,
 // purple in octave 3: spine note n sits at MIDI 57 + 7n (57 + 5n on the fourths
 // spine), and the hues step through hueCycleOrder octave by octave, the other
 // way round on the fourths spine. A note reached from the spine by chaining
@@ -34,7 +34,7 @@
 // (apps/hkl/src/render/colors.ts); Composer can call them directly.
 
 import { coordExps, coordToMidi, type TuningMode } from './freq.js';
-import { LAYOUT, type Mapping } from './mapping.js';
+import { layoutOf, type Mapping } from './mapping.js';
 import {
   type Hue, hueC, hueCycleOrder, whiteSet, equalHueCycle,
   hexToRgb, rgbToHsl, hslToRgb, rgbToHex, profileForHue,
@@ -63,7 +63,7 @@ export function keyColor(q: number, r: number, mode: TuningMode, mapping: Mappin
   /* each septimal factor → the 5-limit note it stands for: ×36/35 = 2²·3²/(5·7) */
   const n = e3 + 2 * e7, thirds = e5 - e7;
   /* the octave of the pitch's place on the spine: fifths, or fourths (spine note −n) */
-  const invert = LAYOUT[mapping].invert;
+  const invert = layoutOf(mapping).invert;
   const oct = Math.floor((57 + (invert ? -5 * n : 7 * n) + 4 * thirds) / 12) - 4;
   /* hueCycleOrder walks the cycle backward, so warm is −1: e7 half-steps warm
      land on index − floor(e7/2), plus the half-step variant when e7 is odd */

@@ -12,7 +12,7 @@
 
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
-import { convertCell, isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { convertCell, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { TUNING_MODES, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
@@ -433,7 +433,7 @@ export function getFootprintColors(): FootprintColorMap {
 
 /** A bridge message's `mapping` field ('euler' when absent: an older peer). */
 function mappingOf(raw: string | undefined): Mapping {
-  return isMapping(raw) ? raw : 'euler';
+  return isPresetMapping(raw) ? raw : 'euler';
 }
 
 /** Re-express a note HKL resolved (in mapping `from`) in the score's frame. */

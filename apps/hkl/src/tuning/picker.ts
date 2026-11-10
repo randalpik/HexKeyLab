@@ -51,7 +51,7 @@
 // each band to match its pitch, so it ranks under its own ratios like any mode.
 
 import { anchorOf, coordToMidi, tenneyHeightFromExps } from '@hkl/shared/freq.js';
-import { LAYOUT, bandWidth } from '@hkl/shared/mapping.js';
+import { layoutOf, bandWidth } from '@hkl/shared/mapping.js';
 import { noteName } from '@hkl/shared/notes.js';
 import { jiRatioWithState } from './ratios.js';
 import type { TuningStateLike } from './regions.js';
@@ -111,7 +111,7 @@ function pickRange(refQ: number, refR: number, state: TuningStateLike, lo: numbe
   /* Octave step is (W, 0) = (12/c, 0): (+3, 0) Euler, (+6, 0) Wicki-Hayden,
      (+12, 0) chromatic. The isotone projection ρ(q−refQ) − c(r−refR) shifts by
      ρ·W per octave. */
-  const c = LAYOUT[mapping].c;
+  const c = layoutOf(mapping).c;
   const rho = coordToMidi(0, 1, mapping) - 57;
   let inv = 0; /* ρ·inv ≡ 1 (mod c) */
   while ((rho * inv) % c !== 1 % c) inv++;

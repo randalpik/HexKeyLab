@@ -24,7 +24,7 @@ const DEBUG_PORT = 9322 + Math.floor(Math.random() * 600);
 const profileDir = mkdtempSync(join(tmpdir(), 'hklo-smoke-'));
 
 const chromium = spawn('chromium', [
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
+  '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--mute-audio',
   '--autoplay-policy=no-user-gesture-required',
   `--remote-debugging-port=${DEBUG_PORT}`,
   `--user-data-dir=${profileDir}`,

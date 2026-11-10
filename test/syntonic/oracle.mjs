@@ -20,7 +20,7 @@
 // Exits non-zero on any failure.
 
 import { coordExps, coordToMidi, anchorOf, bandOffset } from '../../packages/shared/src/freq.ts';
-import { bandOfCell, pitchBandOf, bandWidth, LAYOUT, MAPPINGS } from '../../packages/shared/src/mapping.ts';
+import { bandOfCell, pitchBandOf, bandWidth, layoutOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOrder, hueIdx } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain } from '../../packages/shared/src/heji.ts';
@@ -48,7 +48,7 @@ function ratio(e) {
 
 for (const mapping of MAPPINGS) {
   const W = bandWidth(mapping);                    /* band width in q */
-  const QR = 20 * 4 / LAYOUT[mapping].c;
+  const QR = 20 * 4 / layoutOf(mapping).c;
   for (const mode of ['S', 'Y']) {
     for (const anchor of ANCHORS) {
       for (let q = -QR; q <= QR; q++) {
@@ -82,7 +82,7 @@ for (const mapping of MAPPINGS) {
       }
       /* C: the band step (+W, 0) across each transition */
       for (let b = anchor - 6; b <= anchor + 6; b++) {
-        const q0 = b * W - Math.floor(4 / LAYOUT[mapping].c);  /* first column of band b (A3 sits in column ⌊4/c⌋ of band 0) */
+        const q0 = b * W - Math.floor(4 / layoutOf(mapping).c);  /* first column of band b (A3 sits in column ⌊4/c⌋ of band 0) */
         const step = sub(coordExps(q0 + W, 0, mode, mapping, anchor, true), coordExps(q0, 0, mode, mapping, anchor, true));
         /* the offset each cell carries: its pitch band (an odd chromatic column carries the
            band five columns left) */

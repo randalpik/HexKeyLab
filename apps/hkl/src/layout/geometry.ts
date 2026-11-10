@@ -1,7 +1,7 @@
 // Hex lattice → screen geometry. The tilt angle is selectable at runtime via
 // setRotation():
 //   verticalFreq — average log-frequency gradient is screen-vertical
-//                  (q-axis: log(2)·c/12 per step, c from LAYOUT — log(2)/3 Euler,
+//                  (q-axis: log(2)·c/12 per step, c from layoutOf — log(2)/3 Euler,
 //                  /6 Wicki-Hayden, /12 chromatic; r-axis: midpoint of 5-limit
 //                  log(3/2) and 7-limit log(3/2)-log(81/80)/6)
 //   lumatone     — the Lumatone case row (the (+7, −2) board step, posed by the
@@ -16,7 +16,7 @@
 // updates to every importer without re-importing.
 
 import type { Alignment, HexSize, Mapping, RotationMode } from '../state/persistence.js';
-import { LAYOUT } from '@hkl/shared/mapping.js';
+import { layoutOf } from '@hkl/shared/mapping.js';
 import { coordToMidi } from '@hkl/shared/freq.js';
 import { poseOffset } from './physical.js';
 
@@ -57,7 +57,7 @@ function verticalFreqTilt(qStep: number, rStep: number): number {
 function verticalFreqTiltOf(mapping: Mapping): number {
   const rowStep = coordToMidi(0, 1, mapping) - 57;
   const avgFifth = Math.log(3 / 2) - Math.log(81 / 80) / 12;
-  return verticalFreqTilt(Math.log(2) * LAYOUT[mapping].c / 12, avgFifth + (rowStep - 7) * Math.log(2) / 12);
+  return verticalFreqTilt(Math.log(2) * layoutOf(mapping).c / 12, avgFifth + (rowStep - 7) * Math.log(2) / 12);
 }
 const TILT_VERTICAL_FREQ = verticalFreqTiltOf('euler');
 /* The tilt that levels the Lumatone case row — the (+7, −2) board step as the

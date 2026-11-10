@@ -110,7 +110,7 @@ try {
   /* 2. Our own Chromium, loading the overlay the host itself serves (so it
         dials the same-origin relay on our throwaway port, not 5190). */
   const chromium = spawn('chromium', ['--headless=new', '--disable-gpu', '--no-sandbox',
-    '--no-first-run', `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profileDir}`,
+    '--no-first-run', '--mute-audio', `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profileDir}`,
     '--window-size=1400,900', 'about:blank'], { stdio: 'pipe' });
   procs.push(chromium);
   await waitFor(async () => (await fetch(`http://localhost:${DEBUG_PORT}/json/version`)).ok, 10000, 'chromium');

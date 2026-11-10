@@ -28,7 +28,7 @@ import {
 import { view } from '../../apps/hkl/src/state/view.ts';
 import * as geo from '../../apps/hkl/src/layout/geometry.ts';
 import { coordExps } from '../../packages/shared/src/freq.ts';
-import { LAYOUT, MAPPINGS } from '../../packages/shared/src/mapping.ts';
+import { layoutOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 
 const results = [];
 const check = (name, got, want) => results.push({ name, got, want, ok: got === want });
@@ -97,14 +97,14 @@ for (const mode of ['verticalFreq', 'piano'])
 const has = new Set(baseKeys.map(key));
 let bad = 0, pairs = 0;
 for (const mode of ['5', 'P', 'D', '7', 'V', 'S', 'Y'])
-  for (const m of MAPPINGS.filter((x) => LAYOUT[x].s === 0))   /* unsheared: r is the pure line */
+  for (const m of MAPPINGS.filter((x) => layoutOf(x).s === 0))   /* unsheared: r is the pure line */
     for (const [u, v] of baseKeys) {
       if (!has.has((u + 1) + ',' + v)) continue;
       const a = coordExps(...poseOffset('right', u, v), mode, m, 0, true);
       const b = coordExps(...poseOffset('right', u + 1, v), mode, m, 0, true);
       const d = b.map((x, i) => x - a[i]).join(',');
       pairs++;
-      if (d !== (LAYOUT[m].invert ? '2,-1,0,0' : '-1,1,0,0')) bad++;
+      if (d !== (layoutOf(m).invert ? '2,-1,0,0' : '-1,1,0,0')) bad++;
     }
 check(`F1: Right rows are pure 3:2 (4:3 inverted) in every JI mode × unsheared mapping (${pairs} steps)`, bad, 0);
 

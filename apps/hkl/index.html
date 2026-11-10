@@ -281,6 +281,20 @@ dialog.hkl-dialog dl.facts{display:grid;grid-template-columns:max-content 1fr;ga
 dialog.hkl-dialog dl.facts dt{color:#999}
 dialog.hkl-dialog p.credits-head{margin:14px 0 2px}
 dialog.hkl-dialog p.credits{font-size:11px;line-height:1.5;color:#999;margin:0}
+/* The layout builder: the same tray, but non-modal (opened with show(), so no backdrop and nothing
+   outside it blocked) and shallow, above the toolbars. A non-modal <dialog> is position:absolute
+   by default; fixed keeps it on the viewport's top edge. With no backdrop to set it off, it casts a
+   shadow. */
+dialog.hkl-dialog.builder{box-shadow:0 6px 18px rgba(0,0,0,0.6);position:fixed;z-index:10;min-width:0;width:max-content;max-width:calc(100vw - 32px);padding:8px 16px 10px}
+dialog.hkl-dialog.builder .ctrls{margin:0;gap:4px 20px;flex-wrap:nowrap;align-items:center}
+dialog.hkl-dialog.builder .lsel-col .lsel>span:first-child{min-width:96px}
+dialog.hkl-dialog.builder label{min-width:0}
+dialog.hkl-dialog.builder .stepper{display:flex;align-items:center;gap:4px;flex:1}
+dialog.hkl-dialog.builder .stepper button{padding:0 8px;line-height:1.5}
+dialog.hkl-dialog.builder .stepper button:disabled{opacity:.35;cursor:default;border-color:#555}
+dialog.hkl-dialog.builder .stepper output{flex:1;min-width:22px;text-align:center;color:#ccc;font-variant-numeric:tabular-nums}
+dialog.hkl-dialog.builder dl.axes{display:grid;grid-template-columns:max-content max-content;gap:1px 10px;font-size:12px;min-width:210px}
+dialog.hkl-dialog.builder dl.axes dt{color:#ccc;font-weight:500}
 dialog.hkl-dialog h3{color:#fff;font-size:14px;margin-bottom:10px;font-family:system-ui,sans-serif}
 dialog.hkl-dialog .row{display:flex;gap:8px;align-items:center;margin:8px 0}
 dialog.hkl-dialog label{color:#999;font-size:12px;min-width:130px}
@@ -562,6 +576,21 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button type="submit" id="cmpDownloadBtn">Download .hkc</button>
 </div>
 </form>
+</dialog>
+<dialog id="layoutBuilder" class="hkl-dialog builder" aria-label="Layout builder">
+<div class="ctrls">
+<div class="lsel-col">
+<div class="lsel"><span>Octave division:</span><select id="lbDivision" autocomplete="off"></select></div>
+<div class="lsel"><span>Shear:</span><span class="stepper"><button type="button" id="lbShearDown" aria-label="Decrease shear">−</button><output id="lbShear">0</output><button type="button" id="lbShearUp" aria-label="Increase shear">+</button></span></div>
+<label><input type="checkbox" id="lbInvert" autocomplete="off"> Invert</label>
+</div>
+<dl class="axes">
+<dt>Rows</dt><dd id="lbRows"></dd>
+<dt>Columns</dt><dd id="lbColumns"></dd>
+<dt>Diagonal</dt><dd id="lbDiagonal"></dd>
+</dl>
+<button type="button" id="lbClose">Close</button>
+</div>
 </dialog>
 <dialog id="aboutDialog" class="hkl-dialog wide">
 <h3>About HexKeyLab</h3>

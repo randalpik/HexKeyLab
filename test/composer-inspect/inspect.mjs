@@ -67,7 +67,7 @@ const chromium = spawn('chromium', [
   '--headless=new',
   '--disable-gpu',
   '--no-sandbox',
-  '--no-first-run',
+  '--no-first-run', '--mute-audio',
   `--remote-debugging-port=${DEBUG_PORT}`,
   `--user-data-dir=${profileDir}`,
   '--window-size=1600,1200',

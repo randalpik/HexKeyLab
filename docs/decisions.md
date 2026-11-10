@@ -10681,3 +10681,46 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Rejected:** a per-app Vite plugin reading the bundle's module graph (exact, but each app's `vite.config.ts` would import from `vite/`, which `check:boundaries` forbids: five exceptions). The closure can list a package the bundler tree-shook away; a notice too many is harmless.
 
 **Where:** `apps/hkl/index.html` (`#aboutDialog`), `apps/hkl/src/ui/about.ts`, `apps/hkl/src/audio/samples-data.ts`, `vite/{assemble-dist,third-party-notices}.mjs`; docs/architecture.md (Repo layout), docs/guide/core.md (About), docs/lessons.md.
+
+## A layout is its three values (2026-11-09, Max)
+
+**Context:** the layout builder needs layouts beyond the eight presets. A mapping was one of eight names, and its matrix came from a table keyed by name (`LAYOUT`), so a ninth layout had nowhere to live, and a mapping travels with every coordinate (prefs, `.hkr`, MPE `.mid`, bridge, overlay, a score's layout stamp).
+
+**Picked:** a layout's identity is its `(division, shear, invert)`, the builder's three controls. Its id stays a string: the preset's name when the values are a preset's, otherwise the canonical custom id `<division>:<shear>` plus `:i` when inverted (`6:-2:i`). A custom id never names a preset's values, so each layout has exactly one id, ids still compare with `===`, and "show the preset when the values match one" needs no rule. `layoutOf(id)` derives the matrix for any id (`c = 12/division`, `s = −shear·c`); the presets are rows of the same three values (`PRESETS`). The bound is the one from the spec: the row step is 1–12 semitones and differs from the column step, which allows 48 layouts.
+
+**Scope of this step:** the shared model only. Every reader that validated a mapping now calls `isPresetMapping`, so no app accepts a custom id yet and nothing a user sees changes; the tray (4b) and the Composer boundary (4c) widen them deliberately. Composer Setup stays at the eight presets (Max): it has no place to build a custom layout or to mirror one from HKL.
+
+**Rejected:**
+- A ninth id `custom` with a mutable matrix: the id would not say which layout a coordinate is in, and `@hkl/shared` would hold state.
+- An object `{division, shear, invert}` as the mapping everywhere: every carrier's format and every `===` comparison would change, for no gain over a canonical string.
+- Keeping the by-name table and adding entries: a `Record<Mapping, …>` cannot enumerate an open set, so the compiler's guarantee would be false.
+
+**Cost:** none measurable. 637,632 `coordExps` + `keyColor` calls take about 37 ms on both the committed table and `layoutOf` (a memo keyed by id).
+
+**Gates:** `test/layout-presets/oracle.mjs` now runs every section on all 48 layouts, with a new section T for the ids and the bound (5,285,272 checks; 633,956 before, on the eight). A copy of the model with the bound tightened to 11 semitones fails it. This restores coverage of 4-wide bands and of inverted layouts with odd chromatic columns, which no preset has had since the Accordion and Bass changes of 2026-11-01.
+
+**Where:** `packages/shared/src/mapping.ts` (`layoutOf` replaces `LAYOUT`; `PresetMapping`, `CustomMapping`, `LayoutSpec`, `PRESETS`, `mappingOf`, `specOf`, `isValidSpec`, `shearRange`, `clampShear`, `allMappings`, `mappingLabel`, `isPresetMapping`), its ten call sites in `packages/shared`, `apps/hkl` and `apps/composer`, four gates under `test/`; docs/architecture.md (Note-name mapping), AGENTS.md, docs/architecture/hkl.md, docs/lessons.md, docs/local/layout-presets.md.
+
+## The layout builder is a stateless, non-modal tray (2026-11-09, Max)
+
+**Context:** the builder edits a layout's three values live, with the lattice as the readout (Max: "show, not tell"), so it may not shade the lattice or block clicks outside itself. It is opened by "Custom…" at the bottom of the Mapping dropdown and may cover the toolbars.
+
+**Picked:**
+- A `<dialog>` opened with `show()`, sharing the modal trays' look, with a drop shadow in place of the backdrop: nothing outside it blocked. Controls: Octave division, Shear (− / +), Invert, stacked; readouts: the three axis intervals only.
+- **No preset picker in the tray** (Max, on seeing it): the first build mirrored the Mapping dropdown inside the tray, on the premise that the tray would cover the toolbars. It ends above them, so the toolbar dropdown is the one picker.
+- **One switch path, `applyMapping(id)`.** The toolbar select, the tray, a recording's snapshot, Composer's layout request and Reset all call it. Before, three callers wrote the select's value and then called a handler that read it back; a custom id has no option, and a select set to a missing value silently reads `''`.
+- **The select and the tray are views of `tuning.mapping`.** The tray holds no layout state: `syncLayoutBuilder()` redraws it after every switch. On a custom layout the select shows an option hidden from its list, so choosing the visible "Custom…" is still a `change` and reopens the tray.
+- **Shear out of range is clamped** to the nearest valid value after a division or invert change (Max), rather than refusing the change.
+- **Axis names by semitone count** (Max): the within-band spelling where a band has one, a neutral name where it has two (semitone, tritone), "descending …" for a falling step.
+- **Controls blur after each edit**, and Escape is bound at the document, so QWERTY keys keep playing with the tray open.
+
+**Rejected:**
+- A number input for shear: it holds the focus, and a focused input swallows the QWERTY note keys.
+- One "Custom…" option that is also the selected one on a custom layout: choosing it again fires no `change`, so the tray could not be reopened.
+- Detecting a re-pick of the selected option from `click` on the select: not reported consistently across browsers or for the keyboard.
+
+**Open until 4c:** Composer reads a custom id as Euler, so playing into it from a custom layout, or exporting a custom-layout recording to it, is wrong.
+
+**Gates:** `test/layout-presets/tray.mjs` (new): 811 checks through the tray's own controls on all 48 layouts, against the shared model; with the diagonal readout on the wrong axis it failed 61 (of 921, on the first build, which still had the mirror). The 15 `test/hkl-midi/` gates pass; the HKL layout screenshots are 52/52 identical to the pre-builder baseline. Its first runs played through the speakers: docs/lessons.md, "A headless browser is not a silent one".
+
+**Where:** `apps/hkl/src/ui/{layoutBuilder,controls,init}.ts`, `apps/hkl/index.html` (`#layoutBuilder`, `dialog.hkl-dialog.builder`); readers widened to `isMapping` in `apps/hkl/src/{state/persistence,recording/hkr,bridge/overlay-subscribe,bridge/hkl-side}.ts`; `recording/apply.ts`; docs/architecture.md, docs/architecture/hkl.md (Layout builder), docs/guide/core.md (Mappings).

@@ -2,8 +2,10 @@
 // Every layout samples the chromatic frame: cell (q, r) is the chromatic cell
 // (c·q + s·r, r) — or, INVERTED, (c·q + s·r, −r) raised r exact octaves — with c
 // the column step in semitones and s the shear in chromatic columns per row.
-// LAYOUT holds each layout's (c, s, invert) (docs/architecture.md → Note-name
-// mapping → The layout matrix).
+// layoutOf(id) derives each layout's (c, s, invert) from its three defining
+// values, (division, shear, invert): the eight presets by name, every other
+// valid triple by a custom id (docs/architecture.md → Note-name mapping → The
+// layout matrix).
 //
 //   'euler'        c 4 — the Harmonic-Table lattice: q = major thirds, 3-wide
 //                  octave bands (docs/architecture.md → Tuning system).
@@ -30,23 +32,32 @@
 //                 (A's row: F F# G G# A Bb B C C# D D# E)
 // A3 sits at (0,0) — the qm0 column, chromatic position 4 — in every layout.
 
-/** Every layout the matrix model defines. In Euler, Wicki-Hayden and Chromatic
- *  r is the fifths axis; the other five are sheared or inverted
+/** The eight named layouts. In Euler, Wicki-Hayden and Chromatic r is the fifths
+ *  axis; the other five are sheared or inverted
  *  (docs/architecture.md → Sheared and inverted layouts). */
-export type Mapping = 'euler' | 'wickiHayden' | 'chromatic' | 'gerhard' | 'janko' | 'accordion' | 'randal' | 'park';
+export type PresetMapping = 'euler' | 'wickiHayden' | 'chromatic' | 'gerhard' | 'janko' | 'accordion' | 'randal' | 'park';
 
-/** Every mapping, in dropdown order (Max, 2026-11-01): the fifths layouts, their
+/** A layout that is not a preset, named by its values: `<division>:<shear>`,
+ *  plus `:i` when inverted (`6:-2:i`). */
+export type CustomMapping = `${number}:${number}` | `${number}:${number}:i`;
+
+/** A layout id. A layout IS its (division, shear, invert) (`LayoutSpec`): a
+ *  preset's values go by the preset's name and every other valid triple by its
+ *  custom id, so each layout has exactly one id and ids compare with `===`. */
+export type Mapping = PresetMapping | CustomMapping;
+
+/** The presets, in dropdown order (Max, 2026-11-01): the fifths layouts, their
  *  sheared forms (Gerhard Euler's cells, Janko Wicki-Hayden's, the Accordion
  *  Park's), then the fourths layouts. */
-export const MAPPINGS: ReadonlyArray<Mapping> = [
+export const MAPPINGS: ReadonlyArray<PresetMapping> = [
   'euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park',
 ];
 
-export function isMapping(x: unknown): x is Mapping {
+export function isPresetMapping(x: unknown): x is PresetMapping {
   return (MAPPINGS as ReadonlyArray<unknown>).includes(x);
 }
 
-export const MAPPING_LABELS: Readonly<Record<Mapping, string>> = {
+export const MAPPING_LABELS: Readonly<Record<PresetMapping, string>> = {
   euler: 'Euler',
   wickiHayden: 'Wicki-Hayden',
   chromatic: 'Chromatic',
@@ -56,6 +67,119 @@ export const MAPPING_LABELS: Readonly<Record<Mapping, string>> = {
   randal: 'Randal',
   park: 'Park',
 };
+
+/** A layout's label: the preset's name, or "Custom". */
+export function mappingLabel(layout: Mapping): string {
+  return isPresetMapping(layout) ? MAPPING_LABELS[layout] : 'Custom';
+}
+
+/** A layout's three defining values. */
+export interface LayoutSpec {
+  /** Keys per octave along a row (the band width W): 3, 4, 6 or 12. A column
+   *  step is 12/division semitones. */
+  readonly division: number;
+  /** Whole keys each row slides right of the row below (negative: left). The
+   *  pure line is (shear, 1). */
+  readonly shear: number;
+  /** The pure line is a fourth instead of a fifth; the row step drops by 2. */
+  readonly invert: boolean;
+}
+
+/** The octave divisions: the band widths that divide 12 (2 and 1 are degenerate). */
+export const DIVISIONS: ReadonlyArray<number> = [3, 4, 6, 12];
+
+export const PRESETS: Readonly<Record<PresetMapping, LayoutSpec>> = {
+  euler: { division: 3, shear: 0, invert: false },
+  wickiHayden: { division: 6, shear: 0, invert: false },
+  chromatic: { division: 12, shear: 0, invert: false },
+  gerhard: { division: 3, shear: 1, invert: false },
+  janko: { division: 6, shear: 3, invert: false },
+  accordion: { division: 6, shear: 1, invert: true },
+  randal: { division: 3, shear: 0, invert: true },
+  park: { division: 6, shear: 0, invert: true },
+};
+
+/** Semitones from one row to the next, the step of (0, 1): a fifth (a fourth,
+ *  inverted) less the shear's columns. */
+function rowStepOf(spec: LayoutSpec): number {
+  return (spec.invert ? 5 : 7) - spec.shear * (12 / spec.division);
+}
+
+/** The one bound on a layout: the row step ascends by 1 to 12 semitones and
+ *  differs from the column step (equal steps collapse the third axis to a
+ *  unison). Every pitch class is then reachable. */
+export function isValidSpec(spec: LayoutSpec): boolean {
+  if (!DIVISIONS.includes(spec.division) || !Number.isInteger(spec.shear)) return false;
+  const step = rowStepOf(spec);
+  return step >= 1 && step <= 12 && step !== 12 / spec.division;
+}
+
+/** The valid shears for `division` and `invert`, as [lowest, highest]; every
+ *  whole shear between them is valid. */
+export function shearRange(division: number, invert: boolean): readonly [number, number] {
+  let lo = 0, hi = 0;
+  while (isValidSpec({ division, shear: lo - 1, invert })) lo--;
+  while (isValidSpec({ division, shear: hi + 1, invert })) hi++;
+  return [lo, hi];
+}
+
+/** `shear` moved to the nearest valid value for `division` and `invert`. */
+export function clampShear(division: number, shear: number, invert: boolean): number {
+  const [lo, hi] = shearRange(division, invert);
+  return Math.min(hi, Math.max(lo, shear));
+}
+
+function presetOf(spec: LayoutSpec): PresetMapping | null {
+  for (const m of MAPPINGS) {
+    const p = PRESETS[m];
+    if (p.division === spec.division && p.shear === spec.shear && p.invert === spec.invert) return m;
+  }
+  return null;
+}
+
+const CUSTOM_ID = /^(3|4|6|12):(0|-?[1-9]\d?)(:i)?$/;
+
+/** The values a custom id names, or null: not the canonical form, out of
+ *  bounds, or a preset's values (those go by the preset's name). */
+function parseCustom(id: string): LayoutSpec | null {
+  const m = CUSTOM_ID.exec(id);
+  if (!m) return null;
+  const spec: LayoutSpec = { division: +m[1], shear: +m[2], invert: m[3] !== undefined };
+  return isValidSpec(spec) && !presetOf(spec) ? spec : null;
+}
+
+/** The id of the layout with these values: the preset's name where they are a
+ *  preset's, otherwise the custom id. Throws on values outside the bound. */
+export function mappingOf(spec: LayoutSpec): Mapping {
+  if (!isValidSpec(spec)) throw new Error(`mappingOf: (${spec.division}, ${spec.shear}, ${spec.invert}) is not a layout`);
+  return presetOf(spec) ?? (`${spec.division}:${spec.shear}${spec.invert ? ':i' : ''}` as CustomMapping);
+}
+
+/** A layout's (division, shear, invert). */
+export function specOf(layout: Mapping): LayoutSpec {
+  const spec = isPresetMapping(layout) ? PRESETS[layout] : parseCustom(layout);
+  if (!spec) throw new Error(`specOf: "${layout}" is not a layout`);
+  return spec;
+}
+
+/** True for a preset name or a custom id in canonical form and within the bound. */
+export function isMapping(x: unknown): x is Mapping {
+  return isPresetMapping(x) || (typeof x === 'string' && parseCustom(x) !== null);
+}
+
+/** Every layout: the presets in dropdown order, then every other valid
+ *  (division, shear, invert), by division, plain before inverted, by shear. */
+export function allMappings(): Mapping[] {
+  const out: Mapping[] = [...MAPPINGS];
+  for (const division of DIVISIONS) for (const invert of [false, true]) {
+    const [lo, hi] = shearRange(division, invert);
+    for (let shear = lo; shear <= hi; shear++) {
+      const id = mappingOf({ division, shear, invert });
+      if (!isPresetMapping(id)) out.push(id);
+    }
+  }
+  return out;
+}
 
 export interface LayoutMatrix {
   /** Semitones per column step (+1, 0); the octave band is 12/c columns. */
@@ -68,28 +192,28 @@ export interface LayoutMatrix {
   readonly invert: boolean;
 }
 
-/** Each layout's matrix into the chromatic frame. */
-export const LAYOUT: Readonly<Record<Mapping, LayoutMatrix>> = {
-  euler: { c: 4, s: 0, invert: false },
-  wickiHayden: { c: 2, s: 0, invert: false },
-  chromatic: { c: 1, s: 0, invert: false },
-  gerhard: { c: 4, s: -4, invert: false },
-  janko: { c: 2, s: -6, invert: false },
-  accordion: { c: 2, s: -2, invert: true },
-  randal: { c: 4, s: 0, invert: true },
-  park: { c: 2, s: 0, invert: true },
-};
+/** Derived matrices by id: a memo of a pure function of the id. */
+const MATRICES: Record<string, LayoutMatrix> = Object.create(null);
+
+/** A layout's matrix into the chromatic frame: c = 12/division, s = −shear·c. */
+export function layoutOf(layout: Mapping): LayoutMatrix {
+  const known = MATRICES[layout];
+  if (known) return known;
+  const spec = specOf(layout);
+  const c = 12 / spec.division;
+  return (MATRICES[layout] = { c, s: 0 - spec.shear * c, invert: spec.invert });
+}
 
 /** The chromatic cell [Q, R] that cell (q, r) of `layout` samples, and the exact
  *  octaves `oct` it sounds above that cell. */
 export function toChromatic(q: number, r: number, layout: Mapping): [number, number, number] {
-  const { c, s, invert } = LAYOUT[layout];
+  const { c, s, invert } = layoutOf(layout);
   return invert ? [c * q + s * r, 0 - r, r] : [c * q + s * r, r, 0];
 }
 
 /** Columns per octave band: 12 / c (3 Euler, 6 Wicki-Hayden, 12 chromatic). */
 export function bandWidth(layout: Mapping): number {
-  return 12 / LAYOUT[layout].c;
+  return 12 / layoutOf(layout).c;
 }
 
 export interface EulerCell {
@@ -135,7 +259,7 @@ const CHROMATIC_TWINS: ReadonlyArray<readonly [number, number, number]> = [
  *  Q is Euler column Q/2, and an odd column (a copy of column (Q−1)/2, 2 cells
  *  down and an octave down) is ((Q−1)/2 − 3, R+2). */
 export function eulerOf(q: number, r: number, layout: Mapping): EulerCell {
-  const L = LAYOUT[layout];
+  const L = layoutOf(layout);
   if (!L.invert) return chromaticEuler(L.c * q + L.s * r, r);
   const e = chromaticEuler(L.c * q + L.s * r, 0 - r);
   e.q += 3 * r;
@@ -148,7 +272,7 @@ export function eulerOf(q: number, r: number, layout: Mapping): EulerCell {
  *  Euler's own, (4/c)·q. Of the four chromatic cells with that equivalent, the
  *  first the layout samples. */
 export function fromEuler(q: number, r: number, layout: Mapping): [number, number] {
-  const { c, s, invert } = LAYOUT[layout];
+  const { c, s, invert } = layoutOf(layout);
   for (const [j, dk, dR] of CHROMATIC_TWINS) {
     const R = r + dR, row = invert ? 0 - R : R, oct = invert ? row : 0;
     const n = 4 * (q - 3 * oct + dk) + j - s * row;
@@ -165,14 +289,14 @@ export function fromEuler(q: number, r: number, layout: Mapping): [number, numbe
  *  seams, position in band, the reference spine, the S/Y anchor and the
  *  Schismatic schisma count all use it. */
 export function bandOfCell(q: number, r: number, layout: Mapping): number {
-  const L = LAYOUT[layout];
+  const L = layoutOf(layout);
   return chromaticBand(L.c * q + L.s * r);
 }
 
 /** Position of cell (q, r) within its band, 0 … W−1: its chromatic position
  *  (Q + 4) mod 12 in column steps. A3's qm0 column is W/3 where that is whole. */
 export function posInBandOf(q: number, r: number, layout: Mapping): number {
-  const { c, s } = LAYOUT[layout];
+  const { c, s } = layoutOf(layout);
   return Math.floor((((c * q + s * r + 4) % 12) + 12) % 12 / c);
 }
 
@@ -182,7 +306,7 @@ export function posInBandOf(q: number, r: number, layout: Mapping): number {
  *  otherwise. Every other column carries its own band. Read only by the S/Y band
  *  term and the unbanded respelling. */
 export function pitchBandOf(q: number, r: number, layout: Mapping): number {
-  const L = LAYOUT[layout];
+  const L = layoutOf(layout);
   return chromaticPitchBand(L.c * q + L.s * r);
 }
 
@@ -196,7 +320,7 @@ export function pitchBandOf(q: number, r: number, layout: Mapping): number {
  *  Euler, Gerhard, Randal. */
 export function octaveVector(layout: Mapping, banded: boolean): readonly [number, number] | null {
   if (banded) return [bandWidth(layout), 0];
-  const { c, s, invert } = LAYOUT[layout];
+  const { c, s, invert } = layoutOf(layout);
   const n = (invert ? 2 : -2) - 2 * s;
   return n % c === 0 ? [n / c, 2] : null;
 }
@@ -208,7 +332,7 @@ export function octaveVector(layout: Mapping, banded: boolean): readonly [number
  *  4/c. Null where the layout has no such vector: every preset has them all,
  *  but a 4-wide band (c = 3) only has those whose dq is a multiple of 3. */
 export function vecFromEuler(dq: number, dr: number, layout: Mapping): [number, number] | null {
-  const { c, s, invert } = LAYOUT[layout];
+  const { c, s, invert } = layoutOf(layout);
   const row = invert ? 0 - dr : dr;
   const n = 4 * dq - (invert ? s + 12 : s) * row;
   return n % c === 0 ? [n / c, row] : null;
@@ -217,7 +341,7 @@ export function vecFromEuler(dq: number, dr: number, layout: Mapping): [number, 
 /** The cell of `layout` that samples chromatic cell (Q, R) raised `oct`
  *  octaves, or null. */
 function fromChromatic(Q: number, R: number, oct: number, layout: Mapping): [number, number] | null {
-  const { c, s, invert } = LAYOUT[layout];
+  const { c, s, invert } = layoutOf(layout);
   const row = invert ? 0 - R : R;
   if ((invert ? row : 0) !== oct) return null;
   const n = Q - s * row;

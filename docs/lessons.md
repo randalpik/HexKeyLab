@@ -5637,7 +5637,7 @@ Widening `Mapping` to the nine presets surfaced the assumptions the compiler can
 - the alignment gate asserted rows are 3:2, which holds only where r is the pure line of a plain layout;
 - the layout-presets oracle's "old closed forms" section iterated `MAPPINGS`, meaning the three.
 
-Derive such facts from `LAYOUT` (`⌊4/c⌋`, `pitchBandOf`, `c`, `s`, `invert`): the rule AGENTS.md sets for app code applies to tests as well. A gate that names a mapping, or uses `W/3` or 7, is the same bug in a place no typecheck reaches.
+Derive such facts from `layoutOf(mapping)` (`⌊4/c⌋`, `pitchBandOf`, `c`, `s`, `invert`): the rule AGENTS.md sets for app code applies to tests as well. A gate that names a mapping, or uses `W/3` or 7, is the same bug in a place no typecheck reaches.
 
 One survived in app code since before the presets: Composer's ottava playback added Euler's 3 columns per octave in every mapping, which is a tritone in Wicki-Hayden and three semitones in chromatic. Only a fixture in a new layout's mapping category caught it (`map_ottava_band_width`, 2026-10-30). Playback now shifts by `bandWidth` per octave.
 
@@ -5662,3 +5662,10 @@ The inverted-layout color rule (2026-10-30) mirrored one term and declared that 
 - **An equality that holds in Euler may be a coincidence of fifths.** 12 fifths span 7 octaves and there are 7 hues, so a Pythagorean comma keeps its hue; 12 fourths span 5.
 - **A gate that recomputes the implementation's formula pins the code, not the intent.** The oracle and the color gate both agreed with the bug. Section L now states the rule in the spine's terms and checks a consequence in Max's words (unbanded Ptolemaic is one stripe per octave).
 - **Test a conceptual description against the code as a hypothesis.** The bug surfaced only when Max's one-sentence rule was implemented literally and compared cell by cell; reading the code's own terms back as "rules" had hidden it.
+
+## A headless browser is not a silent one (2026-11-09)
+
+Headless Chromium plays to the machine's default audio output. An HKL page stays quiet at boot only because the audio context waits for a user gesture, and an input event injected over CDP (`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`) is one. The layout-builder tray gate pressed the mouse on the lattice to prove clicks pass under the tray, left that key selected, and then switched layouts and tunings about 60 times: the selected key re-pitched through Max's speakers on each of three runs.
+- **Mute at launch, at every launch site.** `--mute-audio` for Chromium (the shared launcher `test/composer-test/lib/chromium.mjs` and every standalone spawn); for Firefox, which has no flag, `media.volume_scale` `"0.0"` in the profile's `user.js`. Muting the output device changes nothing the page's audio graph computes, so gates that assert on audio state are unaffected.
+- **What the audit found:** 13 launch sites, one of them muted (`test/react-consumer/run.mjs`). A rule that lived in one gate's comment protected one gate.
+- **A gate releases what it presses**, and asserts that it did, before driving the app through anything else.

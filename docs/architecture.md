@@ -397,14 +397,28 @@ pitches reachable from a central key). One LTN file gives every physical key a s
 ### Note-name mapping (Euler / Wicki-Hayden / Chromatic)
 
 A second axis, orthogonal to the tuning mode: **where note names sit** on the hex grid
-(`Mapping = 'euler' | 'wickiHayden' | 'chromatic'`, single definition in `@hkl/shared/mapping.js`
-with `MAPPINGS`, `MAPPING_LABELS`; toolbar `Mapping:` dropdown). It applies identically to every
-tuning mode — no per-mode gating.
+(`Mapping`, single definition in `@hkl/shared/mapping.js`; toolbar `Mapping:` dropdown). It applies
+identically to every tuning mode — no per-mode gating.
+
+**A layout is its three values**, `(division, shear, invert)` (`LayoutSpec`): keys per octave along
+a row (3, 4, 6 or 12), whole keys each row slides right of the row below, and whether the pure line
+is a fourth instead of a fifth. The eight presets go by name (`PresetMapping`; `MAPPINGS` in
+dropdown order, `MAPPING_LABELS`, `PRESETS` for their values); every other valid triple goes by a
+custom id, `<division>:<shear>` plus `:i` when inverted (`6:-2:i`, `CustomMapping`). A custom id
+never names a preset's values, so a layout has exactly one id and ids compare with `===`
+(`mappingOf(spec)`, `specOf(id)`). The one bound is on the row step, `7 − shear·c` (`5 − shear·c`
+inverted): 1 to 12 semitones and not equal to the column step `c`. That allows 48 layouts
+(`isValidSpec`, `shearRange`, `clampShear`, `allMappings`). `isMapping` accepts any of them,
+`isPresetMapping` only the eight. HKL accepts any layout wherever it reads a mapping (prefs,
+`.hkr`, the overlay snapshot, bridge messages in) and builds custom ones in its layout builder
+(docs/architecture/hkl.md → Layout builder). Composer still accepts presets only and reads a
+custom id as Euler, so playing into it from a custom layout is wrong until its boundary lands
+(docs/local/layout-presets.md, phase 4c).
 
 **The layout matrix.** Every layout samples the chromatic frame: cell `(q, r)` is the chromatic
 cell `(c·q + s·r, r)` — or, inverted, `(c·q + s·r, −r)` raised `r` exact octaves (`toChromatic`).
-`LAYOUT` holds each layout's `(c, s, invert)`: `c` the column step in semitones, `s` the shear in
-chromatic columns per row. The three mappings here are unsheared and plain, so `r` is the fifth
+`layoutOf(id)` derives each layout's `(c, s, invert)` from its values: `c = 12/division` the column
+step in semitones, `s = −shear·c` the shear in chromatic columns per row. The three mappings here are unsheared and plain, so `r` is the fifth
 and a column step `(+1, 0)` is `c` semitones: 4 Euler, 2 Wicki-Hayden, 1 chromatic. Every
 primitive goes through the sampled chromatic cell:
 - `coordToMidi = 57 + Q + 7R + 12·oct` (`57 + c·q + 7r` for the three); `coordExps` is the
@@ -454,7 +468,9 @@ occupies the middle four columns.
   `c·q + ρ·r = N` (c = 4 Euler, 2 Wicki-Hayden, 1 chromatic; ρ the row step, 7 in all three),
   stepping along the isotone `(ρ, −c)` over ±⌈80/c⌉ steps centered on the ref's row (the same
   ±80-row span in every mapping); projection `ρΔq − c·Δr`; copies are candidates like any cell.
-- **Switching mapping** (`setMapping`, `apps/hkl/src/ui/controls.ts`): the reference, anchor, held mouse /
+- **Switching mapping** (`applyMapping(id)`, `apps/hkl/src/ui/controls.ts`, the one path for every
+  writer: the toolbar select, the layout builder, a recording's snapshot, Composer's layout request,
+  Reset): the reference, anchor, held mouse /
   piano-input / pedal-sustained notes convert by the frame formula (same pitch); held Lumatone / QWERTY
   voices keep their `(q,r)` and retune in place (they release through the key they struck,
   `input/held.ts`); nothing is dropped. The `verticalFreq` tilt uses a `log(2)/6` column gradient — under
@@ -657,7 +673,8 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 - **MIDI import** (`midi-io/import.ts`): the index covers rows ±16 and, in each, the cells whose
   chromatic column, raised by its octaves, lies within ±120 of A3's: the same pitch span in every
   layout, and in the fifths layouts the old ±30-Euler-column box exactly.
-- Gates: `test/layout-presets/oracle.mjs`; `test/picker/`, `test/syntonic/`, `test/unbanded/`,
+- Gates: `test/layout-presets/oracle.mjs` (all 48 layouts) and `test/layout-presets/tray.mjs` (the
+  HKL builder tray, headless); `test/picker/`, `test/syntonic/`, `test/unbanded/`,
   `test/color-gate/` and `test/alignment/` run over all eight.
 
 ---
@@ -674,7 +691,7 @@ Composer recolors notes with the same functions.
 
 - **The spine rule — 7 hues × {light,dark}**, `hueCycleOrder = [PU,PK,OR,YE,GR,TE,BL]`. The
   Pythagorean spine is the chain of pure fifths from A3, and of pure fourths in an inverted layout
-  (the Accordion, Randal, Park: `LAYOUT` `invert`). It holds one color per nominal octave, purple
+  (the Accordion, Randal, Park: `layoutOf(…).invert`). It holds one color per nominal octave, purple
   in octave 3: spine note n sits at MIDI `57 + 7n` (`57 + 5n` on the fourths spine), and the hues
   step through `hueCycleOrder` octave by octave, the other way round on the fourths spine. A note
   reached from the spine by chaining 5:4 major thirds takes the spine's color at its own octave (a

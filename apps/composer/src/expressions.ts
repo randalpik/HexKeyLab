@@ -19,7 +19,7 @@
 
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
-import { isMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { instrumentStaffSets } from './notation/parts.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -1006,7 +1006,7 @@ export function getLayoutReq(doc: Document): LayoutReq {
       const map = lr.getAttribute('mapping');
       return {
         tuningMode: isTuningMode(m) ? m : '5',
-        mapping: isMapping(map) ? map : 'euler',
+        mapping: isPresetMapping(map) ? map : 'euler',
         banded: lr.getAttribute('banded') !== 'false',
       };
     }
@@ -1026,7 +1026,7 @@ export function setLayoutReq(doc: Document, req: LayoutReq): void {
   lr.setAttribute('tuningMode', req.tuningMode);
   /* Euler is the default and stays implicit, so Euler scores serialize exactly
      as they did before mappings existed. */
-  if (isMapping(req.mapping) && req.mapping !== 'euler') lr.setAttribute('mapping', req.mapping);
+  if (isPresetMapping(req.mapping) && req.mapping !== 'euler') lr.setAttribute('mapping', req.mapping);
   else lr.removeAttribute('mapping'); /* also guards untyped callers that omit it */
   /* likewise banded: only an unbanded score carries the attribute */
   if (req.banded === false) lr.setAttribute('banded', 'false');

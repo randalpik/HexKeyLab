@@ -9,7 +9,7 @@ import { parseMidi } from 'midi-file';
 import type { MidiEvent } from 'midi-file';
 import { coordToMidi, midiToFreq, snapshotToTuningState } from './mpe.js';
 import { keyFreqWithState } from '../tuning/frequency.js';
-import { LAYOUT } from '@hkl/shared/mapping.js';
+import { layoutOf } from '@hkl/shared/mapping.js';
 import type { HkrSession, HkrEvent, LayoutSnapshot } from '../recording/types.js';
 
 const TOLERANCE_CENTS = 25;
@@ -25,7 +25,7 @@ const COLS = 120;
 const R_MIN = -16, R_MAX = 16;
 
 function forEachIndexCell(mapping: LayoutSnapshot['mapping'], fn: (q: number, r: number) => void): void {
-  const { c, s, invert } = LAYOUT[mapping];
+  const { c, s, invert } = layoutOf(mapping);
   const lift = s + (invert ? 12 : 0); /* columns per row, octaves included */
   const qLo = (r: number): number => Math.ceil((-COLS - lift * r) / c);
   const qHi = (r: number): number => Math.floor((COLS - lift * r) / c);
