@@ -93,7 +93,7 @@ A shallow tray (`#layoutBuilder`, `apps/hkl/src/ui/layoutBuilder.ts`) for the 48
 - **Axis intervals**: Rows `(1, 0)`, Columns `(0, 1)` and Diagonal `(−1, 1)`, each named from its semitone count (`coordToMidi`): the spelling it has inside a band, or a neutral name where a band spells it two ways (semitone, tritone); a falling step reads "descending …".
 - **No state of its own.** Every control is redrawn from `tuning.mapping` by `syncLayoutBuilder()`, which `applyMapping` calls, so a layout arriving from a recording, Composer or Reset shows in an open tray.
 - **Focus.** Opening the tray and every edit blur the control, as the toolbar's selects do, so QWERTY keys keep playing (a focused select swallows them, `input/keyboard-notes.ts`). Escape closes the tray from anywhere unless a modal is open; closing keeps the layout.
-- **Carriers.** A custom id is stored in prefs, a recording's snapshot (`.hkr`; the MPE `.mid` round-trip takes its layout from that snapshot) and the overlay snapshot, and accepted from bridge messages. A build from before 2026-11-09 rejects a `.hkr` recorded on a custom layout.
+- **Carriers.** A custom id is stored in prefs, a recording's snapshot (`.hkr`; the MPE `.mid` round-trip takes its layout from that snapshot) and the overlay snapshot, and accepted from bridge messages. A build from before 2026-11-09 rejects a `.hkr` recorded on a custom layout. A score never carries one: Composer converts from a custom layout, and Export to Composer writes Chromatic or Park (`.hkr` → `.hkc` transcription → Pipeline).
 - **Gate**: `test/layout-presets/tray.mjs` (needs `pnpm dev`; muted headless Chromium) drives the tray through all 48 layouts with its own controls and checks them against the shared model.
 
 ### Keyboard shortcuts
@@ -419,6 +419,8 @@ The span ends 1.5 s after Stop/playback-end so release tails land. `.wav` is a s
 Takes a `.hkr` recorded at roughly constant tempo in a user-supplied time signature, produces a Composer-native `.hkc` (MEI 5) colored-notehead grand staff — downloadable or sent straight to Composer over the bridge for editing. **v1 scope**: 8th-note minimum granularity, middle-C voice split, no microtonal accidentals (12-TET notation; lattice spelling from `noteName(q,r)` gives the enharmonics). The `.ly`/LilyPond emitter it replaced is gone.
 
 ### Pipeline
+
+**Frame first (`index.ts`, `inScoreFrame`)**: a score's mapping is one of the eight presets, so a recording made on a custom layout is re-expressed before anything else runs: every `on` / `off` / `pa` cell through `convertCell` into Chromatic (plain layout) or Park (inverted), the finest preset of its orientation, with the snapshot's home band and any per-note `a` carried into that frame. Best effort, with no guard (Max, 2026-11-09). Measured over the 40 custom layouts: a plain layout converts exactly in every tuning, banded and unbanded; an inverted one exactly from division 3 or 6, and from division 4 or 12 only banded in Equal / Ptolemaic / Pythagorean / Semiditonal / Septimal (their exact frame would be an inverted Chromatic, which is not a preset). A preset recording is untouched and comes out in its own mapping.
 
 `.hkr` → onsets → tempo → beats → meter → chords → qnotes → voiced → `.hkc`. Eleven modules under `apps/hkl/src/transcription/`, one per stage. Identity (`Onset.id`, `QNote.sourceOnsetIds`) flows end-to-end for a future correction UI; each `QNote` also carries a `coords: {q,r}[]` array (parallel to `pitches`) so the emitter spells from the exact lattice cell rather than a MIDI-only guess.
 

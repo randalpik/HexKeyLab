@@ -987,7 +987,7 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   preset has one), an
   ottava's playback shift (one band, `bandWidth`, per octave) and the
   performance matcher all read it; MusicXML import makes Euler scores, and an
-  HKL transcription writes the recording's own mapping. The clipboard records its source mapping and a paste into a
+  HKL transcription writes the recording's own mapping, or Chromatic / Park for a recording made on a custom layout. The mapping is always one of the eight presets (`LayoutReq.mapping: PresetMapping`): bridge messages may name any layout HKL is on, a layout-builder custom one included (`mappingOf` in `main.ts` accepts `isMapping`), and Composer converts from it, but never stores it. On a custom layout the entry gate reports a mismatch ("Ptolemaic · Custom") like any other, and a blank score adopts HKL's tuning but keeps its own mapping. The clipboard records its source mapping and a paste into a
   score of another mapping converts coordinates (`selection/clipboard.ts`).
 - **Banding**: `<hkl:layoutReq banded="false">` (absent = banded, so banded
   scores serialize exactly as before) selects the unbanded layout

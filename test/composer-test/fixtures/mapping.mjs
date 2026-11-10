@@ -220,6 +220,33 @@ export const FIXTURES = {
       window.__bridgeMock.sendHeldKeys([RN(3, 1, 'e', '', 4, 64)], 'janko');
     `,
   },
+  /* HKL plays in a custom layout from its layout builder (division 6, shear −2: the id "6:-2",
+     docs/architecture.md → Note-name mapping). No score can use one, but Composer converts from
+     it: its held E4 at (−2, 1) reaches a Euler score as Euler (0, 1). Before Composer accepted
+     custom ids it read "6:-2" as Euler and took (−2, 1) itself — G#3. */
+  map_held_keys_from_custom: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '5', mapping: 'euler' });
+      window.__bridgeMock.sendHeldKeys([RN(-2, 1, 'e', '', 4, 64)], '6:-2');
+    `,
+  },
+  /* Entry needs HKL on the score's layout, and a custom layout is never a score's: the gate
+     prompts, naming HKL's layout "Custom", and a decline inserts nothing. Read as Euler, the
+     custom layout "matched" a Euler score and the held key went in at the wrong cell. */
+  map_entry_gate_custom: {
+    setup: `
+      ${HELPERS}
+      window.__bridgeMock.sendTuningChanged('5', '6:-2');
+      window.__bridgeMock.sendHeldKeys([RN(-2, 1, 'e', '', 4, 64)], '6:-2');
+      window.__mapAsked = [];
+      window.__mapOrigConfirm = window.confirm;
+      /* self-restoring: declines once, then puts the real confirm back */
+      window.confirm = (msg) => { window.__mapAsked.push(msg); window.confirm = window.__mapOrigConfirm; return false; };
+      m.setCursor(0, 1);
+    `,
+    setupKeys: ['5'],
+  },
   /* Setup offers every mapping, in the dropdown order. */
   map_setup_lists_all_mappings: {
     setup: `
@@ -385,6 +412,25 @@ export const ASSERTIONS = {
         if (!held) return { ok: false, detail: 'no getHeldKeys hook' };
         return (${expect.toString()})(held.map((k) => k.q + ',' + k.r + ':' + k.pname + '/' + k.accid + '/' + k.oct), ['0,1:e//4']);
       })()` },
+  ],
+  map_held_keys_from_custom: [
+    { name: 'getHeldKeys returns the Euler cell of the custom-layout key',
+      expr: `(() => {
+        const held = window.__hkl_composer.getHeldKeys ? window.__hkl_composer.getHeldKeys() : null;
+        if (!held) return { ok: false, detail: 'no getHeldKeys hook' };
+        return (${expect.toString()})(held.map((k) => k.q + ',' + k.r + ':' + k.pname + '/' + k.accid + '/' + k.oct), ['0,1:e//4']);
+      })()` },
+  ],
+  map_entry_gate_custom: [
+    { name: 'prompt names HKL\'s layout Custom and the score\'s Ptolemaic',
+      expr: `(() => {
+        const a = window.__mapAsked ?? [];
+        window.confirm = window.__mapOrigConfirm ?? window.confirm;
+        const ok = a.length === 1 && a[0].includes('"Ptolemaic · Custom"') && a[0].includes('requires "Ptolemaic"');
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(a) };
+      })()` },
+    { name: 'declined → nothing inserted',
+      expr: `(${expect.toString()})(window.__hkl_composer.model.getDoc().querySelectorAll('note').length, 0)` },
   ],
   map_setup_lists_all_mappings: [
     { name: 'the Setup mapping list is all eight, in dropdown order',

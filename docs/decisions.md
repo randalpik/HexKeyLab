@@ -10724,3 +10724,27 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/layout-presets/tray.mjs` (new): 811 checks through the tray's own controls on all 48 layouts, against the shared model; with the diagonal readout on the wrong axis it failed 61 (of 921, on the first build, which still had the mirror). The 15 `test/hkl-midi/` gates pass; the HKL layout screenshots are 52/52 identical to the pre-builder baseline. Its first runs played through the speakers: docs/lessons.md, "A headless browser is not a silent one".
 
 **Where:** `apps/hkl/src/ui/{layoutBuilder,controls,init}.ts`, `apps/hkl/index.html` (`#layoutBuilder`, `dialog.hkl-dialog.builder`); readers widened to `isMapping` in `apps/hkl/src/{state/persistence,recording/hkr,bridge/overlay-subscribe,bridge/hkl-side}.ts`; `recording/apply.ts`; docs/architecture.md, docs/architecture/hkl.md (Layout builder), docs/guide/core.md (Mappings).
+
+## Composer converts from custom layouts (2026-11-09, Max)
+
+**Context:** HKL's layout builder puts HKL on layouts Composer cannot build or mirror, and Composer's Setup stays at the eight presets (Max). Before this, Composer read a custom id as Euler: a custom layout "matched" a Euler score, and held keys went in at the wrong cells.
+
+**Picked:**
+- **A score's mapping is a preset, by type**: `LayoutReq.mapping` is a `PresetMapping`. Bridge messages may name any layout (`isMapping`), and Composer converts from it into the score's frame, as it already did between presets.
+- **The entry gate needs no new case.** A custom layout never equals a score's mapping, so entry prompts as for any mismatch ("Ptolemaic · Custom") and offers to put HKL on the score's layout.
+- **A blank score adopts HKL's tuning but keeps its own mapping** when HKL is on a custom layout (it adopts a preset mapping, as before).
+- **Export to Composer from a custom-layout recording is re-expressed in the finest preset of the layout's orientation**: Chromatic for a plain layout, Park for an inverted one (`inScoreFrame`, `apps/hkl/src/transcription/index.ts`), the home band carried into that frame. Best effort, with no guard for the inexact cases (Max): it is an edge of a feature he does not use, Composer has no custom layouts to make it matter, and a recording that leaves the Lumatone outline cannot convert exactly in any mapping anyway.
+
+**Measured** (the real shared modules, the 40 custom layouts; "exact" = every cell keeps its pitch):
+- Plain (19) → Chromatic: exact in every tuning, banded and unbanded; each band maps onto one Chromatic band.
+- Inverted, division 3 or 6 (6) → Park: exact in every tuning, banded and unbanded.
+- Inverted, division 4 or 12 (15) → Park: exact banded in Equal, Ptolemaic, Pythagorean, Semiditonal and Septimal; off by a schisma (2¢) in Schismatic and up to 43¢ in Syntonic / Polysyntonic; unbanded, wrong in every just tuning (up to 82¢ within ±30 columns). Their exact frame is an inverted Chromatic, which is Bass, not a preset.
+
+**Rejected:**
+- Chromatic for every custom layout (the first ruling, on my incomplete figures): for an inverted layout it is exact only banded in the band-uniform tunings, and unbanded it is wrong in every just tuning (up to 287¢ in Ptolemaic).
+- Refusing or warning when a recording does not convert exactly: a special guard for an edge case (Max).
+- Storing the custom id in the score: Composer could not retune, respell or offer it in Setup.
+
+**Gates:** Composer fixtures `map_held_keys_from_custom` and `map_entry_gate_custom` failed on the old code (the key arrived at `-2,1`; no prompt, one note inserted) and pass; affected run 739/739. `test/transcription-roundtrip/run.mjs` gained a plain and an inverted custom recording (four checks failed before: the score was stamped `6:-2` / `12:0:i`). `test/layout-presets/oracle.mjs` section S pins the exact cases above over all 48 layouts (6,386,218 checks; 5,285,272 before).
+
+**Where:** `apps/composer/src/{main,expressions}.ts`; `apps/hkl/src/transcription/index.ts`; `packages/bridge/src/protocol.ts` (comment); docs/architecture.md, docs/architecture/{composer,hkl}.md, docs/guide/core.md; docs/local/layout-presets.md.

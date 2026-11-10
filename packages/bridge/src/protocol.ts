@@ -9,7 +9,8 @@
 // instances — they cross the BroadcastChannel and must survive structuredClone.
 //
 // Coordinate frames: a lattice (q, r) means nothing without its note-name
-// mapping ('euler' | 'wickiHayden' | 'chromatic', @hkl/shared/mapping.js). Every message
+// mapping (a layout id: a preset's name or a custom id such as '6:-2:i',
+// @hkl/shared/mapping.js; a score's is always a preset). Every message
 // carrying coordinates also carries the `mapping` they are in (HKL's live
 // mapping, or the score's), and the receiver converts with convertCell() into
 // its own frame when it uses them. Receivers treat an absent mapping (an older

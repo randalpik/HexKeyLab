@@ -19,7 +19,7 @@
 
 import { DYNAMIC_NAMES, DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
-import { isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { isPresetMapping, type PresetMapping } from '@hkl/shared/mapping.js';
 import { instrumentStaffSets } from './notation/parts.js';
 
 export const MEI_NS = 'http://www.music-encoding.org/ns/mei';
@@ -983,10 +983,12 @@ function seedDefaults(cfg: Element, doc: Document): void {
  *  reference note is DERIVED from the key signature at the current position
  *  (see cursor/refNote.ts), never stored. Legacy files carry `refQ`/`refR`
  *  here; those attributes are simply never read, so no migration is needed.
- *  Files without a `mapping` attribute are Euler; without `banded`, banded. */
+ *  Files without a `mapping` attribute are Euler; without `banded`, banded.
+ *  The mapping is one of the eight presets: a score never stores a custom
+ *  layout id (docs/decisions.md, "Composer converts from custom layouts"). */
 export interface LayoutReq {
   tuningMode: TuningMode;
-  mapping: Mapping;
+  mapping: PresetMapping;
   banded: boolean;
 }
 

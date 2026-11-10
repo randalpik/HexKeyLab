@@ -411,9 +411,13 @@ inverted): 1 to 12 semitones and not equal to the column step `c`. That allows 4
 (`isValidSpec`, `shearRange`, `clampShear`, `allMappings`). `isMapping` accepts any of them,
 `isPresetMapping` only the eight. HKL accepts any layout wherever it reads a mapping (prefs,
 `.hkr`, the overlay snapshot, bridge messages in) and builds custom ones in its layout builder
-(docs/architecture/hkl.md → Layout builder). Composer still accepts presets only and reads a
-custom id as Euler, so playing into it from a custom layout is wrong until its boundary lands
-(docs/local/layout-presets.md, phase 4c).
+(docs/architecture/hkl.md → Layout builder). **A score's mapping is one of the eight presets**
+(Composer's `LayoutReq.mapping` is a `PresetMapping`; Setup offers the eight): Composer cannot
+build a custom layout, so it never stores one. It does accept any layout id on a bridge message
+and converts from it into the score's frame (`convertCell`), and HKL's Export to Composer
+re-expresses a custom-layout recording in the finest preset of its orientation, Chromatic for a
+plain layout and Park for an inverted one (best effort: docs/architecture/hkl.md → `.hkr` → `.hkc`
+transcription).
 
 **The layout matrix.** Every layout samples the chromatic frame: cell `(q, r)` is the chromatic
 cell `(c·q + s·r, r)` — or, inverted, `(c·q + s·r, −r)` raised `r` exact octaves (`toChromatic`).

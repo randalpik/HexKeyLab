@@ -12,7 +12,7 @@
 
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
-import { convertCell, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { convertCell, isMapping, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { TUNING_MODES, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
@@ -348,7 +348,10 @@ bridge.on((msg: HklEvent) => {
         autoAdoptedHklLayout = true;
         const isMode = (s: string): s is TuningMode => (TUNING_MODES as ReadonlyArray<string>).includes(s);
         const tuningMode = isMode(msg.tuningMode) ? msg.tuningMode : '5';
-        model.setLayoutReq({ tuningMode, mapping: hklMapping, banded: model.getLayoutReq().banded });
+        /* the mapping too when a score can hold it; on a custom layout the score
+           keeps its own, and the match indicator and entry gate report the difference */
+        const cur = model.getLayoutReq();
+        model.setLayoutReq({ tuningMode, mapping: isPresetMapping(hklMapping) ? hklMapping : cur.mapping, banded: cur.banded });
         broadcastLayoutReq();
       }
       refreshLayoutMatchIndicator();
@@ -431,9 +434,12 @@ export function getFootprintColors(): FootprintColorMap {
   return footprintInScoreFrame();
 }
 
-/** A bridge message's `mapping` field ('euler' when absent: an older peer). */
+/** A bridge message's `mapping` field ('euler' when absent: an older peer).
+ *  Any layout HKL can be on, its builder's custom ones included: Composer
+ *  converts from it into the score's frame (convertCell) and never stores it —
+ *  a score's own mapping is one of the presets (LayoutReq). */
 function mappingOf(raw: string | undefined): Mapping {
-  return isPresetMapping(raw) ? raw : 'euler';
+  return isMapping(raw) ? raw : 'euler';
 }
 
 /** Re-express a note HKL resolved (in mapping `from`) in the score's frame. */

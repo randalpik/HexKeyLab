@@ -33,6 +33,10 @@
 //      orientation (Euler's plain, Randal's inverted, copy columns included); 3-wide bands read
 //      ±(MIDI octave − band), and unbanded Ptolemaic there is one stripe per octave; a band step
 //      keeps the hue; Equal stays its octave cycle
+//   S  the score frame: every layout converts into the finest preset of its orientation
+//      (Chromatic plain, Park inverted) with the nominal MIDI kept, and with the exact pitch kept
+//      in every JI mode, banded and unbanded, from every plain layout and every inverted layout
+//      of division 3 or 6; from an inverted division 4 or 12, banded in the band-uniform modes
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/layout-presets/oracle.mjs
 
 import {
@@ -309,6 +313,39 @@ for (const L of ALL) for (let r = -9; r <= 9; r++) {
       for (const mode of UNIFORM) check(`L ${L} ${mode} (${q},${r}) band step keeps the hue`, idxOf(q + W, r, mode, L, 0, true), idxOf(q, r, mode, L, 0, true));
       /* Equal stays its octave cycle */
       check(`L ${L} E (${q},${r})`, keyColor(q, r, 'E', L, 0, true).hue, equalHueCycle[((Math.floor(coordToMidi(q, r, L) / 12) % 3) + 3) % 3]);
+    }
+  }
+}
+
+/* S — the score frame (docs/architecture/hkl.md → `.hkr` → `.hkc` transcription): a score's mapping
+   is a preset, so HKL's Export to Composer re-expresses a recording in the finest preset of its
+   layout's orientation, Chromatic (plain) or Park (inverted), with the home band carried over as
+   the band its first row-0 cell converts into (transcription/index.ts, anchorIn). The pitch is
+   kept exactly, in every JI mode, banded and unbanded, from every plain layout and from an
+   inverted one of division 3 or 6; from an inverted division 4 or 12 only banded, in the
+   band-uniform modes (their exact frame would be an inverted Chromatic, which is no preset). */
+for (const L of ALL) {
+  const { division, invert } = specOf(L);
+  const to = invert ? 'park' : 'chromatic';
+  const everywhere = !invert || division === 3 || division === 6;
+  let midiKept = true;
+  for (const [q, r] of CELLS) {
+    const [q2, r2] = convertCell(q, r, L, to);
+    if (coordToMidi(q, r, L) !== coordToMidi(q2, r2, to)) midiKept = false;
+  }
+  check(`S ${L} → ${to} keeps the nominal MIDI`, midiKept, true);
+  for (const banded of [true, false]) {
+    for (const mode of (everywhere ? JI : banded ? UNIFORM : [])) {
+      for (const anchor of [0, 1, -2]) {
+        let q0 = (anchor - 1) * bandWidth(L);
+        while (bandOfCell(q0, 0, L) < anchor) q0++;
+        const anchor2 = bandOfCell(...convertCell(q0, 0, L, to), to);
+        for (const [q, r] of CELLS) {
+          const [q2, r2] = convertCell(q, r, L, to);
+          check(`S ${L} → ${to} ${mode} ${banded ? 'banded' : 'unbanded'} anchor ${anchor} (${q},${r})`,
+            k(coordExps(q2, r2, mode, to, anchor2, banded)), k(coordExps(q, r, mode, L, anchor, banded)));
+        }
+      }
     }
   }
 }

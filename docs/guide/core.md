@@ -107,7 +107,7 @@ The Mapping dropdown stays in view below the tray: choosing a named mapping ther
 
 On the Lumatone, Wicki-Hayden covers about 4½ octaves. Chromatic spans MIDI notes 12–102: each board covers about five octaves top to bottom, a fifth lower than the board to its left.
 
-A Composer score can use any mapping (its Setup). While HKL plays in another mapping than the score's, Composer converts what you play into the score's.
+A Composer score can use any of the eight named mappings (its Setup), but not a custom layout. While HKL plays in another mapping than the score's, a custom one included, Composer converts what you play into the score's.
 
 Switching mapping keeps what you're holding. Mouse and MIDI-keyboard notes keep their pitch and move to that note's new key; Lumatone and computer-keyboard notes stay on their key and glide to its new pitch.
 
@@ -185,7 +185,7 @@ The Recording tab captures everything you play, from any input: notes, pedals an
 
 ### Export to Composer
 
-**Export to Composer** turns the recording into a score: HKL finds the tempo and the beats, quantizes the rhythm, and writes a Composer score with every note spelled and colored as on the keyboard. Give it a title, a time signature (in quarter notes) and, if you like, a tempo hint. **Send to Composer** opens it in a connected Composer tab; **Download .hkc** saves it.
+**Export to Composer** turns the recording into a score: HKL finds the tempo and the beats, quantizes the rhythm, and writes a Composer score with every note spelled and colored as on the keyboard. The score uses the recording's mapping; a recording made on a custom layout comes out in Chromatic, or in Park if the layout is inverted, which is not always pitch-exact for an inverted layout. Give it a title, a time signature (in quarter notes) and, if you like, a tempo hint. **Send to Composer** opens it in a connected Composer tab; **Download .hkc** saves it.
 
 ---
 

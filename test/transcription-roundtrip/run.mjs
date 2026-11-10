@@ -97,6 +97,9 @@ async function main() {
     const hkc = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE());
     const hkcJanko = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('janko', '(q, r) => [2 * q + 3 * r, r]'));
     const hkcRandal = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('randal', '(q, r) => [q + 3 * r, -r]'));
+    /* custom layouts from the layout builder (division 6, shear −2; division 12 inverted) */
+    const hkcPlain = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('6:-2', '(q, r) => [2 * q - 2 * r, r]'));
+    const hkcInverted = await hklCdp.evalJSON(BUILD_AND_TRANSCRIBE('12:0:i', '(q, r) => [4 * q + 12 * r, -r]'));
     hklCdp.close();
     if (typeof hkc !== 'string') {
       console.error('FAIL — emit stage:', hkc && hkc.__error ? hkc.__error : JSON.stringify(hkc));
@@ -138,16 +141,21 @@ async function main() {
       const spelled = (x) => fieldsOf(x, ['pname', 'accid', 'oct']).map((f) => f.join('/')).sort().join(' ');
       const cellsOf = (x) => fieldsOf(x, ['data-q', 'data-r']).map((f) => f.join(',')).sort().join(' ');
       const eulerCells = fieldsOf(hkc, ['data-q', 'data-r']).map(([q, r]) => [Number(q), Number(r)]);
-      for (const [name, x, mapping, at] of [
-        ['Janko', hkcJanko, 'janko', (q, r) => [2 * q + 3 * r, r]],
-        ['Randal', hkcRandal, 'randal', (q, r) => [q + 3 * r, -r]],
+      /* A custom-layout recording: a score cannot hold a custom layout, so it comes out in the
+         finest preset of the layout's orientation (plain → Chromatic, inverted → Park), the same
+         spelled notes at that preset's cells (`at`: Euler (q, r) → the score's cell). */
+      for (const [name, x, mapping, score, at, where] of [
+        ['Janko', hkcJanko, 'janko', 'Janko', (q, r) => [2 * q + 3 * r, r], 'at the cells played'],
+        ['Randal', hkcRandal, 'randal', 'Randal', (q, r) => [q + 3 * r, -r], 'at the cells played'],
+        ['Custom 6:-2', hkcPlain, 'chromatic', 'Chromatic', (q, r) => [4 * q, r], 'at its Chromatic cells'],
+        ['Custom 12:0:i', hkcInverted, 'park', 'Park', (q, r) => [2 * q + 6 * r, -r], 'at its Park cells'],
       ]) {
         const lr = typeof x === 'string' ? (x.match(/<hkl:layoutReq\b[^>]*>/) ?? [''])[0] : '';
-        check(name + ' recording → a ' + name + ' score', lr.includes('mapping="' + mapping + '"'), lr || JSON.stringify(x));
+        check(name + ' recording → a ' + score + ' score', lr.includes('mapping="' + mapping + '"'), lr || JSON.stringify(x));
         check(name + ' recording → the same spelled notes', typeof x === 'string' && spelled(x) === spelled(hkc),
           typeof x === 'string' ? spelled(x) + ' vs ' + spelled(hkc) : JSON.stringify(x));
         const want = eulerCells.map(([q, r]) => at(q, r).join(',')).sort().join(' ');
-        check(name + ' recording → at the cells played', typeof x === 'string' && cellsOf(x) === want,
+        check(name + ' recording → ' + where, typeof x === 'string' && cellsOf(x) === want,
           typeof x === 'string' ? cellsOf(x) + ' vs ' + want : JSON.stringify(x));
       }
       if (r.tieCount === 0) {
