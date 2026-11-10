@@ -24,8 +24,8 @@
 //
 // Wire protocol (JSON unless noted; every success body carries {path,dir,name}):
 //   GET  /fs/status                         → {version, picker, home, roots}
-//   POST /fs/pick-open  {filter, startDir?} → {path,dir,name} | {cancelled:true}
-//   POST /fs/pick-save  {filter, dir?, name}→ {path,dir,name,appended} | {cancelled:true}
+//   POST /fs/pick-open  {filter, startDir?} → {path,dir,name} | {canceled:true}
+//   POST /fs/pick-save  {filter, dir?, name}→ {path,dir,name,appended} | {canceled:true}
 //   POST /fs/read       {path}              → {path,dir,name,text,mtimeMs}
 //   POST /fs/write?path=P[&ifMtime=N|&ifAbsent=1|&unique=1]   body = raw bytes
 //                                           → {path,dir,name,mtimeMs}
@@ -149,7 +149,7 @@ export function nativePicker(tool) {
     child.on('close', (code) => {
       const p = out.replace(/\r?\n$/, '');
       if (code === 0 && p) resolve(p);
-      else if (code === 1) resolve(null);   // all three: 1 = cancelled
+      else if (code === 1) resolve(null);   // all three: 1 = canceled
       else reject(new HttpError(500, 'picker', `${tool} exited ${code}: ${err.trim()}`));
     });
   });
@@ -337,7 +337,7 @@ export async function createFsBridge(opts) {
       if (filter !== 'score' && filter !== 'musicxml') throw new HttpError(400, 'bad-filter', 'filter must be score|musicxml');
       const dir = (await gateDir(roots, startDir)) ?? home;
       const chosen = await pick('open', filter, dir.endsWith(path.sep) ? dir : dir + path.sep);
-      if (!chosen) return { cancelled: true };
+      if (!chosen) return { canceled: true };
       const real = await gatePath(roots, chosen, READ_EXTS);
       return describe(real);
     },
@@ -351,7 +351,7 @@ export async function createFsBridge(opts) {
       }
       const dir = (await gateDir(roots, rawDir)) ?? home;
       let chosen = await pick('save', filter, path.join(dir, name));
-      if (!chosen) return { cancelled: true };
+      if (!chosen) return { canceled: true };
       /* A typed name without one of the filter's extensions gets the default
          one. The dialog's overwrite confirmation covered the TYPED name, not
          this one — `appended` tells the client to write exclusively. */

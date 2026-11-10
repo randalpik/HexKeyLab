@@ -100,6 +100,17 @@ Path forward when macro buttons are broken: skip 0x24 entirely. Edit per-key cal
 
 **Firmware 1.5.0 (2026-11-08)** adds SysEx `0x52` (ConfirmCalibration), which sends the PICs a new UART command `0x6a` (`cmdCalibrationButton`): a macro-button press in software. With 1.5.0 on both the BBB and the PICs, 0x24 calibration can be completed without the buttons (read from the binary; not yet exercised on hardware here). Completing the built-in routine commits touch-learned values over hand-set KeyData, so back up `files/` first.
 
+**What the 1.5.0 binaries say about `0x52` and the key diagnostic display (2026-11-09).** Read from `LumatoneController` (gdb) and the octave-board image (a PIC18F6xK22; disassembled with `tools/lumatone-cal/pic18dis.py`); none of it exercised on hardware yet.
+
+- **Starting**: `0x24` (keys) and `0x0F` (aftertouch; `0x25` is DemoMode, not aftertouch calibration), `F0 00 21 50 00 <cmd> 00 00 00 00 F7`: 11 bytes, board byte 0, anything else is answered ERROR. Both mark every responding board for its PIC's calibration routine.
+- **The mode gate**: in key or aftertouch calibration mode `decodeMidiMessage` answers every command except `0x52` with STATE (4) before dispatch — pings, GETs and color frames included. (Demo mode passes only `0x25`, pitch/mod calibration only `0x26`, expression-pedal calibration only `0x38`.) The mode returns to normal in `checkKeyboardModeDone`, once every board has sent its calibration-done message, so a `0x52` ACK is not yet the end of the mode.
+- **Ending**: `F0 00 21 50 <board> 52 <value> 00 00 00 F7`, 11 bytes exactly. Board 0 = every responding board, 1–5 = one PIC. Value 0 = cancel, 1 = confirm; any other value or board is answered ERROR (3), and outside key/aftertouch calibration mode the answer is NACK (0).
+- **PIC side**: the key-calibration routine (`0x121C`) polls the UART for `0x6a` once per scan pass (`0x4392`). Flag 0 returns before the threshold computation with the save flag clear; flag 1 takes the path the physical buttons take. The aftertouch routine polls the same way (`0x208C`) and treats flag 0 the same.
+- **BBB side** (`decodePicMessage`, same logic in 1.4.0): a PIC's calibration-done message with a zero save flag only leaves cal mode. A non-zero flag queues GetMax, GetMin, a third query (flag bit `0x200`, not identified) and GetAftertouchMax, and the replies are copied into `boardId[]` and written by `storeKeySetting`: `KeyData_N`'s MAX and MIN rows, and the AT-MAX row, are rewritten. Nothing on the calibration path writes `ThresholdData_N`.
+- **The diagnostic display is an inner loop of that same routine**, in 1.4.0's PIC image too. It is armed unconditionally at entry, whether the routine was entered by holding both macro buttons at power-up or by `0x24` (PIC command `0x5E`). Either macro button down during a scan pass enters it; it repaints every key from its ADC value, and it ends only when both buttons are down together, which also clears the save flag. The buttons are read from the PIC's pins (PORTE bits 2 and 4), so `0x6a` can neither enter nor leave it, and a board in the display loop does not poll the UART: a `0x52` sent meanwhile is not seen by that board. A board with exactly one working macro button can enter the display and never leave it (power-cycle).
+
+HKL drives all of this from Calibrate Keys (`lumatone/keycal.ts`, architecture/hkl.md → Built-in calibration); `tools/lumatone-cal/keydata-backup.sh` saves, verifies and restores `KeyData_N` / `ThresholdData_N`.
+
 ### In-memory per-board state (`boardId[5]`) is indexed by PIC number, NOT spatial board
 
 Two related quirks compound:
@@ -1853,7 +1864,7 @@ A key/meter change lives as a `<section>`-level sibling BETWEEN measures, so a c
 
 ## A probe that edits the model directly cannot test undo — withHistory never runs, so Ctrl+Z silently no-ops (2026-08-30)
 
-Chasing "does undo restore the layout exactly?", a sonata probe called `model.deleteAtCursor()` and then dispatched Ctrl+Z. Result looked alarming: the post-undo geometry equalled the post-EDIT geometry, and repeated cycles drifted monotonically (a measure's width grew 7194 → 7211 → 7380 units). The real story: only the INPUT layer wraps mutations in `withHistory`, so a direct model call pushes nothing on the undo stack — Ctrl+Z popped an unrelated entry (or nothing) and the probe quietly deleted one more chord per cycle (measure source 2834 → 2652 → 2397 bytes). The spot-splice doc already warned "drive through the input layer (keystrokes) to include withHistory"; it applies to any probe or fixture testing undo/redo, history labels, or edit reversibility. Two tells that should have redirected the diagnosis faster: `afterUndo` diffs byte-identical to `duringEdit` diffs (undo changed nothing at all), and the live DOM matching a fresh full render within 4 units (the RENDERER was right; the document was wrong). Rule: any reversibility test dispatches real keystrokes and asserts a content invariant (e.g. note count) after BOTH the edit and the undo, so a no-op undo fails loudly instead of proving a phantom bug.
+Chasing "does undo restore the layout exactly?", a sonata probe called `model.deleteAtCursor()` and then dispatched Ctrl+Z. Result looked alarming: the post-undo geometry equaled the post-EDIT geometry, and repeated cycles drifted monotonically (a measure's width grew 7194 → 7211 → 7380 units). The real story: only the INPUT layer wraps mutations in `withHistory`, so a direct model call pushes nothing on the undo stack — Ctrl+Z popped an unrelated entry (or nothing) and the probe quietly deleted one more chord per cycle (measure source 2834 → 2652 → 2397 bytes). The spot-splice doc already warned "drive through the input layer (keystrokes) to include withHistory"; it applies to any probe or fixture testing undo/redo, history labels, or edit reversibility. Two tells that should have redirected the diagnosis faster: `afterUndo` diffs byte-identical to `duringEdit` diffs (undo changed nothing at all), and the live DOM matching a fresh full render within 4 units (the RENDERER was right; the document was wrong). Rule: any reversibility test dispatches real keystrokes and asserts a content invariant (e.g. note count) after BOTH the edit and the undo, so a no-op undo fails loudly instead of proving a phantom bug.
 
 ## Verovio spaces the SAME document differently per breaks algorithm — and page-based getMEI hands you the castoff layout 18× cheaper than rendering it (2026-08-30)
 
@@ -3477,7 +3488,7 @@ filled shapes needs all three.
 ## Verovio's autogenerated page header on pages 2+ is "– N –" (2026-09-04)
 
 `header: 'auto'` gives pages 2+ a `g.pgHead.autogenerated` holding
-`<text font-size="0px"><tspan class="rend" x=centre y=195 text-anchor="middle">`
+`<text font-size="0px"><tspan class="rend" x=center y=195 text-anchor="middle">`
 with three children: `tspan.text` ("– "), `tspan.num` (which nests a hidden
 `<title class="labelAttr">page</title>` before its digit — `textContent`
 reads "page2"), and `tspan.text` (" –"). Composer's `styleRunningHeader`

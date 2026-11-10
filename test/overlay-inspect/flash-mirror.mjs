@@ -42,7 +42,7 @@ function cleanup(code) {
   if (exiting) return; exiting = true;
   /* Only PIDs this script spawned. */
   for (const p of procs) { try { p.kill('SIGTERM'); } catch {} }
-  stopBrowser(null, profileDir);    // waits out the Chromium signalled above
+  stopBrowser(null, profileDir);    // waits out the Chromium signaled above
   process.exit(code);
 }
 process.on('SIGINT', () => cleanup(130));

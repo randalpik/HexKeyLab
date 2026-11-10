@@ -86,7 +86,7 @@ export function syncViewToOutline(outline: OutlineMode, immediate: boolean): voi
      canvas width and one canvas height. Past that the slide shares no landmark
      with where it started (and in ANIM_DURATION it is a blur), and its layer,
      the bounding box of both views (buildHexLayerForTween), grows without
-     bound — so snap, cancelling any slide in flight. Clicking a key on screen
+     bound — so snap, canceling any slide in flight. Clicking a key on screen
      stays well inside it. */
   const dQ = targetQ - view.viewQ, dR = targetR - view.viewR;
   const ux = dQ * dxH + dR * dxH * 0.5, uy = -dR * dyH;

@@ -22,6 +22,38 @@ slide below 1.5.0. No dev server or MIDI device is needed. **Run it
 before declaring any change to `lumatone/sync.ts`, `lumatone/sysex.ts` or the
 frame builder done.**
 
+## Built-in key / aftertouch calibration (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/keycal.mjs
+```
+
+Drives the real `lumatone/keycal.ts`, `lumatone/sysex.ts` and `lumatone/sync.ts`
+against a scripted device that answers as firmware 1.5.0's `decodeMidiMessage`
+does: `24h` / `0Fh` enter a calibration mode, every command but `52h` is then
+answered STATE, `52h` is ACKed in a calibration and NACKed outside one, and the
+mode returns to normal a number of requests later. Checks that no start is sent
+to firmware below 1.5.0 (or of unknown version); the exact start and end
+messages; that color sync sends nothing while a calibration runs and re-syncs
+every key after it; that the end is polled until the STATE gate opens; that a
+board which never reports back leaves Confirm / Cancel on offer; that a device
+found already calibrating at connect is adopted and its firmware version
+recovered; that another mode's STATE to `52h` is let go; departure; and a lost
+start ACK. Takes about 10 s (it waits out real timeouts). No dev server or MIDI
+device is needed. **Run it before declaring any change to `lumatone/keycal.ts`
+done.**
+
+```sh
+node test/hkl-midi/keycal-overlay.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+The overlay around it, in headless Chromium: builds the real Calibrate Keys
+overlay, clicks the real buttons against a fake output, and checks that the
+section sits first under the header, that the two start buttons give way to
+Confirm / Cancel while a calibration runs and return after it, the status
+line, the bytes on the wire, the read-back of the per-board values, and that
+firmware 1.4.0 is refused with a reason.
+
 ## Color sync ordering (hardware-free)
 
 ```sh

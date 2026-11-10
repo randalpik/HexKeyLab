@@ -202,7 +202,7 @@ async function hostPhase() {
     check('pick-open startDir outside roots → falls back to root', pickLog.at(-1)?.start === rootReal + path.sep, JSON.stringify(pickLog.at(-1)));
     pickQueue.push(null);
     r = await post(P, '/fs/pick-open', { filter: 'score' });
-    check('pick-open cancel → {cancelled}', r.status === 200 && r.json.cancelled === true, r.text);
+    check('pick-open cancel → {canceled}', r.status === 200 && r.json.canceled === true, r.text);
     pickQueue.push(path.join(outside, 'x.hkc'));
     r = await post(P, '/fs/pick-open', { filter: 'score' });
     check('pick-open outside roots → 403', r.status === 403 && r.json.error === 'outside-roots', r.text);

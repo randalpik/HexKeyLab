@@ -22,12 +22,12 @@ export const SYSEX_CMD_GET_FIRMWARE_REVISION = 0x31;
    never touches the PICs or key state — and echoes the 4 data bytes back:
    F0 00 21 50 00 33 01 <d1 d2 d3 d4> F7. Used as the liveness heartbeat. */
 export const SYSEX_CMD_PING = 0x33;
-/* Firmware 1.5.0 whole-keyboard colour frame (SetOctaveColours): board 0 + 280 keys
+/* Firmware 1.5.0 whole-keyboard color frame (SetOctaveColours): board 0 + 280 keys
    × 7-bit R, G, B, boards 1→5 then keys 0→55; 847 bytes, length checked exactly.
    The firmware stores each value << 1 and defers the ACK until every responding
-   board's PIC has the colours. A frame sent before that ACK replaces the pending
+   board's PIC has the colors. A frame sent before that ACK replaces the pending
    one and swallows its ACK, so keep exactly one frame in flight. */
-export const SYSEX_CMD_SET_OCTAVE_COLOURS = 0x55;
+export const SYSEX_CMD_SET_OCTAVE_COLORS = 0x55;
 export const FRAME_FIRMWARE = [1, 5, 0] as const;
 
 /* True when [major, minor, revision] is at least `min`. */
@@ -70,9 +70,28 @@ export const SYSEX_CMD_RESET_BOARD_THRESHOLDS = 0x34;
 export const SYSEX_CMD_GET_BOARD_THRESHOLDS = 0x3A;
 export const SYSEX_CMD_GET_BOARD_SENSITIVITY = 0x3B;
 
+/* Built-in touch calibration: the firmware learns every key's thresholds from
+   presses. 24h starts key calibration and 0Fh aftertouch calibration, both
+   F0 00 21 50 00 <cmd> 00 00 00 00 F7 (board byte 0 only; buildRequestSysEx).
+   While either runs, the firmware answers every other command with STATE.
+   Firmware 1.5.0 adds 52h to end it from software:
+   F0 00 21 50 <board> 52 <value> 00 00 00 F7 (buildToggleSysEx) — board 0 = all
+   boards; value 1 confirms (the learned thresholds replace the stored per-key
+   ones), 0 cancels (nothing is saved); NACK when no calibration is running.
+   Older firmware ends a calibration only on a board's own macro buttons, so a
+   start is never sent there (lumatone/keycal.ts; lessons.md). */
+export const SYSEX_CMD_CALIBRATE_AFTERTOUCH = 0x0F;
+export const SYSEX_CMD_CALIBRATE_KEYS = 0x24;
+export const SYSEX_CMD_CONFIRM_CALIBRATION = 0x52;
+export const CONFIRM_CALIBRATION_FIRMWARE = [1, 5, 0] as const;
+
 export const SYSEX_NACK = 0x00;
 export const SYSEX_ACK = 0x01;
 export const SYSEX_BUSY = 0x02;
+/* ERROR: bad arguments, or (1.5.0) a board marked not-responding. STATE: the
+   device is in a mode that refuses this command (a calibration, demo). */
+export const SYSEX_ERROR = 0x03;
+export const SYSEX_STATE = 0x04;
 
 /* baseKeys group index (0-4) → SysEx board byte (1-based). Standard = identity;
    swapped variant for units with boards 3 & 4 physically transposed. */
@@ -114,7 +133,7 @@ export function buildFrameSysEx(colors: readonly string[]): SysexMessage {
   const msg = new Uint8Array(847) as SysexMessage;
   msg[0] = 0xF0;
   msg[1] = SYSEX_MANU[0]; msg[2] = SYSEX_MANU[1]; msg[3] = SYSEX_MANU[2];
-  msg[4] = 0; msg[5] = SYSEX_CMD_SET_OCTAVE_COLOURS;
+  msg[4] = 0; msg[5] = SYSEX_CMD_SET_OCTAVE_COLORS;
   for (let i = 0; i < 280; i++) {
     const at = 6 + ((sysexBoardFor(Math.floor(i / 56)) - 1) * 56 + (i % 56)) * 3;
     const hex = colors[i];

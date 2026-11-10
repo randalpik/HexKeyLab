@@ -4,6 +4,12 @@
 // private encapsulated state — not here. Only state that other modules need
 // to read/write directly belongs here.
 
+/** Built-in key / aftertouch calibration phase (lumatone/keycal.ts is the only
+ *  writer). 'unknown' = the device was found in a calibration mode HKL did not
+ *  start. Anything but 'idle' means the device answers STATE to every command
+ *  except the calibration end, so color sync sends nothing. */
+export type KeyCalPhase = 'idle' | 'starting' | 'key' | 'aftertouch' | 'unknown' | 'ending';
+
 export const lumatone: {
   /** user's Auto-sync checkbox state */
   autoSyncEnabled: boolean;
@@ -15,10 +21,13 @@ export const lumatone: {
   firmware: number[] | null;
   /** user's Hover checkbox: light the key under the canvas pointer (frame sync only) */
   hoverMirror: boolean;
+  /** built-in calibration phase; see KeyCalPhase */
+  keyCal: KeyCalPhase;
 } = {
   autoSyncEnabled: false,
   deviceColors: null,
   fixedLayoutSent: false,
   firmware: null,
   hoverMirror: false,
+  keyCal: 'idle',
 };

@@ -175,7 +175,7 @@ const SCRIPT = `(async () => {
   push('C16a a nearby Ctrl+click still slides', animMod.animation.isAnimating, animMod.animation.isAnimating, true);
   await wait(SLIDE);                                                expect('C16b ...and lands centered', '-3,3');
   const n16 = layerNormal(); push('C16c ...with the layer rebuilt at normal size', n16.ok, n16.got, n16.want);
-  /* C17: (-3,3) is its band's spine; its neighbours (-2,3) and (-4,3) are not */
+  /* C17: (-3,3) is its band's spine; its neighbors (-2,3) and (-4,3) are not */
   await ctrlClick('C17a', -2, 3);                                   expect('C17a banded: a Ctrl+click right of the spine is centered exactly', '-2,3', '-2,3');
   await ctrlClick('C17b', -4, 3);                                   expect('C17b banded: a Ctrl+click left of the spine is centered exactly', '-4,3', '-4,3');
   refState.clearSelection(); await wait(SLIDE);

@@ -108,7 +108,7 @@ export function ensureLoopOverlay(ac: AudioContext, sampleEngine: SampleEngineSu
   audioCtx = ac;
   /* ChannelSplitter routes each input channel to a separate output. We tap
      sampleMaster into the splitter, then connect each output to its own
-     mono AnalyserNode. The analysers each see one channel of the stereo
+     mono AnalyserNode. The analyzers each see one channel of the stereo
      master signal — no downmix happens, getFloatTimeDomainData returns the
      raw per-channel waveform. */
   const splitter = ac.createChannelSplitter(2);

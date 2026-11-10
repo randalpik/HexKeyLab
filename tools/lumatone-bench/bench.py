@@ -278,7 +278,7 @@ def run_phase(client, state, spec, args, stopped, summaries):
         client.verify(state)
         summary['readback_verified'] = True
         print(f"  {client.run_id:18} {summary['frames_per_s']:8.1f} frames/s "
-              f"({summary['key_updates_per_s']:.0f} key colours/s)  "
+              f"({summary['key_updates_per_s']:.0f} key colors/s)  "
               f"p50 {summary['rtt_p50_ms'] or 0:.2f} ms  p95 {summary['rtt_p95_ms'] or 0:.2f} ms  "
               f"max {summary['rtt_max_ms'] or 0:.2f} ms  RGB verified", flush=True)
         return

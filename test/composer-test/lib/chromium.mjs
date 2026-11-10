@@ -76,7 +76,7 @@ function profileHolders(profileDir) {
 
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** Stops the browser `proc` (null if the caller already signalled it, or never
+/** Stops the browser `proc` (null if the caller already signaled it, or never
  *  launched it) and removes its profile. A browser writes profile files while
  *  it shuts down (Chromium's Local State, Default/), from the main process and
  *  from helpers that outlive it by tens of ms, so the profile is removed only

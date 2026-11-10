@@ -34,7 +34,7 @@ export type HklOrchestratorEvent =
   | { type: 'hkl-hello'; version: number }
   /** Sent on HKL unload (best-effort). */
   | { type: 'hkl-bye' }
-  /** Per-import acknowledgement. `ok:false` carries an error string the
+  /** Per-import acknowledgment. `ok:false` carries an error string the
    *  Orchestrator surfaces in its status bar. */
   | { type: 'import-ack'; instrumentKey: string; ok: boolean; error?: string };
 

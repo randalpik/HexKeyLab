@@ -6,11 +6,13 @@
 // registered hotkey callback so init.ts can keep the checkbox + pref in sync.
 //
 // Lets the user adjust per-board key thresholds and CC/aftertouch sensitivity
-// live from HKL, bypassing the macro-button-driven calibration routine
-// (CMD 0x24) — useful when those buttons are partly broken. There is no SysEx
-// command for per-key threshold tuning; the firmware-internal "SET_KEY_*"
-// commands (0x29–0x2C, 0x32) are board-scoped, so per-board is the ceiling
-// without the macro buttons.
+// live from HKL. There is no SysEx command for per-key threshold tuning; the
+// firmware-internal "SET_KEY_*" commands (0x29–0x2C, 0x32) are board-scoped,
+// so per-board is the ceiling for numeric control from here.
+//
+// The top section runs the firmware's own touch-learning calibration instead
+// (keys 0x24, aftertouch 0x0F), ended from here with 0x52 on firmware 1.5.0+
+// (lumatone/keycal.ts) — no macro buttons needed.
 //
 // CRITICAL: two of the SET commands pack two values per message:
 //   • 0x29 sets (maxThreshold, aftertouchThreshold) together
@@ -54,6 +56,7 @@ import { lumatone } from '../state/lumatone.js';
 import { savePrefs, loadPrefs } from '../state/persistence.js';
 import { SampleEngine } from '../audio/samples.js';
 import { syncLumatoneColors } from './sync.js';
+import { startKeyCal, endKeyCal, keyCalStatus, onKeyCalChange } from './keycal.js';
 
 /* Per-key stats are keyed by physical key, "ch,note": in the fixed layout the
    channel is the board (group + 1) and the note the key's index on it. */
@@ -281,6 +284,77 @@ function refreshSliders(logical: number): void {
       label.style.color = 'rgba(255,255,255,0.6)';
     }
   }
+}
+
+/* Built-in touch calibration (lumatone/keycal.ts). Idle: the two start
+   buttons. While a calibration runs they give way to Confirm / Cancel. When
+   one has ended, the per-board values are read back. */
+function makeBuiltinCalSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  Object.assign(sec.style, {
+    borderTop: '1px solid rgba(255,255,255,0.12)',
+    padding: '6px 8px',
+  });
+  const title = document.createElement('strong');
+  title.textContent = 'Built-in calibration';
+  Object.assign(title.style, { fontSize: '12px', color: '#9cf' });
+  sec.appendChild(title);
+  const hint = document.createElement('div');
+  hint.textContent = 'The Lumatone learns each key\u2019s thresholds from your touch. Confirm replaces the '
+    + 'per-key thresholds stored on it; Cancel changes nothing. Firmware 1.5.0+.';
+  Object.assign(hint.style, {
+    fontSize: '10px', color: 'rgba(255,255,255,0.55)', margin: '3px 0 5px',
+  });
+  sec.appendChild(hint);
+  const row = document.createElement('div');
+  Object.assign(row.style, { display: 'flex', flexWrap: 'wrap', gap: '4px' });
+  const mkBtn = (label: string, tip: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = tip;
+    Object.assign(b.style, {
+      fontSize: '11px', padding: '2px 6px',
+      background: 'rgba(255,255,255,0.08)', color: '#eee',
+      border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+      cursor: 'pointer',
+    });
+    b.addEventListener('click', onClick);
+    row.appendChild(b);
+    return b;
+  };
+  const startKey = mkBtn('Start key calibration', 'CMD 0x24 — all five boards learn key thresholds',
+    () => startKeyCal('key'));
+  const startAt = mkBtn('Start aftertouch calibration', 'CMD 0x0F — all five boards learn aftertouch thresholds',
+    () => startKeyCal('aftertouch'));
+  const confirm = mkBtn('Confirm (save)', 'CMD 0x52, value 1 — save the learned thresholds on the Lumatone',
+    () => endKeyCal(true));
+  const cancel = mkBtn('Cancel (discard)', 'CMD 0x52, value 0 — leave calibration; nothing is saved',
+    () => endKeyCal(false));
+  sec.appendChild(row);
+  const statusEl = document.createElement('div');
+  Object.assign(statusEl.style, {
+    fontSize: '11px', color: 'rgba(255,255,255,0.8)', marginTop: '5px', lineHeight: '1.35',
+  });
+  sec.appendChild(statusEl);
+  let prev = lumatone.keyCal;
+  const refresh = (): void => {
+    const phase = lumatone.keyCal;
+    const ending = phase !== 'idle' && phase !== 'starting'; /* running, or its end in flight */
+    const busy = phase === 'starting' || phase === 'ending';
+    for (const b of [startKey, startAt]) b.style.display = ending ? 'none' : '';
+    for (const b of [confirm, cancel]) b.style.display = ending ? '' : 'none';
+    for (const b of [startKey, startAt, confirm, cancel]) {
+      b.disabled = busy;
+      b.style.opacity = busy ? '0.5' : '1';
+    }
+    statusEl.textContent = keyCalStatus();
+    statusEl.style.display = statusEl.textContent ? '' : 'none';
+    if (phase === 'idle' && prev === 'ending') for (let i = 0; i < 5; i++) getBoardValues(i);
+    prev = phase;
+  };
+  onKeyCalChange(refresh);
+  refresh();
+  return sec;
 }
 
 /* Board 3↔4 routing swap. For units with boards 3 & 4 physically transposed,
@@ -1613,6 +1687,7 @@ export function ensureLumaDiag(): void {
     fontSize: '12px',
   });
   panel.appendChild(header);
+  panel.appendChild(makeBuiltinCalSection());
   panel.appendChild(makeSwapSection());
   for (let i = 0; i < 5; i++) panel.appendChild(makeBoardSection(i));
   panel.appendChild(makeVelocityCalSection());

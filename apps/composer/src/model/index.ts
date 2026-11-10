@@ -1131,7 +1131,7 @@ export class ComposerModel {
    *
    *  SAFETY: reuse is sound only while the live doc still matches `reuseMei`. In
    *  HKL_INDEX_CHECK mode this asserts that — catching any doc mutation that
-   *  reached the DOM without funnelling through history.push (which would leave
+   *  reached the DOM without funneling through history.push (which would leave
    *  HistoryManager's cached MEI stale). */
   snapshotStateReusing(reuseMei: string | null): { mei: string; voice: Voice; cursors: Record<Voice, number>; docVer: number } {
     /* A BEFORE snapshot precedes a mutation: any lazy AFTER still pending must

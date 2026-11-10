@@ -4,7 +4,7 @@
 //
 // Drives the real lumatone/sync.ts + lumatone/sysex.ts against a scripted device that
 // ACKs only when told to, which is how the firmware behaves: a frame's ACK arrives
-// once every board has its colours, and nothing else is in flight meanwhile.
+// once every board has its colors, and nothing else is in flight meanwhile.
 import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;

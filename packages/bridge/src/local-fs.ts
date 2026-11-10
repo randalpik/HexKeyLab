@@ -114,13 +114,13 @@ export function createLocalFs(): LocalFs {
       }
     },
     async pickOpen(filter, startDir) {
-      const r = await postJson<LocalFileRef | { cancelled: true }>('/fs/pick-open', { filter, startDir: startDir ?? undefined });
-      return 'cancelled' in r ? null : r;
+      const r = await postJson<LocalFileRef | { canceled: true }>('/fs/pick-open', { filter, startDir: startDir ?? undefined });
+      return 'canceled' in r ? null : r;
     },
     async pickSave(filter, name, dir) {
-      const r = await postJson<(LocalFileRef & { appended: boolean }) | { cancelled: true }>(
+      const r = await postJson<(LocalFileRef & { appended: boolean }) | { canceled: true }>(
         '/fs/pick-save', { filter, name, dir: dir ?? undefined });
-      return 'cancelled' in r ? null : r;
+      return 'canceled' in r ? null : r;
     },
     readText(path) {
       return postJson<LocalFileText>('/fs/read', { path });

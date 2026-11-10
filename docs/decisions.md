@@ -4284,7 +4284,7 @@ reaches `osc.type`.
 
 ## 2026-08-30 — Page-view edits preserve scroll; composer-test visual capture reworked (viewport-fit raster, compact-vs-fullPage framing, capture meta)
 
-**Context**: after Phase C-A, Max reported every page-view edit shifting vertical scroll then scroll-into-view correcting it, even for edits that move nothing. Probing confirmed a T2.1-era flaw: the virtualized rebuild's zero-height placeholders + the page-1 measurement forced layout on a collapsed extent, clamping #score.scrollTop (25392 → 2744 on the sonata, content-identical edit). Fixing it and pinning it with a fixture then unravelled a chain of test-infrastructure problems, several of which Max diagnosed from screenshots after instituting the surface-both-images-and-stop rule.
+**Context**: after Phase C-A, Max reported every page-view edit shifting vertical scroll then scroll-into-view correcting it, even for edits that move nothing. Probing confirmed a T2.1-era flaw: the virtualized rebuild's zero-height placeholders + the page-1 measurement forced layout on a collapsed extent, clamping #score.scrollTop (25392 → 2744 on the sonata, content-identical edit). Fixing it and pinning it with a fixture then unraveled a chain of test-infrastructure problems, several of which Max diagnosed from screenshots after instituting the surface-both-images-and-stop rule.
 
 **Picked**:
 1. **renderPage (virtualized) captures and restores scrollTop/scrollLeft in the same synchronous block** — after placeholder sizing, before mountVisiblePages, so the pages at the restored position mount. Shorter documents re-clamp naturally. The numeric offset is preserved (content below a merged line legitimately shifts); anchor-based preservation belongs to Phase C-B's splice, which will stop rebuilding the container entirely.
@@ -10359,7 +10359,7 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 - That layer then stayed: `draw()` rebuilds only when a layer is dirty, building the tween layer clears both flags, and nothing set them when the tween landed. Every frame kept blitting from it.
 
 **Picked:**
-- **Slide only while the old and new views overlap,** meaning a screen displacement under one canvas width and one canvas height. Otherwise snap, cancelling any slide in flight (`syncViewToOutline`).
+- **Slide only while the old and new views overlap,** meaning a screen displacement under one canvas width and one canvas height. Otherwise snap, canceling any slide in flight (`syncViewToOutline`).
   - Past that point the two views share no landmark, and at the fixed 500 ms the motion is a blur.
   - The tween layer is now capped at 4× a normal one.
   - The cutoff scales with the window and hex size, unlike a key count. Ctrl+clicking a key on screen stays well inside it.
@@ -10473,7 +10473,7 @@ Gate: `test/hkl-midi/velocity-owners.mjs`. P, R and K failed first on the unfixe
 ## Inverted copy columns take their source's color (2026-11-01, Max)
 
 **Picked (Max):** the inverted-layout mirror keys off the pitch, not the cell: the banded-Ptolemaic base b is replaced by −(b − b3), b3 being the base's fifths, where the 2026-10-30 rule used −(b + r).
-- **Why:** on an original column r = −b3, so Randal and every original column keep their color. A copy column sounds its source's pitch two rows away in Park (j = 2) and one or two in Bass (j = 1, 2, 3), so −(b + r) mirrored it by the wrong number of octaves. Max reported both symptoms in Park: the same name and tuning in two colors (A3 at (0,0) purple, at (−5,2) teal), and a syntonic comma in one color (B3 9/8 at (1,0) and 10/9 at (−4,2), both blue), its two hue steps cancelled by the copy's error.
+- **Why:** on an original column r = −b3, so Randal and every original column keep their color. A copy column sounds its source's pitch two rows away in Park (j = 2) and one or two in Bass (j = 1, 2, 3), so −(b + r) mirrored it by the wrong number of octaves. Max reported both symptoms in Park: the same name and tuning in two colors (A3 at (0,0) purple, at (−5,2) teal), and a syntonic comma in one color (B3 9/8 at (1,0) and 10/9 at (−4,2), both blue), its two hue steps canceled by the copy's error.
 - **The rule now:** every inverted layout colors a pitch as Randal does, as every plain one colors it as Euler does. Color is one function of the pitch and the layout's orientation.
 - **What remains:** under Schismatic, Park and Bass still put two cells with one name a Pythagorean comma apart in one color (75 and 126 pairs over q ∈ [−16, 16], r ∈ [−8, 8]). That is the hue formula (Pythagorean comma = 7 ≡ 0), not the mirror; no plain layout has such pairs over that window.
 
@@ -10748,3 +10748,26 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** Composer fixtures `map_held_keys_from_custom` and `map_entry_gate_custom` failed on the old code (the key arrived at `-2,1`; no prompt, one note inserted) and pass; affected run 739/739. `test/transcription-roundtrip/run.mjs` gained a plain and an inverted custom recording (four checks failed before: the score was stamped `6:-2` / `12:0:i`). `test/layout-presets/oracle.mjs` section S pins the exact cases above over all 48 layouts (6,386,218 checks; 5,285,272 before).
 
 **Where:** `apps/composer/src/{main,expressions}.ts`; `apps/hkl/src/transcription/index.ts`; `packages/bridge/src/protocol.ts` (comment); docs/architecture.md, docs/architecture/{composer,hkl}.md, docs/guide/core.md; docs/local/layout-presets.md.
+
+## Built-in calibration from HKL: the device's answers drive the phase (2026-11-09, Max)
+
+**Context:** firmware 1.5.0 adds SysEx `0x52`, which ends the firmware's touch-learning key / aftertouch calibration from software; before it, only a board's two macro buttons could, and three of this unit's five button pairs are dead. Max asked for it near the top of Calibrate Keys, with both key and aftertouch as start options that give way to Confirm / Cancel while one runs.
+
+**Picked:**
+- **One phase, one writer.** `lumatone.keyCal` is written only by `lumatone/keycal.ts`; color sync reads it and sends nothing unless it is `idle`. No second "calibrating" flag anywhere.
+- **The device is the authority on its mode.** HKL does not track the mode by remembering what it sent: STATE to a start or to the connect-time firmware query means the device is already in a mode (`unknown`, with Confirm / Cancel offered); NACK to `0x52` means it was not calibrating; STATE to `0x52` means some other mode, and HKL lets go. A page reloaded mid-calibration therefore still has the way out.
+- **The end is confirmed by the mode gate, not by the `0x52` ACK**: the firmware leaves the mode only when every board has reported back, so keycal.ts polls a harmless request until it is no longer answered STATE. Deterministic for the normal case; the poll budget (20 × 300 ms) only decides when to hand a stuck board back to the user, never whether the calibration is treated as over.
+- **A start is refused below 1.5.0**, and while the version is unknown: there it could only be ended with the macro buttons, which is exactly the trap the numeric method was built to avoid.
+- **Colors are re-synced from scratch afterwards** (the routine repaints the keys), and the overlay re-reads the per-board values.
+- **No confirmation dialog on Confirm.** It replaces the stored per-key thresholds; the section says so, and `tools/lumatone-cal/keydata-backup.sh` saves and restores them.
+
+**Read from the binaries, not yet exercised on hardware** (lessons.md → "The PIC's calibration mode"): `0x52` value 0 cancels and 1 confirms; Cancel writes nothing on either side; Confirm rewrites `KeyData_N`'s MAX, MIN and AT-MAX rows; aftertouch calibration is `0x0F` (`0x25` is DemoMode); the key diagnostic display is an inner loop of the key routine reachable only with a board's physical macro buttons, so it is unavailable on a board whose buttons are dead.
+
+**Rejected:**
+- A second firmware query at connect to detect a running calibration: `queryFirmware` already gets the STATE answer, so it hands it on (`onRefused`).
+- Treating the `0x52` ACK as the end: the next color frame would be refused by a board still in the routine.
+- Disabling the rest of the overlay while calibrating: its commands are refused with STATE and change nothing.
+
+**Gates:** `test/hkl-midi/keycal.mjs` (new, hardware-free; failed at import before the module existed, 9 checks pass), `test/hkl-midi/keycal-overlay.mjs` (new; the overlay section in headless Chromium, real buttons against a fake output) 18/18, `frame-sync.mjs` 16 checks, `departure.mjs` 56/56. `keydata-backup.sh` `save` and `verify` run against the live unit; `restore` not yet run.
+
+**Where:** `apps/hkl/src/lumatone/{keycal,protocol,sysex,sync,lumadiag}.ts`, `apps/hkl/src/state/lumatone.ts`, `apps/hkl/src/midi/engine.ts`, `apps/hkl/src/types.ts`; `tools/lumatone-cal/{keydata-backup.sh,pic18dis.py}`; docs/architecture/hkl.md, docs/lessons.md, docs/lumatone-calibration.md, docs/guide/core.md.

@@ -209,8 +209,10 @@ export const sysex: SysexQueueModule = {
   },
 
   /* Silent firmware revision query at connect time. Logs the result, keeps it in
-     lumatone.firmware (it decides per-key vs frame color sync), then calls onKnown. */
-  queryFirmware(onKnown?: () => void): void {
+     lumatone.firmware (it decides per-key vs frame color sync), then calls onKnown.
+     An answer that carries no version goes to onRefused with its status byte: STATE
+     means the device is in a calibration mode (lumatone/keycal.ts adopts it). */
+  queryFirmware(onKnown?: () => void, onRefused?: (status: number) => void): void {
     if (!midi.midiOut) return;
     const msg = buildRequestSysEx(SYSEX_CMD_GET_FIRMWARE_REVISION);
     msg.onResponse = function (data: Uint8Array): void {
@@ -219,10 +221,14 @@ export const sysex: SysexQueueModule = {
         lumatone.firmware = [data[7], data[8], data[9]];
         console.log('Lumatone firmware: v' + data[7] + '.' + data[8] + '.' + data[9]);
         if (onKnown) onKnown();
+      } else if (data[6] === SYSEX_BUSY) {
+        /* the queue retries; the real answer comes through here again */
       } else if (data[6] === SYSEX_NACK) {
         console.log('Lumatone firmware query: not acknowledged (pre-1.0.8 firmware?)');
+        if (onRefused) onRefused(data[6]);
       } else {
         console.log('Lumatone firmware query: unexpected response status 0x' + data[6].toString(16));
+        if (onRefused) onRefused(data[6]);
       }
     };
     sysex.enqueueControl(msg);

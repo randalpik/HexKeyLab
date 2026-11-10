@@ -138,6 +138,9 @@ export function cancelLumatoneSlide(): void {
    then either starts sending or swaps the queue if a push is already running. */
 export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): void {
   if (!midi.midiOut || !lumatone.autoSyncEnabled) return;
+  /* A device in its built-in calibration answers STATE to everything but the
+     calibration end; keycal.ts re-syncs from scratch when the routine is over. */
+  if (lumatone.keyCal !== 'idle') return;
   const causeAt = performance.now();
   const frames = frameSyncActive();
 
