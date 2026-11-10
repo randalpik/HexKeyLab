@@ -10649,3 +10649,20 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/ref-centering.mjs` expects `view = kbAnchor = ref` banded; C15a (a far ref off the spine) and the new C17a/b (Ctrl+clicks either side of a spine) failed under the old rule (26/26 now). `banded-toggle.mjs` B2 now checks that a toggle never moves the keyboard and the held key keeps its cell; B2b–d failed under the old rule (39/39 now). `mapping-switch.mjs` M8c expects the converted ref; it passes under both rules, since A4 converts onto a spine in every preset. The chromatic and Wicki-Hayden oracles lose section G (`refSpine`). Every other hkl-midi gate passes, as do the rest of both oracles.
 
 **Where:** `apps/hkl/src/state/reference.ts`, `apps/hkl/src/ui/controls.ts` (`setBanded`), `apps/hkl/src/tuning/refspine.ts` (deleted); docs/architecture.md (Ref-driven layout shift, Wicki-Hayden, chromatic, layout matrix), docs/architecture/hkl.md, docs/guide/core.md, docs/lessons.md.
+
+## Color is the spine rule; no comma terms (2026-11-09, Max)
+
+**Problem:** the Accordion, Randal and Park showed the wrong colors unbanded (every mode) and in Schismatic. The 2026-10-30 rule mirrored only the banded-Ptolemaic base and added each mode's offset from it as fifths-spine steps: "Every other term keeps its sign: each mode's comma offsets, the unbanded per-band commas". That clause was my wording, a shortcut for working out what the color should be, not Max's ruling. It holds for a syntonic comma (2 steps on either spine) and for nothing else. Against the rule below, the hue was off by 2 steps per band from the anchor, and unbanded Ptolemaic on Randal was not octave stripes. Found by implementing Max's one-sentence rule literally and comparing it with `keyColor` cell by cell.
+
+**Picked (Max):** one rule. The Pythagorean spine holds one color per octave, purple in octave 3, and a note chained from it by 5:4 takes the spine's color at its octave. The spine is the chain of fifths; in an inverted layout it is the chain of fourths, calculated separately, with the cycle reversed.
+- **No explicit comma rules exist.** Unbanded layouts, Schismatic and every comma offset are the rule applied to the pitch. A Pythagorean comma keeping its hue is a coincidence of the fifths spine (12 fifths span 7 octaves, a whole turn of the 7 hues); 12 fourths span 5.
+- **Septimal keeps its half steps in both orientations** (Max: nothing is inverted about their relationships). Each 7 is first replaced by the 5-limit note it stands for (×36/35), which takes the spine color: a weight of 10 on the fifths spine, as before, and −14 on the fourths. The half step has the same sign unbanded, since the anchor's band is exactly the banded layout.
+- **The code:** `keyColor` is one expression per spine. The banded-Ptolemaic correction and its second `coordExps` call are gone.
+
+**What changed on screen:** only the Accordion, Randal and Park, and only unbanded or in Schismatic. Every plain layout, and every other banded mode on the inverted ones, is identical cell for cell.
+
+**Supersedes** the "Every other term keeps its sign" clause and "The rule" line of *Inverted layouts mirror the color base* (2026-10-30). Its rejection of a full mirror stands: a syntonic comma is +2 on both spines, and the septimal half steps and Equal are untouched.
+
+**Gates:** both rewritten oracles failed on the old code first (layout-presets: 29,564 failures). `test/layout-presets/oracle.mjs` section L recomputes the rule from `coordExps` for every JI mode × mapping × banding and checks unbanded Ptolemaic's octave stripes on the 3-wide layouts (633,956 checks); `test/unbanded/oracle.mjs` K (476,042); `test/syntonic/oracle.mjs` unchanged and passing. `test/color-gate/` re-seeded: 3 of 64 grids changed, Schismatic × the three inverted layouts, no hex changes (it runs banded only).
+
+**Where:** `packages/shared/src/keycolor.ts`; docs/architecture.md (Color scheme, Unbanded layout), AGENTS.md, docs/lessons.md.

@@ -254,8 +254,11 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
   D (+2, 0), 7 (+2, −1), V (+1, 0), P/S/Y (0, 0). Hooks stack (`hejiChain`: a single hook, then
   two-hook glyphs U+E2E0/E2E1); HKL labels collapse more than two hooks into one hook with an
   exponent (hkl.md → Note naming).
-- **Color**: Pythagorean hues are unchanged (a Pythagorean comma is 7 ≡ 0 hue steps). Septimal
-  factors stack half-step hue rotations (*Color scheme*).
+- **Color**: the spine rule on the unbanded pitches, nothing added (*Color scheme*). Unbanded
+  Ptolemaic on a 3-wide layout (Euler, Gerhard, Randal) is one stripe per octave. On the fifths
+  spine Pythagorean hues are unchanged, since 12 fifths span 7 octaves, a whole turn of the 7
+  hues; 12 fourths span 5, so in an inverted layout the Pythagorean bands differ in hue. Septimal
+  factors stack half-step hue rotations.
 
 ### Adding a tuning mode
 
@@ -659,37 +662,51 @@ first-class; HKL coordinates in another mapping reach it converted (`convertCell
 
 ## Color scheme
 
-**Color belongs to the pitch, not the layout**: one function of a cell's prime exponents colors
-every JI mode under every mapping (inverted layouts mirror its base, below), so the same pitch gets the same color wherever it appears (color is a reading aid for
-pitch identity across layouts); a mode only decides which pitch sits on a cell. Light/dark encodes the 12-TET black/white key.
+**Color is the spine rule: one function of the pitch and the layout's orientation** (Max,
+2026-11-09). A mode or mapping only decides which pitch sits on a cell, and the same pitch gets the
+same color wherever it appears among the layouts of one orientation (color is a reading aid for
+pitch identity across layouts). Light/dark encodes the 12-TET black/white key.
 Implemented once, purely, in `@hkl/shared/keycolor.js` (`keyColor`, `keyColorHex`,
 `lightSourceHex`, `inkColorHex`); HKL's `render/colors.ts` only supplies its live layout, and
 Composer recolors notes with the same functions.
 
-- **JI modes — 7 hues × {light,dark}**, `hueCycleOrder = [PU,PK,OR,YE,GR,TE,BL]` indexed by
-  `floor((57 + 7·e3 + 4·e5 + 10·e7) / 12) − 4 (mod 7)` on `coordExps`. Each prime is weighted by its
-  12-TET step reduced into the octave (3/2 = 7, 5/4 = 4, 7/4 = 10), so the hue is the pitch's 12-TET
-  octave minus the octaves its factorization contains; octave (`e2`) never enters. Steps per comma:
-  syntonic 2, schisma 5, Pythagorean 7 ≡ 0, 35/36 0. Hence Ptolemaic's `floor(midi/12) − band`,
-  P/D's "color as the SC sibling", Schismatic's +5 per band, Septimal's "Ptolemaic hue", a
-  Wicki-Hayden copy's "its column's color", a chromatic borrowed column's "its source band's
-  hue" under S/Y, and Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised,
-  teal → yellow … lowered) are all this one function.
-- **Inverted layouts** (the Accordion, Randal, Park: `LAYOUT` `invert`; Max, 2026-10-30): each row lifts
-  an octave, so by pitch alone a band's hues would straddle octaves (Randal's home-band pink ran
-  G2–C#4). The banded-Ptolemaic base index b (which on an original column reads MIDI octave −
-  band minus the r octaves the row lifts, and r = −b3 there) is replaced by −(b − b3), so the
-  blocks read **band − MIDI octave**: on
-  Randal's home band purple is C3–B♭3 and blue C♯4–B4, 7 or 8 keys a block (a fourths band holds
-  ~7.2 keys per octave against Euler's ~5). Every other term keeps its sign: each mode's comma
-  offsets, the unbanded per-band commas, the septimal half steps; Equal is untouched. A band step
-  still keeps the hue. Keyed off b3 rather than the row, a copy column in Park or the Accordion takes
-  its source's color although it sits rows away (2026-11-01), so they mirror Wicki-Hayden's mixed
-  blocks, and every inverted layout colors a pitch as Randal does, just as every
-  plain one colors it as Euler does. A pitch's color therefore differs between an inverted layout and the others; relative
-  color within the layout is what carries comma identity.
-- **Septimal half steps**: each septimal factor turns the hue half a step warm (`hueCycleOrder`
-  index − e7/2 on top of the formula above, signed), so an odd `e7` takes `.sl`/`.sd` (a 50% lerp
+- **The spine rule — 7 hues × {light,dark}**, `hueCycleOrder = [PU,PK,OR,YE,GR,TE,BL]`. The
+  Pythagorean spine is the chain of pure fifths from A3, and of pure fourths in an inverted layout
+  (the Accordion, Randal, Park: `LAYOUT` `invert`). It holds one color per nominal octave, purple
+  in octave 3: spine note n sits at MIDI `57 + 7n` (`57 + 5n` on the fourths spine), and the hues
+  step through `hueCycleOrder` octave by octave, the other way round on the fourths spine. A note
+  reached from the spine by chaining 5:4 major thirds takes the spine's color at its own octave (a
+  major third is 4 semitones); 2:1 carries no color. On `coordExps`' `[e2, e3, e5, e7]`:
+  - fifths spine: index `floor((57 + 7·e3 + 4·e5) / 12) − 4 (mod 7)`;
+  - fourths spine: index `−(floor((57 − 5·e3 + 4·e5) / 12) − 4) (mod 7)`.
+- **Nothing else is a rule.** Every JI mode and mapping, banded and unbanded, is that expression on
+  the cell's pitch. What a comma does to the hue follows from where it lands on the spine: there
+  are no comma terms and no per-mode or per-layout branch. Consequences, each derived:
+  - Ptolemaic's banded blocks read `floor(midi/12) − band` (band − MIDI octave on the fourths
+    spine), since a band step is 2:1; unbanded Ptolemaic on a 3-wide layout is one stripe per
+    octave.
+  - A syntonic comma is 2 hue steps on either spine: P/D's "color as the SC sibling", and
+    Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised, teal → yellow …
+    lowered).
+  - A Wicki-Hayden copy takes its column's color and a chromatic borrowed column its source's:
+    they are exact octaves.
+  - 12 fifths span 7 octaves, a whole turn of the 7 hues, so a Pythagorean comma keeps the hue on
+    the fifths spine. That is a coincidence of that spine: 12 fourths span 5, so on the fourths
+    spine it moves the hue, as do the other unbanded per-band commas and Schismatic's schisma,
+    each by where it lands.
+- **Inverted layouts**: each row lifts an octave, so the fifths spine's colors would straddle
+  octaves there (Randal's home-band pink ran G2–C#4). On the fourths spine the blocks read
+  **band − MIDI octave**: on Randal's home band purple is C3–B♭3 and blue C♯4–B4, 7 or 8 keys a
+  block (a fourths band holds ~7.2 keys per octave against Euler's ~5). A copy column in Park or
+  the Accordion takes its source's color although it sits rows away, so every inverted layout
+  colors a pitch as Randal does, just as every plain one colors it as Euler does. A pitch's color
+  therefore differs between an inverted layout and the others; relative color within the layout is
+  what carries comma identity.
+- **Septimal half steps**: each factor of 7 is first replaced by the 5-limit note it stands for
+  (×36/35, the Ptolemaic cell a septimal column replaces), which takes the spine color; unbanded
+  Septimal's replaced pitches are exactly unbanded Ptolemaic's (225/224 × 35/36 = 125/128). Each
+  factor then turns the hue half a step warm (`hueCycleOrder` index − e7/2, signed, the same in
+  both orientations), so an odd `e7` takes `.sl`/`.sd` (a 50% lerp
   toward the next hue: `keyColor.half`) and `e7 = ±2` is a whole step. Banded layouts only reach
   `e7 ∈ {0, 1}`; the unbanded Septimal layout stacks them, which is consistent with Schismatic's
   near-octave changing color on the same spelling. `keyColor.isSept` (`e7 ≠ 0`) is the info

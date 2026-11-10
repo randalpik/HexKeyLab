@@ -1,33 +1,34 @@
-// Key color — one function of the pitch (and the layout's orientation).
+// Key color — one function of the pitch and the layout's orientation: the
+// spine rule (Max, 2026-11-09).
 //
-// Color belongs to the pitch, not to the layout: a tuning mode or note-name
-// mapping only decides which pitch sits on a cell, and the same pitch gets the
-// same color wherever it appears, except that an inverted layout mirrors the
-// base (below). For the JI modes the hue is a function of the
-// cell's prime-exponent vector e = [e2, e3, e5, e7] (coordExps):
+// The Pythagorean spine is the chain of pure fifths from A3 — of pure fourths
+// in an inverted layout (LAYOUT invert). It holds one color per nominal octave,
+// purple in octave 3: spine note n sits at MIDI 57 + 7n (57 + 5n on the fourths
+// spine), and the hues step through hueCycleOrder octave by octave, the other
+// way round on the fourths spine. A note reached from the spine by chaining
+// 5:4 major thirds takes the spine's color at its own octave, a major third
+// being 4 semitones; 2:1 carries no color. So for a cell's prime-exponent
+// vector e = [e2, e3, e5, e7] (coordExps):
 //
-//   hue = hueCycleOrder[ floor((57 + 7·e3 + 4·e5 + 10·e7) / 12) − 4   mod 7 ]
+//   fifths   hue = hueCycleOrder[   floor((57 + 7·e3 + 4·e5) / 12) − 4   mod 7 ]
+//   fourths  hue = hueCycleOrder[ −(floor((57 − 5·e3 + 4·e5) / 12) − 4)  mod 7 ]
 //
-// Each prime is weighted by its 12-TET step reduced into the octave (3/2 = 7,
-// 5/4 = 4, 7/4 = 10), so the hue is the pitch's 12-TET octave minus the octaves
-// its prime factorization contains; e2 never enters. Steps per comma: syntonic 2,
-// schisma 5, Pythagorean 7 ≡ 0, 35/36 0. On top of that, each septimal factor
-// turns the hue half a step (warm for e7 > 0): odd e7 takes the half-step
-// (.sl/.sd) variant, e7 = ±2 is a whole step. Banded layouts only reach
-// e7 ∈ {0, 1}; the unbanded Septimal layout stacks them. White/black follows
-// the cell's MIDI pitch class.
+// That is the whole rule for every JI mode and mapping, banded and unbanded:
+// a mode or mapping only decides which pitch sits on a cell, and what a comma
+// does to the hue follows from where it lands on the spine. There are no comma
+// terms. (12 fifths span 7 octaves, a whole turn of the 7 hues, so a
+// Pythagorean comma keeps the hue on the fifths spine; 12 fourths span 5.)
+// A pitch's color therefore differs between a plain and an inverted layout,
+// and agrees across the layouts of one orientation, copy columns included.
+//
+// Septimal: each factor of 7 is first replaced by the 5-limit note it stands
+// for (×36/35, the Ptolemaic cell a septimal column replaces), which takes the
+// spine color; each factor then turns the hue half a step (warm for e7 > 0):
+// odd e7 takes the half-step (.sl/.sd) variant, e7 = ±2 is a whole step. Banded
+// layouts only reach e7 ∈ {0, 1}; the unbanded Septimal layout stacks them.
+// White/black follows the cell's MIDI pitch class.
 //
 // Equal is the one separate rule: a 3-hue cycle by sounding octave.
-//
-// An inverted layout (each row lifts an octave: LAYOUT invert) mirrors the
-// Ptolemaic base, so its octave blocks run the other way along the band (Max,
-// 2026-10-30). The base is the cell's banded Ptolemaic index, which on an
-// original column reads MIDI octave − band minus the r octaves its row lifts,
-// and r = −b3 there; it is replaced by −(base − b3), i.e. band − MIDI octave.
-// Keyed off b3, not the row, a copy column (Park, the Accordion) takes its source's
-// color, rows away (2026-11-01): every inverted layout colors a pitch as Randal
-// does. Every other term keeps its sign: each mode's comma offsets, the unbanded
-// per-band commas, the septimal half-steps.
 //
 // Pure: callers pass the layout. HKL wraps these with its live tuning state
 // (apps/hkl/src/render/colors.ts); Composer can call them directly.
@@ -59,14 +60,14 @@ export function keyColor(q: number, r: number, mode: TuningMode, mapping: Mappin
   const isW = whiteSet.has(mod(midi, 12));
   if (mode === 'E') return { hue: equalHueCycle[mod(Math.floor(midi / 12), 3)], isW, half: false, isSept: false };
   const [, e3, e5, e7] = coordExps(q, r, mode, mapping, anchor, banded);
+  /* each septimal factor → the 5-limit note it stands for: ×36/35 = 2²·3²/(5·7) */
+  const n = e3 + 2 * e7, thirds = e5 - e7;
+  /* the octave of the pitch's place on the spine: fifths, or fourths (spine note −n) */
+  const invert = LAYOUT[mapping].invert;
+  const oct = Math.floor((57 + (invert ? -5 * n : 7 * n) + 4 * thirds) / 12) - 4;
   /* hueCycleOrder walks the cycle backward, so warm is −1: e7 half-steps warm
      land on index − floor(e7/2), plus the half-step variant when e7 is odd */
-  let idx = Math.floor((57 + 7 * e3 + 4 * e5 + 10 * e7) / 12) - 4 - Math.floor(e7 / 2);
-  if (LAYOUT[mapping].invert) {
-    const [, b3, b5] = coordExps(q, r, '5', mapping, anchor, true);
-    const base = Math.floor((57 + 7 * b3 + 4 * b5) / 12) - 4;
-    idx += -(base - b3) - base;
-  }
+  const idx = (invert ? -oct : oct) - Math.floor(e7 / 2);
   return { hue: hueCycleOrder[mod(idx, 7)], isW, half: mod(e7, 2) === 1, isSept: e7 !== 0 };
 }
 

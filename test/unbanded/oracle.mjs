@@ -27,8 +27,9 @@
 //      shape per column class (Euler; chromatic q mod 4)
 //   J  HEJI per band, against Pythagorean unbanded: (arrows, hooks)
 //      5 (3, 0) · D (2, 0) · 7 (2, −1) · V (1, 0) · P S Y (0, 0)
-//   K  color: Pythagorean hues unchanged; every septimal factor is a further
-//      half-step warm (odd e7 → half-step variant); both signs exercised
+//   K  color: the spine rule on unbanded pitches (Pythagorean hues unchanged
+//      on the fifths spine); every septimal factor is a further half-step
+//      warm (odd e7 → half-step variant); both signs exercised
 //   L  hook glyphs: hejiChain stacks single + two-hook glyphs; hejiLabel
 //      collapses to one hook + exponent above 2
 //   M  no Euler vector is a spelled octave from every cell
@@ -258,17 +259,26 @@ for (const map of MAPPINGS) {
 /* ── K: color ────────────────────────────────────────────────────────────── */
 {
   let neg = 0, multi = 0;
+  /* the spine rule (keycolor.ts): the octave of the pitch's place on the spine of fifths — of
+     fourths, the cycle reversed, in an inverted layout — after each septimal factor is replaced
+     by the 5-limit note it stands for (×36/35) */
+  const spine = (e, inv) => {
+    const b = e[1] + 2 * e[3], c = e[2] - e[3];
+    const oct = Math.floor((57 + (inv ? -5 * b : 7 * b) + 4 * c) / 12) - 4;
+    return inv ? -oct : oct;
+  };
   for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(map)) {
-    check(`K P hue ${map} a${a} (${q},${r})`, keyColor(q, r, 'P', map, a, false).hue, keyColor(q, r, 'P', map, a, true).hue);
+    const inv = LAYOUT[map].invert;
+    /* 12 fifths span 7 octaves, a whole turn of the 7 hues, so on the fifths spine the
+       Pythagorean comma each band carries leaves the hue alone; 12 fourths span 5 */
+    const pu = keyColor(q, r, 'P', map, a, false).hue;
+    if (!inv) check(`K P hue ${map} a${a} (${q},${r})`, pu, keyColor(q, r, 'P', map, a, true).hue);
+    check(`K P spine ${map} a${a} (${q},${r})`, pu, hueCycleOrder[md(spine(coordExps(q, r, 'P', map, a, false), inv), 7)]);
     for (const banded of [true, false]) {
       const e = coordExps(q, r, '7', map, a, banded);
-      /* position in half-steps along hueCycleOrder (which walks warm → −1):
-         the comma formula's hue, then e7 half-steps warm; an inverted layout
-         mirrors its banded-Ptolemaic base b to −(b − b3) (keycolor.ts) */
-      const e5b = coordExps(q, r, '5', map, a, true);
-      const base = Math.floor((57 + 7 * e5b[1] + 4 * e5b[2]) / 12) - 4;
-      const mirror = LAYOUT[map].invert ? -(base - e5b[1]) - base : 0;
-      const pos = 2 * (Math.floor((57 + 7 * e[1] + 4 * e[2] + 10 * e[3]) / 12) - 4 + mirror) - e[3];
+      /* position in half-steps along hueCycleOrder (which walks warm → −1): the spine's
+         hue, then e7 half-steps warm */
+      const pos = 2 * spine(e, inv) - e[3];
       const c = keyColor(q, r, '7', map, a, banded);
       check(`K 7 ${map} a${a} ${banded ? 'b' : 'u'} (${q},${r})`,
         `${c.hue} ${c.half} ${c.isSept}`, `${hueCycleOrder[md(Math.ceil(pos / 2), 7)]} ${md(pos, 2) === 1} ${e[3] !== 0}`);

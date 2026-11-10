@@ -22,11 +22,12 @@
 //      exists in every preset (null only for a 4-wide band, c = 3: an M3 count not a multiple of 3)
 //   K  the reference spine: every row holds a cell on its band's qm0 column (chromatic Q ≡ 0
 //      mod 12)
-//   L  color: one function of the pitch in plain layouts; an inverted layout mirrors the
-//      banded-Ptolemaic base (−(base − b3)) and keeps every other term; a pitch keeps its color
-//      across layouts of one orientation (Euler's plain, Randal's inverted, copy columns
-//      included); 3-wide bands read ±(MIDI octave − band); a band step keeps the hue; Equal
-//      stays its octave cycle
+//   L  color: the spine rule in every JI mode, banded and unbanded — the spine of fifths (of
+//      fourths, mirrored, in an inverted layout) holds one color per octave and a 5:4 chain takes
+//      the spine's color at its octave; a pitch keeps its color across layouts of one
+//      orientation (Euler's plain, Randal's inverted, copy columns included); 3-wide bands read
+//      ±(MIDI octave − band), and unbanded Ptolemaic there is one stripe per octave; a band step
+//      keeps the hue; Equal stays its octave cycle
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/layout-presets/oracle.mjs
 
 import {
@@ -205,22 +206,34 @@ for (const L of MAPPINGS) for (let r = -9; r <= 9; r++) {
   check(`K ${L} row ${r} holds a qm0 cell`, found, true);
 }
 
-/* L — color. The hue index from a cell's exponents (keycolor.ts) is one function of the pitch
-   in a plain layout; an inverted layout replaces its banded-Ptolemaic base with −(base − b3),
-   b3 the base's fifths (−r on an original column), and keeps every other term (Max,
-   2026-10-30; 2026-11-01). Recomputed here from coordExps, not keyColor. */
+/* L — color: the spine rule (Max, 2026-11-09). The Pythagorean spine — the chain of fifths from
+   A3, or of fourths in an inverted layout — holds one color per nominal octave, purple in
+   octave 3, the cycle running the other way inverted. A pitch 2^a·3^b·5^c stands c major thirds
+   (4 semitones each) off spine note b (−b on the fourths spine) and takes the spine's color at
+   that octave; 2:1 carries no color. A septimal factor is first replaced by the 5-limit note it
+   stands for (×36/35), then turns the hue half a step. Every mode, banded and unbanded, is this
+   one rule: no comma terms. Recomputed here from coordExps, not keyColor. */
 {
   const mod7 = (x) => ((x % 7) + 7) % 7;
-  const pitchIdx = (e) => Math.floor((57 + 7 * e[1] + 4 * e[2] + 10 * e[3]) / 12) - 4 - Math.floor(e[3] / 2);
+  const spineIdx = (e, inv) => {
+    const b = e[1] + 2 * e[3], c = e[2] - e[3];                     /* ×(36/35)^e7 */
+    const place = 57 + (inv ? 5 * -b : 7 * b) + 4 * c;              /* nominal MIDI along the spine */
+    const oct = Math.floor(place / 12) - 4;
+    return (inv ? -oct : oct) - Math.floor(e[3] / 2);
+  };
   const idxOf = (q, r, mode, L, a, banded) => hueIdx[keyColor(q, r, mode, L, a, banded).hue];
   for (const L of MAPPINGS) {
     const inv = LAYOUT[L].invert, W = bandWidth(L), home = inv ? 'randal' : 'euler';
     for (const [q, r] of CELLS) {
-      const be = coordExps(q, r, '5', L, 0, true), base = pitchIdx(be);
       for (const banded of [true, false]) for (const mode of JI) for (const a of [0, 1]) {
-        const p = pitchIdx(coordExps(q, r, mode, L, a, banded));
-        const want = inv ? mod7(p - base - (base - be[1])) : mod7(p);
+        const want = mod7(spineIdx(coordExps(q, r, mode, L, a, banded), inv));
         check(`L ${L} ${mode} ${banded ? 'b' : 'u'} a${a} (${q},${r}) hue`, idxOf(q, r, mode, L, a, banded), want);
+      }
+      /* unbanded Ptolemaic on a 3-wide layout is (5/4)^q along every row: one stripe per
+         nominal MIDI octave, mirrored when inverted */
+      if (W === 3) {
+        const o = Math.floor(coordToMidi(q, r, L) / 12) - 4;
+        check(`L ${L} (${q},${r}) unbanded Ptolemaic octave stripe`, idxOf(q, r, '5', L, 0, false), mod7(inv ? -o : o));
       }
       /* a pitch keeps its color across one orientation: every cell takes Euler's (plain) or
          Randal's (inverted) color at its Euler-equivalent — a copy column its source's */

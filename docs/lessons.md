@@ -5654,3 +5654,11 @@ Composer loaded Verovio from `verovio.org/javascript/latest`. The morning 6.4.0 
 The six neighbors of a cell are (±1, 0), (0, ±1) and (±1, ∓1), so the key steps between two cells are `(|Δq| + |Δr| + |Δq + Δr|) / 2` (`picker.ts`). |Δq| + |Δr| counts each step along the (−1, +1) diagonal twice: a minor third is one key, not two.
 - **What it cost:** the interval-names enumerate tool used |Δq| + |Δr| in 2026-05. Its "81:56 at 4, 10:7 at 7" bound the septimal tritone names to 81:56 / 112:81 for five months. In key steps the figures were 2 and 5, and the diminished 5ths ran the other way (decisions.md, "Septimal tritones are 10:7 and 7:5").
 - **Before a reach argument decides a name:** measure in key steps, fold octaves and complements, and compare both members of each complement pair. A single entry names both, so one side's distance is half the evidence.
+
+## "Every other term keeps its sign" is a rule nobody derived (2026-11-09)
+
+The inverted-layout color rule (2026-10-30) mirrored one term and declared that the rest kept their sign. The list named comma offsets nobody had worked out on the fourths spine, and it was wrong for all but the syntonic comma: for ten days the Accordion, Randal and Park were off by 2 hue steps per band when unbanded or in Schismatic (decisions.md, "Color is the spine rule; no comma terms").
+- **Derive from the generating rule, not from a base plus corrections.** Color is the spine rule (docs/architecture.md → Color scheme); a per-comma hue step is a consequence to compute, never an input.
+- **An equality that holds in Euler may be a coincidence of fifths.** 12 fifths span 7 octaves and there are 7 hues, so a Pythagorean comma keeps its hue; 12 fourths span 5.
+- **A gate that recomputes the implementation's formula pins the code, not the intent.** The oracle and the color gate both agreed with the bug. Section L now states the rule in the spine's terms and checks a consequence in Max's words (unbanded Ptolemaic is one stripe per octave).
+- **Test a conceptual description against the code as a hypothesis.** The bug surfaced only when Max's one-sentence rule was implemented literally and compared cell by cell; reading the code's own terms back as "rules" had hidden it.
