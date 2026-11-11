@@ -4,6 +4,25 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # Public by nature: it is in the tag every visitor's page carries.
+  UMAMI_WEBSITE_ID = "026e2417-e6c3-4a2d-95c5-c26cec91eb3f"
+
+# Usage analytics (Umami Cloud), served from this origin so content blockers
+# that list the Umami hosts don't drop it. The prefix must match
+# ANALYTICS_PREFIX in vite/analytics-tag.mjs; the tracker posts to
+# <prefix>/api/send. The tag itself is added at assemble time, only when
+# UMAMI_WEBSITE_ID is set under [build.environment].
+[[redirects]]
+  from = "/u/s.js"
+  to = "https://cloud.umami.is/script.js"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/u/api/send"
+  to = "https://gateway.umami.is/api/send"
+  status = 200
+  force = true
 
 [[headers]]
   for = "/assets/*"

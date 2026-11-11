@@ -120,6 +120,9 @@ export const FIXTURES = {
   file_import_musicxml_saves_numbered_hkc: { setup: `/* flow runs in the assertion */` },
   file_new_doc_save_as: { setup: `m.setTitle('New Piece');` },
   file_host_down_load_uses_input: { setup: `/* flow runs in the assertion */` },
+  /* Usage analytics (2026-11-10): the title and the host path are the content
+   * that must never appear in a reported event. */
+  file_usage_events_carry_no_content: { setup: `m.setTitle('Secret Title');` },
 };
 
 export const ASSERTIONS = {
@@ -457,6 +460,54 @@ export const ASSERTIONS = {
       if (clicked[0] !== 'fileInputHkc') return { ok: false, detail: 'clicked ' + JSON.stringify(clicked) + ' calls=' + JSON.stringify(calls) };
       if (calls.some((c) => c[0] === 'pickOpen')) return { ok: false, detail: 'asked a dead host for a dialog' };
       return { ok: true, detail: 'fell back to the file input' };
+    `) },
+  ],
+  /* Usage analytics (@hkl/bridge/analytics.js), against a stub tracker: a save
+   * is reported once per page load however often it repeats, an export every
+   * time, a canceled export not at all, each with its backend — and no event
+   * carries the title, a file name or a path. */
+  file_usage_events_carry_no_content: [
+    { name: 'save once, export each time, cancel nothing; enumerations only', expr: fsAssert(`
+      const events = [];
+      const origCreate = URL.createObjectURL;
+      const origClick = HTMLAnchorElement.prototype.click;
+      const downloads = [];
+      URL.createObjectURL = () => 'blob:test-suppressed';
+      HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
+      window.umami = { track: (name, data) => { events.push([name, data]); } };
+      const named = (n) => events.filter((e) => e[0] === n);
+      try {
+        /* No host: two saves and one export, all downloads. */
+        click('btnSave');
+        if (!(await until(() => downloads.length === 1))) return { ok: false, detail: 'first save did not download' };
+        click('btnSave');
+        if (!(await until(() => downloads.length === 2))) return { ok: false, detail: 'second save did not download' };
+        click('btnExportXml');
+        if (!(await until(() => downloads.length === 3))) return { ok: false, detail: 'export did not download' };
+        /* Host: one export through the dialog, then a canceled one. */
+        H.__setLocalFs(mock);
+        picks.push('/home/u/private/Secret Title.musicxml');
+        click('btnExportXml');
+        if (!(await until(() => writes().length === 1))) return { ok: false, detail: 'host export did not write; calls=' + JSON.stringify(calls) };
+        picks.push(null);
+        click('btnExportXml');
+        await until(() => calls.filter((c) => c[0] === 'pickSave').length === 2);
+        await new Promise((r) => setTimeout(r, 50));
+      } finally {
+        URL.createObjectURL = origCreate;
+        HTMLAnchorElement.prototype.click = origClick;
+        delete window.umami;
+      }
+      const got = JSON.stringify(events);
+      const want = JSON.stringify([
+        ['composer-save', { via: 'download', as: false }],
+        ['composer-export', { kind: 'musicxml', via: 'download' }],
+        ['composer-export', { kind: 'musicxml', via: 'host' }],
+      ]);
+      if (got !== want) return { ok: false, detail: 'events ' + got };
+      if (named('composer-save').length !== 1) return { ok: false, detail: 'save reported ' + named('composer-save').length + ' times' };
+      if (/Secret|[/]home|[.]hkc|[.]musicxml/.test(got)) return { ok: false, detail: 'content leaked: ' + got };
+      return { ok: true, detail: got };
     `) },
   ],
 };

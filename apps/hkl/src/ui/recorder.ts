@@ -21,6 +21,7 @@ import {
   startCapture, stopCapture, isCapturing, isCaptureSupported,
 } from '../audio/capture.js';
 import { loadPrefs, savePrefs } from '../state/persistence.js';
+import { track } from '@hkl/bridge/analytics.js';
 import type { HkrSession } from '../recording/types.js';
 
 const $ = <T extends HTMLElement>(id: string): T | null =>
@@ -224,6 +225,7 @@ function onSaveHkrClick(): void {
   const text = serializeHkr(curSession);
   downloadBlob('hkl-' + isoStamp() + '.hkr',
     new Blob([text], { type: 'application/json' }));
+  track('recording-export', { kind: 'hkr' });
 }
 
 function onLoadHkrClick(): void {
@@ -254,6 +256,7 @@ function onExportMidiClick(): void {
   const bytes = sessionToMidi(curSession);
   downloadBlob('hkl-' + isoStamp() + '.mid',
     new Blob([bytes as BlobPart], { type: 'audio/midi' }));
+  track('recording-export', { kind: 'mid' });
 }
 
 function onImportMidiClick(): void {
@@ -308,6 +311,7 @@ function onComposerDownloadSubmit(e: Event): void {
     if (hkc !== null) {
       downloadBlob('hkl-' + isoStamp() + '.hkc',
         new Blob([hkc], { type: 'application/xml' }));
+      track('recording-export', { kind: 'hkc' });
     }
     dlg.close();
   } catch (err) {
@@ -324,7 +328,10 @@ function onSendToComposer(): void {
   const dlg = $<HTMLDialogElement>('composerExportDialog');
   try {
     const hkc = buildHkcFromDialog();
-    if (hkc !== null) importScoreToComposer(hkc);
+    if (hkc !== null) {
+      importScoreToComposer(hkc);
+      track('recording-export', { kind: 'composer' });
+    }
     dlg?.close();
   } catch (err) {
     setStatusText('Transcription failed: ' + (err as Error).message);

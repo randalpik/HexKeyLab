@@ -19,6 +19,7 @@
 //   new / transcription → nothing      (Save = Save As: dialog, <Title>.hkc)
 
 import { createLocalFs, type LocalFs, type LocalFileWritten, type SaveFilter, type WriteCondition, type OpenFilter } from '@hkl/bridge/local-fs.js';
+import { track, trackOnce } from '@hkl/bridge/analytics.js';
 import type { ComposerModel } from './model/index.js';
 import { downloadBlob, fileBaseFromTitle, hkcBlob } from './save.js';
 
@@ -163,6 +164,10 @@ export async function saveDocument(model: ComposerModel, as: boolean): Promise<s
     const base = baseName() || fileBaseFromTitle(model.getTitle());
     const h = await probe();
     const blob = (): Blob => hkcBlob(model);
+    /* Usage analytics: that a score was saved and by which backend, once per
+       page load (repeated saves would only measure the Ctrl+S habit). Never the
+       name or path. */
+    const saved = (via: 'host' | 'download'): void => trackOnce('composer-save', { via, as });
 
     if (h && !as && cur.path) {
       const name = cur.path.slice(Math.max(cur.path.lastIndexOf('/'), cur.path.lastIndexOf('\\')) + 1);
@@ -173,6 +178,7 @@ export async function saveDocument(model: ComposerModel, as: boolean): Promise<s
           : `${name} changed on disk since it was opened or last saved. Overwrite it with this version?`);
       if (!w) return 'Save canceled — the file on disk was left as it is.';
       set({ path: w.path, mtimeMs: w.mtimeMs, dir: w.dir, base: baseOf(w.name) });
+      saved('host');
       return 'Saved ' + w.path;
     }
 
@@ -180,6 +186,7 @@ export async function saveDocument(model: ComposerModel, as: boolean): Promise<s
       /* Imported beside a source: <dir>/<base>.hkc, numbered when taken. */
       const w = await h.fs.write(joinPath(cur.dir, base + '.hkc'), blob(), { kind: 'unique' });
       set({ path: w.path, mtimeMs: w.mtimeMs, dir: w.dir, base: baseOf(w.name) });
+      saved('host');
       return 'Saved ' + w.path;
     }
 
@@ -193,10 +200,12 @@ export async function saveDocument(model: ComposerModel, as: boolean): Promise<s
         () => `${chosen.name} already exists. Replace it?`);
       if (!w) return 'Save canceled.';
       set({ path: w.path, mtimeMs: w.mtimeMs, dir: w.dir, base: baseOf(w.name) });
+      saved('host');
       return 'Saved ' + w.path;
     }
 
     downloadBlob(base + '.hkc', blob());
+    saved('download');
     return 'Downloaded ' + base + '.hkc'
       + (h ? ' (the local host has no file dialog — install kdialog or zenity)' : '');
   });
@@ -233,9 +242,11 @@ export async function exportDocument(
         () => `${chosen.name} already exists. Replace it?`);
       if (!w) return null;
       try { localStorage.setItem(LAST_DIR_KEY, w.dir); } catch { /* storage unavailable */ }
+      track('composer-export', { kind, via: 'host' });
       return 'Exported ' + w.path;
     }
     downloadBlob(base + ext, await make());
+    track('composer-export', { kind, via: 'download' });
     return 'Exported ' + base + ext;
   });
   return r === 'busy' ? 'A file operation is already in progress.' : r;

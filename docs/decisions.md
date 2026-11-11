@@ -10771,3 +10771,32 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/keycal.mjs` (new, hardware-free; failed at import before the module existed, 9 checks pass), `test/hkl-midi/keycal-overlay.mjs` (new; the overlay section in headless Chromium, real buttons against a fake output) 18/18, `frame-sync.mjs` 16 checks, `departure.mjs` 56/56. `keydata-backup.sh` `save` and `verify` run against the live unit; `restore` not yet run.
 
 **Where:** `apps/hkl/src/lumatone/{keycal,protocol,sysex,sync,lumadiag}.ts`, `apps/hkl/src/state/lumatone.ts`, `apps/hkl/src/midi/engine.ts`, `apps/hkl/src/types.ts`; `tools/lumatone-cal/{keydata-backup.sh,pic18dis.py}`; docs/architecture/hkl.md, docs/lessons.md, docs/lumatone-calibration.md, docs/guide/core.md.
+
+## Usage analytics: Umami Cloud, tag only in the deployed build (2026-11-10, Max)
+
+**Context:** Lumatone's official update email linked its users to HKL, and there was no way to tell how many visit or what they use. HKL is a static Netlify site with no backend; Netlify's free tier has no analytics.
+
+**Picked:**
+- **Umami Cloud's free Hobby plan** (100K events a month, one website, six months' retention, on its pricing page 2026-11-10): the one free hosted option found with custom events that carry properties. All five apps share an origin, so one website covers them and the URL path separates the apps.
+- **Events** (Max's list plus three he approved): app opens as pageviews; `composer-save`, `composer-export`, `lumatone-connect` (with the firmware version), `midi-connect`, `overlay-connect`; `midi-access` (granted / denied / unsupported: the gap between a visit and a connection), `first-note` (input source, mode, mapping: a visit that played something), `recording-export`. The table is in docs/architecture.md → Usage analytics.
+- **Connections and saves are once per page load** (`trackOnce`): a reconnecting device or a Ctrl+S habit would otherwise measure itself and spend the event budget. Exports report every time.
+- **Only enumerations are sent**: never a file name or path, a MIDI device name, notes, or score / recording content. The tracker adds the URL and `document.title` to every payload, which makes "no user content in the URL or title" a standing constraint on every app.
+- **The tag is added at assemble time**, only when `UMAMI_WEBSITE_ID` is set, and its loader runs only on the production host and never in a `?overlay` instance. Dev, tests and per-app builds stay free of it, and app code calls one function (`@hkl/bridge/analytics.js`) that is a no-op without a tracker.
+- **Served from our own origin** (`/u/…` proxy rewrites in `netlify.toml`), because content blockers list the Umami hosts and this audience is likely to run one.
+- **Disclosed in About**: a Privacy paragraph in the Credits style, in Max's wording: anonymous statistics through Umami, and what HKL does not see or send.
+
+**Read from Umami's tracker source** (`cloud.umami.is/script.js`, 2026-11-10): it posts to `<data-host-url or https://gateway.umami.is>/api/send` with credentials omitted, takes its settings from its own script tag, sets no cookie, and reads only `localStorage['umami.disabled']` (an opt-out). It re-reports a pageview on `pushState` / `replaceState`; no app uses either.
+
+**Not verifiable before the first deploy:** that the two rewrites pass a blocker, that Netlify proxies the POST, and that the country survives the proxy (the gateway sees Netlify's address unless it honors the forwarded one).
+
+**Rejected:**
+- Beaconing to Intonalogy's production backend, which already has homemade analytics: Max ruled it out.
+- GoatCounter: free with no stated cap, but its events are bare named counters. The fallback if Umami's cap or retention bites.
+- Cloudflare Web Analytics: no custom events, by every source found. PostHog: far more than this needs.
+- A static tag in each `index.html`: five copies, and dev and test runs would fetch it.
+- A per-app Vite plugin: five configs to touch for what the one assemble step already owns.
+- Sending the MIDI device name with `midi-connect`: informative, but it is the user's hardware inventory.
+
+**Gates:** root typecheck and `check:boundaries` pass. A Node check of `analytics-tag.mjs` (injection, id validation, the loader parses) and of the helper (held events delivered in order, once-only, a throwing tracker contained) passes. Composer fixture `file_usage_events_carry_no_content` (a stub tracker: one save event for two saves, an export event per export, none for a canceled one, no title / name / path in any payload); it was written after the hooks, so it was not seen failing first. `test/hkl-midi/frame-sync.mjs` (16 checks) and `keycal.mjs` (9) pass after the connect-path change. The HKL-side events have no gate. Event delivery itself can only be confirmed on the live domain.
+
+**Where:** `packages/bridge/src/analytics.ts`; `apps/hkl/src/{input/first-note,input/held,midi/engine,midi/piano,bridge/overlay-publish,ui/recorder,ui/init}.ts`, `apps/hkl/index.html` (About → Privacy); `apps/composer/src/{files,main}.ts` (the hooks; the test reset), `test/composer-test/fixtures/files.mjs`; `vite/{analytics-tag,assemble-dist}.mjs`, `netlify.toml`; docs/architecture.md → Usage analytics.

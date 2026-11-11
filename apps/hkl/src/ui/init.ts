@@ -70,6 +70,7 @@ import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { applyTooltips } from './tooltips.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { markFirstNote } from '../input/first-note.js';
 import { initHklBridge } from '../bridge/hkl-side.js';
 import { setOverlayPublishing, publishComposerView } from '../bridge/overlay-publish.js';
 import { initRecorderUI } from './recorder.js';
@@ -264,6 +265,7 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
     if (selection.selectedKeys.has(key)) selection.selectedKeys.delete(key);
     else selection.selectedKeys.add(key);
   }
+  if (selection.selectedKeys.has(key)) markFirstNote('pointer');
   onSelectionChanged();
 });
 

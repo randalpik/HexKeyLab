@@ -15,6 +15,7 @@ import { sysex } from '../lumatone/sysex.js';
 import { syncLumatoneColors, frameSyncActive } from '../lumatone/sync.js';
 import { adoptKeyCal, keyCalDeviceGone } from '../lumatone/keycal.js';
 import { buildPingSysEx, isPingReply } from '../lumatone/protocol.js';
+import { trackOnce } from '@hkl/bridge/analytics.js';
 import type { KeyId } from '../types.js';
 
 export function syncOutput(): void { syncAudio(); syncPianoOut(); }
@@ -212,8 +213,12 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
          it, which holds the color sync off and offers the way out. */
       lumatone.firmware = null;
       sysex.queryFirmware(() => {
+        reportLumatoneConnect();
         if (lumatone.autoSyncEnabled && frameSyncActive()) syncLumatoneColors();
-      }, adoptKeyCal);
+      }, (status) => {
+        reportLumatoneConnect();
+        adoptKeyCal(status);
+      });
       if (lumatone.autoSyncEnabled) syncLumatoneColors();
     }
   }
@@ -221,6 +226,15 @@ export function findLumatone(handleMidiMessage: MidiMessageHandler): void {
     console.log('Lumatone search: out=' + (midi.midiOut ? (midi.midiOut as MIDIOutput).name : 'none')
       + ', in=' + (midi.midiIn ? (midi.midiIn as MIDIInput).name : 'none'));
   }
+}
+
+/* Usage analytics: a Lumatone answered the connect-time firmware query. Once
+   per page load, with the version it reported ('unknown' when it answered
+   without one: pre-1.0.8 firmware, or a device found in a calibration mode). */
+function reportLumatoneConnect(): void {
+  trackOnce('lumatone-connect', {
+    firmware: lumatone.firmware ? lumatone.firmware.join('.') : 'unknown',
+  });
 }
 
 /* Request MIDI access at startup. Caller provides handleMidiMessage so that
@@ -273,6 +287,7 @@ export function whenMidiAccessReady(): Promise<MIDIAccess> {
 
 export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
   if (!navigator.requestMIDIAccess) {
+    trackOnce('midi-access', { result: 'unsupported' });
     ensureMidiAccessReadyPromise();
     if (midiAccessReadyReject) midiAccessReadyReject(new Error('Web MIDI not available'));
     return;
@@ -280,6 +295,7 @@ export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
   ensureMidiAccessReadyPromise();
   navigator.requestMIDIAccess({ sysex: true }).then(function (access) {
     console.log('MIDI access granted');
+    trackOnce('midi-access', { result: 'granted' });
     midi.midiAccess = access;
     findLumatone(handleMidiMessage);
     access.onstatechange = function () { findLumatone(handleMidiMessage); };
@@ -312,6 +328,7 @@ export function requestMidi(handleMidiMessage: MidiMessageHandler): void {
     }
   }).catch(function (err) {
     console.error('MIDI access denied:', err);
+    trackOnce('midi-access', { result: 'denied' });
     if (midiAccessReadyReject) midiAccessReadyReject(err);
   });
 }

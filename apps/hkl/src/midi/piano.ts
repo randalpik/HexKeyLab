@@ -26,6 +26,7 @@ import { whenMidiAccessReady } from './engine.js';
 import { rebindPianoOut, setOutputProgram } from './piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { heldKey, pressHeld, releaseHeld, dropHeld } from '../input/held.js';
+import { trackOnce } from '@hkl/bridge/analytics.js';
 import type { KeyId } from '../types.js';
 
 /* ── module state ──────────────────────────────────────────────────────────── */
@@ -181,6 +182,7 @@ function bindPort(port: MIDIInput | null): void {
   if (port) {
     port.onmidimessage = pianoMessage;
     setStatus("Piano connected", "luma-connected");
+    trackOnce('midi-connect'); /* the fact only: never the device name */
   } else {
     setStatus('No device');
   }

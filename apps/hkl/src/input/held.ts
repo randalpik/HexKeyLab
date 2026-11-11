@@ -22,6 +22,7 @@ import { animation } from '../render/animation.js';
 import { flashKey } from '../render/key-flash.js';
 import { restrikePianoOut } from '../midi/piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
+import { markFirstNote } from './first-note.js';
 import type { KeyId } from '../types.js';
 
 export type HeldSource = 'lumatone' | 'qwerty' | 'piano';
@@ -69,6 +70,7 @@ export function pressHeld(source: HeldSource, id: string, key: KeyId, velocity: 
   selection.selectedKeys.add(key);
   audio.keyVelocity[key] = velocity;
   held[source].set(id, key);
+  markFirstNote(source);
   restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   onSelectionChanged();
 }

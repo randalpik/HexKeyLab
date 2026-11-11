@@ -41,13 +41,14 @@ packages/
   shared/     pure data: tuning math, note naming, segments, dynamics, hki, colors, heji
   engine/     @hkl/engine — sample playback                → engine.md
   notation/   @hkl/notation — Verovio/MEI rendering
-  bridge/     @hkl/bridge — BroadcastChannel protocol + message types
+  bridge/     @hkl/bridge — BroadcastChannel protocol + message types; analytics.ts (usage events)
   analysis/   @hkl/analysis — DOM-free sample-analysis DSP (Analyzer + Orchestrator) → analyzer.md
 test/         composer-test, composer-inspect, picker, interval-names, engine-smoke, orchestrator-smoke, *-check.mjs
 tools/        lumatone-cal, reset-calibration.sh   (hardware/ops)
 vite/         dev-proxy.mjs + middleware (the dev umbrella); assemble-dist.mjs (the publish dir,
               `pnpm assemble`) + third-party-notices.mjs (its THIRD-PARTY-NOTICES.txt: the license
               notices of the apps' runtime npm dependency closure, written at the site root)
+              + analytics-tag.mjs (the usage-analytics tag, added at assemble time → Usage analytics)
 ```
 
 Dependency DAG: `@hkl/shared ← {engine, notation, bridge} ← apps`, plus `@hkl/analysis` (zero deps)
@@ -778,3 +779,50 @@ TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF8
   Browser Source. Unlike the same-origin bridges above, OBS's CEF is a separate browser, so this hop
   is WebSocket (not BroadcastChannel) and is served by the standalone `apps/overlay-host`. See
   overlay.md.
+
+---
+
+## Usage analytics
+
+The deployed site reports anonymous usage to [Umami Cloud](https://umami.is/): a pageview per app
+load (the URL path says which app) and the custom events below. There is no backend of our own.
+
+**Only the deployed build carries the tracker.** `vite/assemble-dist.mjs` adds an inline loader to
+each app's `index.html` when `UMAMI_WEBSITE_ID` is set (`netlify.toml` → `[build.environment]`);
+`vite/analytics-tag.mjs` builds it. The loader does nothing on any host but the production one
+(`ANALYTICS_HOST`) and nothing in a `?overlay` instance (an OBS Browser Source reloads with every
+scene change and is not a visit). `pnpm dev`, the test suites and a per-app build have no tracker.
+
+**One reporting function.** App code calls `track(name, props)` / `trackOnce(name, props)` from
+`@hkl/bridge/analytics.js` and never touches `window.umami`. Without a tracker (dev, tests, a
+content blocker) both are no-ops; an event that precedes the async tracker is held for up to 10 s.
+`trackOnce` reports a name at most once per page load, for things that recur within a session.
+
+**Served from our origin.** Content blockers list the Umami hosts, so `netlify.toml` proxies
+`/u/s.js` → `cloud.umami.is/script.js` and `/u/api/send` → `gateway.umami.is/api/send`. The tracker
+posts to `<data-host-url>/api/send`, so the rewrites and `ANALYTICS_PREFIX` must agree.
+
+| Event | Properties | Reported from | Per page load |
+|---|---|---|---|
+| `midi-access` | `result`: `granted` / `denied` / `unsupported` | `requestMidi` (`apps/hkl/src/midi/engine.ts`) | once |
+| `lumatone-connect` | `firmware`: `"1.5.0"`, or `unknown` | the connect-time firmware query's answer (`midi/engine.ts`) | once |
+| `midi-connect` | — | Piano input bound to a port (`midi/piano.ts`) | once |
+| `overlay-connect` | — | the overlay publisher's socket opened (`bridge/overlay-publish.ts`): a relay answered on this machine, whether or not an OBS source is subscribed | once |
+| `first-note` | `source`: `lumatone` / `qwerty` / `piano` / `pointer`; `mode`; `mapping` | `input/first-note.ts`, from `pressHeld` and the canvas click. Playback and Composer-driven selection do not count | once |
+| `recording-export` | `kind`: `hkr` / `mid` / `hkc` / `composer` (sent straight to the Composer tab) | `ui/recorder.ts` | every time |
+| `composer-save` | `via`: `host` / `download`; `as` | `saveDocument` (`apps/composer/src/files.ts`), on success | once |
+| `composer-export` | `kind`: `pdf` / `musicxml`; `via` | `exportDocument` (`files.ts`), on success | every time |
+
+**What may be sent.** A fixed event name, and properties that are short enumerations. Never a file
+name or path, a MIDI device name, note data, score or recording content, or anything a user typed.
+The tracker adds the page URL, `document.title`, the referrer, screen size and language to every
+payload, so **no app may put user content in the URL or the title** (none does: only the Guide sets
+a title, to its tab name). It sets no cookie; the one thing it reads from storage is the opt-out
+flag `localStorage['umami.disabled']`. The About dialog's Privacy paragraph tells users that
+anonymous statistics are collected and lists what is never seen or sent (scores, recordings, custom
+instruments, file names, notes, device names, anything identifying); every event must keep that
+list true.
+
+Adding an event: pick a name of at most 50 characters, call `track`/`trackOnce` at the single point
+every path to the action goes through, add the row above, and check the Privacy paragraph still
+holds.

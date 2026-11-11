@@ -20,6 +20,7 @@
 // acyclic.
 
 import { OverlayChannel } from '@hkl/bridge/overlay-ws.js';
+import { trackOnce } from '@hkl/bridge/analytics.js';
 import type { OverlaySnapshot, OverlayPlaybackBar } from '@hkl/bridge/overlay-protocol.js';
 import { view } from '../state/view.js';
 import { selection } from '../state/selection.js';
@@ -117,6 +118,9 @@ export function setOverlayPublishing(on: boolean): void {
        unbounded. */
     channel = new OverlayChannel({ giveUpAfter: 3 });
     channel.onOpen(sendFullState);
+    /* Usage analytics: a relay answered on this machine (it does not say
+       whether an OBS source is subscribed). */
+    channel.onOpen(() => trackOnce('overlay-connect'));
   } else if (!on && channel) {
     channel.close();
     channel = null;

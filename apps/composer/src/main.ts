@@ -12,6 +12,7 @@
 
 import { createComposerBridge, PROTOCOL_VERSION } from '@hkl/bridge/channel.js';
 import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol.js';
+import { resetAnalytics } from '@hkl/bridge/analytics.js';
 import { convertCell, isMapping, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { TUNING_MODES, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
 import { ComposerModel, type Voice } from './model/index.js';
@@ -1945,6 +1946,8 @@ void bootRenderer();
        mock never sends the matching HKL ack), which would otherwise swallow the
        next fixture's playback-finished. Clear it like the other playback state. */
     pendingStopAcks = 0;
+    /* Usage events are once per page load; the suite reuses one page. */
+    resetAnalytics();
     hklConnected = false;
     hklTuningMode = null;
     hklMapping = null;
