@@ -355,6 +355,10 @@ $<HTMLInputElement>('cbSyncToComposer').addEventListener('change', (e) => {
     preloadComposerInstruments();
   }
 });
+$<HTMLInputElement>('cbAnalysis').addEventListener('change', (e) => {
+  updateInfo();
+  savePrefs({ showAnalysis: (e.target as HTMLInputElement).checked });
+});
 $<HTMLInputElement>('cbCoords').addEventListener('change', (e) => {
   updateInfo();
   savePrefs({ showCoords: (e.target as HTMLInputElement).checked });
