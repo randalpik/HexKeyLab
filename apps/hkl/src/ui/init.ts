@@ -39,7 +39,7 @@ import {
   initAudio, changeWaveform, toggleAudio,
   setDamperDepth, sostenutoOn, sostenutoOff,
 } from '../audio/engine.js';
-import { requestMidi } from '../midi/engine.js';
+import { requestMidi, setLumatoneConnectionHandler } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
 import { initPianoOut } from '../midi/piano-out.js';
@@ -118,7 +118,14 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbAutoSync').checked = p.autoSync;
   $<HTMLInputElement>('cbLumaHover').checked = p.lumatoneHover;
   $<HTMLInputElement>('cbShowDiag').checked = p.showDiagnostics;
-  $<HTMLInputElement>('cbCalibrateKeys').checked = p.calibrateKeys;
+  /* Hidden while no Lumatone is connected, and never checked while hidden:
+     the connection handler below applies the saved pref on connect. */
+  $<HTMLInputElement>('cbCalibrateKeys').checked = p.calibrateKeys && calibrateKeysShown();
+}
+
+/** Whether the Calibrate Keys checkbox is on screen (`luma-conn-only`). */
+function calibrateKeysShown(): boolean {
+  return !!document.getElementById('tb-group-lumatone')?.classList.contains('lumatone-connected');
 }
 
 /* Imported .hki bundles: open the IndexedDB-backed registry and append the
@@ -208,7 +215,18 @@ setLumaDiagHotkeyCallback(() => {
   applyCalibrateKeys(next);
   savePrefs({ calibrateKeys: next });
 });
-if (prefs.calibrateKeys) applyCalibrateKeys(true);
+/* The checkbox is hidden while no Lumatone is connected, so it is unchecked
+   then and the overlay closed with it: an open overlay would have no visible
+   control to close it. The pref is left alone, so the overlay comes back when
+   the Lumatone does, and a saved pref opens it on connect rather than at
+   startup. */
+setLumatoneConnectionHandler((connected) => {
+  const cb = $<HTMLInputElement>('cbCalibrateKeys');
+  const next = connected && loadPrefs().calibrateKeys;
+  if (cb.checked === next) return;
+  cb.checked = next;
+  applyCalibrateKeys(next);
+});
 
 /* Pedal HUD: opt-in diagnostic readout for the intermittent stuck-sustain
    bug. Enabled via `?pedaldiag=1` querystring; no toolbar/pref entry (this

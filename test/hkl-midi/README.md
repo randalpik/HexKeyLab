@@ -82,8 +82,10 @@ AudioContext. **Run it before declaring any change to `setDamperDepth`,
 ## Device departure and liveness heartbeat
 
 Behavioral gate for HKL's **Lumatone MIDI input path** — device-departure
-handling, the liveness heartbeat that detects a power-off, and confirmed
-re-adoption of a port that reappears.
+handling, the liveness heartbeat that detects a power-off, confirmed
+re-adoption of a port that reappears, and the Calibrate Keys checkbox staying
+unchecked (its overlay closed) while a disconnect hides it, including after a
+reload with the pref on.
 
 Requires `pnpm dev` running (the umbrella proxy at `:5170`).
 

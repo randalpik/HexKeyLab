@@ -81,11 +81,20 @@ function confirmCandidate(out: MIDIOutput, inp: MIDIInput, handleMidiMessage: Mi
   catch { /* dead port: the timer drops the candidate */ }
 }
 
+/* Invoked when the toolbar's connected state flips, which is when its
+   `luma-conn-only` controls appear or disappear (init.ts keeps the Calibrate
+   Keys checkbox unchecked while it is hidden). Transitions only: the hotplug
+   poll re-runs the status update on every tick. */
+let connectionHandler: ((connected: boolean) => void) | null = null;
+export function setLumatoneConnectionHandler(fn: (connected: boolean) => void): void { connectionHandler = fn; }
+
 function updateLumatoneStatusUI(): void {
   const statusEl = document.getElementById('lumaStatus');
   const lumaGroup = document.getElementById('tb-group-lumatone');
   if (!statusEl) return;
-  if (midi.midiOut) {
+  const connected = !!midi.midiOut;
+  const wasConnected = !!lumaGroup?.classList.contains('lumatone-connected');
+  if (connected) {
     statusEl.textContent = 'Lumatone connected';
     statusEl.className = 'luma-connected';
     if (lumaGroup) lumaGroup.classList.add('lumatone-connected');
@@ -93,6 +102,10 @@ function updateLumatoneStatusUI(): void {
     statusEl.textContent = 'Lumatone Not Connected';
     statusEl.className = 'luma-disconnected';
     if (lumaGroup) lumaGroup.classList.remove('lumatone-connected');
+  }
+  if (connected !== wasConnected && connectionHandler) {
+    try { connectionHandler(connected); }
+    catch (e) { console.error('Lumatone: connection handler failed', e); }
   }
 }
 

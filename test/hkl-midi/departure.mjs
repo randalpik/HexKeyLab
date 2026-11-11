@@ -28,6 +28,10 @@
 //         detaches the old object, so a burst can't leak through it
 //   I     after a self-declared departure, a reappearing port is adopted only
 //         once it answers a ping
+//   J     Calibrate Keys is unchecked (and its overlay closed) while a
+//         departure hides the checkbox, and comes back on reconnect
+//   K     reloaded with the pref on and no Lumatone, the overlay stays shut
+//         until one connects
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -312,6 +316,37 @@ const SCRIPT = `(async () => {
   check('I8: badge reads connected', badge(), 'Lumatone connected|luma-connected');
   midi.midiAccess = savedAccess;
 
+  /* ══ J. Calibrate Keys is never checked while its checkbox is hidden ══
+     The checkbox is luma-conn-only, so a departure hides it; an overlay left
+     open then has no visible control to close it. Connected here (I6). */
+  const cbCal = document.getElementById('cbCalibrateKeys');
+  const overlayShown = () => {
+    const el = document.getElementById('lumaDiagOverlay');
+    return !!el && el.style.display !== 'none';
+  };
+  const calPref = () => JSON.parse(localStorage.getItem('hkl.prefs.v1') || '{}').calibrateKeys;
+  const reconnect = async () => {
+    const pair = mkPair(true);
+    midi.midiAccess = pair.access;
+    eng.findLumatone(handler.handleMidiMessage);
+    await sleep(40);
+    midi.midiAccess = savedAccess;
+  };
+  cbCal.click();                             /* the user checks it */
+  check('J1: checkbox opens the overlay', cbCal.checked && overlayShown(), true);
+  gone();
+  check('J2: departure unchecks the hidden checkbox', cbCal.checked, false);
+  check('J3: overlay closed with it', overlayShown(), false);
+  check('J4: pref kept', calPref(), true);
+  await reconnect();
+  check('J5: reconnect re-checks and reopens', cbCal.checked && overlayShown(), true);
+  cbCal.click();                             /* the user unchecks it */
+  gone();
+  await reconnect();
+  check('J6: an unchecked box stays unchecked across a reconnect', cbCal.checked || overlayShown(), false);
+  cbCal.click();                             /* leave the pref on for the reload round (K) */
+  check('J7: pref on for the reload round', calPref(), true);
+
   /* leave nothing running */
   reset();
   const sx = await import(await depUrl(handlerUrl, '/src/lumatone/sysex.ts'));
@@ -319,6 +354,51 @@ const SCRIPT = `(async () => {
   midi.midiIn = null; midi.midiOut = null;
 
   return { pass: results.every(r => r.ok), results };
+})()`;
+
+/* ══ K. after a reload with the pref on and no Lumatone, the overlay stays shut
+   until one connects (the page is reloaded with the prefs section J left). */
+const RELOAD_SCRIPT = `(async () => {
+  const depUrl = async (fromPath, depPath) => {
+    const src = await (await fetch(fromPath)).text();
+    const i = src.indexOf(depPath);
+    if (i < 0) throw new Error(depPath + ' is not imported by ' + fromPath);
+    let j = i + depPath.length;
+    while (j < src.length && src[j] !== '"' && src[j] !== "'") j++;
+    return src.slice(i, j);
+  };
+  const initUrl = '/src/ui/init.ts';
+  const handlerUrl = await depUrl(await depUrl(initUrl, '/src/effects/onRefChanged.ts'), '/src/midi/handler.ts');
+  const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
+  const [handler, { midi }, eng, { sysex }] = await Promise.all([
+    import(handlerUrl),
+    depUrl(engineUrl, '/src/state/midi.ts').then((u) => import(u)),
+    import(engineUrl),
+    depUrl(handlerUrl, '/src/lumatone/sysex.ts').then((u) => import(u)),
+  ]);
+  const results = [];
+  const check = (name, got, want) => results.push({ name, got, want, ok: got === want });
+  const cbCal = document.getElementById('cbCalibrateKeys');
+  const overlayShown = () => {
+    const el = document.getElementById('lumaDiagOverlay');
+    return !!el && el.style.display !== 'none';
+  };
+  check('K1: pref survived the reload', JSON.parse(localStorage.getItem('hkl.prefs.v1') || '{}').calibrateKeys, true);
+  check('K2: no Lumatone', midi.midiOut, null);
+  check('K3: hidden checkbox is unchecked', cbCal.checked, false);
+  check('K4: overlay not shown', overlayShown(), false);
+  const inp = { id: 'fake-lumatone-in', name: 'Lumatone', state: 'connected', onmidimessage: null };
+  const out = { id: 'fake-lumatone-out', name: 'Lumatone', state: 'connected', send() {} };
+  const savedAccess = midi.midiAccess;
+  midi.midiAccess = { inputs: new Map([[inp.id, inp]]), outputs: new Map([[out.id, out]]) };
+  eng.findLumatone(handler.handleMidiMessage);
+  midi.midiAccess = savedAccess;
+  check('K5: connected', midi.midiOut === out, true);
+  check('K6: connect checks the box and opens the overlay', cbCal.checked && overlayShown(), true);
+  cbCal.click();
+  eng.markLumatoneGone('test');
+  sysex.cancel();
+  return { results };
 })()`;
 
 const chrome = await launchChromium();
@@ -339,6 +419,16 @@ await loaded;
 await sleep(2500);
 
 const out = await cdp.evalJSON(SCRIPT);
+if (out && out.results) {
+  const reloaded = new Promise((res) => { const off = cdp.on('Page.loadEventFired', () => { off(); res(); }); });
+  await cdp.send('Page.reload');
+  await reloaded;
+  await sleep(2500);
+  const again = await cdp.evalJSON(RELOAD_SCRIPT);
+  if (again && again.results) out.results.push(...again.results);
+  else out.results.push({ name: 'K: reload round ran', got: JSON.stringify(again), want: 'results', ok: false });
+  out.pass = out.results.every((r) => r.ok);
+}
 let exit = 0;
 if (!out || !out.results) {
   console.log('FAILED TO RUN:', JSON.stringify(out));
