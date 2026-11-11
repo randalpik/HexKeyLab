@@ -5,9 +5,11 @@
 // without the tracker.
 //
 // The tracker and its endpoint are served from our own origin under
-// ANALYTICS_PREFIX, by the two proxy rewrites in netlify.toml (content blockers
-// list the Umami hosts). The tracker posts to `<data-host-url>/api/send`, so
-// those rewrites and this prefix must agree.
+// ANALYTICS_PREFIX (content blockers list the Umami hosts): the script by a
+// proxy rewrite in netlify.toml, the endpoint by the edge function
+// netlify/edge-functions/umami-send.js. The tracker posts to
+// `<data-host-url>/api/send`, so the rewrite, the function's path and this
+// prefix must agree.
 //
 // The loader skips every host but the production one (deploy previews, a local
 // `vite preview`) and the `?overlay` instance, an OBS Browser Source that

@@ -9,18 +9,15 @@
 
 # Usage analytics (Umami Cloud), served from this origin so content blockers
 # that list the Umami hosts don't drop it. The prefix must match
-# ANALYTICS_PREFIX in vite/analytics-tag.mjs; the tracker posts to
-# <prefix>/api/send. The tag itself is added at assemble time, only when
-# UMAMI_WEBSITE_ID is set under [build.environment].
+# ANALYTICS_PREFIX in vite/analytics-tag.mjs. The tracker posts its events to
+# <prefix>/api/send, which is the edge function
+# netlify/edge-functions/umami-send.js and not a rewrite: it adds the visitor's
+# address, without which Umami locates every visitor at a Netlify node. The tag
+# itself is added at assemble time, only when UMAMI_WEBSITE_ID is set under
+# [build.environment].
 [[redirects]]
   from = "/u/s.js"
   to = "https://cloud.umami.is/script.js"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/u/api/send"
-  to = "https://gateway.umami.is/api/send"
   status = 200
   force = true
 

@@ -798,9 +798,16 @@ scene change and is not a visit). `pnpm dev`, the test suites and a per-app buil
 content blocker) both are no-ops; an event that precedes the async tracker is held for up to 10 s.
 `trackOnce` reports a name at most once per page load, for things that recur within a session.
 
-**Served from our origin.** Content blockers list the Umami hosts, so `netlify.toml` proxies
-`/u/s.js` → `cloud.umami.is/script.js` and `/u/api/send` → `gateway.umami.is/api/send`. The tracker
-posts to `<data-host-url>/api/send`, so the rewrites and `ANALYTICS_PREFIX` must agree.
+**Served from our origin.** Content blockers list the Umami hosts, so both halves are served under
+`ANALYTICS_PREFIX` (`/u`). The tracker script is a rewrite in `netlify.toml` (`/u/s.js` →
+`cloud.umami.is/script.js`). The tracker posts to `<data-host-url>/api/send`, and `/u/api/send` is
+the Netlify Edge Function `netlify/edge-functions/umami-send.js`, which relays the event to
+`gateway.umami.is/api/send` with the visitor's address in the payload's `ip` field. A plain rewrite
+is not enough there: Umami then sees only the Netlify node that made the request, so it locates
+every visitor in a data-center city, and it merges visitors who share a node and a user agent,
+because the address is an input to its session id. The function forwards the user agent and the
+tracker's `x-umami-*` headers and nothing else. The rewrite, the function's path and
+`ANALYTICS_PREFIX` must agree.
 
 | Event | Properties | Reported from | Per page load |
 |---|---|---|---|
@@ -818,7 +825,10 @@ name or path, a MIDI device name, note data, score or recording content, or anyt
 The tracker adds the page URL, `document.title`, the referrer, screen size and language to every
 payload, so **no app may put user content in the URL or the title** (none does: only the Guide sets
 a title, to its tab name). It sets no cookie; the one thing it reads from storage is the opt-out
-flag `localStorage['umami.disabled']`. The About dialog's Privacy paragraph tells users that
+flag `localStorage['umami.disabled']`. Umami receives the visitor's IP address (from the edge
+function, as it would from a direct connection); its published source uses it for the location
+lookup and as an input to the hashed session id, and its schema has no column for it. The About
+dialog's Privacy paragraph tells users that
 anonymous statistics are collected and lists what is never seen or sent (scores, recordings, custom
 instruments, file names, notes, device names, anything identifying); every event must keep that
 list true.
