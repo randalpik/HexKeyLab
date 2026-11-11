@@ -10789,7 +10789,7 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 
 **Found on the first deploy (2026-11-10):** events arrived through the two rewrites, but Max's visit was located in San Jose and another visitor's in Ashburn, neither of them real. Every event goes through the proxy, so a content blocker was not the cause. `gateway.umami.is` is behind Cloudflare, and Umami's source (`src/lib/ip.ts`, `src/lib/detect.ts`) reads, in cloud mode, its own gateway headers first, then Cloudflare's, and `x-forwarded-for` only after them; that the gateway fills its headers from Cloudflare's view of the connection is inferred, its code not being public. The same source hashes the address into the session id (`src/app/api/send/route.ts`), so visitors sharing a Netlify node and a user agent were also counted as one. The send handler takes an `ip` field in the payload over all of that and then skips the location headers. Tested before building: one POST to the gateway with a Japanese address (JAIST's) in `payload.ip` was located in Nomi, so Umami Cloud honors the field. The edge function replaced the `/u/api/send` rewrite for that reason. Umami's published schema has no column for the address.
 
-**Still to confirm on the live site:** that the function runs (a visit located correctly), and that events still arrive with a content blocker on.
+**Confirmed on the live site (2026-11-10, Max):** with the edge function deployed, events arrive and are located correctly.
 
 **Rejected:**
 - Beaconing to Intonalogy's production backend, which already has homemade analytics: Max ruled it out.
