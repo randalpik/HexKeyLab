@@ -28,7 +28,7 @@
 //   J  HEJI per band, against Pythagorean unbanded: (arrows, hooks)
 //      5 (3, 0) · D (2, 0) · 7 (2, −1) · V (1, 0) · P S Y (0, 0)
 //   K  color: the spine rule on unbanded pitches (Pythagorean hues unchanged
-//      on the fifths spine); every septimal factor is a further half-step
+//      on either spine: 7 hues on fifths, 5 on fourths); every septimal factor is a further half-step
 //      warm (odd e7 → half-step variant); both signs exercised
 //   L  hook glyphs: hejiChain stacks single + two-hook glyphs; hejiLabel
 //      collapses to one hook + exponent above 2
@@ -43,7 +43,7 @@ import { coordExps, coordToMidi, freqAt, TUNING_MODES } from '../../packages/sha
 import { noteName, keyOctave, fifthName, parseNote, accToVal } from '../../packages/shared/src/notes.ts';
 import { bandOfCell, pitchBandOf, bandWidth, octaveVector, layoutOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
-import { hueCycleOrder } from '../../packages/shared/src/colors.ts';
+import { hueCycleOf } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain, SEPT_DOWN_1, SEPT_UP_1, SEPT_DOWN_2, SEPT_UP_2 } from '../../packages/shared/src/heji.ts';
 import { hejiLabel } from '../../apps/hkl/src/tuning/heji.ts';
 
@@ -269,19 +269,20 @@ for (const map of MAPPINGS) {
   };
   for (const map of MAPPINGS) for (const a of ANCHORS) for (const [q, r] of cells(map)) {
     const inv = layoutOf(map).invert;
-    /* 12 fifths span 7 octaves, a whole turn of the 7 hues, so on the fifths spine the
-       Pythagorean comma each band carries leaves the hue alone; 12 fourths span 5 */
+    /* 12 fifths span 7 octaves and 12 fourths span 5, a whole turn of each spine's cycle (7
+       hues, 5 hues), so the Pythagorean comma each band carries leaves the hue alone */
+    const N = inv ? 5 : 7;
     const pu = keyColor(q, r, 'P', map, a, false).hue;
-    if (!inv) check(`K P hue ${map} a${a} (${q},${r})`, pu, keyColor(q, r, 'P', map, a, true).hue);
-    check(`K P spine ${map} a${a} (${q},${r})`, pu, hueCycleOrder[md(spine(coordExps(q, r, 'P', map, a, false), inv), 7)]);
+    check(`K P hue ${map} a${a} (${q},${r})`, pu, keyColor(q, r, 'P', map, a, true).hue);
+    check(`K P spine ${map} a${a} (${q},${r})`, pu, hueCycleOf(inv)[md(spine(coordExps(q, r, 'P', map, a, false), inv), N)].hue);
     for (const banded of [true, false]) {
       const e = coordExps(q, r, '7', map, a, banded);
-      /* position in half-steps along hueCycleOrder (which walks warm → −1): the spine's
+      /* position in half-steps along the cycle (which walks warm → −1): the spine's
          hue, then e7 half-steps warm */
       const pos = 2 * spine(e, inv) - e[3];
       const c = keyColor(q, r, '7', map, a, banded);
       check(`K 7 ${map} a${a} ${banded ? 'b' : 'u'} (${q},${r})`,
-        `${c.hue} ${c.half} ${c.isSept}`, `${hueCycleOrder[md(Math.ceil(pos / 2), 7)]} ${md(pos, 2) === 1} ${e[3] !== 0}`);
+        `${c.hue} ${c.half} ${c.isSept}`, `${hueCycleOf(inv)[md(Math.ceil(pos / 2), N)].hue} ${md(pos, 2) === 1} ${e[3] !== 0}`);
       if (banded) check(`K banded e7 ∈ {0,1} ${map} (${q},${r})`, e[3] === 0 || e[3] === 1, true);
       else { if (e[3] < 0) neg++; if (Math.abs(e[3]) >= 2) multi++; }
     }

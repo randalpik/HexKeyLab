@@ -20,7 +20,7 @@ import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { referenceNote } from '../state/reference.js';
-import { whiteSet, hueC, keyColorVariant, lightenHex, HOVER_LIGHTEN } from './colors.js';
+import { whiteSet, keyColorHex, lightenHex, HOVER_LIGHTEN } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
@@ -932,9 +932,7 @@ function buildHexLayer(): void {
   ctx.save(); ctx.translate(gcx, gcy); ctx.rotate(-tiltAngle);
   ctx.fillStyle = '#111'; gKeys.forEach((k) => { if (k.isKb) { drawHexPath(k.ux, k.uy, hexR + 0.5); ctx.fill(); } });
   gKeys.forEach((k) => {
-    const v = keyColorVariant(k.q, k.r);
-    const col = v.half ? (v.isW ? hueC[v.hue].sl! : hueC[v.hue].sd!) : (v.isW ? hueC[v.hue].l : hueC[v.hue].d);
-    drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = col; ctx.fill();
+    drawHexPath(k.ux, k.uy, hexR - 0.5); ctx.fillStyle = keyColorHex(k.q, k.r); ctx.fill();
   });
   ctx.restore();
   ctx = savedCtx;
@@ -1096,16 +1094,8 @@ export function draw(): void {
   if (selection.hoverKey) {
     const hk = posMap[selection.hoverKey];
     if (hk) {
-      const hv = keyColorVariant(hk.q, hk.r);
-      const hCol = hv.half
-        ? hv.isW
-          ? hueC[hv.hue].sl!
-          : hueC[hv.hue].sd!
-        : hv.isW
-          ? hueC[hv.hue].l
-          : hueC[hv.hue].d;
       drawHexPath(hk.ux, hk.uy, hexR - 0.5);
-      ctx.fillStyle = lightenHex(hCol, HOVER_LIGHTEN);
+      ctx.fillStyle = lightenHex(keyColorHex(hk.q, hk.r), HOVER_LIGHTEN);
       ctx.fill();
     }
   }
@@ -1121,15 +1111,7 @@ export function draw(): void {
     if (flashingSet.has(key)) return;
     const k = posMap[key];
     if (!k) return;
-    const v = keyColorVariant(k.q, k.r);
-    let col = v.half
-      ? v.isW
-        ? hueC[v.hue].sl!
-        : hueC[v.hue].sd!
-      : v.isW
-        ? hueC[v.hue].l
-        : hueC[v.hue].d;
-    col = lightenHex(col, 90);
+    const col = lightenHex(keyColorHex(k.q, k.r), 90);
     drawHexPath(k.ux, k.uy, hexR - 0.5);
     ctx.fillStyle = col;
     ctx.fill();

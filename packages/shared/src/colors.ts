@@ -3,84 +3,108 @@
 // data-q/data-r → resolved color through the bridge). No runtime state, no
 // tuning dependency — the color function (pitch → hue) is keycolor.ts.
 //
-// The septimal-variant fields (`sl`/`sd`) are populated by the load-time IIFE
-// at the bottom of this file by linear-interpolating each hue toward the next
-// in the warm direction (PK→PU→BL→TE→GR→YE→OR→PK). They start undefined and
-// become fully populated before any consumer reads them.
+// A hue is a light / dark pair plus its ink on paper (`hueC`). A hue CYCLE is an ordered list of
+// hues, one per spine (`FIFTHS_CYCLE`, `FOURTHS_CYCLE`): each of its steps
+// carries the hue and its half-step (septimal) variants, halfway to the next
+// warmer step of the same cycle, so a half step belongs to a cycle, not a hue.
 
-export type Hue = 'PK' | 'PU' | 'BL' | 'TE' | 'GR' | 'YE' | 'OR';
+export type Hue = 'PK' | 'PU' | 'BL' | 'TE' | 'GR' | 'YE' | 'OR' | 'DA' | 'SG';
 
 export interface HueColors {
   /** light variant — natural pitch class */
   l: string;
   /** dark variant — accidental pitch class */
   d: string;
-  /** septimal-light (B-band) variant — set by load-time IIFE */
-  sl?: string;
-  /** septimal-dark (B-band) variant — set by load-time IIFE */
-  sd?: string;
+  /** ink on white paper (Composer's light theme): one per hue, for every
+   *  variant of it, half steps included (lowercase, as baked into a score) */
+  ink: string;
 }
 
-export const hueC: Record<Hue, HueColors> = {
-  PK: { l: '#FF4C79', d: '#59002C' },
-  PU: { l: '#C94CFF', d: '#3E0059' },
-  BL: { l: '#4C96FF', d: '#002559' },
-  TE: { l: '#4CFFBA', d: '#005937' },
-  GR: { l: '#55FF4C', d: '#045900' },
-  YE: { l: '#FFF94C', d: '#595600' },
-  OR: { l: '#FF884C', d: '#591D00' },
+/* The seven hues, tuned by eye for the Lumatone's LEDs: equal steps round the
+   wheel. Their inks are tuned for white paper, where the lattice hexes are too
+   pale to read and pink / orange and teal / green would be confused (HSL:
+   pink 333° .95 .50, pinker and brighter; purple 282° .95 .42; blue 215° .95
+   .42; teal 178° .95 .40, toward cyan; green 95° .90 .38, yellow-green;
+   yellow 42° .85 .40, goldenrod; orange 25° 1.00 .46, warm and brighter). */
+const SEVEN = {
+  PK: { l: '#FF4C79', d: '#59002C', ink: '#f90673' },
+  PU: { l: '#C94CFF', d: '#3E0059', ink: '#9405d1' },
+  BL: { l: '#4C96FF', d: '#002559', ink: '#055ad1' },
+  TE: { l: '#4CFFBA', d: '#005937', ink: '#05c7c0' },
+  GR: { l: '#55FF4C', d: '#045900', ink: '#52b80a' },
+  YE: { l: '#FFF94C', d: '#595600', ink: '#bd890f' },
+  OR: { l: '#FF884C', d: '#591D00', ink: '#eb6200' },
 };
 
-/* septimal hue variants: each hue shifted 1/2 toward the next in cycle (warm direction) */
-export const hueCycle: ReadonlyArray<Hue> = ['PK', 'PU', 'BL', 'TE', 'GR', 'YE', 'OR'];
+/** The hue `t` of the way from `a` to `b`: light, dark and ink alike. */
+function between(a: HueColors, b: HueColors, t: number): HueColors {
+  return { l: lerpHex(a.l, b.l, t).toUpperCase(), d: lerpHex(a.d, b.d, t).toUpperCase(), ink: lerpHex(a.ink, b.ink, t) };
+}
 
-(function () {
-  function lerpHex(a: string, b: string, t: number): string {
-    const ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
-    const br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
-    const rr = Math.round(ar + (br - ar) * t), rg = Math.round(ag + (bg - ag) * t), rb = Math.round(ab + (bb - ab) * t);
-    return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1);
-  }
-  for (let i = 0; i < hueCycle.length; i++) {
-    const cur = hueCycle[i], nxt = hueCycle[(i + 1) % hueCycle.length];
-    hueC[cur].sl = lerpHex(hueC[cur].l, hueC[nxt].l, 1 / 2);
-    hueC[cur].sd = lerpHex(hueC[cur].d, hueC[nxt].d, 1 / 2);
-  }
-})();
+export const hueC: Readonly<Record<Hue, HueColors>> = {
+  ...SEVEN,
+  /* Dandelion and spring green, the fourths cycle's two hues between pink and
+     blue (Max, 2026-11-10). That stretch of the seven is five equal steps
+     (pink, orange, yellow, green, teal, blue) and the two cut it in thirds:
+     2/3 of the way from orange to yellow, 1/3 of the way from green to teal,
+     their inks likewise from those hues' inks. */
+  DA: between(SEVEN.OR, SEVEN.YE, 2 / 3),
+  SG: between(SEVEN.GR, SEVEN.TE, 1 / 3),
+};
+
+/** Every hue in a fixed order: stable ids for gates and snapshots. Append only. */
+export const HUES: ReadonlyArray<Hue> = ['PK', 'PU', 'BL', 'TE', 'GR', 'YE', 'OR', 'DA', 'SG'];
+
+/** One step of a hue cycle. */
+export interface CycleStep extends HueColors {
+  hue: Hue;
+  /** half-step light variant: halfway to the next warmer step of this cycle */
+  sl: string;
+  /** half-step dark variant */
+  sd: string;
+}
+
+function lerpHex(a: string, b: string, t: number): string {
+  const ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
+  const br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
+  const rr = Math.round(ar + (br - ar) * t), rg = Math.round(ag + (bg - ag) * t), rb = Math.round(ab + (bb - ab) * t);
+  return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1);
+}
+
+/* A cycle in keycolor.ts's index space: index 0 is A3's hue, a syntonic comma
+   is +2, and warm is −1, so step i's half-step variants lerp toward step i − 1. */
+function buildCycle(hues: ReadonlyArray<Hue>): ReadonlyArray<CycleStep> {
+  return hues.map((hue, i) => {
+    const cur = hueC[hue], warm = hueC[hues[(i + hues.length - 1) % hues.length]];
+    return { hue, ...cur, sl: lerpHex(cur.l, warm.l, 1 / 2), sd: lerpHex(cur.d, warm.d, 1 / 2) };
+  });
+}
+
+/** The hue cycle of each spine (keycolor.ts). A cycle is as long as its spine
+ *  step has semitones — the octaves twelve spine steps span, 7 for fifths and
+ *  5 for fourths — so a Pythagorean comma is a whole turn on either. The two
+ *  share purple and its neighbors, pink and blue, with the half steps between. */
+export const FIFTHS_CYCLE: ReadonlyArray<CycleStep> = buildCycle(['PU', 'PK', 'OR', 'YE', 'GR', 'TE', 'BL']);
+export const FOURTHS_CYCLE: ReadonlyArray<CycleStep> = buildCycle(['PU', 'PK', 'DA', 'SG', 'BL']);
+
+/** The hue cycle of a layout's spine: fourths in an inverted layout. */
+export function hueCycleOf(invert: boolean): ReadonlyArray<CycleStep> {
+  return invert ? FOURTHS_CYCLE : FIFTHS_CYCLE;
+}
 
 export const whiteSet: ReadonlySet<number> = new Set([0, 2, 4, 5, 7, 9, 11]);
 
-/* hueCycle walked backward, starting at the A3 hue (PU). The index space of
-   keycolor.ts's pitch → hue function (+2 per syntonic comma). */
-export const hueCycleOrder: ReadonlyArray<Hue> = (() => {
-  const start = hueCycle.indexOf('PU');
-  return Array.from({ length: 7 }, (_, i) => hueCycle[((start - i) % 7 + 7) % 7]);
-})();
-export const hueIdx: Record<Hue, number> = {} as Record<Hue, number>;
-for (let hi = 0; hi < 7; hi++) hueIdx[hueCycleOrder[hi]] = hi;
-
-/* 3-hue octave cycle for Equal mode (A3=PU) */
-export const equalHueCycle: ReadonlyArray<Hue> = ['BL', 'PU', 'PK'];
-
-/* ── ink-on-paper hue profiles + sanctioned reverse-map ────────────────────
-   Notehead colors on white paper (light theme) are computed by inkColorHex
-   (keycolor.ts): remap the lattice hue to one of these 7 per-hue (H,S,L) targets.
-   So the set of sanctioned INK colors is exactly {hslToRgb(profile)} — 7 fixed
-   hexes. On a DARK surface noteheads instead use the bright light-source hue
-   (hueC.l / .sl). When a file is imported WITHOUT the baked light variant we
-   reverse-map its ink color to the sanctioned light color via these tables; an
-   unrecognized color isn't approximated (the renderer flags it white/black so a
-   bad import is obvious). inkColorHex shares these helpers + profiles so its
-   outputs match the map keys exactly. */
+/* ── notehead colors a score may hold ──────────────────────────────────────
+   On white paper (light theme) a notehead takes its hue's ink (`hueC[…].ink`,
+   via inkColorHex in keycolor.ts); on a DARK surface it takes the bright
+   light-source hue (.l / .sl). A score bakes both. When a file comes WITHOUT
+   the baked light variant we reverse-map its ink to its hue's light color; an
+   unrecognized color isn't approximated (the renderer flags it white/black so
+   a bad import is obvious). */
 
 export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.startsWith('#') ? hex.slice(1) : hex;
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-}
-
-export function rgbToHex(r: number, g: number, b: number): string {
-  const cl = (x: number): string => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0');
-  return '#' + cl(r) + cl(g) + cl(b);
 }
 
 export function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
@@ -97,63 +121,22 @@ export function rgbToHsl(r: number, g: number, b: number): [number, number, numb
   return [h, s, l];
 }
 
-export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-  if (s === 0) return [l * 255, l * 255, l * 255];
-  const hue2rgb = (p: number, q: number, t: number): number => {
-    let tt = t;
-    if (tt < 0) tt += 1;
-    if (tt > 1) tt -= 1;
-    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
-    if (tt < 1 / 2) return q;
-    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
-    return p;
-  };
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  return [hue2rgb(p, q, h + 1 / 3) * 255, hue2rgb(p, q, h) * 255, hue2rgb(p, q, h - 1 / 3) * 255];
-}
-
-export interface HueProfile { centerDeg: number; H: number; S: number; L: number; hue: Hue }
-export const HUE_PROFILES: ReadonlyArray<HueProfile> = [
-  { centerDeg: 20,  H: 25,  S: 1.00, L: 0.46, hue: 'OR' }, /* warm orange, brighter */
-  { centerDeg: 58,  H: 42,  S: 0.85, L: 0.40, hue: 'YE' }, /* goldenrod */
-  { centerDeg: 117, H: 95,  S: 0.90, L: 0.38, hue: 'GR' }, /* yellow-green */
-  { centerDeg: 157, H: 178, S: 0.95, L: 0.40, hue: 'TE' }, /* toward cyan */
-  { centerDeg: 215, H: 215, S: 0.95, L: 0.42, hue: 'BL' },
-  { centerDeg: 282, H: 282, S: 0.95, L: 0.42, hue: 'PU' },
-  { centerDeg: 344, H: 333, S: 0.95, L: 0.50, hue: 'PK' }, /* pinker, brighter */
-];
-
-/** Nearest ink-on-paper profile for an input hue (h in [0,1]). */
-export function profileForHue(h01: number): HueProfile {
-  const deg = h01 * 360;
-  let best = HUE_PROFILES[0], bestDist = 360;
-  for (const p of HUE_PROFILES) {
-    let d = Math.abs(deg - p.centerDeg);
-    if (d > 180) d = 360 - d;
-    if (d < bestDist) { bestDist = d; best = p; }
-  }
-  return best;
-}
-
-/** Sanctioned ink hex (an inkColorHex output) → sanctioned light-source hex.
- *  Keys/values lowercase. Built with the SAME hsl→rgb→hex path inkColorHex
- *  uses, so the keys match its outputs exactly. */
+/** Sanctioned ink hex (an inkColorHex output) → its hue's light-source hex.
+ *  Keys/values lowercase. */
 export const SANCTIONED_INK_TO_LIGHT: ReadonlyMap<string, string> = (() => {
   const m = new Map<string, string>();
-  for (const p of HUE_PROFILES) {
-    const [r, g, b] = hslToRgb(p.H / 360, p.S, p.L);
-    m.set(rgbToHex(r, g, b).toLowerCase(), hueC[p.hue].l.toLowerCase());
-  }
+  for (const hue of HUES) m.set(hueC[hue].ink.toLowerCase(), hueC[hue].l.toLowerCase());
   return m;
 })();
 
-/** Every sanctioned light-source notehead hex (base .l + septimal .sl). */
+/** Every sanctioned light-source notehead hex: each cycle's .l and half-step .sl. */
 export const SANCTIONED_LIGHT: ReadonlySet<string> = (() => {
   const s = new Set<string>();
-  for (const h of hueCycle) {
-    s.add(hueC[h].l.toLowerCase());
-    if (hueC[h].sl) s.add(hueC[h].sl!.toLowerCase());
+  for (const cycle of [FIFTHS_CYCLE, FOURTHS_CYCLE]) {
+    for (const step of cycle) {
+      s.add(step.l.toLowerCase());
+      s.add(step.sl.toLowerCase());
+    }
   }
   return s;
 })();

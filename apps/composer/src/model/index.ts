@@ -865,6 +865,10 @@ export class ComposerModel {
     normalizeTies(this);
     this.normalizePlaceholdersAll();
     this.ensureCursorSlots();
+    /* A note's baked colors are a cache of its pitch's color under the
+       document's layout: refresh it, so a file written under an earlier color
+       rule opens in the current one (Max, 2026-11-10). Idempotent. */
+    this.recolorNotes();
   }
 
   /** Strip any <beam> wrappers from the live doc so cursor/mutation code

@@ -258,10 +258,9 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
   two-hook glyphs U+E2E0/E2E1); HKL labels collapse more than two hooks into one hook with an
   exponent (hkl.md → Note naming).
 - **Color**: the spine rule on the unbanded pitches, nothing added (*Color scheme*). Unbanded
-  Ptolemaic on a 3-wide layout (Euler, Gerhard, Randal) is one stripe per octave. On the fifths
-  spine Pythagorean hues are unchanged, since 12 fifths span 7 octaves, a whole turn of the 7
-  hues; 12 fourths span 5, so in an inverted layout the Pythagorean bands differ in hue. Septimal
-  factors stack half-step hue rotations.
+  Ptolemaic on a 3-wide layout (Euler, Gerhard, Randal) is one stripe per octave. Pythagorean
+  hues are unchanged on either spine: 12 fifths span 7 octaves and 12 fourths span 5, a whole turn
+  of each spine's cycle (7 hues, 5 hues). Septimal factors stack half-step hue rotations.
 
 ### Adding a tuning mode
 
@@ -694,15 +693,26 @@ Implemented once, purely, in `@hkl/shared/keycolor.js` (`keyColor`, `keyColorHex
 `lightSourceHex`, `inkColorHex`); HKL's `render/colors.ts` only supplies its live layout, and
 Composer recolors notes with the same functions.
 
-- **The spine rule — 7 hues × {light,dark}**, `hueCycleOrder = [PU,PK,OR,YE,GR,TE,BL]`. The
+- **The spine rule — one hue cycle per spine, × {light,dark}.** The
   Pythagorean spine is the chain of pure fifths from A3, and of pure fourths in an inverted layout
   (the Accordion, Randal, Park: `layoutOf(…).invert`). It holds one color per nominal octave, purple
   in octave 3: spine note n sits at MIDI `57 + 7n` (`57 + 5n` on the fourths spine), and the hues
-  step through `hueCycleOrder` octave by octave, the other way round on the fourths spine. A note
+  step through the spine's cycle octave by octave, the other way round on the fourths spine. A note
   reached from the spine by chaining 5:4 major thirds takes the spine's color at its own octave (a
   major third is 4 semitones); 2:1 carries no color. On `coordExps`' `[e2, e3, e5, e7]`:
-  - fifths spine: index `floor((57 + 7·e3 + 4·e5) / 12) − 4 (mod 7)`;
-  - fourths spine: index `−(floor((57 − 5·e3 + 4·e5) / 12) − 4) (mod 7)`.
+  - fifths spine: index `floor((57 + 7·e3 + 4·e5) / 12) − 4 (mod 7)` into
+    `FIFTHS_CYCLE = [PU,PK,OR,YE,GR,TE,BL]`;
+  - fourths spine: index `−(floor((57 − 5·e3 + 4·e5) / 12) − 4) (mod 5)` into
+    `FOURTHS_CYCLE = [PU,PK,DA,SG,BL]`.
+- **A cycle is as long as its spine step has semitones** (Max, 2026-11-10; `hueCycleOf(invert)`):
+  twelve spine steps span that many octaves (12 fifths 7, 12 fourths 5), a whole turn of the
+  cycle, so a Pythagorean comma keeps the hue on either spine and shows as a diminished second in
+  one color. The two cycles share purple and its neighbors, pink and blue, with the half steps
+  between them. Where the fifths cycle goes on through orange, yellow, green and teal, the fourths
+  cycle closes the wheel with two hues of its own, dandelion (`DA`) and spring green (`SG`). The
+  seven hues are the ruler: pink → blue is five of their equal steps, and the two cut it in
+  thirds, 2/3 of the way from orange to yellow and 1/3 of the way from green to teal, light and
+  dark alike. `hueC` derives them, so they follow those four.
 - **Nothing else is a rule.** Every JI mode and mapping, banded and unbanded, is that expression on
   the cell's pitch. What a comma does to the hue follows from where it lands on the spine: there
   are no comma terms and no per-mode or per-layout branch. Consequences, each derived:
@@ -711,13 +721,14 @@ Composer recolors notes with the same functions.
     octave.
   - A syntonic comma is 2 hue steps on either spine: P/D's "color as the SC sibling", and
     Syntonic/Polysyntonic's +2 per comma (purple A → orange → green … raised, teal → yellow …
-    lowered).
+    lowered; on the fourths cycle dandelion → blue … raised, spring green → pink … lowered).
   - A Wicki-Hayden copy takes its column's color and a chromatic borrowed column its source's:
     they are exact octaves.
-  - 12 fifths span 7 octaves, a whole turn of the 7 hues, so a Pythagorean comma keeps the hue on
-    the fifths spine. That is a coincidence of that spine: 12 fourths span 5, so on the fourths
-    spine it moves the hue, as do the other unbanded per-band commas and Schismatic's schisma,
-    each by where it lands.
+  - With the Pythagorean comma a whole turn, the hue shift between two enharmonic notes is twice
+    their syntonic-comma difference, mod the cycle, on both spines: a schisma is −2, a diaschisma
+    +4, a lesser diesis 6 (−1 of 7 hues, +1 of 5). The fifths cycle tells seven comma levels
+    apart and the fourths cycle five. (On the seven-hue cycle the inverted layouts had until
+    2026-11-10, a Pythagorean comma moved the hue by 5 ≡ −2, the shift of a syntonic comma down.)
 - **Inverted layouts**: each row lifts an octave, so the fifths spine's colors would straddle
   octaves there (Randal's home-band pink ran G2–C#4). On the fourths spine the blocks read
   **band − MIDI octave**: on Randal's home band purple is C3–B♭3 and blue C♯4–B4, 7 or 8 keys a
@@ -729,22 +740,38 @@ Composer recolors notes with the same functions.
 - **Septimal half steps**: each factor of 7 is first replaced by the 5-limit note it stands for
   (×36/35, the Ptolemaic cell a septimal column replaces), which takes the spine color; unbanded
   Septimal's replaced pitches are exactly unbanded Ptolemaic's (225/224 × 35/36 = 125/128). Each
-  factor then turns the hue half a step warm (`hueCycleOrder` index − e7/2, signed, the same in
+  factor then turns the hue half a step warm (cycle index − e7/2, signed, the same in
   both orientations), so an odd `e7` takes `.sl`/`.sd` (a 50% lerp
-  toward the next hue: `keyColor.half`) and `e7 = ±2` is a whole step. Banded layouts only reach
+  toward the next warmer step of the same cycle: `keyColor.half`; a half step belongs to its
+  cycle, so blue's leans to teal on fifths and to spring green on fourths) and `e7 = ±2` is a whole
+  step. Banded layouts only reach
   `e7 ∈ {0, 1}`; the unbanded Septimal layout stacks them, which is consistent with Schismatic's
   near-octave changing color on the same spelling. `keyColor.isSept` (`e7 ≠ 0`) is the info
   panel's "7" tag.
-- **Equal — 3 hues**: `[BL,PU,PK][floor(midi/12) % 3]` by sounding octave, rotated so A3 = purple —
-  the one genuinely separate rule.
+- **Equal — the layout's cycle by MIDI octave**: index `±(floor(midi/12) − 4)` into the spine's
+  cycle (7 hues, or 5 inverted), in the spine's direction: purple is C3–B3, and the octave above
+  is pink on a plain layout and blue on an inverted one. It ignores the anchor and the banding,
+  and a 12-TET pitch has one color wherever it sits. The one genuinely separate rule, since 12-TET
+  has no place on the spine; on a 3-wide layout it draws unbanded Ptolemaic's stripes with A3's
+  band as home.
 - **Light vs dark**: by the cell's own MIDI pitch class — light if ∈ {0,2,4,5,7,9,11}, else dark.
 
 Regression gate: `test/color-gate/gate.mjs` pins hue/light/septimal and the three hex outputs for
-every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended color change);
-`test/layout-presets/oracle.mjs` section L checks the rule itself, inverted layouts included.
+every mode × mapping over q, r ∈ [−40, 40] (re-seed only for an intended color change; hexes are
+recorded per orientation); `test/layout-presets/oracle.mjs` section L checks the rule itself on
+all 48 layouts: both cycle lengths, Equal, the hues the cycles share, and distinct inks.
 
 Base palette (light/dark hex): PK `#FF4C79`/`#59002C`, PU `#C94CFF`/`#3E0059`, BL `#4C96FF`/`#002559`,
-TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF884C`/`#591D00`.
+TE `#4CFFBA`/`#005937`, GR `#55FF4C`/`#045900`, YE `#FFF94C`/`#595600`, OR `#FF884C`/`#591D00`;
+fourths cycle only, derived: DA `#FFD34C`/`#594300`, SG `#52FF71`/`#035912`.
+
+**Ink on paper** (Composer's light theme, `inkColorHex`): a notehead on white takes its hue's
+ink, a third field of the hue (`hueC[…].ink`), whatever the variant: a half step takes its hue's
+ink too, so a septimal note is not told apart by ink (its accidental says it). The seven inks
+are tuned for paper: PK `#f90673`, PU `#9405d1`, BL `#055ad1`, TE `#05c7c0`, GR `#52b80a`,
+YE `#bd890f`, OR `#eb6200`. Dandelion's and spring green's are derived as the hues are, 2/3 of
+the way from orange's ink to yellow's (`#cc7c0a`) and 1/3 of the way from green's to teal's
+(`#38bd47`).
 
 ---
 

@@ -11,7 +11,7 @@
 //      160/81, 160/81, 81/40 by transition (Wicki-Hayden 6-band, chromatic
 //      12-band; Euler 3-band step is P's 2/1 times the same comma)
 //   D  re-anchoring: Polysyntonic = global shift by −n·SC; Syntonic = period 4
-//   E  color: hue = P's hue + 2k steps (mod 7); septimal never; white/black =
+//   E  color: hue = P's hue + 2k steps (mod 7; mod 5 inverted); septimal never; white/black =
 //      MIDI pitch class
 //   F  HEJI: syn5 = −k (up-arrows raised), sept7 = 0; hejiChain renders |k| ≤ 4
 //
@@ -22,7 +22,7 @@
 import { coordExps, coordToMidi, anchorOf, bandOffset } from '../../packages/shared/src/freq.ts';
 import { bandOfCell, pitchBandOf, bandWidth, layoutOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
-import { hueCycleOrder, hueIdx } from '../../packages/shared/src/colors.ts';
+import { hueCycleOf } from '../../packages/shared/src/colors.ts';
 import { hejiCommasFor, hejiChain } from '../../packages/shared/src/heji.ts';
 
 const SC = [-4, 4, -1, 0];
@@ -49,6 +49,7 @@ function ratio(e) {
 for (const mapping of MAPPINGS) {
   const W = bandWidth(mapping);                    /* band width in q */
   const QR = 20 * 4 / layoutOf(mapping).c;
+  const cycle = hueCycleOf(layoutOf(mapping).invert), N = layoutOf(mapping).invert ? 5 : 7;
   for (const mode of ['S', 'Y']) {
     for (const anchor of ANCHORS) {
       for (let q = -QR; q <= QR; q++) {
@@ -71,7 +72,7 @@ for (const mapping of MAPPINGS) {
           /* E */
           const c = keyColor(q, r, mode, mapping, anchor, true);
           const cp = keyColor(q, r, 'P', mapping, anchor, true);
-          check(`E ${tag} hue +2k`, c.hue, hueCycleOrder[mod(hueIdx[cp.hue] + 2 * k, 7)]);
+          check(`E ${tag} hue +2k`, c.hue, cycle[mod(cycle.findIndex((s) => s.hue === cp.hue) + 2 * k, N)].hue);
           check(`E ${tag} not septimal`, c.isSept, false);
           check(`E ${tag} white/black`, c.isW, [0, 2, 4, 5, 7, 9, 11].includes(mod(coordToMidi(q, r, mapping), 12)));
           /* F */

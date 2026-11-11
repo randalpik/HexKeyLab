@@ -964,6 +964,9 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   under the new layout (color is one function of the pitch,
   `@hkl/shared/keycolor.js`), so an inexact relocation no longer keeps a stale
   color. A note whose `@color` isn't a lattice ink (an import's black) keeps it.
+  The baked colors are a cache, so loading a document recolors too
+  (`replaceDocument`): a file written under an earlier color rule opens in the
+  current one.
 - **Syntonic / Polysyntonic anchor**: each note sounds under the anchor of the
   key signature at its measure — `model.anchorAt(mi)` = the band of the same
   key-tonic cell `set-score-ref` carries (`findTonicCoord`, always an original

@@ -1,23 +1,17 @@
 // Key color under HKL's live tuning state. The color function itself is pure
-// and lives in @hkl/shared/keycolor.js — color is one function of the pitch,
-// identical across every JI mode and mapping (Equal keeps its own octave
-// cycle); see that module. These wrappers only supply the current layout.
-// Pure data tables (hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx,
-// equalHueCycle) live in @hkl/shared/colors.js — re-exported here so existing
-// callers continue to import from '../render/colors.js'.
+// and lives in @hkl/shared/keycolor.js — color is one function of the pitch
+// and the layout's orientation; see that module. These wrappers only supply
+// the current layout. The palette lives in @hkl/shared/colors.js.
 
 import { tuning } from '../state/tuning.js';
 import {
   type KeyColor,
   keyColor, keyColorHex as sharedKeyColorHex, lightSourceHex as sharedLightSourceHex,
 } from '@hkl/shared/keycolor.js';
-import {
-  type Hue, type HueColors,
-  hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle,
-} from '@hkl/shared/colors.js';
+import { whiteSet } from '@hkl/shared/colors.js';
 
-export type { Hue, HueColors, KeyColor };
-export { hueC, hueCycle, whiteSet, hueCycleOrder, hueIdx, equalHueCycle };
+export type { KeyColor };
+export { whiteSet };
 
 /** Hue, white/black and septimal flags for a cell under the current layout. */
 export function keyColorVariant(q: number, r: number): KeyColor {

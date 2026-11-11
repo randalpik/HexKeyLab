@@ -34,7 +34,7 @@ const { setBoards34Swapped, sysexBoardFor, buildFrameSysEx, buildBoardRequestSys
 const { lumatoneCell, lumatoneCells } = await import('../../apps/hkl/src/layout/physical.ts');
 const { keyColorHex, lightenHex, HOVER_LIGHTEN } = await import('../../apps/hkl/src/render/colors.ts');
 const { hexToOklab, oklabToHex } = await import('../../apps/hkl/src/lumatone/oklab.ts');
-const { hueC } = await import('../../packages/shared/src/colors.ts');
+const { FIFTHS_CYCLE, FOURTHS_CYCLE } = await import('../../packages/shared/src/colors.ts');
 
 let sent = [];
 midi.midiOut = { send: (m) => sent.push(m) };
@@ -221,9 +221,10 @@ const two = (q, r) => (q === 0 && r === 0 ? '#000000' : '#c8c8c8');
 const ch = (h) => [1, 3, 5].map((a) => parseInt(h.slice(a, a + 2), 16));
 const near = (a, b, tol) => ch(a).every((v, i) => Math.abs(v - ch(b)[i]) <= tol);
 assert(near(sampleField(0.5, 0, two), '#191919', 1), 'gray midpoint halves OKLab lightness (200 / 8 = 25)');
-const palette = Object.values(hueC).flatMap((h) => [h.l, h.d, h.sl, h.sd]);
+const steps = [...FIFTHS_CYCLE, ...FOURTHS_CYCLE];
+const palette = steps.flatMap((h) => [h.l, h.d, h.sl, h.sd]);
 for (const hex of palette) assert(near(oklabToHex(hexToOklab(hex)), hex, 1), `OKLab round trip ${hex}`);
-for (const h of Object.values(hueC)) {
+for (const h of steps) {
   for (const [l, d] of [[h.l, h.d], [h.sl, h.sd]]) {
     const mid = sampleField(0.5, 0, (q, r) => (q === 0 && r === 0 ? l : d));
     const want = (hexToOklab(l)[0] + hexToOklab(d)[0]) / 2;

@@ -19,7 +19,7 @@ The toolbar's tabs each show or hide a group of controls, and you can have sever
 
 The keyboard is an **isomorphic** hexagonal layout: each direction always steps by the same interval, so a chord or scale has the same shape in every key. In the default Euler mapping, a step to the right is a major third (5:4), a step up-right a perfect fifth (3:2), and a step up-left a minor third (6:5), so a major or minor triad is three touching keys.
 
-**A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors (in the Accordion, Randal and Park, built on pure fourths, the colors step the other way as you go up a band: from the purple keys, the next octave's keys are blue rather than pink); a light or dark shade marks a white-key or black-key note name. In Equal tuning, three colors cycle by octave instead.
+**A3** (220 Hz) is at the center. Each key's color comes from its exact pitch, so two versions of a note a comma apart have different colors (the Accordion, Randal and Park, built on pure fourths, use five colors where the other layouts use seven, and step the other way as you go up a band: from the purple keys, the next octave's keys are blue rather than pink); a light or dark shade marks a white-key or black-key note name. In Equal tuning, the same colors cycle by octave instead.
 
 In the Euler mapping the keyboard is divided into **bands** three keys wide, and every key sounds exactly an octave above the key three places to its left. The boundaries between bands are **seams**, drawn as dark wedges. Turning **Banded layout** off removes the bands (below).
 
@@ -74,7 +74,7 @@ The **Tuning** dropdown (Layout tab) sets how every key is tuned. The keyboard k
 - Whole bands are shifted by a syntonic comma (81:80) against their neighbors: the band left of the **home band** is lowered, the one to its right raised. A pure major third (5:4) is then the same key one band to the left, and a pure minor third (6:5) the same key one band to the right.
 - **Syntonic** comes back to unaltered every second band (0, +1, 0, −1 commas going right). **Polysyntonic** keeps stacking, one more comma per band, so a note's comma variants sit side by side.
 - The home band is the band holding your [reference note](#reference-note). Move the reference into another band and that band becomes home: the keys keep their notes, and the tunings, arrows and colors re-anchor around it.
-- Colors follow the comma count: from a purple A, one comma up is orange, two is green, and one down is teal.
+- Colors follow the comma count: from a purple A, one comma up is orange, two is green, and one down is teal (dandelion, blue and spring green in the Accordion, Randal and Park).
 - A MIDI keyboard plays the simplest just ratio from your reference, which is 5-limit wherever the bands offer it.
 
 ---

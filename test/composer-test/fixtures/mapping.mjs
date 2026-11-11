@@ -258,9 +258,11 @@ export const FIXTURES = {
   /* Notehead color in an inverted layout is the fourths spine's (docs/architecture.md → Color
      scheme): Randal, the chord A3 C#4 A4 C#5, the upper pair one band up. Ptolemaic's band step
      is 2:1, so each pair shares a color. Schismatic's is 2:1 × a schisma (3⁸·5/2¹⁵): 8 fourths
-     down the spine and a major third up, 3 octaves, so the upper pair turns 3 hues (purple →
-     yellow, blue → orange). Until 2026-11-09 the inverted branch added the schisma's fifths-spine
-     step instead and gave teal and green. Hexes computed from the shared functions. */
+     down the spine and a major third up, 3 octaves, so the upper pair turns 3 steps of the
+     fourths spine's five hues, a syntonic comma down (purple → spring green, blue → dandelion). On the
+     seven-hue cycle the inverted layouts had until 2026-11-10 that was yellow and orange, and
+     until 2026-11-09 the inverted branch added the schisma's fifths-spine step instead and gave
+     teal and green. Hexes computed from the shared functions. */
   map_randal_schismatic_recolors: {
     setup: `
       ${HELPERS}
@@ -281,6 +283,34 @@ export const FIXTURES = {
       m.setLayoutReq({ tuningMode: 'V', mapping: 'randal' });
       m.recolorNotes();
       window.__mapColSchismatic = window.__mapCols();
+      r();
+    `,
+  },
+  /* A note's baked colors are a cache of its pitch's color under the score's layout, and loading
+     a document refreshes it (replaceDocument → recolorNotes), so a file written under an earlier
+     color rule opens in the current one. An Equal score in Euler holding A3 A4 A5 A6 baked as the
+     pre-2026-11-10 three-hue octave cycle (purple, pink, blue, purple): it loads as the fifths
+     cycle by MIDI octave (purple, pink, orange), and the A6, given a color that is not a lattice
+     ink (an import's black), keeps it. Hexes computed from the shared functions. */
+  map_load_recolors_stale: {
+    setup: `
+      ${HELPERS}
+      const N = (q, pname, oct, midi, ink, light) => ({ q, r: 0, pname, accid: '', oct, midi, colorHex: ink, lightColorHex: light, velocity: 80 });
+      const cols = () => {
+        const by = {};
+        for (const n of m.getDoc().querySelectorAll('note')) by[n.getAttribute('data-q')] = [n.getAttribute('color'), n.getAttribute('data-light-color')];
+        return ['0', '3', '6', '9'].map((k) => by[k] ?? null);
+      };
+      m.setLayoutReq({ tuningMode: 'E', mapping: 'euler' });
+      m.setCursor(0, 1);
+      m.insertChordAtCursor({ notes: [
+        N(0, 'a', 3, 57, '#9405d1', '#C94CFF'), N(3, 'a', 4, 69, '#f90673', '#FF4C79'),
+        N(6, 'a', 5, 81, '#055ad1', '#4C96FF'), N(9, 'a', 6, 93, '#9405d1', '#C94CFF'),
+      ], duration: '4', dots: 0 });
+      m.getDoc().querySelector('note[data-q="9"]').setAttribute('color', '#000000');
+      window.__mapStaleBefore = cols();
+      m.replaceDocument(m.serialize());
+      window.__mapStaleLoaded = cols();
       r();
     `,
   },
@@ -436,10 +466,16 @@ export const ASSERTIONS = {
     { name: 'the Setup mapping list is all eight, in dropdown order',
       expr: `(${expect.toString()})(window.__mapOptions, ['euler', 'wickiHayden', 'chromatic', 'gerhard', 'janko', 'accordion', 'randal', 'park'])` },
   ],
+  map_load_recolors_stale: [
+    { name: 'before the load the notes hold the stale colors (A5 blue)',
+      expr: `(${expect.toString()})(window.__mapStaleBefore, [['#9405d1', '#C94CFF'], ['#f90673', '#FF4C79'], ['#055ad1', '#4C96FF'], ['#000000', '#C94CFF']])` },
+    { name: 'loading recolors the lattice inks (A5 orange) and leaves the black note alone',
+      expr: `(${expect.toString()})(window.__mapStaleLoaded, [['#9405d1', '#C94CFF'], ['#f90673', '#FF4C79'], ['#eb6200', '#FF884C'], ['#000000', '#C94CFF']])` },
+  ],
   map_randal_schismatic_recolors: [
     { name: 'Ptolemaic: A3 and A4 purple, C#4 and C#5 blue (a band step keeps the color)',
       expr: `(${expect.toString()})(window.__mapColPtolemaic, [['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF'], ['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF']])` },
-    { name: 'Schismatic: the band above turns 3 hues on the fourths spine (A4 yellow, C#5 orange)',
-      expr: `(${expect.toString()})(window.__mapColSchismatic, [['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF'], ['#bd890f', '#FFF94C'], ['#eb6200', '#FF884C']])` },
+    { name: 'Schismatic: the band above turns 3 of the fourths spine\'s 5 hues (A4 spring green, C#5 dandelion)',
+      expr: `(${expect.toString()})(window.__mapColSchismatic, [['#9405d1', '#C94CFF'], ['#055ad1', '#4C96FF'], ['#38bd47', '#52FF71'], ['#cc7c0a', '#FFD34C']])` },
   ],
 };

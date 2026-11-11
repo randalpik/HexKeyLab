@@ -4,7 +4,9 @@
 // docs/architecture.md → Color scheme). This gate pins what that function
 // produces: for every mode × mapping over a wide cell window it records each
 // cell's (hue, white/black, septimal) as one code character, and once per
-// distinct code the exact hexes the three public outputs give — lattice
+// distinct code and orientation (a half step belongs to its spine's cycle, so
+// an inverted layout's codes are keyed 'i' + code) the exact hexes the three
+// public outputs give — lattice
 // (keyColorHex), dark-surface notehead (lightSourceHex) and ink-on-paper
 // notehead (darkColorHex). A check run recomputes everything through HKL's
 // public color API and requires an exact match.
@@ -17,8 +19,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { TUNING_MODES } from '../../packages/shared/src/freq.ts';
-import { MAPPINGS } from '../../packages/shared/src/mapping.ts';
-import { hueCycle } from '../../packages/shared/src/colors.ts';
+import { MAPPINGS, layoutOf } from '../../packages/shared/src/mapping.ts';
+import { HUES } from '../../packages/shared/src/colors.ts';
 import { tuning } from '../../apps/hkl/src/state/tuning.ts';
 import { keyColorVariant, keyColorHex, lightSourceHex } from '../../apps/hkl/src/render/colors.ts';
 import { darkColorHex } from '../../apps/hkl/src/transcription/pitch.ts';
@@ -33,9 +35,9 @@ function setLayout(mode, mapping) {
   tuning.mapping = mapping;
 }
 
-/* code = hue index (hueCycle) · 4 + white · 2 + septimal → one char from '0' */
+/* code = hue index (HUES) · 4 + white · 2 + septimal → one char from '0' */
 function codeOf(v) {
-  return String.fromCharCode(48 + hueCycle.indexOf(v.hue) * 4 + (v.isW ? 2 : 0) + (v.half ? 1 : 0));
+  return String.fromCharCode(48 + HUES.indexOf(v.hue) * 4 + (v.isW ? 2 : 0) + (v.half ? 1 : 0));
 }
 
 function capture() {
@@ -44,14 +46,16 @@ function capture() {
   for (const mode of TUNING_MODES) {
     for (const mapping of MAPPINGS) {
       setLayout(mode, mapping);
+      const orient = layoutOf(mapping).invert ? 'i' : '';
       let s = '';
       for (let q = -W; q <= W; q++) {
         for (let r = -W; r <= W; r++) {
           const c = codeOf(keyColorVariant(q, r));
           s += c;
           const h = [keyColorHex(q, r), lightSourceHex(q, r), darkColorHex(q, r)].join(' ');
-          if (hexes[c] === undefined) hexes[c] = h;
-          else if (hexes[c] !== h) throw new Error(`code ${c} maps to two hex triples: ${hexes[c]} vs ${h} at ${mode}/${mapping} (${q},${r})`);
+          const hk = orient + c;
+          if (hexes[hk] === undefined) hexes[hk] = h;
+          else if (hexes[hk] !== h) throw new Error(`code ${hk} maps to two hex triples: ${hexes[hk]} vs ${h} at ${mode}/${mapping} (${q},${r})`);
         }
       }
       grids[`${mode}/${mapping}`] = s;

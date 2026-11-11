@@ -29,10 +29,15 @@
 //      mod 12)
 //   L  color: the spine rule in every JI mode, banded and unbanded — the spine of fifths (of
 //      fourths, mirrored, in an inverted layout) holds one color per octave and a 5:4 chain takes
-//      the spine's color at its octave; a pitch keeps its color across layouts of one
+//      the spine's color at its octave, on a cycle as long as the spine step has semitones (7
+//      hues on fifths, 5 on fourths); a pitch keeps its color across layouts of one
 //      orientation (Euler's plain, Randal's inverted, copy columns included); 3-wide bands read
 //      ±(MIDI octave − band), and unbanded Ptolemaic there is one stripe per octave; a band step
-//      keeps the hue; Equal stays its octave cycle
+//      keeps the hue; Equal is the layout's cycle by MIDI octave, purple in octave 3, whatever
+//      the anchor or banding; the two cycles share purple and its two neighbors (pink, blue)
+//      with their half steps; the fourths cycle's own two hues cut pink → blue in thirds of the
+//      seven's steps; ink on paper belongs to the hue, half steps included, and the two new
+//      inks are the same thirds of the seven's inks
 //   S  the score frame: every layout converts into the finest preset of its orientation
 //      (Chromatic plain, Park inverted) with the nominal MIDI kept, and with the exact pitch kept
 //      in every JI mode, banded and unbanded, from every plain layout and every inverted layout
@@ -47,8 +52,8 @@ import {
 } from '../../packages/shared/src/mapping.ts';
 import { coordExps, coordToMidi, anchorOf, TUNING_MODES } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
-import { keyColor } from '../../packages/shared/src/keycolor.ts';
-import { hueIdx, equalHueCycle } from '../../packages/shared/src/colors.ts';
+import { keyColor, inkColorHex } from '../../packages/shared/src/keycolor.ts';
+import { hueCycleOf, FIFTHS_CYCLE, FOURTHS_CYCLE, hexToRgb, rgbToHsl, sanctionedLightForInk } from '../../packages/shared/src/colors.ts';
 
 let checks = 0, fails = 0;
 function check(label, got, want) {
@@ -277,28 +282,69 @@ for (const L of ALL) for (let r = -9; r <= 9; r++) {
    (4 semitones each) off spine note b (−b on the fourths spine) and takes the spine's color at
    that octave; 2:1 carries no color. A septimal factor is first replaced by the 5-limit note it
    stands for (×36/35), then turns the hue half a step. Every mode, banded and unbanded, is this
-   one rule: no comma terms. Recomputed here from coordExps, not keyColor. */
+   one rule: no comma terms. The cycle is as long as the spine step has semitones — the octaves
+   twelve spine steps span — so a Pythagorean comma is a whole turn: 7 hues on fifths, 5 on
+   fourths. Recomputed here from coordExps, not keyColor. */
 {
-  const mod7 = (x) => ((x % 7) + 7) % 7;
+  const modN = (x, inv) => { const n = inv ? 5 : 7; return ((x % n) + n) % n; };
+  check('L fifths cycle length', FIFTHS_CYCLE.length, 7);
+  check('L fourths cycle length', FOURTHS_CYCLE.length, 5);
+  /* purple and its two neighbors, with the half steps between them, are the same in both */
+  for (const [i, j, name] of [[0, 0, 'purple'], [1, 1, 'pink'], [6, 4, 'blue']]) {
+    const a = FIFTHS_CYCLE[i], b = FOURTHS_CYCLE[j];
+    check(`L ${name} is shared`, `${b.hue} ${b.l} ${b.d}`, `${a.hue} ${a.l} ${a.d}`);
+    if (name !== 'blue') check(`L ${name}'s half step is shared`, `${b.sl} ${b.sd}`, `${a.sl} ${a.sd}`);
+  }
+  /* the fourths cycle's own two hues cut the seven's stretch pink → blue (orange, yellow, green
+     and teal between: five steps) in thirds: 2/3 of the way from orange to yellow and 1/3 of the
+     way from green to teal, light and dark alike, each dark at its light's hue (Max, 2026-11-10) */
+  {
+    const mix = (a, b, t) => '#' + [1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - t) + parseInt(b.slice(i, i + 2), 16) * t).toString(16).padStart(2, '0')).join('').toUpperCase();
+    const hueOf = (hex) => rgbToHsl(...hexToRgb(hex))[0] * 360;
+    const F = Object.fromEntries(FIFTHS_CYCLE.map((s) => [s.hue, s]));
+    for (const [j, a, b, t, name] of [[2, 'OR', 'YE', 2 / 3, 'dandelion'], [3, 'GR', 'TE', 1 / 3, 'spring green']]) {
+      const s = FOURTHS_CYCLE[j];
+      check(`L ${name} light`, s.l, mix(F[a].l, F[b].l, t));
+      check(`L ${name} dark`, s.d, mix(F[a].d, F[b].d, t));
+      check(`L ${name} dark has its light's hue`, Math.abs(hueOf(s.d) - hueOf(s.l)) < 1, true);
+    }
+  }
+  /* Ink on paper (Composer's light theme) belongs to the hue: every variant of a hue, half steps
+     included, takes that hue's ink. The seven inks are pinned; the fourths cycle's two are the
+     same thirds of them as the hues are of the seven (2/3 of the way from orange's ink to
+     yellow's, 1/3 of the way from green's to teal's). No two hues share an ink, and an ink maps
+     back to its hue's light variant. */
+  const INK = { PK: '#f90673', PU: '#9405d1', BL: '#055ad1', TE: '#05c7c0', GR: '#52b80a', YE: '#bd890f', OR: '#eb6200' };
+  {
+    const mix = (a, b, t) => '#' + [1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - t) + parseInt(b.slice(i, i + 2), 16) * t).toString(16).padStart(2, '0')).join('');
+    INK.DA = mix(INK.OR, INK.YE, 2 / 3);
+    INK.SG = mix(INK.GR, INK.TE, 1 / 3);
+    check('L inks distinct', new Set(Object.values(INK)).size, 9);
+    for (const s of [...FIFTHS_CYCLE, ...FOURTHS_CYCLE]) check(`L ${s.hue} ink maps back to its light variant`, sanctionedLightForInk(INK[s.hue]), s.l.toLowerCase());
+  }
   const spineIdx = (e, inv) => {
     const b = e[1] + 2 * e[3], c = e[2] - e[3];                     /* ×(36/35)^e7 */
     const place = 57 + (inv ? 5 * -b : 7 * b) + 4 * c;              /* nominal MIDI along the spine */
     const oct = Math.floor(place / 12) - 4;
     return (inv ? -oct : oct) - Math.floor(e[3] / 2);
   };
-  const idxOf = (q, r, mode, L, a, banded) => hueIdx[keyColor(q, r, mode, L, a, banded).hue];
+  const idxOf = (q, r, mode, L, a, banded) => {
+    const hue = keyColor(q, r, mode, L, a, banded).hue;
+    return hueCycleOf(layoutOf(L).invert).findIndex((s) => s.hue === hue);
+  };
   for (const L of ALL) {
     const inv = layoutOf(L).invert, W = bandWidth(L), home = inv ? 'randal' : 'euler';
     for (const [q, r] of CELLS) {
       for (const banded of [true, false]) for (const mode of JI) for (const a of [0, 1]) {
-        const want = mod7(spineIdx(coordExps(q, r, mode, L, a, banded), inv));
+        const want = modN(spineIdx(coordExps(q, r, mode, L, a, banded), inv), inv);
         check(`L ${L} ${mode} ${banded ? 'b' : 'u'} a${a} (${q},${r}) hue`, idxOf(q, r, mode, L, a, banded), want);
+        check(`L ${L} ${mode} ${banded ? 'b' : 'u'} a${a} (${q},${r}) ink`, inkColorHex(q, r, mode, L, a, banded), INK[hueCycleOf(inv)[want].hue]);
       }
       /* unbanded Ptolemaic on a 3-wide layout is (5/4)^q along every row: one stripe per
          nominal MIDI octave, mirrored when inverted */
       if (W === 3) {
         const o = Math.floor(coordToMidi(q, r, L) / 12) - 4;
-        check(`L ${L} (${q},${r}) unbanded Ptolemaic octave stripe`, idxOf(q, r, '5', L, 0, false), mod7(inv ? -o : o));
+        check(`L ${L} (${q},${r}) unbanded Ptolemaic octave stripe`, idxOf(q, r, '5', L, 0, false), modN(inv ? -o : o, inv));
       }
       /* a pitch keeps its color across one orientation: every cell takes Euler's (plain) or
          Randal's (inverted) color at its Euler-equivalent — a copy column its source's */
@@ -307,12 +353,19 @@ for (const L of ALL) for (let r = -9; r <= 9; r++) {
       /* the octave blocks: Euler-family bands read ±(MIDI octave − band), mirrored when inverted */
       if (W === 3) {
         const ob = Math.floor(coordToMidi(q, r, L) / 12) - bandOfCell(q, r, L) - 4;
-        check(`L ${L} (${q},${r}) Ptolemaic block`, idxOf(q, r, '5', L, 0, true), mod7(inv ? -ob : ob));
+        check(`L ${L} (${q},${r}) Ptolemaic block`, idxOf(q, r, '5', L, 0, true), modN(inv ? -ob : ob, inv));
       }
       /* a band step keeps the hue (banded, uniform modes) */
       for (const mode of UNIFORM) check(`L ${L} ${mode} (${q},${r}) band step keeps the hue`, idxOf(q + W, r, mode, L, 0, true), idxOf(q, r, mode, L, 0, true));
-      /* Equal stays its octave cycle */
-      check(`L ${L} E (${q},${r})`, keyColor(q, r, 'E', L, 0, true).hue, equalHueCycle[((Math.floor(coordToMidi(q, r, L) / 12) % 3) + 3) % 3]);
+      /* Equal: the layout's cycle by MIDI octave, purple in octave 3, mirrored when inverted;
+         never a half step, and blind to the anchor and the banding */
+      {
+        const o = Math.floor(coordToMidi(q, r, L) / 12) - 4;
+        for (const banded of [true, false]) for (const a of [0, 1]) {
+          const c = keyColor(q, r, 'E', L, a, banded);
+          check(`L ${L} E ${banded ? 'b' : 'u'} a${a} (${q},${r})`, `${idxOf(q, r, 'E', L, a, banded)} ${c.half} ${c.isSept}`, `${modN(inv ? -o : o, inv)} false false`);
+        }
+      }
     }
   }
 }

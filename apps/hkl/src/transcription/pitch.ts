@@ -1,6 +1,6 @@
 // Color helpers for transcription: the ink-on-paper notehead color for a
-// lattice cell under the current layout. The remap itself (per-hue ink
-// profiles) is @hkl/shared/keycolor.js's inkColorHex, shared with Composer.
+// lattice cell under the current layout. The ink itself (one per hue) is
+// @hkl/shared/keycolor.js's inkColorHex, shared with Composer.
 
 import { inkColorHex } from '@hkl/shared/keycolor.js';
 import { tuning } from '../state/tuning.js';
