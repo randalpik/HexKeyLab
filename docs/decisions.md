@@ -10839,3 +10839,24 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 - **Cost:** `keyColorHex` 60.4 ms per 645,248 calls (82.7 before). The load recolor is 2.6 ms of a 130 ms `replaceDocument` on the sonata (9,115 notes, 165 lattice-colored, 8 of them change; a reload changes none).
 
 **Where:** `packages/shared/src/{colors,keycolor}.ts`; `apps/hkl/src/render/{colors,draw}.ts`; `apps/composer/src/model/index.ts` (`replaceDocument`); `test/{color-gate,layout-presets,unbanded,syntonic,hkl-midi}/`, `test/composer-test/fixtures/mapping.mjs`; docs/architecture.md (Color scheme, Unbanded layout), docs/architecture/{hkl,composer}.md, docs/guide/core.md, AGENTS.md, docs/lessons.md.
+
+## Exponent collapse: the pairing unit doubles on the heavy side; excess collapse is a second step (2026-11-10, Max)
+
+**Context:** Max reported Randal Ptolemaic unbanded (−14, 5): a B with 9 flats and 14 up arrows drew as `(♭↑)⁹ ♮↑↑ ♮↑↑ ♮↑`. The 2026-05-24 collapse made Case A (both counts above 4) and Case B (one count exceeds the other by more than 4) exclusive branches, so Case A's leftover went to the chain however long it was. Unbanded layouts stack commas and accidentals per band at different rates, which the banded layouts that rule was written for never did: over all 8 presets × 7 JI modes × both bandings on q ±16, r ±10, the gap is hit by unbanded Ptolemaic (arrow-heavy, 1,004 cells, a chain of up to 7 naturals) and by unbanded Schismatic (accidental-heavy, 50 cells, `(♯↓)⁵ ♯ 𝄪 𝄪`), and by nothing else.
+
+**Picked** (Max's "technically best" form, `(♭↑↑)⁷ 𝄫`, made symmetric):
+- **Step 0a, pairing** (both counts above 4): one group, `before`. The unit is 1 accidental + 1 arrow unless that would strand an excess above 4 on one side; that side then doubles in the unit: 2 arrows per accidental (`♭↑↑`) when the arrows exceed, a double accidental per arrow (`𝄪↓`) when the accidentals do. `k = min(⌊|AD| / accidentals per unit⌋, ⌊|SD| / arrows per unit⌋)`.
+- **Step 0b, excess** (what remains differs by more than 4): the old Case B, now run after 0a instead of in place of it. It fires on a label that never paired (one count at most 4, as before) and on a ratio beyond 2:1 after pairing (`(♯↓↓)⁵ (♮↓)¹⁰` for 5 sharps and 20 arrows; `(♭↑↑)¹³ ♭⁷` for 20 flats and 26 arrows).
+- **The label holds a list of groups** (`HejiLabel.collapses`, at most two), drawn `before` groups, chain, `after` groups, hooks.
+
+**Unchanged:** every label whose counts are not both above 4 and more than 4 apart, compared against the previous `hejiLabel` on |AD|, |SD| ≤ 40 × five hook counts (32,805 labels: 19,840 changed, none outside that region).
+
+**Rejected:**
+- **A second 1:1 group** (`(♭↑)⁹ (♮↑)⁵`), which Max offered as the acceptable simpler form: no unit choice, but two exponents on every affected cell, where the doubled unit gives each of the census's 1,054 affected cells one exponent and at most two chain glyphs.
+- **Double-arrow naturals in step 0b** (`(♮↓↓)⁵` for `(♮↓)¹⁰`): the banded Case B labels would change, and no cell in the census reaches a ratio beyond 2:1 by more than two arrows.
+
+**Also fixed** (read from the code, not seen on screen): the hooks after an `after` group were drawn with the exponent's sans-serif font still set; `drawHejiLabel` now sets the Bravura font before the hooks.
+
+**Gates:** `test/unbanded/oracle.mjs` section O, added after the list refactor and before the rule change, failed on the old rule (3,034 failures) and passes (508,153 checks): groups + chain hold exactly the given accidentals and arrows over |AD|, |SD| ≤ 40 in all four sign pairs, every exponent is above 4, at most two groups, the chain at most 4 glyphs, and 17 pinned labels. Typecheck, boundaries, `check:heji`, the HKL build. Not looked at on screen: where the exponent sits against a double-arrow or double-accidental glyph.
+
+**Where:** `apps/hkl/src/tuning/heji.ts` (`hejiLabel` step 0, `HejiLabel.collapses`), `apps/hkl/src/render/draw.ts` (`drawHejiLabel`), `test/unbanded/oracle.mjs` (O), docs/architecture/hkl.md (Note naming).

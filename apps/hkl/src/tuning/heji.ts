@@ -44,12 +44,12 @@ export const COLLAPSE_THRESHOLD = 4;
  *  collapse to one hook with an exponent above this count. */
 export const HOOK_COLLAPSE_THRESHOLD = 2;
 
-/** When a cell's accidental degree (AD) and/or syntonic degree (SD) is large
- *  enough to trigger collapse, the renderer draws a single accidental-form
- *  glyph carrying a small superscript count, with the remaining unabsorbed
- *  glyphs rendered as a normal chain on the side specified by `position`. The
- *  septimal hooks are always the chain's last slots and collapse separately
- *  (`HejiLabel.hookCount`). */
+/** One exponent group. When a cell's accidental degree (AD) and/or syntonic
+ *  degree (SD) is large enough to trigger collapse, the renderer draws a
+ *  single accidental-form glyph carrying a small superscript count, on the
+ *  side of the remaining chain given by `position`. A label holds at most two
+ *  groups (`hejiLabel` step 0). The septimal hooks are always the chain's last
+ *  slots and collapse separately (`HejiLabel.hookCount`). */
 export interface CollapseSpec {
   glyph: HejiGlyphInfo;
   count: number;
@@ -58,13 +58,14 @@ export interface CollapseSpec {
 
 /** Result of HEJI label assembly. `letter` renders in sans-serif (A–G);
  *  `glyphs` is the chain of SMuFL codepoints (rendered in Bravura) that follows
- *  the letter, left to right. When `collapse` is set, the renderer draws the
- *  collapse glyph + a small superscript count adjacent to the chain. Empty
- *  `glyphs` AND undefined `collapse` means the bare letter. */
+ *  the letter, left to right. Each entry of `collapses` is an exponent group:
+ *  the renderer draws its glyph + a small superscript count, the 'before'
+ *  groups ahead of the chain and the 'after' groups behind it, each side in
+ *  array order. Empty `glyphs` AND empty `collapses` means the bare letter. */
 export interface HejiLabel {
   letter: string;
   glyphs: HejiGlyphInfo[];
-  collapse?: CollapseSpec;
+  collapses: CollapseSpec[];
   /** |sept7| when above HOOK_COLLAPSE_THRESHOLD: `glyphs` then ends in a
    *  single hook, which the renderer draws with this count as its exponent. */
   hookCount?: number;
@@ -79,46 +80,49 @@ export function hejiLabel(noteNameStr: string, commas: HejiCommas): HejiLabel {
   const { syn5, sept7 } = commas;
 
   if (accVal === 0 && syn5 === 0 && sept7 === 0) {
-    return { letter: p.letter, glyphs: [] };
+    return { letter: p.letter, glyphs: [], collapses: [] };
   }
 
-  /* Step 0: decide collapse and reduce the AD/SD the chain will see. */
-  const a = Math.abs(accVal);
-  const s = Math.abs(syn5);
+  /* Step 0: exponent groups, reducing the AD/SD the chain will see. `a` and
+     `s` are what is still to be drawn. */
+  let a = Math.abs(accVal);
+  let s = Math.abs(syn5);
   const sa = accVal >= 0 ? 1 : -1;
   const ss = syn5 >= 0 ? 1 : -1;
-  let collapse: CollapseSpec | undefined;
-  let accValRem = accVal;
-  let syn5Rem = syn5;
+  const single: AccKind = sa > 0 ? 'sharp' : 'flat';
+  const collapses: CollapseSpec[] = [];
+  const group = (kind: AccKind, arrows: number, count: number, position: CollapseSpec['position']): void => {
+    collapses.push({
+      glyph: { ch: String.fromCodePoint(combinedCode(kind, arrows * ss)), family: kind },
+      count,
+      position,
+    });
+  };
   if (a > COLLAPSE_THRESHOLD && s > COLLAPSE_THRESHOLD) {
-    /* Case A: both large. Each exponent unit consumes 1 accidental + 1 arrow. */
-    const k = Math.min(a, s);
-    const kind: AccKind = sa > 0 ? 'sharp' : 'flat';
-    collapse = {
-      glyph: { ch: String.fromCodePoint(combinedCode(kind, ss)), family: kind },
-      count: k,
-      position: 'before',
-    };
-    accValRem = (a - k) * sa;
-    syn5Rem = (s - k) * ss;
-  } else if (Math.abs(a - s) > COLLAPSE_THRESHOLD) {
-    /* Case B: one significantly larger. Greedy — absorb the excess. */
+    /* 0a: both large — pair them into one unit. The unit is 1 accidental + 1
+       arrow unless that would strand an excess above the threshold on one
+       side; that side then doubles in the unit (2 arrows per accidental, or a
+       double accidental per arrow), which leaves a short chain where a 1:1
+       unit would leave a second long run. */
+    const accPer = a - s > COLLAPSE_THRESHOLD ? 2 : 1;
+    const arrowsPer = s - a > COLLAPSE_THRESHOLD ? 2 : 1;
+    const k = Math.min(Math.floor(a / accPer), Math.floor(s / arrowsPer));
+    const double: AccKind = sa > 0 ? 'doubleSharp' : 'doubleFlat';
+    group(accPer === 2 ? double : single, arrowsPer, k, 'before');
+    a -= k * accPer;
+    s -= k * arrowsPer;
+  }
+  if (Math.abs(a - s) > COLLAPSE_THRESHOLD) {
+    /* 0b: one side still exceeds the other by more than the threshold (one
+       side small from the start, or a ratio beyond 2:1 after 0a). Greedy —
+       absorb the whole excess; the chain gets equal residual AD/SD. */
     const k = Math.abs(a - s);
     if (s > a) {
-      collapse = {
-        glyph: { ch: String.fromCodePoint(combinedCode('natural', ss)), family: 'natural' },
-        count: k,
-        position: 'before',
-      };
-      syn5Rem = a * ss;
+      group('natural', 1, k, 'before');
+      s = a;
     } else {
-      const kind: AccKind = sa > 0 ? 'sharp' : 'flat';
-      collapse = {
-        glyph: { ch: String.fromCodePoint(combinedCode(kind, 0)), family: kind },
-        count: k,
-        position: 'after',
-      };
-      accValRem = s * sa;
+      group(single, 0, k, 'after');
+      a = s;
     }
   }
 
@@ -126,10 +130,9 @@ export function hejiLabel(noteNameStr: string, commas: HejiCommas): HejiLabel {
   const hookCount = Math.abs(sept7) > HOOK_COLLAPSE_THRESHOLD ? Math.abs(sept7) : undefined;
 
   /* Steps 1-4: residual chain + septimal hooks (shared, no collapse). */
-  const glyphs = hejiChain(accValRem, syn5Rem, hookCount ? Math.sign(sept7) : sept7);
+  const glyphs = hejiChain(a * sa, s * ss, hookCount ? Math.sign(sept7) : sept7);
 
-  const label: HejiLabel = { letter: p.letter, glyphs };
-  if (collapse) label.collapse = collapse;
+  const label: HejiLabel = { letter: p.letter, glyphs, collapses };
   if (hookCount) label.hookCount = hookCount;
   return label;
 }

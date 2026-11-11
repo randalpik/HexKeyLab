@@ -34,6 +34,11 @@
 //      collapses to one hook + exponent above 2
 //   M  no Euler vector is a spelled octave from every cell
 //   N  octaveVector: the band step banded; F, G and M's vectors unbanded
+//   O  exponent groups: over |AD|, |SD| ≤ 40 and all four sign pairs, groups +
+//      chain hold exactly the accidentals and arrows given, every exponent is
+//      above 4, at most two groups, and the chain is at most 4 glyphs; the
+//      doubled pairing units (2 arrows per accidental, a double accidental per
+//      arrow) and the labels the 1:1 unit keeps
 //
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/unbanded/oracle.mjs
 //
@@ -44,7 +49,7 @@ import { noteName, keyOctave, fifthName, parseNote, accToVal } from '../../packa
 import { bandOfCell, pitchBandOf, bandWidth, octaveVector, layoutOf, MAPPINGS } from '../../packages/shared/src/mapping.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOf } from '../../packages/shared/src/colors.ts';
-import { hejiCommasFor, hejiChain, SEPT_DOWN_1, SEPT_UP_1, SEPT_DOWN_2, SEPT_UP_2 } from '../../packages/shared/src/heji.ts';
+import { hejiCommasFor, hejiChain, combinedCode, SEPT_DOWN_1, SEPT_UP_1, SEPT_DOWN_2, SEPT_UP_2 } from '../../packages/shared/src/heji.ts';
 import { hejiLabel } from '../../apps/hkl/src/tuning/heji.ts';
 
 const JI = ['5', 'P', 'D', '7', 'V', 'S', 'Y'];
@@ -328,6 +333,63 @@ for (const map of MAPPINGS) for (const banded of [true, false]) for (const a of 
     check(`N ${map} ${banded ? 'b' : 'u'} a${a} (${q},${r}) spelled P8`,
       noteName(q + v[0], r + v[1], map, a, banded) + (keyOctave(q + v[0], r + v[1], map, a, banded) - 1), noteName(q, r, map, a, banded) + keyOctave(q, r, map, a, banded));
   }
+}
+
+/* ── O: exponent groups ──────────────────────────────────────────────────── */
+{
+  /* glyph → (accidentals, arrows): accidentals signed sharp-positive, arrows
+     signed like syn5 (down-positive) */
+  const UNITS = { doubleFlat: -2, flat: -1, natural: 0, sharp: 1, doubleSharp: 2 };
+  const decode = new Map();
+  for (const [kind, acc] of Object.entries(UNITS)) for (let arrows = -2; arrows <= 2; arrows++) {
+    decode.set(String.fromCodePoint(combinedCode(kind, arrows)), { acc, arrows });
+  }
+  const spell = (acc) => 'C' + (acc > 0 ? '#' : 'b').repeat(Math.abs(acc));
+  /* a label as text: 'before' groups, chain, 'after' groups; a group is kind:arrows^count */
+  const KIND = Object.fromEntries(Object.entries(UNITS).map(([k, v]) => [v, k]));
+  const g = (ch) => { const d = decode.get(ch); return `${KIND[d.acc]}:${d.arrows}`; };
+  const grp = (c) => `${g(c.glyph.ch)}^${c.count}`;
+  const text = (l) => [
+    ...l.collapses.filter((c) => c.position === 'before').map(grp),
+    ...l.glyphs.map((x) => g(x.ch)),
+    '|',
+    ...l.collapses.filter((c) => c.position === 'after').map(grp),
+  ].join(' ').trim();
+
+  for (let acc = -40; acc <= 40; acc++) for (let syn5 = -40; syn5 <= 40; syn5++) {
+    const l = hejiLabel(spell(acc), { syn5, sept7: 0 });
+    let gotAcc = 0, gotArrows = 0;
+    for (const x of l.glyphs) { const d = decode.get(x.ch); gotAcc += d.acc; gotArrows += d.arrows; }
+    for (const c of l.collapses) { const d = decode.get(c.glyph.ch); gotAcc += c.count * d.acc; gotArrows += c.count * d.arrows; }
+    const at = `O (${acc}, ${syn5})`;
+    check(`${at} accidentals, arrows`, `${gotAcc} ${gotArrows}`, `${acc} ${syn5}`);
+    check(`${at} chain ≤ 4 glyphs`, l.glyphs.length <= 4, true);
+    check(`${at} ≤ 2 groups`, l.collapses.length <= 2, true);
+    check(`${at} every exponent > 4`, l.collapses.every((c) => c.count > 4), true);
+  }
+
+  const lab = (acc, syn5) => text(hejiLabel(spell(acc), { syn5, sept7: 0 }));
+  /* the 1:1 unit: neither side's excess is above 4 */
+  check('O 9♭ 9↑', lab(-9, -9), 'flat:-1^9 |');
+  check('O 9♭ 13↑', lab(-9, -13), 'flat:-1^9 natural:-2 natural:-2 |');
+  check('O 9♯ 5↓', lab(9, 5), 'sharp:1^5 doubleSharp:0 doubleSharp:0 |');
+  /* arrow excess above 4: 2 arrows per accidental (Randal Ptolemaic unbanded (−14, 5)) */
+  check('O 9♭ 14↑', lab(-9, -14), 'flat:-2^7 doubleFlat:0 |');
+  check('O 9♭ 15↑', lab(-9, -15), 'flat:-2^7 doubleFlat:-1 |');
+  check('O 5♭ 10↑', lab(-5, -10), 'flat:-2^5 |');
+  check('O 9♯ 19↓', lab(9, 19), 'sharp:2^9 natural:1 |');
+  check('O 5♯ 20↓', lab(5, 20), 'sharp:2^5 natural:1^10 |');
+  check('O 20♭ 26↑', lab(-20, -26), 'flat:-2^13 | flat:0^7');
+  /* accidental excess above 4: a double accidental per arrow */
+  check('O 10♯ 5↓', lab(10, 5), 'doubleSharp:1^5 |');
+  check('O 14♯ 9↓', lab(14, 9), 'doubleSharp:1^7 natural:2 |');
+  check('O 13♭ 8↑', lab(-13, -8), 'doubleFlat:-1^6 flat:-2 |');
+  check('O 26♭ 5↓', lab(-26, 5), 'doubleFlat:1^5 | flat:0^16');
+  /* one side at most 4: the excess alone collapses */
+  check('O 0 12↓', lab(0, 12), 'natural:1^12 |');
+  check('O 2♭ 14↑', lab(-2, -14), 'natural:-1^12 doubleFlat:-2 |');
+  check('O 12♭ 0', lab(-12, 0), '| flat:0^12');
+  check('O 4♯ 8↓', lab(4, 8), 'doubleSharp:2 doubleSharp:2 natural:2 natural:2 |');
 }
 
 check('modes covered', JI.length + 1, TUNING_MODES.length);

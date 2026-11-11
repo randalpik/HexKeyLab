@@ -602,12 +602,13 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   const hejiScale = 1.8;
   /* Layout order (left to right):
        letter
-       collapse (if position === 'before')
+       exponent groups with position 'before', in array order
        chain (all non-septimal glyphs)
-       collapse (if position === 'after')
-       septimal hooks (if present) — always last so they visually trail the
-         collapse exponent in case-B-a-heavy + Septimal-mode cells; above
-         HOOK_COLLAPSE_THRESHOLD one hook carrying `hookCount` as exponent.
+       exponent groups with position 'after'
+       septimal hooks (if present) — always last so they visually trail an
+         'after' group's exponent (bare-accidental excess + Septimal-mode
+         cells); above HOOK_COLLAPSE_THRESHOLD one hook carrying `hookCount`
+         as exponent.
      Slot widths are computed against the bare-accidental advance so attached
      arrows extend past their slot's right edge without affecting layout. */
   const chainGs: HejiGlyphInfo[] = [];
@@ -623,7 +624,7 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
      font. */
   const hookOverhang = (): number => {
     if (septimalGs.length === 0 || chainGs.length === 0) return 0;
-    if (label.collapse && label.collapse.position === 'after') return 0;
+    if (label.collapses.some((c) => c.position === 'after')) return 0;
     const last = chainGs[chainGs.length - 1];
     return Math.max(0, ctx.measureText(last.ch).actualBoundingBoxRight - slotAdvance(last));
   };
@@ -631,12 +632,12 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   ctx.font = '500 ' + baseFontSize + 'px sans-serif';
   let totalW = ctx.measureText(label.letter).width;
   ctx.font = '500 ' + Math.round(baseFontSize * hejiScale) + 'px "BravuraText", sans-serif';
-  if (label.collapse) totalW += slotAdvance(label.collapse.glyph) + 0.5;
+  for (const c of label.collapses) totalW += slotAdvance(c.glyph) + 0.5;
   for (const g of chainGs) totalW += slotAdvance(g) + 0.5;
   for (const g of septimalGs) totalW += slotAdvance(g) + 0.5;
   totalW += hookOverhang();
   ctx.font = '500 ' + Math.round(baseFontSize * hejiScale * EXP_SCALE) + 'px sans-serif';
-  if (label.collapse) totalW += ctx.measureText(String(label.collapse.count)).width;
+  for (const c of label.collapses) totalW += ctx.measureText(String(c.count)).width;
   if (label.hookCount) totalW += ctx.measureText(String(label.hookCount)).width;
   /* shrink to fit hex */
   const maxW = hexR * 1.3;
@@ -650,27 +651,27 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
   const chainSlotWs = chainGs.map(slotAdvance);
   const septimalSlotWs = septimalGs.map(slotAdvance);
-  let collapseSlotW = 0;
-  let collapseAscent = 0;
-  if (label.collapse) {
-    collapseSlotW = slotAdvance(label.collapse.glyph);
-    const bare = BARE_ACC_CODE[label.collapse.glyph.family] ?? label.collapse.glyph.ch;
-    /* actualBoundingBoxAscent reports the distance from the current
-       textBaseline (here, 'middle') to the top of the rendered bbox.
-       Firefox + Chromium both populate it for Bravura glyphs; fall back to
-       a fraction of the font size on engines that don't. */
-    const m = ctx.measureText(bare);
-    collapseAscent = m.actualBoundingBoxAscent || hejiFontSize * 0.6;
-  }
+  /* Per exponent group: slot width, the bare accidental's ascent (the
+     exponent's vertical anchor) and, below, the exponent's width.
+     actualBoundingBoxAscent reports the distance from the current
+     textBaseline (here, 'middle') to the top of the rendered bbox.
+     Firefox + Chromium both populate it for Bravura glyphs; fall back to
+     a fraction of the font size on engines that don't. */
+  const groups = label.collapses.map((c) => ({
+    spec: c,
+    slotW: slotAdvance(c.glyph),
+    ascent: ctx.measureText(BARE_ACC_CODE[c.glyph.family] ?? c.glyph.ch).actualBoundingBoxAscent || hejiFontSize * 0.6,
+    expW: 0,
+  }));
   const hookAscent = label.hookCount
     ? ctx.measureText(septimalGs[septimalGs.length - 1].ch).actualBoundingBoxAscent || hejiFontSize * 0.6
     : 0;
   const overhang = hookOverhang();
   ctx.font = '500 ' + expFontSize + 'px sans-serif';
-  const expW = label.collapse ? ctx.measureText(String(label.collapse.count)).width : 0;
+  for (const g of groups) g.expW = ctx.measureText(String(g.spec.count)).width;
   const hookExpW = label.hookCount ? ctx.measureText(String(label.hookCount)).width : 0;
   let tw = flw;
-  if (label.collapse) tw += collapseSlotW + 0.5 + expW;
+  for (const g of groups) tw += g.slotW + 0.5 + g.expW;
   for (const w of chainSlotWs) tw += w + 0.5;
   for (const w of septimalSlotWs) tw += w + 0.5;
   tw += overhang + hookExpW;
@@ -682,23 +683,25 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
   ctx.font = '500 ' + fontSize + 'px sans-serif';
   ctx.fillText(label.letter, x, cy);
   x += flw + 0.5;
-  const drawCollapse = (): void => {
-    if (!label.collapse) return;
-    const g = label.collapse.glyph;
-    const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
-    ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
-    ctx.fillText(g.ch, x, cy + yOff);
-    /* Anchor the digit's visual middle near the accidental's upper region:
-       cy + yOff is the glyph's musical baseline, ascent carries up to the
-       apex, then we drop EXP_ASCENT_FRAC of an ascent so the digit
-       overlaps with the top portion of the accidental. textBaseline is
-       'middle' so the y we pass is the digit's visual center. */
-    const expY = cy + yOff - collapseAscent + collapseAscent * EXP_ASCENT_FRAC;
-    ctx.font = '500 ' + expFontSize + 'px sans-serif';
-    ctx.fillText(String(label.collapse.count), x + collapseSlotW, expY);
-    x += collapseSlotW + 0.5 + expW;
+  const drawGroups = (position: 'before' | 'after'): void => {
+    for (const grp of groups) {
+      if (grp.spec.position !== position) continue;
+      const g = grp.spec.glyph;
+      const yOff = HEJI_FAMILY_Y_OFFSET[g.family] * hejiFontSize;
+      ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
+      ctx.fillText(g.ch, x, cy + yOff);
+      /* Anchor the digit's visual middle near the accidental's upper region:
+         cy + yOff is the glyph's musical baseline, ascent carries up to the
+         apex, then we drop EXP_ASCENT_FRAC of an ascent so the digit
+         overlaps with the top portion of the accidental. textBaseline is
+         'middle' so the y we pass is the digit's visual center. */
+      const expY = cy + yOff - grp.ascent + grp.ascent * EXP_ASCENT_FRAC;
+      ctx.font = '500 ' + expFontSize + 'px sans-serif';
+      ctx.fillText(String(grp.spec.count), x + grp.slotW, expY);
+      x += grp.slotW + 0.5 + grp.expW;
+    }
   };
-  if (label.collapse && label.collapse.position === 'before') drawCollapse();
+  drawGroups('before');
   ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
   for (let i = 0; i < chainGs.length; i++) {
     const g = chainGs[i];
@@ -706,7 +709,9 @@ function drawHejiLabel(cx: number, cy: number, label: HejiLabel): void {
     ctx.fillText(g.ch, x, cy + yOff);
     x += chainSlotWs[i] + 0.5;
   }
-  if (label.collapse && label.collapse.position === 'after') drawCollapse();
+  drawGroups('after');
+  /* an 'after' group leaves the exponent font set; the hooks are Bravura */
+  ctx.font = '500 ' + hejiFontSize + 'px "BravuraText", sans-serif';
   x += overhang;
   for (let i = 0; i < septimalGs.length; i++) {
     const g = septimalGs[i];
