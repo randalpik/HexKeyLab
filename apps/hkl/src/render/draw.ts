@@ -34,7 +34,7 @@ import {
   type HejiGlyphFamily,
   type HejiGlyphInfo,
 } from "../tuning/heji.js";
-import { isCtrlHeld } from '../ui/keyboard.js';
+import { isRefEditHeld } from '../input/ref-edit.js';
 import { overlayPublishTick } from '../bridge/overlay-publish.js';
 import type { KeyId } from '../types.js';
 
@@ -1370,8 +1370,9 @@ export function draw(): void {
   }
 
   /* === Ctrl-held darkening: dim everything outside the valid-ref region ===
-     Transient cue that appears whenever Ctrl is held — the same gesture that
-     precedes a Ctrl+click ref-note pick (see src/ui/init.ts) — so the user
+     Transient cue that appears whenever the ref-edit modifier is held (Ctrl,
+     or a pedal in its Ctrl role: input/ref-edit.ts) — the gesture that arms a
+     ref-note pick by click or Lumatone key (input/ref-pick.ts) — so the user
      sees which cells are legal targets without having to enable the static
      "Valid ref bounds" dotted outline. Drawn BEFORE the main outline pass so
      that pass's white stroke stays crisp; an after-the-outline overlay would
@@ -1379,7 +1380,7 @@ export function draw(): void {
      Uses the same lattice-space transform as the dotted outline (which lives
      in absolute (q, r) coords and therefore needs the lattice-scroll
      translate in every outline mode). */
-  if (isCtrlHeld()) {
+  if (isRefEditHeld()) {
     const validPaths = validRefPaths();
     if (validPaths.length > 0) {
       ctx.save();

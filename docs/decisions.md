@@ -10900,3 +10900,21 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/preset-resync.mjs` (new; failed before the change on the missing export, and its in-flight check fails with `voidInFlight` stubbed out) and `test/hkl-midi/departure.mjs` case F2 (the wiring through the input handler; 2 of its 3 checks failed before). Max confirmed the re-sync on his Lumatone (2026-11-11).
 
 **Where:** `apps/hkl/src/lumatone/sync.ts` (`watchPresetSwitch`, `resyncLumatoneDevice`), `lumatone/sysex.ts` + `types.ts` (`voidInFlight`), `midi/handler.ts`, `lumatone/lumadiag.ts`, docs/architecture/hkl.md (Auto-sync), docs/guide/core.md, docs/lessons.md.
+
+## Ctrl is one ref-edit modifier; a Lumatone key pressed under it picks the ref (2026-11-12, Max)
+
+**Context:** the reference note could only be picked with the mouse (Ctrl+click). Max asked for Ctrl to make a Lumatone key press recenter the ref "as if the key was clicked" instead of playing it, as the first of three related changes (the Lumatone dimming the invalid refs under **Key effects**, and per-jack pedal roles with a **Ctrl** role, follow).
+
+**Picked:**
+- **One modifier, several sources** (`input/ref-edit.ts`): held while any source holds it. The computer keyboard's Ctrl is the first source; the pedal jacks will be the others. Sources are separate so a window blur, which drops the keyboard's hold, cannot clear a pedal's.
+- **The modifier means the same for every input** (Max): it shows the canvas dimming, and a mouse click picks the ref while it is held even when the click event carries no `ctrlKey`.
+- **One pick body** (`input/ref-pick.ts` `pickRef`), the former mousedown branch, called by the click and by the Lumatone note-on. A key press therefore inherits everything a Ctrl+click does: validation with the flashed reason, the slide, the persisted `manualRef`, and clearing the manual ref when the pressed key is the current ref.
+- **The pressed key is not a note.** The handler returns before the velocity statistics, the Composer strike broadcast and `pressHeld`, so the key has no held record and its note-off and aftertouch do nothing, with no suppression state to keep. Keys already held keep sounding and migrate as on any ref change.
+
+**Not done:** QWERTY and piano-input keys stay notes while the modifier is held (Max asked for the Lumatone; QWERTY ignores Ctrl+key so browser shortcuts stay free). A spurious note-on from the power-off burst while the modifier is held would pick a ref; not guarded.
+
+**Why two modules:** `render/draw.ts` reads the modifier and is in the lean overlay build's import graph, which must not reach the engines; `pickRef` reaches `effects/onRefChanged`, hence the MIDI handler. The state module imports only `draw`.
+
+**Gates:** `test/hkl-midi/ref-press.mjs` (new; 13 of 32 failed before the change, 32/32 after); `ref-centering` 26/26, `held-inputs` 30/30, `ref-validity` 26/26, `departure` 72/72, `fresh-profile` 12/12, `layer-sync` 4/4, `anchor` 23/23; typecheck, boundaries, HKL build; the lean overlay build still contains no `requestMIDIAccess`, `AudioContext`, `SampleEngine` or `recordOn`. Not yet tried on the hardware.
+
+**Where:** `apps/hkl/src/input/ref-edit.ts` + `input/ref-pick.ts` (new), `midi/handler.ts`, `ui/init.ts`, `ui/keyboard.ts`, `render/draw.ts`, `render/info.ts` (`flashInfoLine` moved here); docs/architecture/hkl.md (Display → Ref-edit modifier), docs/guide/core.md (Reference note), `test/hkl-midi/README.md`.

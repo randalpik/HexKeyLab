@@ -19,6 +19,9 @@
 //   • Note-on/off → Lumatone velocity calibration + Composer strike broadcast,
 //     then the shared held-input strike/release bodies in input/held.ts
 //     (selection, sustain, velocity, re-articulation flash, onSelectionChanged).
+//     While the ref-edit modifier is held (input/ref-edit.ts) a note-on picks
+//     its cell as the reference note instead (input/ref-pick.ts) and is never
+//     a note: nothing sounds, nothing is recorded as held.
 
 import { audio } from '../state/audio.js';
 import { pedal, pushPedalEvent } from '../state/pedal.js';
@@ -41,6 +44,8 @@ import { broadcastPlayerNote } from '../bridge/hkl-side.js';
 import {
   heldKey, heldCount, clearHeld, pressHeld, releaseHeld, dropHeld, migrateHeld,
 } from '../input/held.js';
+import { isRefEditHeld } from '../input/ref-edit.js';
+import { pickRef } from '../input/ref-pick.js';
 import type { KeyId } from '../types.js';
 
 /* Lumatone physical inputs are tracked in input/held.ts under source
@@ -191,6 +196,19 @@ function routeChannelMessage(data: Uint8Array): void {
      (input/held.ts), never through the current anchor. */
   const physId = ch + ',' + d1;
   if (status === 0x90 && d2 > 0) {
+    /* Ref-edit modifier held: the press picks the cell under the key as the
+       reference note, exactly as a Ctrl+click on it does, and is not a note —
+       no velocity statistics, no Composer strike, no held record, so its
+       note-off and aftertouch find nothing and do nothing. Keys already held
+       keep sounding and follow the ref change (migrateHeldLumatoneVoices). */
+    if (isRefEditHeld()) {
+      const cell = fixedMidiToKey(ch, d1);
+      if (cell) {
+        const ci = cell.indexOf(',');
+        pickRef(+cell.slice(0, ci), +cell.slice(ci + 1));
+      }
+      return;
+    }
     const key = heldKey('lumatone', physId) ?? fixedMidiToKey(ch, d1);
     if (!key) return;
     /* Per-key velocity statistics: always-on rolling sample collection when

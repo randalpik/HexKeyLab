@@ -41,6 +41,20 @@ interface IntervalCellJI {
 
 type IntervalCell = IntervalCellEqual | IntervalCellJI;
 
+let infoLineFlashTimer: number | null = null;
+/** Briefly replace #infoLine with a transient message, then restore via
+ *  updateInfo(). Used for rejected reference picks (input/ref-edit.ts). */
+export function flashInfoLine(text: string, ms = 2000): void {
+  const el = document.getElementById('infoLine');
+  if (!el) return;
+  if (infoLineFlashTimer !== null) clearTimeout(infoLineFlashTimer);
+  el.innerHTML = '<span class="hint" style="color:#e88">' + text + '</span>';
+  infoLineFlashTimer = window.setTimeout(() => {
+    infoLineFlashTimer = null;
+    updateInfo();
+  }, ms);
+}
+
 export function updateInfo(): void {
   /* Live staff inset renders independently of the analysis panel (its own
      toggle), so drive it before the analysis early-returns below. */

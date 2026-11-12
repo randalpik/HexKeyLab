@@ -118,6 +118,7 @@ Switching mapping keeps what you're holding. Mouse and MIDI-keyboard notes keep 
 The reference note is the key the outline (Lumatone, QWERTY or Piano) is centered on: **A3** by default.
 
 - **Ctrl+click** a key (**Cmd+click** on a Mac) to make it the reference. The keyboard slides so it sits exactly at the center of the outline (it jumps instead when the new position is more than a screen away), so the key you pick also sets where the band seams fall under your hands; with Auto-sync on Lumatone firmware 1.5.0 or later, the Lumatone's lights slide with it. Lumatone and computer-keyboard notes you're holding move with it, so a held chord keeps its shape; mouse notes stay on their keys.
+- **On the Lumatone, hold Ctrl and press a key** to make that key the reference, just as if you had Ctrl+clicked it on screen. The key doesn't sound; notes you were already holding keep playing and move with the keyboard.
 - While Ctrl is held, keys that can't be the reference are dimmed: a reference must be in the 88-key piano range, A0–C8. **Valid ref bounds** (Piano tab) outlines the allowed area permanently.
 - Ctrl+click the current reference again to clear it. It goes back to the score's key if Composer is open, otherwise to A3. Switching tuning or banding keeps your reference.
 

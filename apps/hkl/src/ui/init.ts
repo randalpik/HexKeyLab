@@ -15,7 +15,7 @@
 // 7. First paint + info-panel size.
 // 8. Window resize handler + Reset-prefs button.
 
-import { onRefChanged, withRefSlide } from '../effects/onRefChanged.js';
+import { onRefChanged } from '../effects/onRefChanged.js';
 import { getComposerRequiredLayout, applyComposerLayout, reconcileSelectionOnSyncEnable, preloadComposerInstruments } from '../bridge/hkl-side.js';
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
@@ -25,10 +25,7 @@ import { audio } from '../state/audio.js';
 import { lumatone } from '../state/lumatone.js';
 import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persistence.js';
 import type { PrefsV1 } from '../state/persistence.js';
-import {
-  referenceNote, setSelectionFromManual,
-  clearSelection as clearRefSelection, setAnchorListener, setRefListener,
-} from '../state/reference.js';
+import { setSelectionFromManual, setAnchorListener, setRefListener } from '../state/reference.js';
 import { onAnchorChanged } from '../effects/onAnchorChanged.js';
 import { refitCanvasWidth } from '../render/controls-core.js';
 import { cv, draw, hexAtPoint, activeFootprintSet, validateRefNoteCandidate } from '../render/draw.js';
@@ -50,6 +47,8 @@ import {
   applyHexSize, setHexSizeFromDom,
 } from './controls.js';
 import './keyboard.js';
+import { isRefEditHeld } from '../input/ref-edit.js';
+import { pickRef } from '../input/ref-pick.js';
 import '../input/keyboard-notes.js';
 import {
   togglePedalCalibration, resetPedalBounds,
@@ -257,25 +256,12 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
   const key = hexAtPoint(e.clientX - rect.left, e.clientY - rect.top);
   if (!key) return;
-  /* Ctrl/Cmd+click: manage the reference-note selection tier. Clicking the
-     current effective ref clears the selection (revealing song-key tier or
-     default); clicking anywhere else sets manual=that-cell. Does NOT touch
-     the play selection. */
-  if (e.ctrlKey || e.metaKey) {
+  /* Ctrl/Cmd+click, or any click while the ref-edit modifier is held (a pedal
+     in its Ctrl role holds it without a ctrlKey on the event): pick the
+     reference note (input/ref-pick.ts). Does NOT touch the play selection. */
+  if (e.ctrlKey || e.metaKey || isRefEditHeld()) {
     const [qs, rs] = key.split(',');
-    const q = +qs, r = +rs;
-    const isCurrentRef = (q === referenceNote.q && r === referenceNote.r);
-    if (!isCurrentRef) {
-      /* Validate the proposed refNote BEFORE mutating state. Rejected
-         clicks flash an explanation and leave everything as-is. */
-      const reason = validateRefNoteCandidate(q, r);
-      if (reason) { flashInfoLine(reason); return; }
-    }
-    /* reference.ts re-derives kbAnchor and runs onRefChanged (voice
-       migration, re-center, redraw, broadcasts) — sliding, for a click. */
-    const changed = withRefSlide(() => isCurrentRef ? clearRefSelection() : setSelectionFromManual(q, r));
-    /* Persist or drop the manual ref. Composer-set selections do not persist. */
-    if (changed) savePrefs({ manualRef: isCurrentRef ? undefined : { q, r } });
+    pickRef(+qs, +rs);
     return;
   }
   if (e.shiftKey) { selection.selectedKeys.clear(); selection.selectedKeys.add(key); }
@@ -287,19 +273,6 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
   onSelectionChanged();
 });
 
-let infoLineFlashTimer: number | null = null;
-/** Briefly replace #infoLine with a transient message, then restore via
- *  updateInfo(). Used for ctrl+click validation rejections. */
-function flashInfoLine(text: string, ms = 2000): void {
-  const el = document.getElementById('infoLine');
-  if (!el) return;
-  if (infoLineFlashTimer !== null) clearTimeout(infoLineFlashTimer);
-  el.innerHTML = '<span class="hint" style="color:#e88">' + text + '</span>';
-  infoLineFlashTimer = window.setTimeout(() => {
-    infoLineFlashTimer = null;
-    updateInfo();
-  }, ms);
-}
 cv.addEventListener('mousemove', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
   const key = hexAtPoint(e.clientX - rect.left, e.clientY - rect.top);

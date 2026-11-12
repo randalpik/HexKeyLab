@@ -225,6 +225,23 @@ slide's expanded offscreen layer rebuilt at normal size when it lands.
 **Run it before declaring any change to `state/reference.ts`,
 `effects/onRefChanged.ts`, a ref-moving handler, or the view tween done.**
 
+## Ref pick from the Lumatone
+
+```sh
+node test/hkl-midi/ref-press.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for the ref-edit modifier (`input/ref-edit.ts`) and the shared
+pick body (`input/ref-pick.ts`; docs/architecture/hkl.md → Display → Ref-edit
+modifier). With Ctrl held, a Lumatone key press makes its cell the ref, sliding
+and persisted, and plays nothing; its note-off and aftertouch are no-ops;
+pressing the ref's own key clears it; a cell outside A0–C8 is rejected. Without
+Ctrl the key plays; a key held before Ctrl follows the ref change and releases
+cleanly; a window blur drops the keyboard's hold; and a mouse click with the
+modifier held picks the ref even when the click event carries no `ctrlKey`.
+Failed 13 of 32 before the feature (2026-11-12). **Run it before declaring any
+change to the modifier, `pickRef`, or the Lumatone note-on path done.**
+
 ## Ref validity and the piano canvas
 
 ```sh
