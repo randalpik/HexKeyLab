@@ -24,6 +24,8 @@ import { animation, smoothstep } from '../render/animation.js';
 /* The LED color is the same hueC variant the canvas lightens on hover, so applying
    HOVER_LIGHTEN here changes the device key exactly as the screen key changes. */
 import { keyColorHex, lightenHex, HOVER_LIGHTEN } from '../render/colors.js';
+import { isRefEditHeld } from "../input/ref-edit.js";
+import { isValidRef } from "../state/reference.js";
 import {
   sysexBoardFor, fixedMidiChannelMap,
   SYSEX_CMD_SET_AFTERTOUCH_FLAG, SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES,
@@ -41,26 +43,45 @@ export function frameSyncActive(): boolean {
   return firmwareAtLeast(lumatone.firmware, FRAME_FIRMWARE);
 }
 
-/* Canvas hover changed (ui/init.ts mousemove/mouseleave). Mirrored onto the device
-   only with the Hover checkbox on, and only on the frame path. */
-export function syncLumatoneHover(): void {
-  if (lumatone.hoverMirror && frameSyncActive()) syncLumatoneColors('hover');
+/* What a key effect shows changed: the canvas hover (ui/init.ts mousemove /
+   mouseleave, cause 'hover') or the ref-edit modifier (input/ref-edit.ts, cause
+   'sync'). Shown on the device only with the Key effects checkbox on, and only on
+   the frame path. */
+export function syncLumatoneKeyEffects(cause: 'hover' | 'sync' = 'hover'): void {
+  if (lumatone.keyEffects && frameSyncActive()) syncLumatoneColors(cause);
 }
 
-/* Hover checkbox handler. Re-syncs at once, so turning it off clears a highlight
-   the device is showing and turning it on shows the current hover. */
-export function toggleLumatoneHover(): void {
-  const cb = document.getElementById('cbLumaHover') as HTMLInputElement;
-  lumatone.hoverMirror = cb.checked;
-  savePrefs({ lumatoneHover: lumatone.hoverMirror });
+/* Key effects checkbox handler. Re-syncs at once, so turning it off clears whatever
+   effect the device is showing and turning it on shows the current ones. */
+export function toggleLumatoneKeyEffects(): void {
+  const cb = document.getElementById('cbLumaKeyEffects') as HTMLInputElement;
+  lumatone.keyEffects = cb.checked;
+  savePrefs({ lumatoneKeyEffects: lumatone.keyEffects });
   syncLumatoneColors();
 }
 
-/* Color of lattice cell (q, r) as the frame path shows it: the key color, lightened
-   like the canvas when it is the hovered cell and Hover is on. */
+/* Brightness a Lumatone key keeps while the ref-edit modifier is held and its cell
+   cannot be the reference note: each channel scaled toward off. The device's own
+   level, set by eye (Max) and darker than the canvas's cover (REF_DIM_FILL,
+   render/colors.ts), which has note names to keep readable. */
+export const REF_DIM_LED = 0.3;
+
+function ledRefDimHex(hex: string): string {
+  const dim = (at: number): number => Math.round(parseInt(hex.slice(at, at + 2), 16) * REF_DIM_LED);
+  return '#' + ((1 << 24) + (dim(1) << 16) + (dim(3) << 8) + dim(5)).toString(16).slice(1);
+}
+
+/* Color of lattice cell (q, r) as the frame path shows it: the key color, and with
+   Key effects on, the canvas's two per-key effects — lightened when it is the
+   hovered cell (the canvas's own amount), then dimmed when the ref-edit modifier
+   is held and the cell cannot be a ref (the same cells as the canvas, at the
+   device's own level; the canvas paints its dim over the hover too). */
 function frameCellColor(q: number, r: number): string {
-  const c = keyColorHex(q, r);
-  return lumatone.hoverMirror && selection.hoverKey === q + ',' + r ? lightenHex(c, HOVER_LIGHTEN) : c;
+  let c = keyColorHex(q, r);
+  if (!lumatone.keyEffects) return c;
+  if (selection.hoverKey === q + "," + r) c = lightenHex(c, HOVER_LIGHTEN);
+  if (isRefEditHeld() && !isValidRef(q, r)) c = ledRefDimHex(c);
+  return c;
 }
 
 /* Barycentric weights of fractional lattice point (q, r) over the three cell
@@ -144,17 +165,19 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
   if (!midi.midiOut || !lumatone.autoSyncEnabled) return;
   /* A device in its built-in calibration answers STATE to everything but the
      calibration end; keycal.ts re-syncs from scratch when the routine is over. */
-  if (lumatone.keyCal !== 'idle') return;
+  if (lumatone.keyCal !== "idle") return;
   const causeAt = performance.now();
   const frames = frameSyncActive();
 
   /* Compute target colors for all 280 physical keys: the color of the cell
      each key plays (layout/physical.ts). The Lumatone outline is statically
      positioned on screen; the lattice underneath shifts by kbAnchor (only
-     updated by user-driven ref changes). On the frame path, with Hover on, the
-     hovered cell's key is lightened as on the canvas; mid-slide, each key samples
+     updated by user-driven ref changes). On the frame path, with Key effects
+     on, a key shows what the canvas does to its cell (frameCellColor: the hover
+     lightening, the invalid-ref dimming); mid-slide, each key samples
      the field at its cell offset plus the slide's fractional anchor. */
-  const anchor = frames && slideState ? slideAnchor(slideState, Date.now()) : null;
+  const anchor =
+    frames && slideState ? slideAnchor(slideState, Date.now()) : null;
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
     if (anchor) {
@@ -165,7 +188,8 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
     const [q, r] = lumatoneCell(i);
     target.push(frames ? frameCellColor(q, r) : keyColorHex(q, r));
   }
-  if (!lumatone.deviceColors) lumatone.deviceColors = new Array<string | null>(280).fill(null);
+  if (!lumatone.deviceColors)
+    lumatone.deviceColors = new Array<string | null>(280).fill(null);
 
   /* Predicted post-ACK lumatone.deviceColors: factor in the in-flight message.
      Without this, a color message on the wire can ACK after our new queue is
@@ -185,9 +209,11 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
 
   /* One-time setup: fixed MIDI layout + aftertouch flag + keystroke-light flag */
   if (!lumatone.fixedLayoutSent) {
-    const typeByte = (1 << 4) | 1; /* faderUpIsNull=1, keyType=noteOnNoteOff=1 → 0x11 */
+    const typeByte =
+      (1 << 4) | 1; /* faderUpIsNull=1, keyType=noteOnNoteOff=1 → 0x11 */
     for (let i = 0; i < 280; i++) {
-      const group = Math.floor(i / 56), keyIdx = i % 56;
+      const group = Math.floor(i / 56),
+        keyIdx = i % 56;
       const board = sysexBoardFor(group);
       const channel = fixedMidiChannelMap[group];
       newQ.push(buildNoteSysEx(board, keyIdx, keyIdx, channel, typeByte));
@@ -216,9 +242,12 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
     /* Top→bottom physical wipe with unconditional board alternation where
        possible. Setup precedes colors; otherwise the in-flight board seeds
        ordering so a mid-push replacement also avoids repeating that board. */
-    const previousBoard = newQ.length ? newQ[newQ.length - 1][4] : inFlight?.[4];
+    const previousBoard = newQ.length
+      ? newQ[newQ.length - 1][4]
+      : inFlight?.[4];
     for (const i of orderColorSync(changedIdx, previousBoard)) {
-      const group = Math.floor(i / 56), keyIdx = i % 56;
+      const group = Math.floor(i / 56),
+        keyIdx = i % 56;
       const board = sysexBoardFor(group);
       newQ.push(buildColorSysEx(board, keyIdx, target[i], i));
     }

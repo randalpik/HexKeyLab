@@ -24,7 +24,7 @@ const { midi } = await import('../../apps/hkl/src/state/midi.ts');
 const { lumatone } = await import('../../apps/hkl/src/state/lumatone.ts');
 const { selection } = await import('../../apps/hkl/src/state/selection.ts');
 const { sysex } = await import('../../apps/hkl/src/lumatone/sysex.ts');
-const { syncLumatoneColors, syncLumatoneHover, cancelLumatoneSlide, watchPresetSwitch } =
+const { syncLumatoneColors, syncLumatoneKeyEffects, cancelLumatoneSlide, watchPresetSwitch } =
   await import('../../apps/hkl/src/lumatone/sync.ts');
 const { lumatoneCell } = await import('../../apps/hkl/src/layout/physical.ts');
 const { keyColorHex, lightenHex, HOVER_LIGHTEN } = await import('../../apps/hkl/src/render/colors.ts');
@@ -56,7 +56,7 @@ function synced(firmware) {
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
   lumatone.firmware = firmware;
-  lumatone.hoverMirror = true;
+  lumatone.keyEffects = true;
   lumatone.keyCal = 'idle';
   syncLumatoneColors();
   drain();
@@ -114,14 +114,14 @@ ok('only B0 7B 00 directly followed by B0 79 00 triggers');
 // It may have reached the device mid-switch, where a board's preset load overwrites it.
 synced([1, 5, 0]);
 selection.hoverKey = keyOf(0);
-syncLumatoneHover();
+syncLumatoneKeyEffects();
 const before = sysex.inFlight;
 assert(before && before.frameColors, 'a hover frame is in flight');
 const want = base(); want[0] = lightenHex(want[0], HOVER_LIGHTEN);
 sent = [];
 marker();
 syncLumatoneColors();                 // any sync before the old frame's ACK must not undo it
-syncLumatoneHover();
+syncLumatoneKeyEffects();
 reply(before);                        // the old frame's ACK
 assert(!lumatone.deviceColors.some((c) => c !== null), 'the old frame is not recorded as the device state');
 drain();

@@ -19,8 +19,10 @@ export const lumatone: {
   fixedLayoutSent: boolean;
   /** [major, minor, revision] from the connect-time firmware query; null until it answers */
   firmware: number[] | null;
-  /** user's Hover checkbox: light the key under the canvas pointer (frame sync only) */
-  hoverMirror: boolean;
+  /** user's Key effects checkbox: show the canvas's per-key effects on the device —
+   *  the hover lightening, and the dimming of invalid refs while the ref-edit
+   *  modifier is held (frame sync only) */
+  keyEffects: boolean;
   /** built-in calibration phase; see KeyCalPhase */
   keyCal: KeyCalPhase;
 } = {
@@ -28,6 +30,6 @@ export const lumatone: {
   deviceColors: null,
   fixedLayoutSent: false,
   firmware: null,
-  hoverMirror: false,
+  keyEffects: false,
   keyCal: 'idle',
 };

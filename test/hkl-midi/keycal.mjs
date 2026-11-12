@@ -22,7 +22,7 @@ const { midi } = await import('../../apps/hkl/src/state/midi.ts');
 const { lumatone } = await import('../../apps/hkl/src/state/lumatone.ts');
 const { selection } = await import('../../apps/hkl/src/state/selection.ts');
 const { sysex } = await import('../../apps/hkl/src/lumatone/sysex.ts');
-const { syncLumatoneColors, syncLumatoneHover } = await import('../../apps/hkl/src/lumatone/sync.ts');
+const { syncLumatoneColors, syncLumatoneKeyEffects } = await import('../../apps/hkl/src/lumatone/sync.ts');
 const { lumatoneCell } = await import('../../apps/hkl/src/layout/physical.ts');
 const { keyColorHex } = await import('../../apps/hkl/src/render/colors.ts');
 const keycal = await import('../../apps/hkl/src/lumatone/keycal.ts');
@@ -87,7 +87,7 @@ function fresh(firmware = [1, 5, 0]) {
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
   lumatone.firmware = firmware;
-  lumatone.hoverMirror = true;
+  lumatone.keyEffects = true;
   midi.midiOut = { send: (m) => sent.push(m) };
 }
 const bytes = (m) => [...m];
@@ -126,7 +126,7 @@ assert.equal(lumatone.keyCal, 'key');
 assert.equal(dev.mode, 1);
 assert(changes >= 2, 'listeners told of starting and running');
 sent = [];
-selection.hoverKey = keyOf(100); syncLumatoneHover();
+selection.hoverKey = keyOf(100); syncLumatoneKeyEffects();
 lumatone.deviceColors = null; syncLumatoneColors();
 assert.equal(sent.length, 0, 'no color traffic while calibrating');
 startKeyCal('aftertouch');

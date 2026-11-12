@@ -19,8 +19,8 @@ import { tuning } from '../state/tuning.js';
 import { view } from '../state/view.js';
 import { selection, type DrawnKey } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import { referenceNote } from '../state/reference.js';
-import { whiteSet, keyColorHex, lightenHex, HOVER_LIGHTEN } from './colors.js';
+import { referenceNote, isValidRef, REF_MIDI_MIN, REF_MIDI_MAX } from '../state/reference.js';
+import { whiteSet, keyColorHex, lightenHex, HOVER_LIGHTEN, REF_DIM_FILL } from './colors.js';
 import { sizeCanvas, getVisibleRange, computePianoViewCenter } from './canvas.js';
 import { animation } from './animation.js';
 import { updateInfo } from './info.js';
@@ -245,7 +245,7 @@ export function invalidatePianoOutline(): void {
 }
 
 /* ── valid-ref region: the piano-range strip ─────────────────────────────────
-   A ref is valid iff its MIDI is in A0–C8 (validateRefNoteCandidate), so the
+   A ref is valid iff its MIDI is in A0–C8 (state/reference.ts isValidRef), so the
    region is the strip between two iso-MIDI lines. Each row's in-range cells
    are one interval, 88/c keys wide; the outline traces the in-range cells of
    the rows within twice a canvas half-diagonal of the view (any tilt), so the
@@ -263,8 +263,8 @@ function validRefPaths(): Point[][] {
   const rho = coordToMidi(0, 1, tuning.mapping) - 57;
   const cells: Array<[number, number]> = [];
   for (let r = r0 - 2 * reach; r <= r0 + 2 * reach; r++) {
-    /* 21 ≤ 57 + c·q + ρ·r ≤ 108 */
-    for (let q = Math.ceil((-36 - rho * r) / c); q <= Math.floor((51 - rho * r) / c); q++) cells.push([q, r]);
+    /* REF_MIDI_MIN ≤ 57 + c·q + ρ·r ≤ REF_MIDI_MAX */
+    for (let q = Math.ceil((REF_MIDI_MIN - 57 - rho * r) / c); q <= Math.floor((REF_MIDI_MAX - 57 - rho * r) / c); q++) cells.push([q, r]);
   }
   validRefStrip = { mapping: tuning.mapping, rLo: r0 - 2 * reach, rHi: r0 + 2 * reach, paths: computeOutlinePaths(cells) };
   return validRefStrip.paths;
@@ -349,17 +349,15 @@ export function snapViewForOutline(outline: OutlineMode): void {
 }
 
 /** Decide whether (q, r) is a sensible reference note: its MIDI lies in the
- *  88-key piano range, A0–C8. That is the whole rule (Max, 2026-10-30): the
+ *  88-key piano range, A0–C8 (state/reference.ts isValidRef, which this words
+ *  as a rejection). That is the whole rule (Max, 2026-10-30): the
  *  former ±3-accidental footprint rule copied a Composer clamp that Composer
  *  lifted in 2026-05. Used by Ctrl+click and the prefs restore (ui/init.ts),
  *  the mapping switch (ui/controls.ts) and the Composer bridge
  *  (bridge/hkl-side.ts). */
 export function validateRefNoteCandidate(q: number, r: number): string | null {
-  const midi = coordToMidi(q, r, tuning.mapping);
-  if (midi < 21 || midi > 108) {
-    return 'Reference note out of 88-key piano range (MIDI ' + midi + ')';
-  }
-  return null;
+  if (isValidRef(q, r)) return null;
+  return 'Reference note out of 88-key piano range (MIDI ' + coordToMidi(q, r, tuning.mapping) + ')';
 }
 
 /* ── tween-aware hex-layer rebuild ─────────────────────────────────────────
@@ -1406,7 +1404,7 @@ export function draw(): void {
         }
         ctx.closePath();
       });
-      ctx.fillStyle = "rgba(17,17,17,0.5)";
+      ctx.fillStyle = REF_DIM_FILL;
       ctx.fill("evenodd");
       ctx.restore();
     }

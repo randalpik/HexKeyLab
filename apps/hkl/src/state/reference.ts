@@ -45,11 +45,23 @@
 
 import { tuning } from './tuning.js';
 import { view } from './view.js';
-import { anchorOf } from '@hkl/shared/freq.js';
+import { anchorOf, coordToMidi } from '@hkl/shared/freq.js';
 
 interface RefCoord {
   q: number;
   r: number;
+}
+
+/** The MIDI range a reference note must lie in: the 88-key piano, A0–C8. */
+export const REF_MIDI_MIN = 21, REF_MIDI_MAX = 108;
+
+/** Whether cell (q, r) can be the reference note, in the current mapping. The
+ *  one statement of the rule: render/draw.ts words the rejection
+ *  (validateRefNoteCandidate) and traces the valid region from the same bounds,
+ *  and lumatone/sync.ts dims the keys outside it. */
+export function isValidRef(q: number, r: number): boolean {
+  const midi = coordToMidi(q, r, tuning.mapping);
+  return midi >= REF_MIDI_MIN && midi <= REF_MIDI_MAX;
 }
 
 const A3: RefCoord = { q: 0, r: 0 };

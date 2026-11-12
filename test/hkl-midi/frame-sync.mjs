@@ -26,8 +26,8 @@ const { midi } = await import('../../apps/hkl/src/state/midi.ts');
 const { lumatone } = await import('../../apps/hkl/src/state/lumatone.ts');
 const { selection } = await import('../../apps/hkl/src/state/selection.ts');
 const { sysex } = await import('../../apps/hkl/src/lumatone/sysex.ts');
-const { syncLumatoneColors, syncLumatoneHover, frameSyncActive, barycentric, sampleField,
-        beginLumatoneSlide, cancelLumatoneSlide } = await import('../../apps/hkl/src/lumatone/sync.ts');
+const { syncLumatoneColors, syncLumatoneKeyEffects, frameSyncActive, barycentric, sampleField,
+        beginLumatoneSlide, cancelLumatoneSlide, REF_DIM_LED } = await import('../../apps/hkl/src/lumatone/sync.ts');
 const { view } = await import('../../apps/hkl/src/state/view.ts');
 const { setBoards34Swapped, sysexBoardFor, buildFrameSysEx, buildBoardRequestSysEx, firmwareAtLeast } =
   await import('../../apps/hkl/src/lumatone/protocol.ts');
@@ -35,6 +35,9 @@ const { lumatoneCell, lumatoneCells } = await import('../../apps/hkl/src/layout/
 const { keyColorHex, lightenHex, HOVER_LIGHTEN } = await import('../../apps/hkl/src/render/colors.ts');
 const { hexToOklab, oklabToHex } = await import('../../apps/hkl/src/lumatone/oklab.ts');
 const { FIFTHS_CYCLE, FOURTHS_CYCLE } = await import('../../packages/shared/src/colors.ts');
+const { setRefEditSource } = await import('../../apps/hkl/src/input/ref-edit.ts');
+const { coordToMidi } = await import('../../packages/shared/src/freq.ts');
+const { tuning } = await import('../../apps/hkl/src/state/tuning.ts');
 
 let sent = [];
 midi.midiOut = { send: (m) => sent.push(m) };
@@ -58,7 +61,7 @@ function fresh(firmware) {
   lumatone.deviceColors = null;
   lumatone.fixedLayoutSent = false;
   lumatone.firmware = firmware;
-  lumatone.hoverMirror = true;
+  lumatone.keyEffects = true;
 }
 
 function checkFrame(m, colors) {
@@ -90,7 +93,7 @@ assert(!sent.some(isFrame), 'no 55h on 1.4.0');
 assert.deepEqual(lumatone.deviceColors, base());
 sent = [];
 selection.hoverKey = keyOf(100);
-syncLumatoneHover();
+syncLumatoneKeyEffects();
 assert.equal(sent.length, 0, 'hover sends nothing on the per-key path');
 ok('1.4.0: per-key wipe, no frames, no hover mirror');
 
@@ -123,10 +126,10 @@ setBoards34Swapped(false);
 fresh([1, 5, 0]);
 syncLumatoneColors(); drain(); sent = [];
 const [k1, k2, k3] = [10, 140, 270];
-selection.hoverKey = keyOf(k1); syncLumatoneHover();
+selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();
 assert.equal(sent.length, 1, 'first hover frame goes straight out');
-selection.hoverKey = keyOf(k2); syncLumatoneHover();
-selection.hoverKey = keyOf(k3); syncLumatoneHover();
+selection.hoverKey = keyOf(k2); syncLumatoneKeyEffects();
+selection.hoverKey = keyOf(k3); syncLumatoneKeyEffects();
 assert.equal(sent.length, 1, 'nothing else on the wire while a frame is in flight');
 const f1 = ackInFlight();
 assert.equal(lumatone.deviceColors[k1], lit(base()[k1]), 'device state = acked frame');
@@ -142,9 +145,9 @@ ok('latest wins: k2 frame superseded; hover key lightened by the canvas rule');
 
 // ── D: hover returns to the in-flight state — the stale queued frame must not go out ──
 sent = [];
-selection.hoverKey = keyOf(k1); syncLumatoneHover();           // frame A in flight
-selection.hoverKey = keyOf(k2); syncLumatoneHover();           // frame B queued
-selection.hoverKey = keyOf(k1); syncLumatoneHover();           // back to A before A's ACK
+selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();           // frame A in flight
+selection.hoverKey = keyOf(k2); syncLumatoneKeyEffects();           // frame B queued
+selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();           // back to A before A's ACK
 ackInFlight();
 assert.equal(sysex.inFlight, null, 'queued B dropped');
 assert.equal(sent.length, 1);
@@ -154,10 +157,10 @@ ok('return to in-flight state drops the stale queued frame');
 
 // ── E: control messages survive a re-sync ──
 sent = [];
-selection.hoverKey = null; syncLumatoneHover();                // frame in flight
+selection.hoverKey = null; syncLumatoneKeyEffects();                // frame in flight
 const query = buildBoardRequestSysEx(3, 0x3A);
 sysex.enqueueControl(query);
-selection.hoverKey = keyOf(k2); syncLumatoneHover();           // replaces the colors only
+selection.hoverKey = keyOf(k2); syncLumatoneKeyEffects();           // replaces the colors only
 ackInFlight();
 assert.equal(sysex.inFlight, query, 'control query sent next');
 ackInFlight();
@@ -168,7 +171,7 @@ ok('replaceQueue keeps queued control messages ahead of new colors');
 // ── F: a frame answered ERROR does not update device state; the next sync resends ──
 sent = [];
 const before = lumatone.deviceColors.slice();
-selection.hoverKey = keyOf(k3); syncLumatoneHover();
+selection.hoverKey = keyOf(k3); syncLumatoneKeyEffects();
 ackInFlight(3);
 assert.deepEqual(lumatone.deviceColors, before, 'ERROR leaves device state alone');
 syncLumatoneColors();
@@ -179,17 +182,17 @@ ok('ERROR (03h) frame is not counted and is resent');
 
 // ── G: Hover checkbox off — no hover frames, and normal syncs still go out as frames ──
 fresh([1, 5, 0]);
-lumatone.hoverMirror = false;
+lumatone.keyEffects = false;
 syncLumatoneColors(); drain(); sent = [];
-selection.hoverKey = keyOf(k1); syncLumatoneHover();
+selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();
 assert.equal(sent.length, 0, 'hover is not mirrored with the checkbox off');
 syncLumatoneColors();
 assert.equal(sent.length, 0, 'a sync while hovering shows no highlight either');
-lumatone.hoverMirror = true;
-syncLumatoneColors();                                          // what toggleLumatoneHover does
+lumatone.keyEffects = true;
+syncLumatoneColors();                                          // what toggleLumatoneKeyEffects does
 assert(isFrame(sysex.inFlight)); ackInFlight();
 assert.equal(lumatone.deviceColors[k1], lit(base()[k1]), 'turning it on shows the current hover');
-lumatone.hoverMirror = false;
+lumatone.keyEffects = false;
 syncLumatoneColors(); ackInFlight();
 assert.deepEqual(lumatone.deviceColors, base(), 'turning it off clears the highlight');
 ok('Hover checkbox gates the mirror; toggling re-syncs both ways');
@@ -326,12 +329,86 @@ assert.deepEqual(lumatone.deviceColors, base());
 setAnchor(q0, r0);
 ok('firmware < 1.5.0: no slide, per-key snap');
 
+// ── K: the ref-edit modifier dims the keys whose cell cannot be a ref (Key effects) ──
+// The gate's own statement of both rules: a ref is valid iff its MIDI is in A0–C8, and
+// an invalid key keeps REF_DIM_LED of each channel. The level is the device's own, set by
+// eye, so the gate reads it; what it pins is that it is darker than the canvas's 50% cover.
+assert(REF_DIM_LED > 0 && REF_DIM_LED < 0.5, 'the Lumatone dims further than the canvas');
+const inRange = (q, r) => { const m = coordToMidi(q, r, tuning.mapping); return m >= 21 && m <= 108; };
+const dim = (hex) => '#' + [1, 3, 5]
+  .map((a) => Math.round(parseInt(hex.slice(a, a + 2), 16) * REF_DIM_LED).toString(16).padStart(2, '0')).join('');
+const dimColor = (q, r) => (inRange(q, r) ? keyColorHex(q, r) : dim(keyColorHex(q, r)));
+const dimmed = () => Array.from({ length: 280 }, (_, i) => dimColor(...lumatoneCell(i)));
+const held = (on, source = 'keyboard') => { setRefEditSource(source, on); syncLumatoneKeyEffects('sync'); }; // init.ts's listener
+fresh([1, 5, 0]);
+setAnchor(q0, r0 + 7);                                         // ref at MIDI 106: the keyboard straddles C8
+syncLumatoneColors(); drain(); sent = [];
+const invalid = Array.from({ length: 280 }, (_, i) => !inRange(...lumatoneCell(i)));
+const nInvalid = invalid.filter(Boolean).length;
+assert(nInvalid > 20 && nInvalid < 260, `some keys are out of range, some in (${nInvalid} out)`);
+held(true);
+assert(isFrame(sysex.inFlight), 'the modifier going down sends a frame');
+assert.equal(sysex.inFlight.cause, 'sync');
+assert.deepEqual(sysex.inFlight.frameColors, dimmed(), 'invalid cells dimmed to the device level, valid ones untouched');
+ackInFlight();
+const [kOut, kIn] = [invalid.indexOf(true), invalid.indexOf(false)];
+selection.hoverKey = keyOf(kOut); syncLumatoneKeyEffects();
+{ const want = dimmed(); want[kOut] = dim(lit(base()[kOut]));
+  assert.deepEqual(sysex.inFlight.frameColors, want, 'hover on a dimmed key: the dim applies to the lightened cell, the canvas\'s order'); }
+ackInFlight();
+selection.hoverKey = keyOf(kIn); syncLumatoneKeyEffects();
+{ const want = dimmed(); want[kIn] = lit(base()[kIn]);
+  assert.deepEqual(sysex.inFlight.frameColors, want, 'hover on a valid key is the plain hover'); }
+ackInFlight();
+selection.hoverKey = null; syncLumatoneKeyEffects(); drain();
+ok(`modifier held: ${nInvalid} out-of-range keys dimmed to ${REF_DIM_LED} of their color; hover composes with it`);
+
+setAnchor(q0, r0 + 6);                                         // a ref change while held
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, dimmed(), 'the dim stays on the cells, not the keys');
+setAnchor(q0, r0 + 7);
+beginLumatoneSlide(0, 1);
+now += 250; tick();
+assert.deepEqual(sysex.inFlight.frameColors, fieldAt(q0, r0 + 6.5, dimColor), 'mid-slide: the field of dimmed cells');
+now += 300; tick(); drain();
+assert.deepEqual(lumatone.deviceColors, dimmed(), 'lands on the dimmed layout');
+ok('the dim follows a ref change and rides the slide');
+
+held(false); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'released: every key restored');
+setRefEditSource('keyboard', true); setRefEditSource('sus', true);
+held(false); drain();                                          // the keyboard lets go, a pedal still holds
+assert.deepEqual(lumatone.deviceColors, dimmed(), 'held while any source holds it');
+held(false, 'sus'); drain();
+assert.deepEqual(lumatone.deviceColors, base());
+ok('release restores the colors; the modifier is held while any source holds it');
+
+lumatone.keyEffects = false; sent = [];
+held(true);
+assert.equal(sent.length, 0, 'no dim with Key effects off');
+syncLumatoneColors();
+assert.equal(sent.length, 0, 'a sync while held shows no dim either');
+lumatone.keyEffects = true;
+syncLumatoneColors(); drain();                                 // what toggleLumatoneKeyEffects does
+assert.deepEqual(lumatone.deviceColors, dimmed(), 'turning it on shows the dim');
+lumatone.keyEffects = false;
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'turning it off clears it');
+fresh([1, 4, 0]);                                              // Key effects on, modifier still held
+syncLumatoneColors(); drain(); sent = [];
+assert.deepEqual(lumatone.deviceColors, base(), 'no dim on the per-key path');
+syncLumatoneKeyEffects('sync');
+assert.equal(sent.length, 0);
+held(false);
+setAnchor(q0, r0);
+ok('Key effects checkbox gates the dim; firmware < 1.5.0 never dims');
+
 // ── H: timings, Auto-sync off ──
 const t = sysex.frameTimings();
 assert(t.length >= 5 && t.every((x) => x.rtt >= 0 && x.sinceCause >= x.rtt - 1e-9));
 assert(t.some((x) => x.cause === 'hover') && t.some((x) => x.cause === 'sync'));
 sent = []; lumatone.autoSyncEnabled = false;
-selection.hoverKey = keyOf(k1); syncLumatoneHover();
+selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();
 assert.equal(sent.length, 0, 'nothing without Auto-sync');
 ok('frame timings recorded; Auto-sync off sends nothing');
 

@@ -10918,3 +10918,22 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/ref-press.mjs` (new; 13 of 32 failed before the change, 32/32 after); `ref-centering` 26/26, `held-inputs` 30/30, `ref-validity` 26/26, `departure` 72/72, `fresh-profile` 12/12, `layer-sync` 4/4, `anchor` 23/23; typecheck, boundaries, HKL build; the lean overlay build still contains no `requestMIDIAccess`, `AudioContext`, `SampleEngine` or `recordOn`. Not yet tried on the hardware.
 
 **Where:** `apps/hkl/src/input/ref-edit.ts` + `input/ref-pick.ts` (new), `midi/handler.ts`, `ui/init.ts`, `ui/keyboard.ts`, `render/draw.ts`, `render/info.ts` (`flashInfoLine` moved here); docs/architecture/hkl.md (Display → Ref-edit modifier), docs/guide/core.md (Reference note), `test/hkl-midi/README.md`.
+
+## Hover becomes Key effects: the Lumatone dims invalid refs while the modifier is held (2026-11-12, Max)
+
+**Amends** the 2026-11-08 Hover checkbox entry (the checkbox now gates two effects) and the entry above (the modifier's state module now has no imports).
+
+**Picked (Max):**
+- **The checkbox is "Key effects"**, and it gates everything the canvas does to a key that the device can show: the hover lightening, as before, and now the dimming of cells that cannot be a ref while the ref-edit modifier is held. Identifiers follow the label (`cbLumaKeyEffects`, `lumatone.keyEffects`, pref `lumatoneKeyEffects`, `toggleLumatoneKeyEffects`, `syncLumatoneKeyEffects`); **the old `lumatoneHover` pref is not migrated**, so a saved Hover setting reads as off.
+- **The Lumatone's dim level is its own, and darker than the canvas's** (Max): the canvas keeps its cover, 50% of the page background `#111` (`REF_DIM_FILL`, `render/colors.ts`), because the note names under it must stay readable; a key has no text, so it keeps `REF_DIM_LED` of each channel, scaled toward off (`lumatone/sync.ts`; 0.2 to start, Max's to tune by eye). The first cut shared the canvas rule, on the model of hover, where one `HOVER_LIGHTEN` serves both; hover stays shared. What the two surfaces share for the dim is which cells, not how much.
+- **Composition follows the canvas's paint order**: lighten the hovered cell, then dim. A hovered invalid key is the lightened color, dimmed.
+- **The dim lives in the per-cell color** (`frameCellColor`), so it needs no code of its own to follow a ref change or to blend through the ref slide.
+- **One statement of ref validity**: `isValidRef` and `REF_MIDI_MIN` / `REF_MIDI_MAX` in `state/reference.ts`. `validateRefNoteCandidate` words its rejection, the valid-ref strip is traced from its bounds, and the LED dim tests it.
+
+**The modifier's state module lost its `draw` import.** `lumatone/sync.ts` reads the modifier and its gate loads it under Node without a canvas, so `input/ref-edit.ts` now calls one registered listener (`setRefEditListener`; `ui/init.ts` registers redraw + `syncLumatoneKeyEffects('sync')`). A side effect: the lean overlay build no longer loads `ui/keyboard.ts`, so an overlay page no longer dims on Ctrl.
+
+**Scope:** frame path only (firmware 1.5.0+), as hover is: 100-odd per-key writes per Ctrl press would take seconds on the older path. The ref pick itself needs neither the checkbox nor the firmware.
+
+**Gates:** `test/hkl-midi/frame-sync.mjs` section K (new, 4 checks; the gate states the piano range independently, reads `REF_DIM_LED` and requires it below the canvas's 0.5; it failed before the dim on "the modifier going down sends a frame"; 20 checks now); `ref-press.mjs` section W (the app wiring against a fake 1.5.0 device: label, default, pref, one frame down and one up with the box on, none with it off; 42/42); `preset-resync` 7, `keycal` 9, `sync-order`, `ref-validity` 26/26, `ref-centering` 26/26, `fresh-profile` 12/12, `departure` 72/72, `held-inputs` 30/30, `keycal-overlay` 18/18; typecheck, boundaries, HKL build; the lean overlay build still contains none of the four engine symbols. Not yet seen on the hardware.
+
+**Where:** `apps/hkl/src/lumatone/sync.ts`, `render/colors.ts`, `render/draw.ts`, `state/reference.ts`, `state/{lumatone,persistence}.ts`, `input/ref-edit.ts`, `ui/init.ts`, `ui/tooltips.ts`, `index.html`; docs/architecture/hkl.md (Lumatone output → Key effects; Display → Ref-edit modifier), docs/guide/core.md, `test/hkl-midi/README.md`.

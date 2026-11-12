@@ -13,12 +13,17 @@ the connect sequence (version answered after the first sync was queued) keeps
 all layout setup and sends one frame; the frame's payload under both board
 maps; latest-wins; that hover returning to the in-flight state drops the stale
 queued frame; that a control query survives a re-sync; that an ERROR frame is
-not counted and is resent; the Hover checkbox gating; the barycentric sampler
+not counted and is resent; the Key effects checkbox gating; the barycentric sampler
 (exact cells, edges, the m3 diagonal, partition of unity, linear reproduction);
-and the ref slide on a hand-driven clock — no jump at the start, the mid frame
+the ref slide on a hand-driven clock — no jump at the start, the mid frame
 equal to the field at the eased anchor, an exact landing, a redirect continuing
 from the interpolated anchor, a snap mid-slide, hover riding the field, and no
-slide below 1.5.0. No dev server or MIDI device is needed. **Run it
+slide below 1.5.0; and the invalid-ref dimming while the ref-edit modifier is
+held — the out-of-range keys at the device's own level (`REF_DIM_LED`, which the
+gate reads and requires to be darker than the canvas's 50% cover; the piano range
+is stated independently in the gate), hover composing with it, the dim following a ref change and riding the
+slide, release, two sources holding the modifier, the checkbox gating, and no
+dim below 1.5.0. No dev server or MIDI device is needed. **Run it
 before declaring any change to `lumatone/sync.ts`, `lumatone/sysex.ts` or the
 frame builder done.**
 
@@ -239,8 +244,12 @@ pressing the ref's own key clears it; a cell outside A0–C8 is rejected. Withou
 Ctrl the key plays; a key held before Ctrl follows the ref change and releases
 cleanly; a window blur drops the keyboard's hold; and a mouse click with the
 modifier held picks the ref even when the click event carries no `ctrlKey`.
-Failed 13 of 32 before the feature (2026-11-12). **Run it before declaring any
-change to the modifier, `pickRef`, or the Lumatone note-on path done.**
+Failed 13 of 32 before the feature (2026-11-12). Section W is the Key effects
+wiring against a fake device on firmware 1.5.0 that ACKs: the checkbox's
+label, default and pref, and that the modifier going down and up each send one
+color frame with it on and none with it off (the colors themselves are
+`frame-sync.mjs`). **Run it before declaring any change to the modifier,
+`pickRef`, the Lumatone note-on path, or the Key effects checkbox done.**
 
 ## Ref validity and the piano canvas
 

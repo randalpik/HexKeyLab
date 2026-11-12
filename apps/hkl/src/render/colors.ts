@@ -30,8 +30,15 @@ export function lightSourceHex(q: number, r: number): string {
 }
 
 /* How much the key under the pointer is lightened — on the canvas (render/draw.ts)
-   and, with Hover on, on the Lumatone (lumatone/sync.ts), so both change alike. */
+   and, with Key effects on, on the Lumatone (lumatone/sync.ts), so both change alike. */
 export const HOVER_LIGHTEN = 30;
+
+/* While the ref-edit modifier is held, the canvas covers every cell that cannot be
+   the reference note halfway with the page background (one fill over the whole
+   invalid region: render/draw.ts), which keeps the note names readable. The
+   Lumatone's level is its own and darker, since a key has no text to keep
+   readable: REF_DIM_LED in lumatone/sync.ts. */
+export const REF_DIM_FILL = 'rgba(17,17,17,0.5)';
 
 /* Add `amt` to each RGB channel (clamped). */
 export function lightenHex(hex: string, amt: number): string {

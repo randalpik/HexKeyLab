@@ -47,13 +47,13 @@ import {
   applyHexSize, setHexSizeFromDom,
 } from './controls.js';
 import './keyboard.js';
-import { isRefEditHeld } from '../input/ref-edit.js';
+import { isRefEditHeld, setRefEditListener } from '../input/ref-edit.js';
 import { pickRef } from '../input/ref-pick.js';
 import '../input/keyboard-notes.js';
 import {
   togglePedalCalibration, resetPedalBounds,
 } from '../lumatone/calibration.js';
-import { toggleAutoSync, syncLumatoneHover, toggleLumatoneHover } from '../lumatone/sync.js';
+import { toggleAutoSync, syncLumatoneKeyEffects, toggleLumatoneKeyEffects } from '../lumatone/sync.js';
 import { setBoards34Swapped } from '../lumatone/protocol.js';
 import {
   ensureLumaDiag, setLumaDiagVisible, setLumaDiagHotkeyCallback,
@@ -115,7 +115,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('waveform').value = p.waveform;
   $<HTMLSelectElement>('pedalMode').value = p.pedalMode;
   $<HTMLInputElement>('cbAutoSync').checked = p.autoSync;
-  $<HTMLInputElement>('cbLumaHover').checked = p.lumatoneHover;
+  $<HTMLInputElement>('cbLumaKeyEffects').checked = p.lumatoneKeyEffects;
   $<HTMLInputElement>('cbShowDiag').checked = p.showDiagnostics;
   /* Hidden while no Lumatone is connected, and never checked while hidden:
      the connection handler below applies the saved pref on connect. */
@@ -276,10 +276,10 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
 cv.addEventListener('mousemove', function (e: MouseEvent) {
   const rect = cv.getBoundingClientRect();
   const key = hexAtPoint(e.clientX - rect.left, e.clientY - rect.top);
-  if (key !== selection.hoverKey) { selection.hoverKey = key; draw(); syncLumatoneHover(); }
+  if (key !== selection.hoverKey) { selection.hoverKey = key; draw(); syncLumatoneKeyEffects(); }
 });
 cv.addEventListener('mouseleave', function () {
-  if (selection.hoverKey !== null) { selection.hoverKey = null; draw(); syncLumatoneHover(); }
+  if (selection.hoverKey !== null) { selection.hoverKey = null; draw(); syncLumatoneKeyEffects(); }
 });
 
 // ── Toolbar wiring ──
@@ -435,7 +435,7 @@ $<HTMLSelectElement>('pedalMode').addEventListener('change', function (e) {
 $<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
 $<HTMLButtonElement>('btnResetPedal').addEventListener('click', resetPedalBounds);
 $<HTMLInputElement>('cbAutoSync').addEventListener('change', toggleAutoSync);
-$<HTMLInputElement>('cbLumaHover').addEventListener('change', toggleLumatoneHover);
+$<HTMLInputElement>('cbLumaKeyEffects').addEventListener('change', toggleLumatoneKeyEffects);
 
 // Diagnostics toggles
 $<HTMLInputElement>('cbShowDiag').addEventListener('change', (e) => {
@@ -475,7 +475,7 @@ function resetToDefaults(): void {
   if (audio.audioEnabled !== p.audioEnabled) toggleAudio();
   if (audio.activeWaveform !== p.waveform) changeWaveform();
   if (lumatone.autoSyncEnabled !== p.autoSync) toggleAutoSync();
-  if (lumatone.hoverMirror !== p.lumatoneHover) toggleLumatoneHover();
+  if (lumatone.keyEffects !== p.lumatoneKeyEffects) toggleLumatoneKeyEffects();
 
   /* View-toggle checkboxes have no handler we fired above — drive their
      side effects directly so cbNotes/cbBands/cbExtend/cbCoords/cbFactors/cbShortIvl
@@ -499,6 +499,10 @@ initRecorderUI();
 /* Every ref-tier change fans out through onRefChanged from here on (the
    restore below re-anchors and re-centers through it). */
 setRefListener(onRefChanged);
+/* The ref-edit modifier went down or up (input/ref-edit.ts): the canvas dims or
+   restores the cells that cannot be a ref, and with Key effects on so does the
+   Lumatone. */
+setRefEditListener(() => { draw(); syncLumatoneKeyEffects('sync'); });
 setTuning();
 if (prefs.manualRef) {
   /* Silently drop a persisted manualRef that no longer validates (outside
@@ -514,7 +518,7 @@ if (prefs.manualRef) {
 }
 setOutline();
 if (prefs.audioEnabled) toggleAudio();
-lumatone.hoverMirror = prefs.lumatoneHover; /* before Auto-sync's first push */
+lumatone.keyEffects = prefs.lumatoneKeyEffects; /* before Auto-sync's first push */
 if (prefs.autoSync) toggleAutoSync();
 /* Apply showDiagnostics now that audio is initialized — the loop overlay
    needs audioCtx, which exists after the toggleAudio() / initAudio() path

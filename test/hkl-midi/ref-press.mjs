@@ -23,6 +23,10 @@
 //   P8  window blur drops the keyboard's hold on the modifier
 //   M1  with the modifier held, a mouse click picks the ref even when the
 //       click itself carries no ctrlKey (one modifier for every input)
+//   W   Key effects wiring, against a fake device on firmware 1.5.0: the
+//       checkbox's label, default and pref; with it on, the modifier going
+//       down and up each send one color frame, the second restoring every
+//       key; with it off, none
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -46,7 +50,7 @@ const SCRIPT = `(async () => {
   const handlerUrl = await depUrl(root, '/src/midi/handler.ts');
   const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
   const heldUrl = await depUrl(handlerUrl, '/src/input/held.ts');
-  const [viewMod, refState, drawMod, animMod, handler, held, eng, selMod, audioMod, midiMod, prefsMod, heartbeat, sx] =
+  const [viewMod, refState, drawMod, animMod, handler, held, eng, selMod, audioMod, midiMod, prefsMod, heartbeat, sx, lumMod] =
     await Promise.all([
       import(await depUrl(root, '/src/state/view.ts')),
       import(await depUrl(root, '/src/state/reference.ts')),
@@ -59,8 +63,10 @@ const SCRIPT = `(async () => {
       import(await depUrl(root, '/src/state/persistence.ts')),
       import(await depUrl(handlerUrl, '/src/midi/heartbeat.ts')),
       import(await depUrl(handlerUrl, '/src/lumatone/sysex.ts')),
+      import(await depUrl(root, '/src/state/lumatone.ts')),
     ]);
   const { view } = viewMod, { selection } = selMod, { audio } = audioMod, { midi } = midiMod;
+  const { lumatone } = lumMod;
   const ref = refState.referenceNote;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const SLIDE = 750; /* > the 500 ms tween */
@@ -74,9 +80,16 @@ const SCRIPT = `(async () => {
   const isPing = (m) => m[4] === 0x00 && m[5] === 0x33;
   const pingReply = (m) => new Uint8Array([0xF0, 0x00, 0x21, 0x50, 0x00, 0x33, 0x01, m[6], m[7], m[8], m[9], 0xF7]);
   const fakeIn = { id: 'fake-lumatone-in', name: 'Lumatone', state: 'connected', onmidimessage: null };
+  const frames = [];   /* 55h whole-keyboard color frames sent to the device */
   const fakeOut = {
     id: 'fake-lumatone-out', name: 'Lumatone', state: 'connected',
-    send(m) { if (isPing(m)) setTimeout(() => { if (fakeIn.onmidimessage) fakeIn.onmidimessage({ data: pingReply(m) }); }, 1); },
+    send(m) {
+      if (m[0] !== 0xF0) return;
+      const answer = (data) => setTimeout(() => { if (fakeIn.onmidimessage) fakeIn.onmidimessage({ data }); }, 1);
+      if (isPing(m)) { answer(pingReply(m)); return; }
+      if (m[5] === 0x55) frames.push(m);
+      answer(new Uint8Array([0xF0, 0x00, 0x21, 0x50, m[4], m[5], 0x01, 0xF7]));   /* ACK */
+    },
   };
   const savedIn = midi.midiIn, savedOut = midi.midiOut;
   midi.midiIn = fakeIn; midi.midiOut = fakeOut;
@@ -221,6 +234,34 @@ const SCRIPT = `(async () => {
   check('M1b: and selects nothing', selection.selectedKeys.size, 0);
   ctrl(false);
   await wait(SLIDE);
+
+  /* ── W: Key effects wiring — the modifier re-syncs the Lumatone's colors ──
+     (the colors themselves are frame-sync.mjs section K) */
+  quiet();
+  refState.setSelectionFromManual(0, 7);   /* part of the keyboard is above C8 */
+  await wait(SLIDE);
+  lumatone.firmware = [1, 5, 0]; lumatone.fixedLayoutSent = true; lumatone.deviceColors = null;
+  tick('cbAutoSync', true);
+  await wait(100);
+  check('setup: Auto-sync sent the layout as one frame', frames.length, 1);
+  const box = document.getElementById('cbLumaKeyEffects');
+  check('W1: the checkbox is labeled Key effects', box ? box.parentElement.textContent.trim() : 'missing', 'Key effects');
+  check('W2: it is off by default', box ? box.checked : null, false);
+  const plain = lumatone.deviceColors.join();
+  ctrl(true); await wait(60);
+  check('W3: Key effects off: the modifier sends nothing', frames.length, 1);
+  ctrl(false); await wait(60);
+  tick('cbLumaKeyEffects', true); await wait(60);
+  check('W4: turning it on with nothing to show sends nothing', frames.length, 1);
+  check('W5: the pref is saved', prefsMod.loadPrefs().lumatoneKeyEffects, true);
+  ctrl(true); await wait(60);
+  check('W6: Key effects on: the modifier going down sends a frame', frames.length, 2);
+  check('W7: which changes the device colors', lumatone.deviceColors.join() === plain, false);
+  ctrl(false); await wait(60);
+  check('W8: the modifier going up sends another', frames.length, 3);
+  check('W9: restoring every key', lumatone.deviceColors.join() === plain, true);
+  tick('cbLumaKeyEffects', false); tick('cbAutoSync', false);
+  lumatone.firmware = null; lumatone.fixedLayoutSent = false; lumatone.deviceColors = null;
 
   /* leave nothing behind */
   refState.clearSelection();
