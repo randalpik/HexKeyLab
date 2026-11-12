@@ -169,6 +169,18 @@ export const sysex: SysexQueueModule = {
     if (pushInProgress) finish(false);
   },
 
+  /* The device's state was reloaded while a color message awaited its ACK (a
+     preset switch; lumatone/sync.ts resyncLumatoneDevice). Whether the device
+     still shows that color depends on which side of the reload it arrived, so
+     its ACK records nothing and no sync predicts from it. The message itself
+     completes as usual. */
+  voidInFlight(): void {
+    if (!waiting) return;
+    waiting.frameColors = undefined;
+    waiting.keyIdx = undefined;
+    waiting.color = undefined;
+  },
+
   /* Route an incoming F0… SysEx response to the in-flight message.
      The MIDI input handler MUST first check for spontaneous CMD 3Eh
      calibration packets and route those elsewhere — they are NOT ACKs

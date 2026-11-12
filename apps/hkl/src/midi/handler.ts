@@ -9,6 +9,9 @@
 //   • CC 4 (expression pedal, hardcoded in firmware) → setDamperDepth as
 //     continuous damper. CC 64 (sustain jack, binary) → setDamperDepth in
 //     'sustain' mode, or sostenutoOn/Off in 'sostenuto' mode (per pedal.mode).
+//   • CC 123 then CC 121 on channel 1, both 0 (the firmware's end of a preset
+//     switch) → watchPresetSwitch (lumatone/sync.ts) re-pushes HKL's layout,
+//     flags and colors.
 //   • Polyphonic aftertouch (0xA0) → handleAftertouch, also stashed in
 //     audio.aftertouchSnapshot for debug polling.
 //   • Every inbound message is reported to the liveness heartbeat
@@ -24,6 +27,7 @@ import {
 } from '../lumatone/protocol.js';
 import { heartbeatInbound, setHeartbeatHoldingProbe, stopHeartbeat } from './heartbeat.js';
 import { sysex } from '../lumatone/sysex.js';
+import { watchPresetSwitch } from '../lumatone/sync.js';
 import { handleCalibrationPacket } from '../lumatone/calibration.js';
 import {
   handleAftertouch,
@@ -117,6 +121,9 @@ function routeChannelMessage(data: Uint8Array): void {
   const ch = (data[0] & 0x0f) + 1;
   const d1 = data[1];
   const d2 = data.length > 2 ? data[2] : 0;
+  /* The end of a preset switch on the device (All Notes Off, then Reset All
+     Controllers): the device now holds the preset, so push HKL's state again. */
+  watchPresetSwitch(data);
   /* CC messages: foot controller (CC 4, expression jack — continuous damper)
      and sustain (CC 64, sustain jack — binary, role per pedal.mode). The
      expression pedal's CC# is hardcoded to 4 in firmware and cannot be

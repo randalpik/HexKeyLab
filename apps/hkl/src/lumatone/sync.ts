@@ -9,6 +9,10 @@
 // messages (fixed MIDI layout: channels 1-5 × notes 0-55) plus the global
 // aftertouch + keystroke-light flags. Gated by lumatone.fixedLayoutSent so
 // re-syncs don't repeat the setup.
+//
+// A preset switch on the device (one of its preset buttons) replaces all of
+// that; watchPresetSwitch sees the firmware's end-of-switch marker and
+// resyncLumatoneDevice repeats the setup and the colors.
 
 import { midi } from '../state/midi.js';
 import { lumatone } from '../state/lumatone.js';
@@ -229,6 +233,35 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
   /* Option B: swap queue in place, let in-flight message complete naturally.
      The new queue takes over once the wire is free. */
   sysex.replaceQueue(newQ);
+}
+
+/* What the device holds can no longer be assumed (a preset was loaded on it; the
+   board map changed): forget it and push the fixed layout, the flags and every
+   color again. A color message still awaiting its ACK is voided as well, since it
+   may have reached the device before the state changed under it. With Auto-sync
+   off or a calibration running nothing is sent, and the next sync is a full one. */
+export function resyncLumatoneDevice(): void {
+  sysex.voidInFlight();
+  lumatone.fixedLayoutSent = false;
+  lumatone.deviceColors = null;
+  syncLumatoneColors();
+}
+
+/* A preset button on the Lumatone reloads its key map, key types and colors from
+   the preset, one board at a time, and HKL's writes are not held back meanwhile:
+   one that reaches a board before its reload is ACKed and then overwritten. The
+   firmware ends the switch, once every board has reloaded, with All Notes Off then
+   Reset All Controllers on channel 1 (B0 7B 00, B0 79 00), which is the only
+   signal that a re-push will stick (docs/lessons.md → "Macro buttons in normal
+   mode"). Called with every inbound channel message (midi/handler.ts): the second
+   message directly after the first re-pushes; anything in between disarms. */
+let allNotesOffSeen = false;
+export function watchPresetSwitch(data: Uint8Array): void {
+  const armed = allNotesOffSeen;
+  allNotesOffSeen = false;
+  if (data.length !== 3 || data[0] !== 0xB0 || data[2] !== 0) return;
+  if (data[1] === 123) allNotesOffSeen = true;
+  else if (data[1] === 121 && armed) resyncLumatoneDevice();
 }
 
 /* Auto-sync checkbox handler. */

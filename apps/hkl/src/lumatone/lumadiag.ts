@@ -55,7 +55,7 @@ import type { LumatoneKeyId } from '../types.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs, loadPrefs } from '../state/persistence.js';
 import { SampleEngine } from '../audio/samples.js';
-import { syncLumatoneColors } from './sync.js';
+import { resyncLumatoneDevice } from './sync.js';
 import { startKeyCal, endKeyCal, keyCalStatus, onKeyCalChange } from './keycal.js';
 
 /* Per-key stats are keyed by physical key, "ch,note": in the fixed layout the
@@ -383,11 +383,9 @@ function makeSwapSection(): HTMLDivElement {
       if (boardTitles[i]) boardTitles[i].textContent = boardTitleText(i);
     }
     /* Re-light: the swap relocates groups 4/5, so the already-sent fixed layout
-       and colors now sit on the wrong physical boards. Force a full re-push
-       (same reset the device uses on reconnect). */
-    lumatone.fixedLayoutSent = false;
-    lumatone.deviceColors = null;
-    syncLumatoneColors();
+       and colors now sit on the wrong physical boards. Force a full re-push,
+       not trusting a frame still in flight under the old board map. */
+    resyncLumatoneDevice();
   });
   label.appendChild(cb);
   label.appendChild(document.createTextNode('Swap boards 3 ↔ 4 (this unit)'));

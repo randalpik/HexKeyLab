@@ -20,6 +20,8 @@
 //         device's own jacks, so their release can never arrive)
 //   E     a throwing release handler must not eat the status-badge update
 //   F     a reconnect re-attaches and plays normally
+//   F2    All Notes Off + Reset All Controllers (the end of a preset switch on
+//         the device) starts a full re-push
 //   G1-G7 the heartbeat: idle when nothing is held, velocity 127 plays with no
 //         delay, a live device survives a held chord, active traffic sends no
 //         pings, a dead device's burst / damper is released, a janked wait is
@@ -189,6 +191,27 @@ const SCRIPT = `(async () => {
   reset(); install();
   deliver(0x90, 3, 77);
   check('F: plays again after reconnect', selection.selectedKeys.size, 1);
+
+  /* ---- F2. the device's end-of-preset-switch pair starts a full re-push ----
+     The logic is gated in preset-resync.mjs; this is the wiring through the
+     real input handler. */
+  const { lumatone } = await import(await depUrl(engineUrl, '/src/state/lumatone.ts'));
+  const { sysex } = await import(await depUrl(engineUrl, '/src/lumatone/sysex.ts'));
+  reset(); install();
+  const wire = [];
+  const pingSend = fakeOut.send;
+  fakeOut.send = (m) => { wire.push(m[5]); pingSend(m); };
+  const autoSyncWas = lumatone.autoSyncEnabled;
+  lumatone.autoSyncEnabled = true;
+  lumatone.fixedLayoutSent = true;
+  lumatone.deviceColors = new Array(280).fill('#000000');
+  deliver(0xB0, 123, 0);
+  check('F2: All Notes Off alone sends nothing', wire.length, 0);
+  deliver(0xB0, 121, 0);
+  check('F2: the pair puts a key write on the wire', wire[0], 0x00);
+  check('F2: the color mirror is void', lumatone.deviceColors.every((c) => c === null), true);
+  sysex.cancel();
+  lumatone.autoSyncEnabled = autoSyncWas; lumatone.deviceColors = null; lumatone.fixedLayoutSent = false;
 
   /* ══ G. liveness heartbeat ══════════════════════════════════════════════ */
   const Q = heartbeat.HEARTBEAT_QUIET_MS, T = heartbeat.HEARTBEAT_REPLY_TIMEOUT_MS;

@@ -10879,3 +10879,24 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `keydata-backup.sh restore` run three times against the device with files identical to its own (2026-11-11; with and without `--thresholds`): fresh modification times, owner and mode unchanged, checksums match, staging folder removed. Not yet followed through a power cycle with changed values. `check` passes the saved snapshot, the full device backup's `files/` and a `KeyData_default`-seeded folder, and refuses a dropped value, a value of 300 and a two-value `ThresholdData` row; `restore` of the dropped-value folder stops before contacting the device. `keydata-locate.py`'s key table compared with `apps/hkl/src/layout/baseKeys.ts`: identical, 280 of 280.
 
 **Where:** `tools/lumatone-cal/` (three scripts removed; `keydata-backup.sh`, `keydata-locate.py`, `README.md`, `.gitignore`), docs/lumatone-calibration.md, docs/lessons.md, docs/architecture/hkl.md, AGENTS.md, README.md.
+
+## Re-sync the Lumatone after a preset switch, on the firmware's end marker (2026-11-11, Max)
+
+**Context:** a preset button on the Lumatone reloads the device's key map, key types and colors from the preset, and HKL did not notice: its fixed layout and colors were gone until a reconnect. Firmware 1.5.0 can send a Program Change with the switch (`0x53`), and Max asked whether the buttons could become HKL controls. Read from the 1.5.0 binaries (lessons.md → "Macro buttons in normal mode"), they cannot be taken over, a hold is never reported, and a re-push cannot hide the switch. Max ruled out any change to the device's firmware, and any write to a user's preset slots, and asked for the re-sync alone.
+
+**Picked:**
+- **Trigger on All Notes Off directly followed by Reset All Controllers** (`B0 7B 00`, `B0 79 00`), which the firmware sends once every board has reloaded. It needs no device setting, and it is the only point from which a re-push is known to stick: host writes are not held back during the switch, and one that reaches a board before its reload is ACKed and then overwritten.
+- **The re-push is the connect-time push** (`resyncLumatoneDevice()`: 280 key writes, the two flags, the colors), through the same queue.
+- **A color message awaiting its ACK at the pair is voided** (`sysex.voidInFlight()`): it may have reached the device before a board's reload, so its ACK records nothing and a fresh frame follows it.
+- **The board-swap toggle uses the same function**, which also stops it trusting a frame sent under the old board map.
+
+**Rejected:**
+- **Triggering on the Program Change**: it arrives before any board has reloaded, so a push made on it is overwritten, and it needs `0x53` set, a persisted setting on the user's device.
+- **Pushing early as well, to shorten the time the preset's colors show**: it only helps when a frame lands between a board's reload and its lights command, which HKL cannot time.
+- **Macro buttons as controls**: each tap costs a preset switch (dead keys per board, All Notes Off, the preset's colors and key map until the re-push), and a hold is invisible.
+
+**Not done** (Max: no other action): releasing HKL's held Lumatone voices on the All Notes Off, and ignoring note input until the key map is back. Keys held through a switch, or played before the 280 key writes land, are handled as before.
+
+**Gates:** `test/hkl-midi/preset-resync.mjs` (new; failed before the change on the missing export, and its in-flight check fails with `voidInFlight` stubbed out) and `test/hkl-midi/departure.mjs` case F2 (the wiring through the input handler; 2 of its 3 checks failed before). Max confirmed the re-sync on his Lumatone (2026-11-11).
+
+**Where:** `apps/hkl/src/lumatone/sync.ts` (`watchPresetSwitch`, `resyncLumatoneDevice`), `lumatone/sysex.ts` + `types.ts` (`voidInFlight`), `midi/handler.ts`, `lumatone/lumadiag.ts`, docs/architecture/hkl.md (Auto-sync), docs/guide/core.md, docs/lessons.md.

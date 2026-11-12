@@ -22,6 +22,25 @@ slide below 1.5.0. No dev server or MIDI device is needed. **Run it
 before declaring any change to `lumatone/sync.ts`, `lumatone/sysex.ts` or the
 frame builder done.**
 
+## Re-sync after a preset switch (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/preset-resync.mjs
+```
+
+Drives the real `lumatone/sync.ts` and `lumatone/sysex.ts` against the same
+kind of scripted device. A preset button on the Lumatone reloads its key map
+and colors, and the firmware ends the switch with All Notes Off then Reset All
+Controllers on channel 1. Checks that the pair re-pushes exactly what a connect
+pushes, on the frame path and the per-key path; that nothing but `B0 7B 00`
+directly followed by `B0 79 00` triggers; that a frame awaiting its ACK at the
+pair is not recorded and is followed by a fresh one; that a second pair
+mid-push writes every key again; and that with Auto-sync off, or a calibration
+running, nothing is sent and the next sync is a full one. No dev server or MIDI
+device is needed. The wiring through the input handler is case F2 of
+`departure.mjs`. **Run it before declaring any change to `watchPresetSwitch`,
+`resyncLumatoneDevice` or `sysex.voidInFlight` done.**
+
 ## Built-in key / aftertouch calibration (hardware-free)
 
 ```sh
