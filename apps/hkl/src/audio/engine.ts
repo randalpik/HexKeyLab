@@ -26,7 +26,7 @@ import * as InstrumentRegistry from '../state/instrumentRegistry.js';
 import { recordSeamEvent } from './diagnostics/loopOverlay.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import {
-  recordOn, recordOff, recordPa, recordPedalDepthsChange, recordSostenuto,
+  recordOn, recordOff, recordPa, recordDamper, recordSostenuto,
 } from '../recording/capture.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { voiceId, coordOf } from '../types.js';
@@ -49,9 +49,10 @@ const DAMPER_SMOOTH_TAU = 0.025;
    inaudibly ringing but fully lit, which reads as a wash of stuck keys on the
    lattice during video capture.
 
-   Deliberately NOT applied as an input clamp on pedal.cc4Depth: that value must
+   Deliberately NOT applied as an input clamp on the expression jack's position
+   (pedal.position.expr): that value must
    keep reporting the pedal's real position (see lessons.md — the at-rest ADC
-   quirk was fixed at the input boundary precisely so cc4Depth reads honestly).
+   quirk was fixed at the input boundary precisely so the position reads honestly).
    The threshold is a sustain-semantics decision, so it lives here. */
 export const DAMPER_RELEASE_FLOOR = 0.05;
 
@@ -545,7 +546,8 @@ function releaseSustainedKey(key: KeyId): void {
   audio.sustainedKeys.delete(key);
 }
 
-/* Damper-pedal entry point. Combines pedal.cc4Depth + pedal.cc64Depth via max,
+/* Damper-pedal entry point. Combines every damper source (pedal.damper: the
+   Lumatone's jacks, the piano input's pedal, the two playbacks) via max,
    updates audio.damperDepth + sustainPedalDown, walks sustainedKeys to apply
    the new depth (skipping sostenuto-locked keys), and collapses to per-key
    release when depth crosses below DAMPER_RELEASE_FLOOR.
@@ -559,10 +561,11 @@ function releaseSustainedKey(key: KeyId): void {
    calls setDamperDepth again while the pedal sits still, so the note hangs lit
    and inaudible forever. Same bug class as the CC 4 = 1 stuck sustain. */
 export function setDamperDepth(): void {
-  const depth = Math.max(pedal.cc4Depth, pedal.cc64Depth);
+  const d = pedal.damper;
+  const depth = Math.max(d.expr, d.sus, d.piano, d.composer, d.playback);
   audio.damperDepth = depth;
   audio.sustainPedalDown = depth > DAMPER_RELEASE_FLOOR;
-  recordPedalDepthsChange();
+  recordDamper();
   if (depth > DAMPER_RELEASE_FLOOR) {
     audio.sustainedKeys.forEach(function (k) {
       if (!audio.sostenutoLockedKeys.has(k)) applyDamperToVoice(k, depth);

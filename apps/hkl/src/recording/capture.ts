@@ -7,7 +7,6 @@
 // `if (audio.audioEnabled === false)` silent input is naturally not recorded.
 
 import { audio } from '../state/audio.js';
-import { pedal } from '../state/pedal.js';
 import { tuning } from '../state/tuning.js';
 import { readsAnchor } from '@hkl/shared/freq.js';
 import { nowSec } from './clock.js';
@@ -25,17 +24,16 @@ let snapshot: LayoutSnapshot | null = null;
 let t0 = 0;
 let t0Anchored = false;
 let divergenceWarned = false;
-let lastCc4 = -1;
-let lastCc64 = -1;
+/* The two pedal streams record what the pedals DO, never which jack or device
+   did it (docs/architecture/hkl.md → Recording): `cc4` is the damper depth,
+   from whatever holds the damper, and `cc64` is the sostenuto. The event names
+   are the file format's, from when each stream was one jack. */
+let lastDamper = -1;
+let lastSostenuto = -1;
 
-const CC4_EPSILON = 1 / 256;
+const DAMPER_EPSILON = 1 / 256;
 
 export function isRecording(): boolean { return active; }
-
-function effectiveCc64(): number {
-  if (pedal.mode === 'sostenuto') return audio.sostenutoActive ? 1 : 0;
-  return pedal.cc64Depth;
-}
 
 function pushEvent(ev: HkrEvent): void {
   buffer.push(ev);
@@ -74,14 +72,14 @@ export function startRecording(): void {
   snapshot = captureSnapshot();
   buffer = [];
   divergenceWarned = false;
-  lastCc4 = pedal.cc4Depth;
-  lastCc64 = effectiveCc64();
+  lastDamper = audio.damperDepth;
+  lastSostenuto = audio.sostenutoActive ? 1 : 0;
   t0Anchored = false;
   active = true;
   /* Seed pedal state at t=0 so playback starts with the right context.
      First seed call anchors t0; subsequent ones return ~0. */
-  if (lastCc4 > 0) pushEvent({ t: tNow(), k: 'cc4', v: lastCc4 });
-  if (lastCc64 > 0) pushEvent({ t: tNow(), k: 'cc64', v: lastCc64 });
+  if (lastDamper > 0) pushEvent({ t: tNow(), k: 'cc4', v: lastDamper });
+  if (lastSostenuto > 0) pushEvent({ t: tNow(), k: 'cc64', v: lastSostenuto });
   /* Auto-balance: synthetic note-ons for voices already held when recording
      started, so playback reproduces a recording that begins mid-chord. */
   for (const key in audio.activeOscs) {
@@ -137,27 +135,22 @@ export function recordPa(key: KeyId, pressure: number): void {
   pushEvent({ t: tNow(), k: 'pa', q: +parts[0], r: +parts[1], p: pressure });
 }
 
-/* Hook from setDamperDepth(): emits cc4 and/or cc64 events whenever the
-   pedal-state has changed since the last emission. Reads pedal.cc4Depth /
-   pedal.cc64Depth directly. In sostenuto mode, cc64Depth is always 0 here —
-   sostenutoOn/Off drives the cc64 channel via recordSostenuto. */
-export function recordPedalDepthsChange(): void {
+/* Hook from setDamperDepth(), after it has combined every damper source:
+   emits a cc4 event whenever the depth has changed since the last emission. */
+export function recordDamper(): void {
   if (!active) return;
-  if (Math.abs(pedal.cc4Depth - lastCc4) > CC4_EPSILON) {
-    pushEvent({ t: tNow(), k: 'cc4', v: pedal.cc4Depth });
-    lastCc4 = pedal.cc4Depth;
-  }
-  if (pedal.mode === 'sustain' && pedal.cc64Depth !== lastCc64) {
-    pushEvent({ t: tNow(), k: 'cc64', v: pedal.cc64Depth });
-    lastCc64 = pedal.cc64Depth;
+  if (Math.abs(audio.damperDepth - lastDamper) > DAMPER_EPSILON) {
+    pushEvent({ t: tNow(), k: 'cc4', v: audio.damperDepth });
+    lastDamper = audio.damperDepth;
   }
 }
 
+/* Hook from sostenutoOn/Off(): emits a cc64 event when the sostenuto changes. */
 export function recordSostenuto(on: boolean): void {
   if (!active) return;
   const v = on ? 1 : 0;
-  if (v !== lastCc64) {
+  if (v !== lastSostenuto) {
     pushEvent({ t: tNow(), k: 'cc64', v });
-    lastCc64 = v;
+    lastSostenuto = v;
   }
 }

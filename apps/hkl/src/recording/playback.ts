@@ -33,6 +33,17 @@ let tickTimer: number | null = null;
 let onEndCb: (() => void) | null = null;
 const playbackKeys = new Set<KeyId>();
 const scheduledTimers = new Set<number>();
+/* The take's pedals. Its damper is one source among the damper's others
+   (pedal.damper.playback), so live pedals mix with it and neither overwrites
+   the other; a 'sustain' take has two damper streams and the deeper one holds.
+   Whether the take engaged the sostenuto is kept so stopping releases it. */
+let damperCc4 = 0, damperCc64 = 0;
+let sostenutoEngaged = false;
+
+function setPlaybackDamper(): void {
+  pedal.damper.playback = Math.max(damperCc4, damperCc64);
+  setDamperDepth();
+}
 
 export function isPlaying(): boolean { return playing; }
 
@@ -45,6 +56,7 @@ export function startPlayback(session: HkrSession, onEnd?: () => void): void {
   if (!audio.audioCtx) return;
   curSession = session;
   nextIdx = 0;
+  damperCc4 = 0; damperCc64 = 0; sostenutoEngaged = false;
   onEndCb = onEnd ?? null;
   playT0 = audio.audioCtx.currentTime;
   playing = true;
@@ -126,16 +138,18 @@ function dispatch(ev: HkrEvent): void {
       break;
     }
     case 'cc4': {
-      pedal.cc4Depth = ev.v;
-      setDamperDepth();
+      damperCc4 = ev.v;
+      setPlaybackDamper();
       break;
     }
     case 'cc64': {
-      if (pedal.mode === 'sostenuto') {
-        if (ev.v >= 0.5) sostenutoOn(); else sostenutoOff();
+      /* What cc64 means is the take's own (types.ts PedalMode), not a live setting. */
+      if (curSession?.snapshot.pedalMode === 'sostenuto') {
+        sostenutoEngaged = ev.v >= 0.5;
+        if (sostenutoEngaged) sostenutoOn(); else sostenutoOff();
       } else {
-        pedal.cc64Depth = ev.v;
-        setDamperDepth();
+        damperCc64 = ev.v;
+        setPlaybackDamper();
       }
       break;
     }
@@ -156,6 +170,11 @@ export function stopPlayback(): void {
     selection.selectedKeys.delete(key);
   });
   playbackKeys.clear();
+  /* Let go of the take's pedals: nothing live writes playback's damper source,
+     so a take that ends (or is stopped) with the pedal down would hold it forever. */
+  damperCc4 = 0; damperCc64 = 0;
+  setPlaybackDamper();
+  if (sostenutoEngaged) { sostenutoEngaged = false; sostenutoOff(); }
   setAnchorOverride(null);
   draw();
   if (onEndCb) {

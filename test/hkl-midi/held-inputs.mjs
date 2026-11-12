@@ -85,13 +85,14 @@ const SCRIPT = `(async () => {
 
   const a0q = view.kbAnchorQ, a0r = view.kbAnchorR;
   const setAnchor = (q, r) => { view.kbAnchorQ = q; view.kbAnchorR = r; };
-  const savedPedalMode = pedal.mode;
-  pedal.mode = 'sustain';
+  const savedRoles = { ...pedal.roles };
+  pedal.roles.expr = 'sustain'; pedal.roles.sus = 'sustain';
   const reset = () => {
     heartbeat.stopHeartbeat();
     selection.selectedKeys.clear(); audio.sustainedKeys.clear();
     held.clearAllHeld();
-    pedal.cc4Depth = 0; pedal.cc64Depth = 0; audio.damperDepth = 0; audio.sustainPedalDown = false;
+    pedal.position.expr = 0; pedal.position.sus = 0; pedal.damper.expr = 0; pedal.damper.sus = 0;
+    audio.damperDepth = 0; audio.sustainPedalDown = false;
     setAnchor(a0q, a0r);
   };
   const key = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code, bubbles: true }));
@@ -183,7 +184,7 @@ const SCRIPT = `(async () => {
 
   /* leave nothing running */
   reset();
-  pedal.mode = savedPedalMode;
+  Object.assign(pedal.roles, savedRoles);
   sx.sysex.cancel();
   midi.midiIn = savedIn; midi.midiOut = savedOut;
 

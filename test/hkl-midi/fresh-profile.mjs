@@ -14,7 +14,7 @@
 //
 // Covers:
 //   D1-D7  selOutline, selRotation, selTuning, selMapping, selHexSize,
-//          waveform, pedalMode each show their DEFAULT_PREFS value
+//          waveform, pedalExpr, pedalSus each show their DEFAULT_PREFS value
 //   D8     audio.activeWaveform === DEFAULT_PREFS.waveform
 //   H1     Shift+\ opens Calibrate Keys before its overlay was ever built
 //          (the listener used to be registered only by the first build)
@@ -50,7 +50,7 @@ const SCRIPT = `(async () => {
     ['D1', 'selOutline', 'outline'], ['D2', 'selRotation', 'rotation'],
     ['D3', 'selTuning', 'tuning'], ['D4', 'selMapping', 'mapping'],
     ['D5', 'selHexSize', 'hexSize'], ['D6', 'waveform', 'waveform'],
-    ['D7', 'pedalMode', 'pedalMode'],
+    ['D7a', 'pedalExpr', 'pedalExpr'], ['D7b', 'pedalSus', 'pedalSus'],
   ];
   for (const [id, el, key] of SELECTS) {
     const sel = document.getElementById(el);

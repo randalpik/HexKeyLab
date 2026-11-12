@@ -120,7 +120,8 @@ const SCRIPT = `(async () => {
     heartbeat.stopHeartbeat();
     selection.selectedKeys.clear(); audio.sustainedKeys.clear();
     handler.clearHeldLumatoneTracking();
-    pedal.cc4Depth = 0; pedal.cc64Depth = 0; audio.damperDepth = 0; audio.sustainPedalDown = false;
+    pedal.position.expr = 0; pedal.position.sus = 0; pedal.damper.expr = 0; pedal.damper.sus = 0;
+    audio.damperDepth = 0; audio.sustainPedalDown = false;
   };
   const gone = (why = 'test') => eng.markLumatoneGone(why);
 
@@ -176,7 +177,7 @@ const SCRIPT = `(async () => {
   gone();
   check('D: sustained note released', audio.sustainedKeys.size, 0);
   check('D: damper forced released', audio.sustainPedalDown, false);
-  check('D: cc64 cleared', pedal.cc64Depth, 0);
+  check('D: the sustain jack reads released', pedal.position.sus + pedal.damper.sus, 0);
 
   /* ---- E. a failing release must not eat the badge update ---- */
   reset(); install();

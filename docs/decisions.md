@@ -10937,3 +10937,34 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/frame-sync.mjs` section K (new, 4 checks; the gate states the piano range independently, reads `REF_DIM_LED` and requires it below the canvas's 0.5; it failed before the dim on "the modifier going down sends a frame"; 20 checks now); `ref-press.mjs` section W (the app wiring against a fake 1.5.0 device: label, default, pref, one frame down and one up with the box on, none with it off; 42/42); `preset-resync` 7, `keycal` 9, `sync-order`, `ref-validity` 26/26, `ref-centering` 26/26, `fresh-profile` 12/12, `departure` 72/72, `held-inputs` 30/30, `keycal-overlay` 18/18; typecheck, boundaries, HKL build; the lean overlay build still contains none of the four engine symbols. Not yet seen on the hardware.
 
 **Where:** `apps/hkl/src/lumatone/sync.ts`, `render/colors.ts`, `render/draw.ts`, `state/reference.ts`, `state/{lumatone,persistence}.ts`, `input/ref-edit.ts`, `ui/init.ts`, `ui/tooltips.ts`, `index.html`; docs/architecture/hkl.md (Lumatone output → Key effects; Display → Ref-edit modifier), docs/guide/core.md, `test/hkl-midi/README.md`.
+
+## Each pedal jack gets a role of its own; recordings store what the pedals did (2026-11-12, Max)
+
+**Amends** "Pedal handling V1" (2026-05-05): its manual mode dropdown (Sustain / Sostenuto+Sustain) is replaced, and its rejected "general CC-routing matrix" is partly taken up, now that there are three things a pedal can do.
+
+**Context:** Max wanted his rarely used sostenuto pedal to hold the ref-edit modifier (the two entries above). The single Pedals dropdown could only say what CC 64 meant, with CC 4 always the damper.
+
+**Picked (Max):**
+- **Two dropdowns, Expr and Sus, each None / Sostenuto / Sustain / Ctrl** (`#pedalExpr`, `#pedalSus`; prefs `pedalExpr`, `pedalSus`; both default to Sustain, which is the old default). Both jacks may share a role. The old `pedalMode` pref is carried over when the new ones are absent: its "Sostenuto + Sustain" becomes Expr Sustain, Sus Sostenuto.
+- **One derivation** (`midi/pedals.ts` `applyJacks`): a jack's position and its role are the only inputs, and everything both jacks do is recomputed whenever either changes. This replaces the hand-written mid-press transition code, which was 2 cases for one jack and would have been 12 per jack. It releases what the jacks let go of before engaging what they now hold, which reproduces the two transitions the old code had (damper → sostenuto releases the sustained notes, then catches only held keys; sostenuto → damper releases the caught notes, then damps).
+- **Binary roles on the continuous jack use CC ≥ 64**, the sustain jack's own threshold, with no hysteresis. A pedal resting exactly at its midpoint can chatter; documented, not guarded.
+- **Damper sources are separate entries** (`pedal.damper`: `expr`, `sus`, `piano`, `composer`, `playback`), combined by max. Before, the sustain jack, the piano input's pedal and Composer playback all wrote one `cc64Depth`, and recording playback wrote the jacks' own fields. Each writer now releases its own entry when it goes away.
+- **Recordings store effects, not jacks** (Max): `cc4` is the damper depth from every source, `cc64` is the sostenuto, and every take is written `pedalMode: 'sostenuto'`, which already meant exactly that. The file format and version are unchanged: an older build plays a new take correctly, and this build plays an older Sustain-mode take by reading `pedalMode: 'sustain'` (its `cc64` is a second damper stream). A Ctrl pedal records nothing; a ref change does not need recording, since events are absolute coordinates.
+- **Playback never touches the live pedal settings.** `applySnapshot` no longer sets them and `snapshotMatchesLive` ignores `pedalMode`; the dispatch reads it from the take.
+
+**Rejected:**
+- **Keeping jack-level events with a derived legacy `pedalMode`** (sostenuto if any jack has that role): nothing visible would change, but capture would have two cases, and a damper on the sustain jack and a sostenuto on the expression jack could not both be stored.
+- **Storing the two roles in the snapshot and forcing them live at playback**, the generalization of what the old code did: playback would keep rewriting the user's pedal setup.
+
+**Behavior changes:**
+- A take made with a binary pedal as the damper now records it on `cc4`, so its `.mid` export carries the damper as CC 4 where it used to be CC 64 (accepted by Max). A `.mid` imported against a new take's snapshot reads CC 64 as the sostenuto.
+- Playing a take no longer changes the pedal dropdowns, and stopping playback releases the take's damper and sostenuto (before, a take ending with the pedal down left it down until the next live pedal message).
+- The piano input's pedal and the Lumatone's sustain jack no longer overwrite each other, and the piano's pedal is released when its port is left or piano input is switched off.
+- A Lumatone departure releases only what its jacks held: not the piano's damper, and not a sostenuto engaged by a playback.
+- A repeated CC 64 ≥ 64 while the sostenuto is already down no longer snapshots again (the engine is told only on a change).
+
+**Identifiers:** `pedal.mode`, `pedal.cc4Depth`, `pedal.cc64Depth` are gone (older entries here and in lessons.md name them). In their place: `pedal.roles[jack]`, `pedal.position[jack]`, `pedal.damper[source]`. `recordPedalDepthsChange` is `recordDamper`. Pref `pedalMode` is `pedalExpr` + `pedalSus`; the `PedalMode` type now belongs to the recording format (`recording/types.ts`).
+
+**Gates:** `test/hkl-midi/pedal-roles.mjs` (new, 70 checks; all nine sections failed before on the missing dropdowns; with playback's pedal release and the sostenuto's edge memory removed, 4 fail); `damper` 23/23, `held-inputs` 30/30, `departure` 72/72, `fresh-profile` 13/13, `ref-press` 42/42, `velocity-owners` 22/22, `anchor` 23/23, `banded-toggle` 39/39, `mapping-switch` 63/63, `frame-sync` 20, `preset-resync` 7, `keycal` 9; typecheck, boundaries, HKL build; the lean overlay build still contains none of the four engine symbols. Not yet tried with the pedals on the hardware.
+
+**Where:** `apps/hkl/src/midi/pedals.ts` (new), `state/pedal.ts`, `midi/handler.ts`, `midi/piano.ts`, `audio/engine.ts`, `bridge/hkl-side.ts`, `recording/{capture,playback,snapshot,apply,types}.ts`, `state/persistence.ts`, `ui/{init,pedalHud,tooltips}.ts`, `index.html`; docs/architecture/hkl.md (Pedal roles; Recording), docs/architecture/engine.md (Pedal semantics), docs/guide/core.md, `test/hkl-midi/README.md`.

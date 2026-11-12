@@ -79,7 +79,7 @@ const SCRIPT = `(async () => {
   engine.initAudio();
 
   const reset = () => {
-    pedal.mode = 'sustain';
+    pedal.roles.expr = 'sustain'; pedal.roles.sus = 'sustain';   /* both jacks the damper */
     cc4(0); deliver(0xB0, 64, 0);
     if (audio.sostenutoActive) engine.sostenutoOff();
     engine.stopAllNotes?.();
@@ -147,7 +147,7 @@ const SCRIPT = `(async () => {
 
   /* ---- R5/R6. sostenuto catching an attenuated note ---- */
   reset();
-  pedal.mode = 'sostenuto';
+  pedal.roles.sus = 'sostenuto';      /* Expr the damper, Sus the sostenuto */
   cc4(127);
   s = sustainNote(12);
   cc4(38);

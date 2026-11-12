@@ -103,6 +103,30 @@ the AudioParam, so it holds whether or not headless Chromium runs the
 AudioContext. **Run it before declaring any change to `setDamperDepth`,
 `sostenutoOn/Off`, or the note-off sustain path done.**
 
+## Pedal roles
+
+```sh
+node test/hkl-midi/pedal-roles.mjs   # requires `pnpm dev`; exits non-zero on failure
+```
+
+Behavioral gate for the Lumatone's two pedal jacks, each with a role of its own
+(`midi/pedals.ts`; docs/architecture/hkl.md → Pedal roles), driven through the
+real dropdowns and CC 4 / CC 64 messages. The dropdowns (options, order,
+defaults, saved prefs, the former single dropdown's pref carried over); each
+jack in each role, the binary roles reading the expression jack from CC 64 up;
+both jacks in one role (dampers by max, sostenuto and Ctrl by OR, no second
+snapshot of a sostenuto); Expr = Sustain with Sus = Ctrl, where a key pressed
+under the pedal picks the ref; a role changed while the pedal is down;
+departure releasing what the jacks held and nothing another source holds;
+recording (damper on `cc4`, sostenuto on `cc64`, `pedalMode: 'sostenuto'`,
+whatever the jacks, and nothing for a Ctrl pedal); and playback (an old
+Sustain-mode take's `cc64` is a damper, a new take's a sostenuto, neither
+touches the dropdowns, and stopping releases both). All nine sections failed
+before the feature on the missing dropdowns; with playback's pedal release and
+the sostenuto's edge memory removed, 4 of 70 checks fail (2026-11-12). **Run it
+before declaring any change to `midi/pedals.ts`, `state/pedal.ts`, the pedal
+dropdowns, a damper source, or the recording's pedal streams done.**
+
 ## Device departure and liveness heartbeat
 
 Behavioral gate for HKL's **Lumatone MIDI input path** — device-departure

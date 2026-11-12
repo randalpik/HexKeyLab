@@ -3,7 +3,7 @@
 //
 // All three were added to chase an intermittent stuck-sustain bug: the user
 // reports notes occasionally ringing loudly after release until the pedal is
-// pressed once more, which means cc4Depth or cc64Depth diverged from the
+// pressed once more, which means a jack's recorded position diverged from the
 // physical pedal position (a single MIDI CC release message was lost upstream
 // of the handler — see the plan file for the full brainstorm).
 //
@@ -19,9 +19,8 @@
 
 import { audio } from '../state/audio.js';
 import { pedal } from '../state/pedal.js';
-import {
-  setDamperDepth, sostenutoOff, DAMPER_RELEASE_FLOOR,
-} from '../audio/engine.js';
+import { sostenutoOff, DAMPER_RELEASE_FLOOR } from '../audio/engine.js';
+import { releaseJacks } from '../midi/pedals.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 
 let domBuilt = false;
@@ -80,10 +79,14 @@ function tick(t: number): void {
   lastTick = t;
   if (!panel) return;
   const cc4 = pedal.lastCC4Value;
-  const cc4Pct = (pedal.cc4Depth * 100).toFixed(1);
+  const cc4Pct = (pedal.position.expr * 100).toFixed(1);
   const cc64 = pedal.lastCC64Value;
-  const cc64State = pedal.cc64Depth > 0 ? 'on' : 'off';
+  const cc64State = pedal.position.sus > 0 ? 'on' : 'off';
   const depth = audio.damperDepth.toFixed(3);
+  /* which sources hold the damper, e.g. "expr 0.42 · piano 1.00" */
+  const holders = (Object.keys(pedal.damper) as (keyof typeof pedal.damper)[])
+    .filter((k) => pedal.damper[k] > 0)
+    .map((k) => k + ' ' + pedal.damper[k].toFixed(2)).join(' · ');
   const susCount = audio.sustainedKeys.size;
   const sosCount = audio.sostenutoLockedKeys.size;
   /* When depth is non-zero but no CC of any kind has arrived recently, we
@@ -100,11 +103,11 @@ function tick(t: number): void {
   const stale = audio.damperDepth > DAMPER_RELEASE_FLOOR && sinceLastCC > 1500;
   panel.style.color = stale ? '#fa6' : 'rgba(255,255,255,0.9)';
   panel.textContent =
-    'CC4:   ' + (cc4 === null ? '—' : String(cc4).padStart(3, ' ')) + '  (' + cc4Pct.padStart(5, ' ') + '%)\n' +
-    'CC64:  ' + (cc64 === null ? '—' : String(cc64).padStart(3, ' ')) + '  (' + cc64State + ')\n' +
+    'CC4:   ' + (cc4 === null ? '—' : String(cc4).padStart(3, ' ')) + '  (' + cc4Pct.padStart(5, ' ') + '%)  ' + pedal.roles.expr + '\n' +
+    'CC64:  ' + (cc64 === null ? '—' : String(cc64).padStart(3, ' ')) + '  (' + cc64State + ')  ' + pedal.roles.sus + '\n' +
     'depth: ' + depth + (stale ? '  ⚠ stale' : '') + '\n' +
-    'sus:   ' + susCount + '   sostenuto: ' + sosCount + '\n' +
-    'mode:  ' + pedal.mode;
+    'from:  ' + (holders || '—') + '\n' +
+    'sus:   ' + susCount + '   sostenuto: ' + sosCount;
 }
 
 /* Pretty-print the tail of the ring buffer. Default tail = 30 entries; pass
@@ -138,14 +141,18 @@ function dumpPedalRecent(n: number = 30): void {
    elsewhere (sostenuto lock, voice graph, etc.) and the user should
    capture audio.sustainedKeys / audio.sostenutoLockedKeys for inspection. */
 function clearPedalState(): void {
-  pedal.cc4Depth = 0;
-  pedal.cc64Depth = 0;
-  /* setDamperDepth handles releasing sustainedKeys via the normal path and
-     calls onSelectionChanged when keys actually release. */
-  setDamperDepth();
-  /* sostenutoOff is a no-op if not active, and itself decides whether to
-     release locked keys based on current damperDepth. After the cc clears
-     above damperDepth is 0, so any keys locked by sostenuto will release. */
+  /* Every damper source, not only the Lumatone's jacks: a stuck depth can come
+     from any of them. */
+  pedal.damper.piano = 0;
+  pedal.damper.composer = 0;
+  pedal.damper.playback = 0;
+  /* Both jacks read as released, whatever their roles: the damper (releasing
+     sustainedKeys via the normal path, which calls onSelectionChanged when
+     keys actually release), a sostenuto, the ref-edit modifier. */
+  releaseJacks();
+  /* A sostenuto the jacks were not holding (engaged by a playback). It is a
+     no-op if not active, and itself decides whether to release locked keys
+     based on current damperDepth, which is 0 after the clears above. */
   sostenutoOff();
   /* If neither setDamperDepth nor sostenutoOff fired onSelectionChanged
      (e.g. sustainedKeys was already empty when called) the visual still

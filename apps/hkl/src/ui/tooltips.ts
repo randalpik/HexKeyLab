@@ -62,7 +62,8 @@ export const TOOLTIPS: Record<string, string> = {
   // ── Lumatone ────────────────────────────────────────────────────────
   cbAutoSync: 'Automatically push key colors to the connected Lumatone whenever the layout changes.',
   cbLumaKeyEffects: 'Show on the Lumatone what the screen does to its keys: the key under the mouse pointer lightens, and while Ctrl is held the keys that cannot be the reference dim (needs Auto-sync and Lumatone firmware 1.5.0 or later).',
-  pedalMode: 'Sustain mode: sustain jack = damper. Sostenuto mode: sustain jack = sostenuto, expression jack = continuous damper.',
+  pedalExpr: 'What the pedal in the Lumatone\'s expression jack does. Sustain: a damper with half-pedaling. Sostenuto: holds the notes that are down when it is pressed. Ctrl: acts as the Ctrl key, so a Lumatone key pressed with the pedal down becomes the reference. The last two read the pedal as pressed from its halfway point.',
+  pedalSus: 'What the pedal in the Lumatone\'s sustain jack does. Sustain: the damper. Sostenuto: holds the notes that are down when it is pressed. Ctrl: acts as the Ctrl key, so a Lumatone key pressed with the pedal down becomes the reference.',
   btnCalibPedal: 'Calibrate the expression pedal jack.',
   cbCalibrateKeys: 'Per-board key calibration overlay (Shift+\\ also toggles)',
 

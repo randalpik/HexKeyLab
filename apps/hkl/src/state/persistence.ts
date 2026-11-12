@@ -9,6 +9,7 @@
 
 import { isMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { TUNING_MODES } from '@hkl/shared/freq.js';
+import { PEDAL_ROLES, type PedalRole } from './pedal.js';
 
 const STORAGE_KEY = 'hkl.prefs.v1';
 
@@ -28,7 +29,6 @@ export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 /* Note-name mapping ('euler' | 'wickiHayden' | 'chromatic'), orthogonal to the tuning mode.
    Single definition in @hkl/shared/mapping.js (no dual-definition here). */
 export type { Mapping };
-export type PedalMode = 'sustain' | 'sostenuto';
 export type RotationMode = 'verticalFreq' | 'lumatone' | 'piano';
 /* How the physical layout (Lumatone, QWERTY) sits on the lattice: the fifths
    axis up its 60° diagonal (vertical), or the layout turned 60° so the fifths
@@ -116,7 +116,10 @@ export interface PrefsV1 {
   hexSize: HexSize;
   audioEnabled: boolean;
   waveform: string;
-  pedalMode: PedalMode;
+  /** What each Lumatone pedal jack does (state/pedal.ts): the expression jack
+   *  (CC 4) and the sustain jack (CC 64). */
+  pedalExpr: PedalRole;
+  pedalSus: PedalRole;
   autoSync: boolean;
   /** Show the canvas's key effects on the Lumatone: the hover lightening, and the
    *  dimming of invalid refs while Ctrl is held (firmware 1.5.0+ frame sync only). */
@@ -199,7 +202,8 @@ export const DEFAULT_PREFS: PrefsV1 = {
      as an empty-type oscillator. "splendid_piano" is the menu's "Piano" option
      (test/hkl-midi/fresh-profile.mjs pins every select-backed default). */
   waveform: "splendid_piano",
-  pedalMode: "sustain",
+  pedalExpr: "sustain",
+  pedalSus: "sustain",
   autoSync: false,
   lumatoneKeyEffects: false,
   /* Layout + Playback cover the core single-keyboard workflow; Analysis,
@@ -243,8 +247,8 @@ function isHexSize(s: unknown): s is HexSize {
 function isTuningMode(s: unknown): s is TuningMode {
   return (TUNING_MODES as ReadonlyArray<unknown>).includes(s);
 }
-function isPedalMode(s: unknown): s is PedalMode {
-  return s === 'sustain' || s === 'sostenuto';
+function isPedalRole(s: unknown): s is PedalRole {
+  return (PEDAL_ROLES as ReadonlyArray<unknown>).includes(s);
 }
 function loadToolbars(o: unknown): ToolbarVisibility {
   if (!o || typeof o !== "object") return { ...DEFAULT_PREFS.toolbars };
@@ -326,7 +330,12 @@ export function loadPrefs(): PrefsV1 {
         : DEFAULT_PREFS.audioEnabled,
     waveform:
       typeof o.waveform === "string" ? o.waveform : DEFAULT_PREFS.waveform,
-    pedalMode: isPedalMode(o.pedalMode) ? o.pedalMode : DEFAULT_PREFS.pedalMode,
+    pedalExpr: isPedalRole(o.pedalExpr) ? o.pedalExpr : DEFAULT_PREFS.pedalExpr,
+    /* Profiles saved by the former single Pedals dropdown: its "Sostenuto +
+       Sustain" made the sustain jack the sostenuto (the expression jack was
+       always the damper, which is the default here). */
+    pedalSus: isPedalRole(o.pedalSus) ? o.pedalSus
+      : o.pedalMode === 'sostenuto' ? 'sostenuto' : DEFAULT_PREFS.pedalSus,
     autoSync:
       typeof o.autoSync === "boolean" ? o.autoSync : DEFAULT_PREFS.autoSync,
     lumatoneKeyEffects:

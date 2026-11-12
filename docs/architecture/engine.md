@@ -121,14 +121,15 @@ On an AT message the gain ramps from its in-flight value to the new target with 
 
 ## Pedal semantics
 
-Two pedal jacks feed a unified damper-depth model plus an optional sostenuto layer. CC 4 (expression jack) is continuous; CC 64 (sustain jack) is binary. The Pedals dropdown selects what CC 64 does:
+A unified damper-depth model plus an optional sostenuto layer. The damper has several sources, each with its own entry in `pedal.damper` — the Lumatone's two pedal jacks, the piano-input device's pedal, Composer playback, recording playback — combined by max into `audio.damperDepth`. The Lumatone's jacks are CC 4 (expression, continuous) and CC 64 (sustain, binary); each has a role of its own, chosen in its own dropdown (HKL: `midi/pedals.ts`, hkl.md → Pedal roles):
 
-- **Sustain** (default): both jacks contribute to damper depth, combined as `max(cc4, cc64)` into `audio.damperDepth`. CC 64 alone = classic binary sustain; CC 4 = continuous damper.
-- **Sostenuto+Sustain** (continuous pedal plugged in): CC 4 is the only damper source. CC 64 toggles a sostenuto layer that snapshots `selection.selectedKeys` into `audio.sostenutoLockedKeys`; locked notes ride through subsequent damper changes.
+- **Sustain** (default for both): the jack is a damper source. CC 64 alone = classic binary sustain; CC 4 = continuous damper.
+- **Sostenuto**: the pedal going down snapshots `selection.selectedKeys` into `audio.sostenutoLockedKeys`; locked notes ride through subsequent damper changes.
+- **Ctrl** and **None** never reach the engine (Ctrl holds HKL's ref-edit modifier).
 
 Engine API:
 
-- `setDamperDepth()` — recomputes `damperDepth = max(cc4, cc64)`, updates `sustainPedalDown`, walks `sustainedKeys` applying new depth (skipping sostenuto-locked), releases keys when depth crosses below `DAMPER_RELEASE_FLOOR`.
+- `setDamperDepth()` — recomputes `damperDepth` = the max over `pedal.damper`, updates `sustainPedalDown`, walks `sustainedKeys` applying new depth (skipping sostenuto-locked), releases keys when depth crosses below `DAMPER_RELEASE_FLOOR`.
 - `sostenutoOn()` — snapshots the locked set (`audio.sostenutoLockedKeys` = the selected keys). Locked voices keep the damper level they have; nothing is raised.
 - `sostenutoOff()` — clears the set; re-applies current depth or releases each previously-locked key still in `sustainedKeys`.
 

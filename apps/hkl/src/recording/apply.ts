@@ -9,7 +9,6 @@
 // stay leaf-position in the module graph; this module is consumed only by
 // ui/recorder.ts.
 
-import { pedal } from '../state/pedal.js';
 import { audio } from '../state/audio.js';
 import { SampleEngine } from '../audio/samples.js';
 import { savePrefs } from '../state/persistence.js';
@@ -39,16 +38,6 @@ export async function applySnapshot(s: LayoutSnapshot): Promise<void> {
   if (cbBanded && cbBanded.checked !== s.banded) {
     cbBanded.checked = s.banded;
     setBanded();
-  }
-
-  /* Pedal mode — no handler beyond the DOM listener, so we set state + DOM and
-     persist directly. The mid-press re-evaluation done by the DOM listener
-     isn't relevant here (nothing is held during playback prep). */
-  if (pedal.mode !== s.pedalMode) {
-    const pmSel = document.getElementById('pedalMode') as HTMLSelectElement | null;
-    if (pmSel) pmSel.value = s.pedalMode;
-    pedal.mode = s.pedalMode;
-    savePrefs({ pedalMode: s.pedalMode });
   }
 
   /* Instrument — load if needed, then commit. */

@@ -6,9 +6,10 @@
 //     message (sysex.handleResponse). Calibration packets MUST be checked
 //     FIRST — they are not ACKs and would silently drop the queue head if
 //     misrouted (lessons.md).
-//   • CC 4 (expression pedal, hardcoded in firmware) → setDamperDepth as
-//     continuous damper. CC 64 (sustain jack, binary) → setDamperDepth in
-//     'sustain' mode, or sostenutoOn/Off in 'sostenuto' mode (per pedal.mode).
+//   • CC 4 (expression jack, hardcoded in firmware, continuous) and CC 64
+//     (sustain jack, binary) → the jack's position (midi/pedals.ts), which
+//     derives what the pedal does from the jack's role: nothing, sostenuto,
+//     damper, or the ref-edit modifier.
 //   • CC 123 then CC 121 on channel 1, both 0 (the firmware's end of a preset
 //     switch) → watchPresetSwitch (lumatone/sync.ts) re-pushes HKL's layout,
 //     flags and colors.
@@ -25,6 +26,7 @@
 
 import { audio } from '../state/audio.js';
 import { pedal, pushPedalEvent } from '../state/pedal.js';
+import { setJackPosition, releaseJacks, jacksHoldRefEdit } from './pedals.js';
 import {
   SYSEX_MANU, SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA, isPingReply,
 } from '../lumatone/protocol.js';
@@ -32,10 +34,7 @@ import { heartbeatInbound, setHeartbeatHoldingProbe, stopHeartbeat } from './hea
 import { sysex } from '../lumatone/sysex.js';
 import { watchPresetSwitch } from '../lumatone/sync.js';
 import { handleCalibrationPacket } from '../lumatone/calibration.js';
-import {
-  handleAftertouch,
-  setDamperDepth, sostenutoOn, sostenutoOff,
-} from '../audio/engine.js';
+import { handleAftertouch } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
 import { fixedMidiToKey, setLumatoneLostHandler } from './engine.js';
@@ -63,26 +62,26 @@ function physToKey(id: string): KeyId | null {
 
    A dead port can never deliver the note-offs or the pedal release, so every
    voice it was holding would otherwise ring indefinitely. That includes the
-   pedal: CC 4 / CC 64 come from the Lumatone's own jacks, so a damper that
-   was down at power-off stays down forever. Mouse and computer-keyboard
-   voices are deliberately untouched — they have their own release paths — but
-   forcing the damper to released does drop anything IT was sustaining, which
-   is correct: the pedal is a Lumatone peripheral. */
+   pedals: CC 4 / CC 64 come from the Lumatone's own jacks, so whatever a jack
+   was holding at power-off — the damper, a sostenuto, the ref-edit modifier —
+   stays held forever. Mouse and computer-keyboard voices are deliberately
+   untouched — they have their own release paths — but releasing the jacks'
+   damper does drop anything IT was sustaining, which is correct: the pedals
+   are Lumatone peripherals. A damper held by another source (the piano input's
+   own pedal, a playback) is not the jacks' and stays. */
 export function releaseLumatoneInput(): void {
   stopHeartbeat();
   const keys = dropHeld('lumatone');
-  pedal.cc4Depth = 0;
-  pedal.cc64Depth = 0;
-  setDamperDepth();  /* walks sustainedKeys and releases them */
-  sostenutoOff();    /* no-op unless a sostenuto lock is active */
+  releaseJacks();    /* damper (walks sustainedKeys and releases them), sostenuto, Ctrl */
   onSelectionChanged();
   if (keys.length) console.warn('Lumatone: released ' + keys.length + ' held key(s) on departure');
 }
 setLumatoneLostHandler(releaseLumatoneInput);
 /* The heartbeat only runs while the Lumatone holds something that a dead port
-   would leave stuck: keys down, or a damper / sostenuto from its pedal jacks. */
+   would leave stuck: keys down, or a damper / sostenuto / ref-edit modifier
+   from its pedal jacks. */
 setHeartbeatHoldingProbe(() =>
-  heldCount('lumatone') > 0 || audio.sustainPedalDown || audio.sostenutoActive);
+  heldCount('lumatone') > 0 || audio.sustainPedalDown || audio.sostenutoActive || jacksHoldRefEdit());
 
 /** Ref-change migration for Lumatone-held voices: each held key re-resolves
  *  under the new kbAnchor (caller has already advanced it). Returns the number
@@ -129,10 +128,11 @@ function routeChannelMessage(data: Uint8Array): void {
   /* The end of a preset switch on the device (All Notes Off, then Reset All
      Controllers): the device now holds the preset, so push HKL's state again. */
   watchPresetSwitch(data);
-  /* CC messages: foot controller (CC 4, expression jack — continuous damper)
-     and sustain (CC 64, sustain jack — binary, role per pedal.mode). The
-     expression pedal's CC# is hardcoded to 4 in firmware and cannot be
-     remapped via SysEx, so we route it here. */
+  /* CC messages: foot controller (CC 4, expression jack — continuous) and
+     sustain (CC 64, sustain jack — binary). Each moves its jack's position;
+     what that does is the jack's role (midi/pedals.ts). The expression pedal's
+     CC# is hardcoded to 4 in firmware and cannot be remapped via SysEx, so we
+     route it here. */
   if (status === 0xB0) {
     if (d1 === 4) {
       const nowMs = performance.now();
@@ -158,22 +158,16 @@ function routeChannelMessage(data: Uint8Array): void {
          1/127 ≈ 0.008, well under the damper-contact threshold
          (DAMPER_RELEASE_FLOOR = 0.05), so the release loop now claims it
          regardless. It is kept because it is still correct at the input
-         boundary: cc4Depth should read a true 0 when the pedal is at rest,
-         and the HUD displays it directly. */
-      pedal.cc4Depth = (d2 <= 1) ? 0 : d2 / 127;
-      setDamperDepth();
+         boundary: the jack's position should read a true 0 when the pedal is
+         at rest, and the HUD displays it directly. */
+      setJackPosition('expr', (d2 <= 1) ? 0 : d2 / 127);
       pushPedalEvent({ t: nowMs, cc: 4, value: d2, ch, depthAfter: audio.damperDepth });
       return;
     }
     if (d1 === 64) {
       if (pedal.debug) console.log('[Pedal CC64] ' + d2 + ' (ch=' + ch + ')');
       pedal.lastCC64Value = d2;
-      if (pedal.mode === 'sostenuto') {
-        if (d2 >= 64) sostenutoOn(); else sostenutoOff();
-      } else {
-        pedal.cc64Depth = (d2 >= 64) ? 1 : 0;
-        setDamperDepth();
-      }
+      setJackPosition('sus', (d2 >= 64) ? 1 : 0);
       pushPedalEvent({ t: performance.now(), cc: 64, value: d2, ch, depthAfter: audio.damperDepth });
     }
     return;

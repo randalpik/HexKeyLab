@@ -20,7 +20,8 @@ import { getComposerRequiredLayout, applyComposerLayout, reconcileSelectionOnSyn
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { view } from '../state/view.js';
-import { pedal } from '../state/pedal.js';
+import { pedal, type PedalJack, type PedalRole } from '../state/pedal.js';
+import { setJackRole } from '../midi/pedals.js';
 import { audio } from '../state/audio.js';
 import { lumatone } from '../state/lumatone.js';
 import { loadPrefs, savePrefs, clearPrefs, DEFAULT_PREFS } from '../state/persistence.js';
@@ -32,10 +33,7 @@ import { cv, draw, hexAtPoint, activeFootprintSet, validateRefNoteCandidate } fr
 import { updateInfo } from '../render/info.js';
 import { renderStaffInset } from '../render/staff-inset.js';
 import { renderComposerFrame } from '../render/composer-frame.js';
-import {
-  initAudio, changeWaveform, toggleAudio,
-  setDamperDepth, sostenutoOn, sostenutoOff,
-} from '../audio/engine.js';
+import { initAudio, changeWaveform, toggleAudio } from '../audio/engine.js';
 import { requestMidi, setLumatoneConnectionHandler } from '../midi/engine.js';
 import { handleMidiMessage } from '../midi/handler.js';
 import { initPiano } from '../midi/piano.js';
@@ -113,7 +111,8 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLSelectElement>('selHexSize').value = p.hexSize;
   $<HTMLInputElement>('cbAudio').checked = p.audioEnabled;
   $<HTMLSelectElement>('waveform').value = p.waveform;
-  $<HTMLSelectElement>('pedalMode').value = p.pedalMode;
+  $<HTMLSelectElement>('pedalExpr').value = p.pedalExpr;
+  $<HTMLSelectElement>('pedalSus').value = p.pedalSus;
   $<HTMLInputElement>('cbAutoSync').checked = p.autoSync;
   $<HTMLInputElement>('cbLumaKeyEffects').checked = p.lumatoneKeyEffects;
   $<HTMLInputElement>('cbShowDiag').checked = p.showDiagnostics;
@@ -163,7 +162,8 @@ initToolbarSelector();
 applyTooltips();
 
 /* State fields with no DOM mirror — set directly before any handlers run. */
-pedal.mode = prefs.pedalMode;
+pedal.roles.expr = prefs.pedalExpr;
+pedal.roles.sus = prefs.pedalSus;
 tuning.hejiEnabled = prefs.hejiEnabled;
 /* Seed the board-routing swap before the first Lumatone sync. The toggle lives
    in the Calibrate Keys overlay, but the routing must be correct even if it's
@@ -406,30 +406,18 @@ $<HTMLButtonElement>('btnClear').addEventListener('click', clearSelection);
 $<HTMLInputElement>('cbAudio').addEventListener('change', toggleAudio);
 $<HTMLSelectElement>('waveform').addEventListener('change', changeWaveform);
 
-// Pedal mode (sustain jack role: damper vs sostenuto)
-$<HTMLSelectElement>('pedalMode').addEventListener('change', function (e) {
-  const next = (e.target as HTMLSelectElement).value as 'sustain' | 'sostenuto';
-  const prev = pedal.mode;
-  if (next === prev) return;
-  pedal.mode = next;
-  /* If sustain jack is currently held, re-evaluate it under the new mode so
-     mid-press dropdown changes don't strand sustain or sostenuto state. */
-  const lastCC64 = pedal.lastCC64Value;
-  if (prev === 'sostenuto' && next === 'sustain') {
-    /* leaving sostenuto: clear any locked set, then if CC64 is held, treat it as damper */
-    sostenutoOff();
-    pedal.cc64Depth = (lastCC64 !== null && lastCC64 >= 64) ? 1 : 0;
-    setDamperDepth();
-  } else if (prev === 'sustain' && next === 'sostenuto') {
-    /* entering sostenuto: if CC64 was contributing to damper, drop that contribution
-       and re-trigger sostenuto from the held state */
-    pedal.cc64Depth = 0;
-    setDamperDepth();
-    if (lastCC64 !== null && lastCC64 >= 64) sostenutoOn();
-    else sostenutoOff();
-  }
-  savePrefs({ pedalMode: next });
-});
+// Pedal roles: what each Lumatone pedal jack does. setJackRole re-reads the
+// pedal's position under the new role, so a change made while the pedal is
+// down strands nothing (midi/pedals.ts).
+function wirePedalRole(jack: PedalJack, id: string): void {
+  $<HTMLSelectElement>(id).addEventListener('change', (e) => {
+    const role = (e.target as HTMLSelectElement).value as PedalRole;
+    setJackRole(jack, role);
+    savePrefs(jack === 'expr' ? { pedalExpr: role } : { pedalSus: role });
+  });
+}
+wirePedalRole('expr', 'pedalExpr');
+wirePedalRole('sus', 'pedalSus');
 
 // Calibration & auto-sync
 $<HTMLButtonElement>('btnCalibPedal').addEventListener('click', togglePedalCalibration);
@@ -461,8 +449,10 @@ function resetToDefaults(): void {
   applyShowDiagnostics(p.showDiagnostics);
   applyCalibrateKeys(p.calibrateKeys);
 
-  /* Non-DOM state: pedal mode is set directly. */
-  pedal.mode = p.pedalMode;
+  /* The pedal roles have no handler fired above; a pedal that is down is
+     re-read under its default role. */
+  setJackRole('expr', p.pedalExpr);
+  setJackRole('sus', p.pedalSus);
 
   setTuning();
   applyMapping(p.mapping);  /* back to Euler: a real switch, so held notes convert */

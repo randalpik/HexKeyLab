@@ -3,7 +3,16 @@
 // plus a flat list of timestamped events. Coordinates `(q, r)` are the source
 // of identity; MIDI export is derived from this via midi-io/export.ts.
 
-import type { TuningMode, PedalMode, Mapping } from '../state/persistence.js';
+import type { TuningMode, Mapping } from '../state/persistence.js';
+
+/* How a take's two pedal streams are read. `cc4` is always a damper depth.
+   'sostenuto': `cc64` is the sostenuto — every take recorded since the pedal
+   jacks got roles of their own (2026-11-12), where `cc4` is the one damper depth
+   from every source. 'sustain': an older take made with the single Pedals
+   dropdown on Sustain, where `cc64` is a second, binary damper and the damper
+   is the deeper of the two. Read from the take by playback; never applied to
+   the live pedal settings. */
+export type PedalMode = 'sustain' | 'sostenuto';
 
 /* Frozen layout state needed to interpret events. Captured at record-start;
    playback re-applies these fields before scheduling. The recording is
@@ -38,6 +47,8 @@ export interface LayoutSnapshot {
 export type HkrEventOn   = { t: number; k: 'on';   q: number; r: number; v: number; a?: number };
 export type HkrEventOff  = { t: number; k: 'off';  q: number; r: number };
 export type HkrEventPa   = { t: number; k: 'pa';   q: number; r: number; p: number };
+/* `cc4`: damper depth, 0..1. `cc64`: 0 or 1 — the sostenuto, or in a 'sustain'
+   take a binary damper (PedalMode). Named for the jacks they once mirrored. */
 export type HkrEventCc4  = { t: number; k: 'cc4';  v: number };
 export type HkrEventCc64 = { t: number; k: 'cc64'; v: number };
 export type HkrEventWarn = { t: number; k: 'warn'; msg: string };

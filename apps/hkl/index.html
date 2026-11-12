@@ -499,10 +499,20 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label class="auto-sync-lbl"><input type="checkbox" id="cbAutoSync" autocomplete="off"> Auto-sync</label>
 <div class="sync-status" id="syncStatus">Idle</div>
 </div>
-<label>Pedals: <select id="pedalMode" autocomplete="off">
+<div class="luma-row">
+<label>Expr <select id="pedalExpr" autocomplete="off">
+<option value="none">None</option>
+<option value="sostenuto">Sostenuto</option>
 <option value="sustain" selected>Sustain</option>
-<option value="sostenuto">Sostenuto + Sustain</option>
+<option value="ctrl">Ctrl</option>
 </select></label>
+<label>Sus <select id="pedalSus" autocomplete="off">
+<option value="none">None</option>
+<option value="sostenuto">Sostenuto</option>
+<option value="sustain" selected>Sustain</option>
+<option value="ctrl">Ctrl</option>
+</select></label>
+</div>
 </div>
 <div class="luma-vstack">
 <label class="luma-conn-only"><input type="checkbox" id="cbLumaKeyEffects" autocomplete="off"> Key effects</label>

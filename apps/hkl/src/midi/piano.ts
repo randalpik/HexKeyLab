@@ -130,17 +130,25 @@ function handleNoteOff(midiNote: number): void {
 }
 
 /* Sustain pedal (CC 64) plugged into the piano device. Always acts as SUSTAIN
-   (damper), independent of the Lumatone toolbar's sustain/sostenuto `pedal.mode`
-   — that mode is a Lumatone-side control and users will have different piano +
-   Lumatone setups. If a separate sostenuto control is ever wanted for the piano
+   (damper), independent of the roles of the Lumatone's pedal jacks — those are
+   Lumatone-side controls and users will have different piano + Lumatone setups.
+   It is a damper source of its own (pedal.damper.piano), so neither device's
+   pedal overwrites the other's. If a separate sostenuto control is ever wanted for the piano
    pedal, add it here. The SP-250 sends a continuous value, so it's a half-damper
    depth (like the Lumatone expression jack's CC 4). Routed through the shared
    pedal state so it integrates with note-off deferral — and thus the piano-out
    sustain mirror (held JI notes ring on the external synth until release).
    `setDamperDepth` fires `onSelectionChanged` itself on release, so no extra sync. */
 function handleSustainCC(d2: number): void {
-  pedal.lastCC64Value = d2;
-  pedal.cc64Depth = (d2 <= 1) ? 0 : d2 / 127;
+  pedal.damper.piano = (d2 <= 1) ? 0 : d2 / 127;
+  setDamperDepth();
+}
+
+/* The piano port is being left (another port bound, input switched off) with
+   its pedal possibly down. Its release can then never arrive, and no other
+   source writes the piano's damper entry, so let go of it here. */
+function releasePianoPedal(): void {
+  pedal.damper.piano = 0;
   setDamperDepth();
 }
 
@@ -176,8 +184,9 @@ function bindPort(port: MIDIInput | null): void {
     midi.pianoIn.onmidimessage = null;
   }
   /* Release any in-flight notes on the previous port (voices stop at the
-     onSelectionChanged below). */
+     onSelectionChanged below), and its pedal. */
   dropHeld('piano');
+  releasePianoPedal();
   midi.pianoIn = port;
   if (port) {
     port.onmidimessage = pianoMessage;
@@ -262,6 +271,7 @@ export function setEnabled(on: boolean): void {
      selection state or stuck audio voices. */
   if (!on) {
     dropHeld('piano');
+    releasePianoPedal();
     onSelectionChanged();
   }
 }

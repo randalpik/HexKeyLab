@@ -67,7 +67,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 - **Playback**: the instrument/waveform selector, with the Audio + Diagnostics checkboxes and the Import button beneath it (`.pb-stack`) · Transpose · Clear. **Diagnostics** (needs Audio) is the dev overlay for vetting sustained instruments (`audio/diagnostics/loopOverlay.ts`): a scrolling RMS/dB envelope of the sample bus (`SampleEngine.tapMaster`; oscillators aren't tapped) with a marker at every loop-seam crossfade — a dip ON a seam is a sample/seam-data problem, BETWEEN seams a crossfade-curve problem — plus per-frame max velocity and max poly AT of the held keys on the same 0–127 axis.
 - **Analysis**: two checkbox columns of four — Show analysis / coordinates / factors / Short intervals, and Show staff notation / Dark staff notation / Composer view / HEJI accidentals.
 - **Recording**: the Rec/Play, Save/Load .hkr and Export/Import .mid button pairs, then one column of status pill · Export to Composer · Capture audio (`.rec-stack`).
-- **Lumatone**: connection status · Auto-sync + sync pill · Pedals selector stacked in one column; beside it a second column of Key effects, Calibrate Keys and Calibrate Pedal (all `luma-conn-only`, so they show only when connected). Calibrate Keys is never checked while hidden: `midi/engine.ts` reports each flip of the connected state (`setLumatoneConnectionHandler`, fired where the `lumatone-connected` class changes), and init.ts unchecks the box and closes the overlay on a disconnect, then re-checks and reopens it on connect when `prefs.calibrateKeys` is set. The pref itself is untouched by a disconnect, and at startup it opens nothing until a Lumatone connects.
+- **Lumatone**: connection status · Auto-sync + sync pill · the two pedal-role selectors (Expr, Sus) side by side, stacked in one column; beside it a second column of Key effects, Calibrate Keys and Calibrate Pedal (all `luma-conn-only`, so they show only when connected). Calibrate Keys is never checked while hidden: `midi/engine.ts` reports each flip of the connected state (`setLumatoneConnectionHandler`, fired where the `lumatone-connected` class changes), and init.ts unchecks the box and closes the overlay on a disconnect, then re-checks and reopens it on connect when `prefs.calibrateKeys` is set. The pref itself is untouched by a disconnect, and at startup it opens nothing until a Lumatone connects.
 - **Piano**: status + Device selector, and the Piano input / output / Valid ref bounds checkbox column.
 - **Composer** (only while connected): connection status · Sync to Composer · score layout + match indicator on one row.
 - Every group has the same fixed 87px height (three stacked select rows), so switching tabs never moves the canvas.
@@ -81,7 +81,7 @@ A **tabbed toolbar** (`apps/hkl/src/ui/toolbars.ts`): a selector row (`Layout ·
 | Transpose | 5-axis ▲/▼ stacks (P5, M3, m3, P8, SC), always visible. Key-repeat 400ms initial / 80ms subsequent. Selection transpose only — positioning is via ref note. |
 | Audio | Toggle + instrument/waveform selector. Piano default. Samples lazy-load with a blue "loading…" state. |
 | Clear | Deselects all and silences every held and pedal-sustained voice (the stuck-note panic button); also forgets held-input records. |
-| Lumatone status panel | Connection badge; **Pedals dropdown** (Sustain / Sostenuto+Sustain — how the sustain jack is read); **Calibrate Pedal** button; Auto-sync checkbox + status badge; **Key effects** checkbox (hover and invalid-ref dimming shown on the device, firmware 1.5.0+). |
+| Lumatone status panel | Connection badge; **Expr** and **Sus** dropdowns (None / Sostenuto / Sustain / Ctrl — what each pedal jack does); **Calibrate Pedal** button; Auto-sync checkbox + status badge; **Key effects** checkbox (hover and invalid-ref dimming shown on the device, firmware 1.5.0+). |
 | Recording controls | ● Rec / ▶ Play / Save .hkr / Load .hkr / Export .mid / Import .mid + status pill. |
 
 ### Layout builder
@@ -224,7 +224,7 @@ The Pythagorean-plus-septimal-comma tritones decompose: 81:56 reads as "septimal
 **Auto-sync** (checkbox + status badge):
 - On every color-affecting state change, `syncLumatoneColors()` computes the 280-entry target, diffs against tracked `deviceColors`, queues only changes.
 - **Two transports, chosen by firmware** (`lumatone.firmware`, from the connect-time `0x31` query; `frameSyncActive()`):
-  - **1.5.0+: whole-keyboard frames.** Any difference sends one `0x55` frame of the full target (`buildFrameSysEx`); its deferred ACK sets all 280 `deviceColors`. Latest wins: `replaceQueue` swaps out a frame still waiting behind the one in flight, so at most one frame waits. Frames are ~17 ms each (p50, measured 2026-11-08), so the screen and the device move together. **Key effects** (the **Key effects** checkbox in the Lumatone group, `cbLumaKeyEffects` → pref `lumatoneKeyEffects`, `lumatone.keyEffects`; off by default): on this path each key shows the canvas's two per-key effects (`frameCellColor`), composed in the canvas's order. The `hoverKey`'s key is `lightenHex(color, HOVER_LIGHTEN)`, the canvas's own amount (`render/colors.ts`; the LED color is the same `hueC` variant the canvas lightens, so both change identically). While the ref-edit modifier is held, every key whose cell cannot be a ref (`isValidRef`, `state/reference.ts`: the same cells the canvas dims) keeps `REF_DIM_LED` (0.2) of each channel. That level is the device's own, set by eye and darker than the canvas's cover (`REF_DIM_FILL`, 50% of `#111`), which has note names to keep readable. Because the dim is part of the per-cell color, it follows a ref change and blends through the ref slide like any color. Triggers: `ui/init.ts` mousemove/mouseleave → `syncLumatoneKeyEffects()`, and the modifier's listener (`setRefEditListener`, registered in `ui/init.ts`) → `syncLumatoneKeyEffects('sync')`; the checkbox handler re-syncs at once, so toggling shows or clears the current effects. `lumaprobe.frames()` prints send→ACK and hover→ACK percentiles.
+  - **1.5.0+: whole-keyboard frames.** Any difference sends one `0x55` frame of the full target (`buildFrameSysEx`); its deferred ACK sets all 280 `deviceColors`. Latest wins: `replaceQueue` swaps out a frame still waiting behind the one in flight, so at most one frame waits. Frames are ~17 ms each (p50, measured 2026-11-08), so the screen and the device move together. **Key effects** (the **Key effects** checkbox in the Lumatone group, `cbLumaKeyEffects` → pref `lumatoneKeyEffects`, `lumatone.keyEffects`; off by default): on this path each key shows the canvas's two per-key effects (`frameCellColor`), composed in the canvas's order. The `hoverKey`'s key is `lightenHex(color, HOVER_LIGHTEN)`, the canvas's own amount (`render/colors.ts`; the LED color is the same `hueC` variant the canvas lightens, so both change identically). While the ref-edit modifier is held, every key whose cell cannot be a ref (`isValidRef`, `state/reference.ts`: the same cells the canvas dims) keeps `REF_DIM_LED` (0.3) of each channel. That level is the device's own, set by eye and darker than the canvas's cover (`REF_DIM_FILL`, 50% of `#111`), which has note names to keep readable. Because the dim is part of the per-cell color, it follows a ref change and blends through the ref slide like any color. Triggers: `ui/init.ts` mousemove/mouseleave → `syncLumatoneKeyEffects()`, and the modifier's listener (`setRefEditListener`, registered in `ui/init.ts`) → `syncLumatoneKeyEffects('sync')`; the checkbox handler re-syncs at once, so toggling shows or clears the current effects. `lumaprobe.frames()` prints send→ACK and hover→ACK percentiles.
   - **Ref slide (frame path).** When the canvas slides (`onRefChanged` sees `animation.isAnimating` after `syncViewToOutline`), `beginLumatoneSlide(dq, dr)` eases a fractional device anchor from what the device shows to `kbAnchor` on the canvas tween's clock (`Date.now`), duration and `smoothstep` (exported from `render/animation.ts`). Its own raf tick builds a target per animation frame in which key *i* shows `sampleField(lumatoneCells[i] + anchor)`: the barycentric blend of the three cells around that lattice point (hex centers triangulate along each rhombus's m3 diagonal; the weights are affine-invariant, so (q, r) works under every alignment and mapping), blended in OKLab (`lumatone/oklab.ts`; LED values treated as linear light — the octave-board firmware has no brightness lookup table, though a computed curve isn't ruled out). OKLab keeps perceived lightness constant through the slide; blending the LED values directly read 3–5 L* brighter at every half-step between a dark and a light key, a visible pulse per lattice step (lessons.md). Frames go out latest-wins at the device's ~17 ms, so ~28 per slide; the landing frame is exact. A redirect starts from the interpolated anchor (no jump); a snap calls `cancelLumatoneSlide()`. `onRefChanged` decides slide-or-snap **before** the voice remap, whose color sync then sends the slide's first frame (identical to the device's state) instead of the final layout. The same sampler with a rotating sample point would animate an alignment change (exact 60° lattice rotations about the outline center), at about a second for 120°.
   - **Older firmware: the per-key `0x01` wipe below.** Until the version query answers, a connect starts on this path; a 1.5.0 answer re-syncs, which turns the queued per-key colors into one frame.
 - **Empty diff while a push is running** still replaces the queue: colors queued behind the in-flight message are stale (hover left and came back before its ACK), and sending them would leave the device wrong.
@@ -253,11 +253,26 @@ The Pythagorean-plus-septimal-comma tritones decompose: 81:56 reads as "septimal
 | SysEx CMD 0x3E | calibration packet handler |
 | SysEx CMD 0x33 reply | heartbeat ping reply — consumed (proof of life already recorded); never reaches the queue |
 | Other SysEx | `sysexHandleResponse` (ACK matching) |
-| CC 4 (expression) | `pedal.cc4Depth = d2/127`; `setDamperDepth()`. Verbose during cal; else endpoints (0/127) only. **The damper never raises a voice**: each sustained voice's `damperGain` follows `Voice.damperLevel = min(damperLevel, depth)` (`applyDamperToVoice`), a one-way ratchet reset only by a fresh voice (re-strike). Re-pressing after a partial lift holds the level; `sostenutoOn` holds locked voices where they are (it no longer pins them to 1.0). Gate: `test/hkl-midi/damper.mjs`. |
-| CC 64 (sustain) | role per `pedal.mode`: `'sustain'` → binary damper (`cc64Depth = d2≥64?1:0` + `setDamperDepth()`); `'sostenuto'` → `sostenutoOn/Off()`, no damper touch. |
+| CC 4 (expression) | `setJackPosition('expr', d2/127)` (a CC 4 of 0 or 1 reads as 0); what that does is the jack's role (*Pedal roles*, below). Verbose during cal; else endpoints (0/127) only. **The damper never raises a voice**: each sustained voice's `damperGain` follows `Voice.damperLevel = min(damperLevel, depth)` (`applyDamperToVoice`), a one-way ratchet reset only by a fresh voice (re-strike). Re-pressing after a partial lift holds the level; `sostenutoOn` holds locked voices where they are (it no longer pins them to 1.0). Gate: `test/hkl-midi/damper.mjs`. |
+| CC 64 (sustain) | `setJackPosition('sus', d2≥64 ? 1 : 0)`; what that does is the jack's role (*Pedal roles*, below). |
 | Note on/off | audio + selection; with the ref-edit modifier held, a note-on is a ref pick instead and never a note (Display → Ref-edit modifier). Note-off branches on `sustainPedalDown ‖ sostenutoLockedKeys.has(key)`: keep or release. `sustainPedalDown` is `damperDepth > DAMPER_RELEASE_FLOOR`, the same threshold the release loop uses — so there is no depth band that defers a note-off the release loop would never claim. |
 | Poly aftertouch (0xA0) | per-voice volume modulation. |
 | Pitch bend (0xE0) | ignored (see *Departure detection* — it was tried as a power-off tell and removed). |
+
+**Pedal roles** (`midi/pedals.ts`, state in `state/pedal.ts`). Each jack has a role of its own, chosen in its own dropdown (`#pedalExpr`, `#pedalSus` → prefs `pedalExpr`, `pedalSus`; both default to Sustain):
+
+| Role | What the jack does |
+|---|---|
+| None | nothing (its CCs are still logged for the HUD) |
+| Sostenuto | `sostenutoOn()` when the pedal goes down, `sostenutoOff()` when it comes up |
+| Sustain | a damper source: `pedal.damper[jack]` = the pedal's position (continuous on Expr, 0 or 1 on Sus) |
+| Ctrl | holds the ref-edit modifier (`setRefEditSource(jack, …)`; Display → Ref-edit modifier) |
+
+- **One derivation.** `pedal.position[jack]` (where the pedal is, kept whatever the role) and `pedal.roles[jack]` are the only inputs; `applyJacks()` derives everything both jacks do and runs whenever either changes: a CC (`setJackPosition`), a dropdown (`setJackRole`), the device leaving or a forced clear (`releaseJacks`). A role changed while the pedal is down is therefore re-read from the pedal at once, with no transition written by hand. It lets go of what the jacks no longer hold before engaging what they hold now: a damper turned sostenuto releases its sustained notes and then catches only the keys still held.
+- **Binary roles** (Sostenuto, Ctrl) read a pedal as down from CC 64 up, the sustain jack's own threshold. On the continuous Expr jack that is one threshold with no hysteresis, so a pedal resting exactly at its midpoint can chatter.
+- **Both jacks may share a role.** Dampers combine by max; sostenuto and Ctrl are held while either pedal is down. The engine is told about the sostenuto only when the jacks' combined answer changes, so a pedal moving further down, or the second pedal joining, never snapshots the held keys again, and a sostenuto engaged by a recording playback is not the jacks' to release.
+- **Damper sources.** `pedal.damper` has one entry per writer — `expr`, `sus`, `piano` (the piano-input device's own pedal), `composer` (Composer playback), `playback` (recording playback) — and `setDamperDepth()` takes their max, so no source can overwrite another's. Each writer releases its own entry when it goes away (Lumatone departure, the piano port being left, a playback stopping).
+- Gate: `test/hkl-midi/pedal-roles.mjs`.
 
 Note routing uses the **fixed MIDI layout**: stable (channel, note) per physical key. `fixedMidiToKey(ch, note)` converts at input time, through `layout/physical.ts` (key offset + kbAnchor) — channels 0–4 = the five board groups, notes 0–55 = key index within board.
 
@@ -273,7 +288,7 @@ a snapshot that never reports the port vanishing. History of what was tried: dec
 
 **The heartbeat** (`midi/heartbeat.ts`, always on, no pref) pings the Lumatone (CMD 0x33 `LUMA_PING`) only
 while the Lumatone is **holding something** — keys down (`heldCount('lumatone')`, `input/held.ts`), or `sustainPedalDown` /
-`sostenutoActive` from its pedal jacks — **and** has sent nothing for `HEARTBEAT_QUIET_MS` (200).
+`sostenutoActive` / the ref-edit modifier from its pedal jacks — **and** has sent nothing for `HEARTBEAT_QUIET_MS` (200).
 
 - **Any inbound message on the port is proof of life** (`heartbeatInbound()` at the top of
   `handleMidiMessage`), so active playing sends no pings at all; it is the silence after the burst that
@@ -302,8 +317,9 @@ while the Lumatone is **holding something** — keys down (`heldCount('lumatone'
    so a throw is logged rather than swallowed. It stops the heartbeat, drops every held Lumatone key
    (`dropHeld('lumatone')`, `input/held.ts`) from `selectedKeys` / `sustainedKeys` / `keyVelocity` /
    `aftertouchSnapshot` / `paFilter`, **and forces
-   the pedal released** (`cc4Depth = cc64Depth = 0`, `setDamperDepth()`, `sostenutoOff()`) — CC 4 / CC 64
-   come from the Lumatone's own jacks, so a damper that was down would otherwise hold notes forever.
+   the pedals released** (`releaseJacks()`: both positions to 0, then the roles let go of the damper, a
+   sostenuto, the ref-edit modifier) — CC 4 / CC 64 come from the Lumatone's own jacks, so whatever a jack
+   was holding would otherwise stay held forever. A damper held by another source is not touched.
    Mouse/computer-keyboard voices are untouched.
 
 The same `releaseLumatoneInput()` runs from `findLumatone`'s port-loss branch, which is how Chromium reaches
@@ -344,7 +360,7 @@ Per note-on: `keyFreq(q,r)` → nearest 12-TET note + cents (`freqToNoteFine`, A
 
 **Hook**: `syncPianoOut()` runs from `syncOutput()` tracking `selectedKeys ∪ sustainedKeys`. Self-gates on its own enabled flag, **independent of `audioEnabled`** — so muting Audio + enabling Piano output makes the external synth the sole source. Sustain needs no CC64 forwarding (HKL defers note-off until pedal release). Aftertouch not forwarded.
 
-**Pedal capture**: a sustain pedal on the piano-input device sends CC 64 on the same port; `piano.ts`'s `pianoMessage` routes it (`handleSustainCC`) through shared `pedal` state via `setDamperDepth`. **Always acts as sustain** (continuous half-damper), independent of the Lumatone sustain/sostenuto dropdown. Feeds HKL's deferred note-off, so held JI notes ring on the external synth until release (matters with Local Control off).
+**Pedal capture**: a sustain pedal on the piano-input device sends CC 64 on the same port; `piano.ts`'s `pianoMessage` routes it (`handleSustainCC`) into its own damper source, `pedal.damper.piano`, via `setDamperDepth`. **Always acts as sustain** (continuous half-damper), independent of the Lumatone jacks' roles; it is released when the piano port is left or piano input is switched off. Feeds HKL's deferred note-off, so held JI notes ring on the external synth until release (matters with Local Control off).
 
 **Rearticulation**: re-striking a pedal-held key doesn't change `selected ∪ sustained` membership, so the diff won't re-fire. `restrikePianoOut(key)` tears down the voice (note-off + free channel) at each re-strike, before the following `syncPianoOut()` re-acquires + re-strikes with updated velocity.
 
@@ -366,14 +382,14 @@ HKL records every performance (Lumatone, QWERTY, mouse) as a stream of lattice-c
 
 ### Architecture
 
-- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning, mapping, anchor, banded, septimalW, instrument, pedal mode, A3 ref) + flat event list `[{t, k, q, r, …}]`. `banded` absent in older files → true. Wherever the layout reads the anchor (Syntonic/Polysyntonic, any mode unbanded: `readsAnchor`) a note-on recorded after a mid-take re-anchor carries its own `a` (anchor); absent → the snapshot's (absent in older files → 0, which no older mode reads). Playback pins the live anchor per note-on (`setAnchorOverride`) and releases it on stop; MPE export reads the same field. Version-stamped (`format:"hkr", version:1`); event kinds `on/off/pa/cc4/cc64/warn` keyed by `k`. Timing is `audioCtxSec` from `epoch=0` (the engine's ramp-schedule clock). No back-compat with pre-legacy-purge files.
+- **`.hkr` (JSON, source of truth)**: layout snapshot (tuning, mapping, anchor, banded, septimalW, instrument, `pedalMode`, A3 ref) + flat event list `[{t, k, q, r, …}]`. `banded` absent in older files → true. Wherever the layout reads the anchor (Syntonic/Polysyntonic, any mode unbanded: `readsAnchor`) a note-on recorded after a mid-take re-anchor carries its own `a` (anchor); absent → the snapshot's (absent in older files → 0, which no older mode reads). Playback pins the live anchor per note-on (`setAnchorOverride`) and releases it on stop; MPE export reads the same field. Version-stamped (`format:"hkr", version:1`); event kinds `on/off/pa/cc4/cc64/warn` keyed by `k`. **The two pedal streams record what the pedals did, not which jack or device did it**: `cc4` is the damper depth (the max over every damper source) and `cc64` is the sostenuto, whatever the jacks' roles; a pedal in the Ctrl role records nothing. The names are the file format's, from when each stream mirrored one jack. Every take is written with `pedalMode: 'sostenuto'`, which says exactly that; `'sustain'` marks an older take made with the former single Pedals dropdown on Sustain, where `cc64` is a second, binary damper (`recording/types.ts`). The format and its version are unchanged, so either build plays either file. Timing is `audioCtxSec` from `epoch=0` (the engine's ramp-schedule clock). No back-compat with pre-legacy-purge files.
 - **`.mid` (binary, derived)**: exported/re-imported deterministically against the same snapshot. The two files travel **separately** — not bundled.
 - **MPE export**: single-track format-0. Channel 1 = manager (CC4/CC64 + MPE Configuration Message); channels 2–16 = members (one voice each). Per-member pitch-bend range ±48 semitones via RPN 0. Tempo fixed 120 BPM, PPQ 960.
 - **MIDI → `.hkr` inverse**: requires the originating snapshot (UI prompts "Load matching .hkr first"). Builds a frequency index over the lattice under the snapshot's tuning; each noteOn's `(note, channel-bend)` → frequency → nearest-match. 25-cent sanity gate; farther emits a `warn` event.
 
 ### Capture point
 
-Hooks live **inside `@hkl/engine`**, not at the MIDI input handler — the convergence point for every source (Lumatone notes after `(channel,note)→(q,r)`, QWERTY, canvas clicks all flow through `noteOn`/`noteOff` before sounding). One line per engine entry point catches everything. CC4/CC64 capture in `setDamperDepth` + `sostenutoOn/Off`; poly aftertouch in `handleAftertouch`. Hooks short-circuit when `audioEnabled === false` — silent input is not recorded (intentional; recording without audio is meaningless).
+Hooks live **inside `@hkl/engine`**, not at the MIDI input handler — the convergence point for every source (Lumatone notes after `(channel,note)→(q,r)`, QWERTY, canvas clicks all flow through `noteOn`/`noteOff` before sounding). One line per engine entry point catches everything. Damper and sostenuto capture (`cc4` / `cc64`) in `setDamperDepth` + `sostenutoOn/Off`; poly aftertouch in `handleAftertouch`. Hooks short-circuit when `audioEnabled === false` — silent input is not recorded (intentional; recording without audio is meaningless).
 
 ### Playback
 
@@ -384,11 +400,12 @@ Web-Audio look-ahead scheduler (Chris-Wilson pattern): 25 ms `setTimeout` loop w
 | `on` | `noteOn` + add to ledger + add to `selectedKeys` + `draw()` |
 | `off` | `noteOff` + remove from ledger + remove from `selectedKeys` + `draw()` |
 | `pa` | `handleAftertouch` |
-| `cc4` | `pedal.cc4Depth = v; setDamperDepth()` |
-| `cc64` | `setDamperDepth()` (sustain) or `sostenutoOn/Off` (sostenuto), per snapshot `pedalMode` |
+| `cc4` | the take's damper → `pedal.damper.playback`; `setDamperDepth()` |
+| `cc64` | per the take's own `pedalMode`: `sostenutoOn/Off` (`'sostenuto'`), or a second damper stream, the deeper of the two holding (`'sustain'`) |
 
 - **Ledger** (`playbackKeys: Set<KeyId>`) tracks playback-created voices only — stopPlayback releases those, leaving user-held voices alone. Live input is allowed during playback and mixes in.
-- Applying the snapshot at play-start drives the real control handlers (`setTuning`, `changeWaveform`) so all side effects fire (color sync, info refresh, prefs). Sample instruments awaited if not loaded.
+- Applying the snapshot at play-start drives the real control handlers (`setTuning`, `changeWaveform`) so all side effects fire (color sync, info refresh, prefs). Sample instruments awaited if not loaded. The pedal jacks' roles are never part of it: `pedalMode` is read from the take by the dispatch above and has no live counterpart (`snapshotMatchesLive` ignores it), so live pedals keep their roles and mix with the take's.
+- **Stopping lets go of the take's pedals**: the playback damper source goes to 0 and a sostenuto the take engaged is released. Nothing live writes that source, so a take ending with the pedal down would otherwise hold it.
 
 ### Transport
 
@@ -513,7 +530,7 @@ Three module groups:
   - `clock.ts` — `nowSec()` from `audioCtx.currentTime`, `performance.now()` fallback.
   - `snapshot.ts` — `captureSnapshot()` + `snapshotMatchesLive(s)` (leaf-position; `capture.ts` imports it).
   - `apply.ts` — `applySnapshot(s)` (split from `snapshot.ts` to avoid a cycle through `ui/controls.ts`).
-  - `capture.ts` — module-private buffer + per-event recorders (`recordOn/Off/Pa/PedalDepthsChange/Sostenuto`). Auto-balances on start/stop.
+  - `capture.ts` — module-private buffer + per-event recorders (`recordOn/Off/Pa/Damper/Sostenuto`). Auto-balances on start/stop.
   - `playback.ts` — look-ahead scheduler + ledger + dispatch routing.
   - `hkr.ts` — JSON serialize/parse with field validation; `HkrParseError` on schema mismatch.
 - **`apps/hkl/src/midi-io/`** — `.hkr` ↔ MIDI, no DOM.

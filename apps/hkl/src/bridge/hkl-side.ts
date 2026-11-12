@@ -372,7 +372,7 @@ function releaseDeferredKey(pb: ActivePlayback, vid: VoiceId): void {
 function resetGlobalDamperFlags(pb: ActivePlayback): void {
   if (!pb.pedalEngaged) return;
   pb.pedalEngaged = false;
-  pedal.cc64Depth = 0;
+  pedal.damper.composer = 0;
   audio.sustainPedalDown = false;
   audio.damperDepth = 0;
   sendSustainPedal(false);
@@ -446,7 +446,7 @@ function applyPedalTransition(pb: ActivePlayback, dir: PedalEvent['dir'], instru
     /* Global hardware flags engage on any instrument's pedal-down (external CC
        64 mirroring stays global — per-instrument external routing is out of
        scope for this prerequisite). Set directly; see resetGlobalDamperFlags. */
-    pedal.cc64Depth = 1;
+    pedal.damper.composer = 1;
     audio.sustainPedalDown = true;
     audio.damperDepth = 1;
     sendSustainPedal(true);
