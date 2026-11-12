@@ -85,8 +85,8 @@ or HTTPS); `file://` doesn't work. Chromium also works for testing.
   orchestrator, engine, overlay).
 - [`docs/lessons.md`](docs/lessons.md): gotchas, anti-patterns, hard-won truths.
 - [`docs/decisions.md`](docs/decisions.md): append-only log of non-obvious design choices.
-- [`docs/lumatone-calibration.md`](docs/lumatone-calibration.md): numeric per-key Lumatone
-  calibration.
+- [`docs/lumatone-calibration.md`](docs/lumatone-calibration.md): Lumatone key calibration
+  (the built-in routine from HKL; backup, restore and per-key edits by number).
 - [`AGENTS.md`](AGENTS.md): entry point for coding agents (project context, constraints, verification).
 
 ## Companion apps

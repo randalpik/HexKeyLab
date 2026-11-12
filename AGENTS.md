@@ -108,7 +108,7 @@ The "what it is / how it works" reference lives under [`docs/architecture/`](doc
 - **`docs/architecture/analyzer.md` → Perceptual seam selection** — the analyzer's perceptual gate methodology. Read before touching analyzer gates or building instrument sets.
 - **`docs/lessons.md`** — gotchas, dead-ends, hard-won truths. Read before debugging anything that smells familiar.
 - **`docs/decisions.md`** — append-only log of non-obvious design choices.
-- **`docs/lumatone-calibration.md`** — numeric per-key calibration over SSH with `tools/lumatone-cal/`.
+- **`docs/lumatone-calibration.md`** — Lumatone key calibration: the built-in routine from HKL, and saving, restoring and editing the per-key values by number over SSH with `tools/lumatone-cal/`.
 - **`README.md`** — contributor-facing repo description.
 
 ## Workflow patterns

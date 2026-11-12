@@ -10761,7 +10761,7 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 - **Colors are re-synced from scratch afterwards** (the routine repaints the keys), and the overlay re-reads the per-board values.
 - **No confirmation dialog on Confirm.** It replaces the stored per-key thresholds; the section says so, and `tools/lumatone-cal/keydata-backup.sh` saves and restores them.
 
-**Read from the binaries, not yet exercised on hardware** (lessons.md → "The PIC's calibration mode"): `0x52` value 0 cancels and 1 confirms; Cancel writes nothing on either side; Confirm rewrites `KeyData_N`'s MAX, MIN and AT-MAX rows; aftertouch calibration is `0x0F` (`0x25` is DemoMode); the key diagnostic display is an inner loop of the key routine reachable only with a board's physical macro buttons, so it is unavailable on a board whose buttons are dead.
+**Read from the binaries, not yet exercised on hardware** (lessons.md → "The PIC's calibration mode"): `0x52` value 0 cancels and 1 confirms; Cancel writes nothing on either side; Confirm rewrites `KeyData_N`'s MAX, MIN and AT-MAX rows; aftertouch calibration is `0x0F` (`0x25` is DemoMode); the key diagnostic display is an inner loop of the key routine reachable only with a board's physical macro buttons (one held down while a key registers), so it is unavailable on a board whose buttons are dead; a macro button pressed and released is that board's own confirm or cancel (corrected 2026-11-11 after Max's hardware observation; the first reading had a press open the display).
 
 **Rejected:**
 - A second firmware query at connect to detect a running calibration: `queryFirmware` already gets the STATE answer, so it hands it on (`onRefused`).
@@ -10860,3 +10860,22 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/unbanded/oracle.mjs` section O, added after the list refactor and before the rule change, failed on the old rule (3,034 failures) and passes (508,153 checks): groups + chain hold exactly the given accidentals and arrows over |AD|, |SD| ≤ 40 in all four sign pairs, every exponent is above 4, at most two groups, the chain at most 4 glyphs, and 17 pinned labels. Typecheck, boundaries, `check:heji`, the HKL build. Not looked at on screen: where the exponent sits against a double-arrow or double-accidental glyph.
 
 **Where:** `apps/hkl/src/tuning/heji.ts` (`hejiLabel` step 0, `HejiLabel.collapses`), `apps/hkl/src/render/draw.ts` (`drawHejiLabel`), `test/unbanded/oracle.mjs` (O), docs/architecture/hkl.md (Note naming).
+
+## Retire the on-device calibration scripts; per-key numbers go through the files (2026-11-11, Max)
+
+**Context:** `tools/lumatone-cal/` was built on firmware 1.4.0 around `keydata-live.py`, which wrote per-key thresholds into the running controller's memory, because the built-in calibration could not be finished on a board with dead macro buttons. Firmware 1.5.0's SysEx `0x52` ends it from software, HKL drives it, and Max completed a full recalibration with it on 2026-11-11. The three on-device scripts exit on 1.5.0 (they look for a `TerpstraController` process and add 1.4.0's symbol offsets to a PIE load base).
+
+**Picked:**
+- **Remove `keydata-live.py`, `lmtncal-read.py` and `lmtncal-poke.py`** instead of porting them. Calibration is the built-in routine; what the live editor still offered, setting a key by number, is done by editing a saved `KeyData_N` and writing the folder back with `keydata-backup.sh restore`, at the cost of a power cycle per round.
+- **Keep the firmware-independent tools**: `keydata-backup.sh`, `keydata-locate.py` (names the file and slot for a hand edit), `KeyData_default` (seeding baseline), `pic18dis.py`.
+- **`restore` validates before it writes**, since a hand-edited file is now the only numeric route: four rows of 56 values from 0 to 254 per `KeyData` file, ten single-value rows per `ThresholdData` file. `check <dir>` runs the same test without the device.
+- **Saved copies live in `tools/lumatone-cal/backups/`** (gitignored by a nested `.gitignore`), the default for `save` and for the copy `restore` takes first: nothing is written to the home directory (Max, 2026-11-11).
+- **`docs/lumatone-calibration.md` rewritten around the new order**: save, built-in calibration, velocity statistics, the interval-table recipe (unchanged), per-key edits by number.
+
+**Rejected:**
+- **Porting `keydata-live.py` to 1.5.0**: every address has to be re-derived from the new static binary and again at each firmware update, for a live-edit loop whose main use (iterative MAX raising) was already set aside in favor of the interval table and HKL's curve ("Velocity shaping: software input curve over hardware MAX raising"). The script stays in git history if live tuning is ever needed.
+- **Retiring the whole folder**: the backup script is the restore path for a confirmed calibration, and the disassembler is how the PIC routine was read.
+
+**Gates:** `keydata-backup.sh restore` run three times against the device with files identical to its own (2026-11-11; with and without `--thresholds`): fresh modification times, owner and mode unchanged, checksums match, staging folder removed. Not yet followed through a power cycle with changed values. `check` passes the saved snapshot, the full device backup's `files/` and a `KeyData_default`-seeded folder, and refuses a dropped value, a value of 300 and a two-value `ThresholdData` row; `restore` of the dropped-value folder stops before contacting the device. `keydata-locate.py`'s key table compared with `apps/hkl/src/layout/baseKeys.ts`: identical, 280 of 280.
+
+**Where:** `tools/lumatone-cal/` (three scripts removed; `keydata-backup.sh`, `keydata-locate.py`, `README.md`, `.gitignore`), docs/lumatone-calibration.md, docs/lessons.md, docs/architecture/hkl.md, AGENTS.md, README.md.

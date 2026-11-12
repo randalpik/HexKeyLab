@@ -6,7 +6,10 @@
 # Usage:
 #   python3 keydata-locate.py [--swap-boards-34] <q> <r> [KEYDATA_DIR]
 #
-# Defaults KEYDATA_DIR to ./files (i.e. run from a local mirror's TerpstraController/).
+# KEYDATA_DIR is any folder holding KeyData_1..5: one made by
+# `keydata-backup.sh save`, or the files/ folder of a full device backup
+# (default: ./files). To change a key by number, edit the printed slot in that
+# file and write the folder back with `keydata-backup.sh restore`.
 #
 # The (q, r) coordinates match HKL's baseKeys. Toggle "coords" in HKL to see
 # them on the canvas.
@@ -15,7 +18,7 @@ from __future__ import print_function
 import os
 import sys
 
-# 280-element baseKeys table — taken from src/layout/baseKeys.ts. The order
+# 280-element baseKeys table — a copy of apps/hkl/src/layout/baseKeys.ts. The order
 # defines key indices 0..279. board_group = idx / 56, key_index_within_board = idx % 56.
 BASE_KEYS = [
     (-19,9),(-18,9),(-18,8),(-17,8),(-16,8),(-15,8),(-14,8),(-18,7),(-17,7),(-16,7),
@@ -52,7 +55,7 @@ SYSEX_BOARD_MAP = [1, 2, 3, 4, 5]
 SWAPPED_BOARD_MAP = [1, 2, 3, 5, 4]
 
 SECTION_NAMES = [
-    'MAX threshold (1=trigger near rest, larger=lighter touch registers)',
+    'MAX threshold (rise from rest that triggers the key; larger = deeper press)',
     'MIN threshold (onset detection — usually 0-5)',
     'Validity (0=disabled, 1=active)',
     'AT MAX threshold (aftertouch trigger)',

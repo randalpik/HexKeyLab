@@ -21,6 +21,10 @@
 // that board's two macro buttons leave — puts the phase back to running, with
 // Confirm and Cancel still on offer.
 //
+// The boards' macro buttons keep working meanwhile, in the PIC and out of HKL's
+// sight: releasing one confirms that board alone, the other cancels it. Holding
+// one down while a key registers is what opens the diagnostic display instead.
+//
 // The device is the authority on its mode; HKL's phase follows what it answers:
 // STATE to a start, or to the connect-time firmware query, means it is already
 // in a mode (a page reloaded mid-calibration), so the way out is offered
@@ -49,10 +53,13 @@ export const KEYCAL_REPLY_TIMEOUT_MS = 3000;
 export const KEYCAL_MODE_POLL_MS = 300;
 export const KEYCAL_MODE_POLL_TRIES = 20;
 
+/* The PIC acts on a macro-button release by itself: one button is that board's
+   confirm, the other its cancel, and the board leaves the routine alone. */
+const OWN_BUTTONS = " A board's own macro buttons end it for that board alone: one saves, the other discards.";
 const RUNNING: Record<KeyCalKind, string> = {
-  key: 'Key calibration running: press every key all the way down, then Confirm to save or Cancel to discard. '
-    + 'A macro button on a board switches that board to its sensor colors; hold both of its macro buttons to leave them.',
-  aftertouch: 'Aftertouch calibration running: press every key hard to the bottom, then Confirm to save or Cancel to discard.',
+  key: 'Key calibration running: press every key all the way down, then Confirm to save or Cancel to discard.' + OWN_BUTTONS,
+  aftertouch: 'Aftertouch calibration running: press every key hard to the bottom, then Confirm to save or Cancel to discard.'
+    + OWN_BUTTONS,
 };
 const ADOPTED = 'The Lumatone is already in a calibration mode. Confirm saves what it has learned; Cancel discards it.';
 
