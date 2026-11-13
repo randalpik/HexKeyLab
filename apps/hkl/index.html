@@ -251,6 +251,11 @@ a.hkl-link:hover{color:#DD8CFF}
    above re: blurred Composer-view staff lines). */
 .toolbar-group{display:inline-flex;flex-wrap:nowrap;flex-shrink:0;align-items:center;gap:4px 8px;padding:3px 8px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;height:87px}
 .tb-hidden{display:none !important}
+/* Secrets toolbar (ui/secrets.ts), three rows: how many secrets are found (in
+   the label weight), a row of buttons (one per discovered secret), and Hide. */
+.secrets-stack{display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px}
+.secrets-count{height:16px;line-height:16px}
+.secret-games{display:inline-flex;gap:6px}
 .cb-column{display:inline-flex;flex-direction:column;align-items:flex-start;gap:0}
 .cb-column label{height:16px;line-height:16px}
 .btn-pair{display:inline-flex;flex-direction:column;gap:2px;align-items:stretch}
@@ -322,6 +327,7 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <button class="tbtn" id="tbRecording">Recording</button>
 <button class="tbtn" id="tbLumatone">Lumatone</button>
 <button class="tbtn" id="tbPiano">Piano</button>
+<button class="tbtn tb-hidden" id="tbSecrets">Secrets</button>
 <span class="cdiv"></span>
 <button class="push-btn" id="btnResetPrefs">Reset</button>
 <span class="companions">
@@ -529,6 +535,13 @@ dialog.hkl-dialog button[type=submit]:hover{border-color:#7BFFD4;color:#7BFFD4}
 <label><input type="checkbox" id="cbPianoEnabled" autocomplete="off"> Piano input</label>
 <label><input type="checkbox" id="cbPianoOutput" autocomplete="off"> Piano output</label>
 <label><input type="checkbox" id="cbValidRefBounds" autocomplete="off"> Valid ref bounds</label>
+</div>
+</div>
+<div class="toolbar-group tb-hidden" id="tb-group-secrets">
+<div class="secrets-stack">
+<span id="secretsCount" class="ts-label secrets-count"></span>
+<span id="secretGames" class="secret-games"></span>
+<button class="push-btn" id="btnHideSecrets">Hide</button>
 </div>
 </div>
 <div class="toolbar-group" id="tb-group-composer" style="display:none">

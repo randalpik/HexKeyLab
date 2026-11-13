@@ -23,6 +23,7 @@ import { flashKey } from '../render/key-flash.js';
 import { restrikePianoOut } from '../midi/piano-out.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { markFirstNote } from './first-note.js';
+import { hearKeyPress } from '../games/discovery.js';
 import type { KeyId } from '../types.js';
 
 export type HeldSource = 'lumatone' | 'qwerty' | 'piano';
@@ -73,6 +74,7 @@ export function pressHeld(source: HeldSource, id: string, key: KeyId, velocity: 
   markFirstNote(source);
   restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   onSelectionChanged();
+  hearKeyPress(key); /* the motif listener hears every strike; it changes none */
 }
 
 /** Release physical input `id`. The damper or a sostenuto lock keeps the note

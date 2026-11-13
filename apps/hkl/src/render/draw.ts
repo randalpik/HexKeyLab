@@ -209,7 +209,8 @@ let pianoSnapIndex: SnapIndex = { buckets: new Map() };
 const emptySnapIndex: SnapIndex = { buckets: new Map() };
 
 type OutlineMode = 'lumatone' | 'qwerty' | 'piano' | 'none';
-function getOutlineMode(): OutlineMode {
+/** The outline the Outline dropdown shows. */
+export function getOutlineMode(): OutlineMode {
   const sel = document.getElementById('selOutline') as HTMLSelectElement | null;
   const v = sel?.value;
   if (v === 'qwerty') return 'qwerty';

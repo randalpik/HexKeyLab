@@ -65,6 +65,8 @@ import { ensurePedalHud, setPedalHudVisible } from './pedalHud.js';
 import '../lumatone/probe.js';
 import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
+import { initSecrets, renderSecrets } from './secrets.js';
+import { hearKeyPress } from '../games/discovery.js';
 import { applyTooltips } from './tooltips.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { markFirstNote } from '../input/first-note.js';
@@ -158,6 +160,7 @@ applyRotation(prefs.rotation);
 applyHexSize(prefs.hexSize);
 applyToolbarVisibility(prefs.toolbars);
 initToolbarSelector();
+initSecrets();   /* the Secrets button and toolbar, if a game has been discovered */
 /* Static tooltips for every toolbar control — text lives in tooltips.ts. */
 applyTooltips();
 
@@ -269,8 +272,10 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
     if (selection.selectedKeys.has(key)) selection.selectedKeys.delete(key);
     else selection.selectedKeys.add(key);
   }
-  if (selection.selectedKeys.has(key)) markFirstNote('pointer');
+  const struck = selection.selectedKeys.has(key);
+  if (struck) markFirstNote('pointer');
   onSelectionChanged();
+  if (struck) hearKeyPress(key);   /* a click that selects a key is a strike to the motif listener */
 });
 
 cv.addEventListener('mousemove', function (e: MouseEvent) {
@@ -446,6 +451,7 @@ function resetToDefaults(): void {
 
   applyPrefsToDom(p);
   applyToolbarVisibility(p.toolbars);
+  renderSecrets();   /* the cleared prefs hold no discovered game */
   applyShowDiagnostics(p.showDiagnostics);
   applyCalibrateKeys(p.calibrateKeys);
 

@@ -1,9 +1,11 @@
 // Toolbar selector + visibility wiring.
 //
 // Each toolbar is a named group of controls (Layout, Playback, Analysis,
-// Recording, Lumatone). The selector row at the top of the page is a strip
-// of toggle buttons that show/hide their corresponding group. Visibility
-// persists across reloads via prefs.toolbars.
+// Recording, Lumatone, Piano, Secrets). The selector row at the top of the page
+// is a strip of toggle buttons that show/hide their corresponding group.
+// Visibility persists across reloads via prefs.toolbars. The Secrets button
+// toggles like the rest; whether the button itself is on the page is
+// ui/secrets.ts's business.
 //
 // CSS handles inter-group dividers via the adjacent-sibling selector against
 // `.tb-hidden`, so this module only flips that one class — no JS bookkeeping
@@ -13,7 +15,7 @@ import { loadPrefs, savePrefs } from '../state/persistence.js';
 import type { ToolbarVisibility } from '../state/persistence.js';
 
 export type ToolbarName = keyof ToolbarVisibility;
-export const TOOLBAR_NAMES: ToolbarName[] = ['layout', 'playback', 'analysis', 'recording', 'lumatone', 'piano'];
+export const TOOLBAR_NAMES: ToolbarName[] = ['layout', 'playback', 'analysis', 'recording', 'lumatone', 'piano', 'secrets'];
 
 const BUTTON_IDS: Record<ToolbarName, string> = {
   layout: 'tbLayout',
@@ -22,6 +24,7 @@ const BUTTON_IDS: Record<ToolbarName, string> = {
   recording: 'tbRecording',
   lumatone: 'tbLumatone',
   piano: 'tbPiano',
+  secrets: 'tbSecrets',
 };
 
 const GROUP_IDS: Record<ToolbarName, string> = {
@@ -31,6 +34,7 @@ const GROUP_IDS: Record<ToolbarName, string> = {
   recording: 'tb-group-recording',
   lumatone: 'tb-group-lumatone',
   piano: 'tb-group-piano',
+  secrets: 'tb-group-secrets',
 };
 
 export function applyToolbarVisibility(vis: ToolbarVisibility): void {

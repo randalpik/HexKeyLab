@@ -19,7 +19,11 @@ export const TOOLTIPS: Record<string, string> = {
   tbRecording: 'Show the Recording toolbar: record/play, .hkr save/load, .mid import/export, and Composer transcription.',
   tbLumatone: 'Show the Lumatone toolbar: connection & color auto-sync, pedal mode, and pedal/key calibration.',
   tbPiano: 'Show the Piano toolbar: external MIDI device input/output and the valid-reference-note overlay.',
+  tbSecrets: 'Show the Secrets toolbar: the secrets you have found.',
   btnResetPrefs: 'Reset all toolbar settings and visibility to defaults',
+
+  // ── Secrets ─────────────────────────────────────────────────────────
+  btnHideSecrets: 'Hide the Secrets toolbar and forget the secrets you have found, until a motif is played again.',
 
   // ── Layout ──────────────────────────────────────────────────────────
   selTuning: 'Active tuning system: sets the just-intonation interpretation of every key.',

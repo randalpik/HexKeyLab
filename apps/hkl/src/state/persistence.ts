@@ -47,6 +47,10 @@ export interface ToolbarVisibility {
   recording: boolean;
   lumatone: boolean;
   piano: boolean;
+  /** The Secrets toolbar (ui/secrets.ts). Never true while `secretGames` is
+   *  empty: loadPrefs enforces that, so the toolbar and its button exist only
+   *  once a game has been discovered. */
+  secrets: boolean;
 }
 
 /* Velocity calibration (curve + per-key gain + per-key stats).
@@ -125,6 +129,10 @@ export interface PrefsV1 {
    *  dimming of invalid refs while Ctrl is held (firmware 1.5.0+ frame sync only). */
   lumatoneKeyEffects: boolean;
   toolbars: ToolbarVisibility;
+  /** Ids of the hidden games discovered so far by playing their motifs
+   *  (games/discovery.ts). Empty by default; the Secrets toolbar's Hide empties
+   *  it again. Treated as immutable: writers save a new array. */
+  secretGames: ReadonlyArray<string>;
   showDiagnostics: boolean;
   calibrateKeys: boolean;
   /** Route SysEx to boards 3 & 4 swapped (for units with those boards
@@ -215,7 +223,9 @@ export const DEFAULT_PREFS: PrefsV1 = {
     recording: false,
     lumatone: false,
     piano: false,
+    secrets: false,
   },
+  secretGames: [],
   showDiagnostics: false,
   calibrateKeys: false,
   swapBoards34: false,
@@ -250,7 +260,13 @@ function isTuningMode(s: unknown): s is TuningMode {
 function isPedalRole(s: unknown): s is PedalRole {
   return (PEDAL_ROLES as ReadonlyArray<unknown>).includes(s);
 }
-function loadToolbars(o: unknown): ToolbarVisibility {
+function loadSecretGames(o: unknown): ReadonlyArray<string> {
+  if (!Array.isArray(o)) return DEFAULT_PREFS.secretGames;
+  return o.filter((g): g is string => typeof g === "string");
+}
+/* `anySecret`: whether a hidden game has been discovered. Without one the
+   Secrets toolbar cannot be open, whatever was stored. */
+function loadToolbars(o: unknown, anySecret: boolean): ToolbarVisibility {
   if (!o || typeof o !== "object") return { ...DEFAULT_PREFS.toolbars };
   const t = o as Record<string, unknown>;
   return {
@@ -276,6 +292,7 @@ function loadToolbars(o: unknown): ToolbarVisibility {
       typeof t.piano === "boolean"
         ? t.piano
         : DEFAULT_PREFS.toolbars.piano,
+    secrets: anySecret && t.secrets === true,
   };
 }
 
@@ -294,6 +311,7 @@ export function loadPrefs(): PrefsV1 {
   }
   if (!obj || typeof obj !== 'object') return { ...DEFAULT_PREFS };
   const o = obj as Record<string, unknown>;
+  const secretGames = loadSecretGames(o.secretGames);
   return {
     showNotes:
       typeof o.showNotes === "boolean" ? o.showNotes : DEFAULT_PREFS.showNotes,
@@ -340,7 +358,8 @@ export function loadPrefs(): PrefsV1 {
       typeof o.autoSync === "boolean" ? o.autoSync : DEFAULT_PREFS.autoSync,
     lumatoneKeyEffects:
       typeof o.lumatoneKeyEffects === "boolean" ? o.lumatoneKeyEffects : DEFAULT_PREFS.lumatoneKeyEffects,
-    toolbars: loadToolbars(o.toolbars),
+    toolbars: loadToolbars(o.toolbars, secretGames.length > 0),
+    secretGames,
     showDiagnostics:
       typeof o.showDiagnostics === "boolean"
         ? o.showDiagnostics

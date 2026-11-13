@@ -10968,3 +10968,35 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/hkl-midi/pedal-roles.mjs` (new, 70 checks; all nine sections failed before on the missing dropdowns; with playback's pedal release and the sostenuto's edge memory removed, 4 fail); `damper` 23/23, `held-inputs` 30/30, `departure` 72/72, `fresh-profile` 13/13, `ref-press` 42/42, `velocity-owners` 22/22, `anchor` 23/23, `banded-toggle` 39/39, `mapping-switch` 63/63, `frame-sync` 20, `preset-resync` 7, `keycal` 9; typecheck, boundaries, HKL build; the lean overlay build still contains none of the four engine symbols. Not yet tried with the pedals on the hardware.
 
 **Where:** `apps/hkl/src/midi/pedals.ts` (new), `state/pedal.ts`, `midi/handler.ts`, `midi/piano.ts`, `audio/engine.ts`, `bridge/hkl-side.ts`, `recording/{capture,playback,snapshot,apply,types}.ts`, `state/persistence.ts`, `ui/{init,pedalHud,tooltips}.ts`, `index.html`; docs/architecture/hkl.md (Pedal roles; Recording), docs/architecture/engine.md (Pedal semantics), docs/guide/core.md, `test/hkl-midi/README.md`.
+
+## Hidden games: Snake on the physical keys, revealed by a motif (2026-11-12, Max)
+
+**Context:** Max wants minigames hidden in HKL that use the Lumatone's LEDs as the screen and its keys as the input. Since firmware 1.5.0 a whole-keyboard color frame takes about 17 ms, so the 280 keys work as a small display. This entry records the design approved for the first game and for how games are found. Phases 1 and 2 are implemented (the rules as pure modules; the listener's wiring and the Secrets toolbar); the running game is not yet, so the toolbar's Snake button does nothing.
+
+**Picked (Max):**
+- **Games that build on the musical lattice come first.** Snake shows the layout darkened and plays the notes its head crosses; Pong is next. A game that is not interpolated must be native to the hexagonal grid, which rules out Tetris.
+- **A game lives on the physical keys** (`games/board.ts`: indices 0–279, neighbors from `baseKeys`). The lattice under the outline only supplies colors and notes, so a ref, mode, mapping or alignment change during a game needs no handling.
+- **Snake** (`games/snake.ts`): the head starts on the key at offset (0, 0) with three body keys behind it on the row, heading toward higher `u`. A tap on the right half turns it clockwise, on the left half counter-clockwise, one of the six directions per tap, and taps before a step add up. The board's rim is the wall. Running into the wall or the body ends the game.
+- **The halves split at the midline of the case**, and every key belongs to one. On regular hexagons a key's position along the case's (+7, −2) direction is proportional to `4u + v`; the line is that value's mean, which is 1. Two keys sit exactly on it, (0, 1) and (1, −3), and each goes to the side it is on along its own row, which gives 140 keys a side and matches the canvas.
+- **Food** appears at random, never on the snake, and avoids keys touching the snake, keys in the snake's direct path and keys touching the rim. When no key satisfies all three it gives up "touching the snake" first, then the rim, then the path.
+- **A motif never starts a game.** Playing one only reveals a Secrets toolbar that lists the games found so far, because someone may simply want to play that melody.
+- **A motif is a sequence of note spellings with octave relationships** (`games/motifs.ts`): the first note in any octave, every later note's octave counted from it. Only the spelling counts, not the tuning, and an enharmonic does not match. Snake's is the Nokia tune (bars 13–16 of Tárrega's *Gran Vals*): E(0) D(0) F♯(−1) G♯(−1) C♯(0) B(−1) D(−1) E(−1) B(−1) A(−1) C♯(−1) E(−1) A(−1).
+- **The listener is a state machine fed every key press.** All motifs begin eligible; a press keeps the ones whose next note it matches. When one completes, or none is left, the machine starts over, and a press that left none eligible is heard once more as a possible first note, so a false start still finds its motif.
+
+**Picked (agent, accepted with the design):**
+- **The tail moves before the head arrives**, so the head may enter the key the tail is leaving. Three taps in one step reverse the heading into the body, which ends the game.
+- **Only motifs of games that exist are registered**, so a count of games still to unlock counts real games.
+- **The Secrets toolbar** (Max): a 7th selector button, absent until a game is discovered, listing the discovered games and how many are left. Its Hide asks for confirmation, then forgets every discovery, so a hidden toolbar only coexists with no discovered games. Motifs are heard from every input, only while the Lumatone outline is shown.
+- **The listener hears a strike at two sites**: the end of `pressHeld` (Lumatone, computer keyboard, piano input) and a canvas click that selects a key. It reads the key's spelling and octave and changes nothing about the press.
+- **Everything the toolbar shows is derived from two prefs** (`secretGames`, `toolbars.secrets`), and `loadPrefs` never returns the toolbar open with no game discovered, so Reset hides it without a case of its own. A motif already found opens the toolbar again.
+
+**Rejected:**
+- **A motif that launches its game directly**: a nuisance for anyone who wants to play the melody.
+- **Steering toward the last key touched**: Max preferred turning by half, as more fun and harder.
+- **Matching a motif by intervals in any key**: Max defined it by spelling and octave.
+- **Sending a key on the midline to a fixed side**: 139 against 141 keys.
+- **Tetris**: the largest fully lit lattice parallelogram on the outline is about 6 × 16 or 8 × 11 keys, and skewed.
+
+**Gates:** `test/games/oracle.mjs` (new, 73 checks: the board, the Snake rules including each food tier and 300 seeded games, the motif listener); `test/games/secrets.mjs` (new page gate, 19 checks; before the wiring it could not run past the missing button); `held-inputs` 30/30, `fresh-profile` 13/13, `ref-press` 42/42; typecheck, boundaries, HKL build. Not yet tried on the hardware.
+
+**Where:** `apps/hkl/src/games/{board,snake,motifs,discovery}.ts` (new), `ui/secrets.ts` (new), `ui/{toolbars,tooltips,init}.ts`, `input/held.ts`, `state/persistence.ts`, `render/draw.ts` (`getOutlineMode` exported), `index.html`, `test/games/` (new); docs/architecture/hkl.md (Controls; Hidden games).
