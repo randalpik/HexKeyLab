@@ -366,6 +366,25 @@ back to the bare path, so an import an app change removes surfaces as a
 "not imported by" error instead of a quietly disconnected module; `damper.mjs`
 still imports bare paths and is exposed to the same failure after a hot reload.
 
+## Clicks at the outline's rim
+
+```sh
+node test/hkl-midi/outline-clicks.mjs
+```
+
+Requires `pnpm dev`. With Extend pattern off the overlay hides every key
+outside the outline, and a click must never reach one. The gate scans the whole
+canvas through the real `hexAtPoint` and requires every point to resolve to
+nothing or to a key of the outline: at 1 px steps under the Lumatone, QWERTY
+and Piano outlines at each hex size, and at half-pixel steps for the Lumatone at
+medium size. It also checks, at the end of every key row, that the strip
+between the midpoint to the hidden neighbor and the outline's edge belongs to
+the rim key and that a point past the edge is nothing; and that with Extend
+pattern on the keys outside stay clickable. Before the fix every scan failed
+(7,958 of 204,441 points on the Lumatone outline at medium size). **Run it
+before declaring any change to `hexAtPoint`, the outline geometry (`outR`,
+`computeOutlinePaths`) or `activeFootprintSet` done.**
+
 ## Adding cases
 
 `check(name, got, want)` inside the in-page script; scenarios are grouped by

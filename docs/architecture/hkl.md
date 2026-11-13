@@ -106,6 +106,7 @@ A shallow tray (`#layoutBuilder`, `apps/hkl/src/ui/layoutBuilder.ts`) for the 48
 ### Selection & interaction
 
 - **Click** toggles a key; **Shift+click** exclusive-selects; **Clear** deselects all.
+- **Hit-test** (`hexAtPoint`, `render/draw.ts`): the nearest drawn key center, within `hexR·√1.5`. With Extend pattern off and an outline shown, the point must also be inside the outline polygon, and only the outline's own keys (`activeFootprintSet`) are candidates: the outline's edge runs `outR = hexR + 1` from a rim key's center, past the midpoint to the hidden neighbor, so without the second rule a strip along the rim resolved to a key the overlay hides. That strip belongs to the rim key. With Extend pattern on, the keys outside the outline are shown and clickable. Gate: `test/hkl-midi/outline-clicks.mjs`.
 - **Hover**: `hoverKey` tracks the hovered cell, drawn with a distinct highlight outside selection treatment; cleared on mouseleave.
 - **Selected keys**: brightened fill (+90), white border ring at hex edge; persist through layout switches.
 

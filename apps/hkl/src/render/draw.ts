@@ -443,6 +443,13 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
      on covered keys are no-ops. Outline 'none' draws no overlay → no clipping. */
   const showE = (document.getElementById('cbExtend') as HTMLInputElement | null)?.checked ?? true;
   const outlineMode = getOutlineMode();
+  /* The keys a click may reach: with the overlay hiding everything outside the
+     outline, only the outline's own. The outline's edge runs outR = hexR + 1
+     from a rim key's center, past the midpoint to its hidden neighbor (about
+     0.89 hexR), so "inside the outline" alone leaves a strip along the rim
+     whose nearest center is a key the user cannot see; the nearest VISIBLE key
+     is the rim key that strip belongs to. */
+  const reachable = !showE && outlineMode !== 'none' ? activeFootprintSet() : null;
   if (!showE && outlineMode !== 'none') {
     /* lumatone/qwerty outlines are statically positioned (drawn from raw
        lumatoneCells / qwertyCells without translation); piano outline rides with
@@ -462,12 +469,12 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
     }
     if (!pointInOutline(paths, tx, ty)) return null;
   }
-  /* find nearest hex by unrotated distance */
+  /* find nearest reachable hex by unrotated distance */
   let best: DrawnKey | null = null, bestD = Infinity;
   for (let i = 0; i < selection.drawnKeys.length; i++) {
     const k = selection.drawnKeys[i];
     const ddx = ux - k.ux, ddy = uy - k.uy, d2 = ddx * ddx + ddy * ddy;
-    if (d2 < bestD) { bestD = d2; best = k; }
+    if (d2 < bestD && (!reachable || reachable.has(k.q + ',' + k.r))) { bestD = d2; best = k; }
   }
   if (!best || bestD > hexR * hexR * 1.5) return null;
   return best.q + ',' + best.r;
