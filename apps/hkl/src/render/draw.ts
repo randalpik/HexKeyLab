@@ -35,6 +35,7 @@ import {
   type HejiGlyphInfo,
 } from "../tuning/heji.js";
 import { isRefEditHeld } from '../input/ref-edit.js';
+import { gameShowing, gameKeyLook, type KeyLook } from '../games/display.js';
 import { overlayPublishTick } from '../bridge/overlay-publish.js';
 import type { KeyId } from '../types.js';
 
@@ -474,6 +475,8 @@ export function hexAtPoint(mx: number, my: number): KeyId | null {
 
 // ── drawing helpers ────────────────────────────────────────────────────────
 function drawHexPath(cx: number, cy: number, r: number): void { ctx.beginPath(); for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); } ctx.closePath(); }
+/* The same hexagon added to the current path as a subpath, so many can share one fill. */
+function hexSubpath(cx: number, cy: number, r: number): void { for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.closePath(); }
 function drawNoteName(
   cx: number,
   cy: number,
@@ -1409,6 +1412,32 @@ export function draw(): void {
       ctx.fill("evenodd");
       ctx.restore();
     }
+  }
+
+  /* === a running game's picture (games/display.ts) ===
+     The same looks the device sync sends to the LEDs, painted over the Lumatone
+     outline's keys: a dim cover on darkened keys (the ref-edit dim's cover, so
+     note names stay readable) and white on white keys. A game lives on the
+     physical keys, so the hexes sit at the outline's own static positions
+     (lumatoneCells offsets), not on the lattice, which may be sliding under
+     them. Before the outline pass, so its white stroke stays crisp. */
+  if (gameShowing() && getOutlineMode() === "lumatone") {
+    ctx.save();
+    ctx.translate(view.CW / 2, cyC);
+    ctx.rotate(-tiltAngle);
+    const fillLook = (look: KeyLook, style: string): void => {
+      ctx.beginPath();
+      for (let i = 0; i < lumatoneCells.length; i++) {
+        if (gameKeyLook(i) !== look) continue;
+        const [u, v] = lumatoneCells[i];
+        hexSubpath(u * dxH + v * dxH * 0.5, -v * dyH, hexR - 0.5);
+      }
+      ctx.fillStyle = style;
+      ctx.fill();
+    };
+    fillLook("dim", REF_DIM_FILL);
+    fillLook("white", "#fff");
+    ctx.restore();
   }
 
   /* === overlay + outline (rotated context, on top of everything) === */

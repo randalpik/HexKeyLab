@@ -412,4 +412,55 @@ selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();
 assert.equal(sent.length, 0, 'nothing without Auto-sync');
 ok('frame timings recorded; Auto-sync off sends nothing');
 
+// ── L: a running game's picture has the last word on each key (games/display.ts) ──
+// The gate's own statement of the rule: a white key is #ffffff, a dimmed key keeps
+// GAME_DIM_LED of each channel of what it would otherwise show (the level is set by eye,
+// so the gate reads it), and a normal key is untouched. Both transports show it.
+const { setGamePicture, gameShowing, GAME_DIM_LED } = await import('../../apps/hkl/src/games/display.ts');
+assert(GAME_DIM_LED > 0 && GAME_DIM_LED < 1, 'the game dim is a fraction');
+const gameDim = (hex) => '#' + [1, 3, 5]
+  .map((a) => Math.round(parseInt(hex.slice(a, a + 2), 16) * GAME_DIM_LED).toString(16).padStart(2, '0')).join('');
+const look = (i) => (i % 7 === 0 ? 'white' : i % 7 === 1 ? 'normal' : 'dim');
+const pictured = (colors, of = look) =>
+  colors.map((c, i) => (of(i) === 'white' ? '#ffffff' : of(i) === 'normal' ? c : gameDim(c)));
+selection.hoverKey = null;
+fresh([1, 5, 0]); lumatone.keyEffects = false;
+setAnchor(q0, r0);
+syncLumatoneColors(); drain(); sent = [];
+assert(!gameShowing(), 'no game to begin with');
+setGamePicture(look);
+syncLumatoneColors();
+assert.equal(sent.filter(isFrame).length, 1, 'the picture goes out as one frame');
+assert.deepEqual(sysex.inFlight.frameColors, pictured(base()), 'white, untouched and dimmed keys');
+drain(); sent = [];
+syncLumatoneColors();
+assert.equal(sent.length, 0, 'an unchanged picture sends nothing');
+setAnchor(q0, r0 + 1);                                         // a ref change under a running game
+beginLumatoneSlide(0, 1);
+now += 250; tick();
+assert.deepEqual(sysex.inFlight.frameColors, pictured(fieldAt(q0, r0 + 0.5)), 'mid-slide: the picture over the sliding field');
+now += 300; tick(); drain();
+assert.deepEqual(lumatone.deviceColors, pictured(base()), 'lands on the picture over the new layout');
+setGamePicture(null);
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'the game gone: every key restored');
+ok('a game picture: white, dimmed and untouched keys in one frame; it rides a ref slide; restored after');
+
+fresh([1, 4, 0]);
+setGamePicture(look);
+syncLumatoneColors(); drain();
+assert(!sent.some(isFrame), 'no frames on 1.4.0');
+assert.deepEqual(lumatone.deviceColors, pictured(base()), 'the per-key path shows the picture too');
+sent = [];
+const flashed = (i) => (i === 1 ? 'dim' : look(i));            // key 1 was untouched: the food going dark
+setGamePicture(flashed);
+syncLumatoneColors(); drain();
+assert.equal(cmds(sent).filter((c) => c === 0x01).length, 1, 'one key changing is one per-key message');
+assert.deepEqual(lumatone.deviceColors, pictured(base(), flashed));
+setGamePicture(null);
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'restored on the per-key path');
+setAnchor(q0, r0);
+ok('firmware < 1.5.0 shows the picture per key, one message per changed key');
+
 console.log(`frame-sync: ${checks} checks passed`);

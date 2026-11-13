@@ -26,6 +26,7 @@ import { animation, smoothstep } from '../render/animation.js';
 import { keyColorHex, lightenHex, HOVER_LIGHTEN } from '../render/colors.js';
 import { isRefEditHeld } from "../input/ref-edit.js";
 import { isValidRef } from "../state/reference.js";
+import { gameKeyLook, GAME_DIM_LED } from "../games/display.js";
 import {
   sysexBoardFor, fixedMidiChannelMap,
   SYSEX_CMD_SET_AFTERTOUCH_FLAG, SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES,
@@ -66,9 +67,20 @@ export function toggleLumatoneKeyEffects(): void {
    render/colors.ts), which has note names to keep readable. */
 export const REF_DIM_LED = 0.3;
 
-function ledRefDimHex(hex: string): string {
-  const dim = (at: number): number => Math.round(parseInt(hex.slice(at, at + 2), 16) * REF_DIM_LED);
+/* `hex` with each LED channel scaled to `level` of its value. */
+function ledDimHex(hex: string, level: number): string {
+  const dim = (at: number): number => Math.round(parseInt(hex.slice(at, at + 2), 16) * level);
   return '#' + ((1 << 24) + (dim(1) << 16) + (dim(3) << 8) + dim(5)).toString(16).slice(1);
+}
+
+/* What Lumatone key `i` shows, given its layout color `c`: while a game runs
+   (games/display.ts), the game's look of that key — white, the color darkened,
+   or the color itself. Applied last, to whatever the key would otherwise show,
+   so a game needs nothing from the layout: a ref change slides the darkened
+   colors under it like any others. Both transports show it. */
+function gameLedColor(i: number, c: string): string {
+  const look = gameKeyLook(i);
+  return look === 'white' ? '#ffffff' : look === 'dim' ? ledDimHex(c, GAME_DIM_LED) : c;
 }
 
 /* Color of lattice cell (q, r) as the frame path shows it: the key color, and with
@@ -80,7 +92,7 @@ function frameCellColor(q: number, r: number): string {
   let c = keyColorHex(q, r);
   if (!lumatone.keyEffects) return c;
   if (selection.hoverKey === q + "," + r) c = lightenHex(c, HOVER_LIGHTEN);
-  if (isRefEditHeld() && !isValidRef(q, r)) c = ledRefDimHex(c);
+  if (isRefEditHeld() && !isValidRef(q, r)) c = ledDimHex(c, REF_DIM_LED);
   return c;
 }
 
@@ -175,18 +187,19 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
      updated by user-driven ref changes). On the frame path, with Key effects
      on, a key shows what the canvas does to its cell (frameCellColor: the hover
      lightening, the invalid-ref dimming); mid-slide, each key samples
-     the field at its cell offset plus the slide's fractional anchor. */
+     the field at its cell offset plus the slide's fractional anchor. A running
+     game then has the last word on each key (gameLedColor). */
   const anchor =
     frames && slideState ? slideAnchor(slideState, Date.now()) : null;
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
     if (anchor) {
       const [u, v] = lumatoneCells[i];
-      target.push(sampleField(u + anchor[0], v + anchor[1], frameCellColor));
+      target.push(gameLedColor(i, sampleField(u + anchor[0], v + anchor[1], frameCellColor)));
       continue;
     }
     const [q, r] = lumatoneCell(i);
-    target.push(frames ? frameCellColor(q, r) : keyColorHex(q, r));
+    target.push(gameLedColor(i, frames ? frameCellColor(q, r) : keyColorHex(q, r)));
   }
   if (!lumatone.deviceColors)
     lumatone.deviceColors = new Array<string | null>(280).fill(null);

@@ -22,7 +22,9 @@
 //     (selection, sustain, velocity, re-articulation flash, onSelectionChanged).
 //     While the ref-edit modifier is held (input/ref-edit.ts) a note-on picks
 //     its cell as the reference note instead (input/ref-pick.ts) and is never
-//     a note: nothing sounds, nothing is recorded as held.
+//     a note: nothing sounds, nothing is recorded as held. Otherwise, while a
+//     hidden game runs (games/mode.ts), a note-on is the game's input and is
+//     not a note either.
 
 import { audio } from '../state/audio.js';
 import { pedal, pushPedalEvent } from '../state/pedal.js';
@@ -45,6 +47,7 @@ import {
 } from '../input/held.js';
 import { isRefEditHeld } from '../input/ref-edit.js';
 import { pickRef } from '../input/ref-pick.js';
+import { captureGamePress } from '../games/mode.js';
 import type { KeyId } from '../types.js';
 
 /* Lumatone physical inputs are tracked in input/held.ts under source
@@ -203,6 +206,12 @@ function routeChannelMessage(data: Uint8Array): void {
       }
       return;
     }
+    /* A running hidden game takes the press as its input (games/mode.ts): a
+       turn, or the start of its clock. Like the ref pick above it is not a
+       note — no velocity statistics, no Composer strike, no held record, so its
+       note-off and aftertouch find nothing. The ref-edit modifier, checked
+       first, keeps precedence. The index is fixedMidiToKey's. */
+    if (captureGamePress((ch - 1) * 56 + d1)) return;
     const key = heldKey('lumatone', physId) ?? fixedMidiToKey(ch, d1);
     if (!key) return;
     /* Per-key velocity statistics: always-on rolling sample collection when

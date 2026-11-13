@@ -67,6 +67,7 @@ import { SampleEngine } from '../audio/samples.js';
 import { applyToolbarVisibility, initToolbarSelector } from './toolbars.js';
 import { initSecrets, renderSecrets } from './secrets.js';
 import { hearKeyPress } from '../games/discovery.js';
+import { captureGameClick } from '../games/mode.js';
 import { applyTooltips } from './tooltips.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
 import { markFirstNote } from '../input/first-note.js';
@@ -267,6 +268,9 @@ cv.addEventListener('mousedown', function (e: MouseEvent) {
     pickRef(+qs, +rs);
     return;
   }
+  /* A running hidden game takes a click on one of the Lumatone's keys as a
+     press of that key (games/mode.ts), and it selects nothing. */
+  if (captureGameClick(key)) return;
   if (e.shiftKey) { selection.selectedKeys.clear(); selection.selectedKeys.add(key); }
   else {
     if (selection.selectedKeys.has(key)) selection.selectedKeys.delete(key);

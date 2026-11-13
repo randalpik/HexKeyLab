@@ -11000,3 +11000,46 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/games/oracle.mjs` (new, 73 checks: the board, the Snake rules including each food tier and 300 seeded games, the motif listener); `test/games/secrets.mjs` (new page gate, 19 checks; before the wiring it could not run past the missing button); `held-inputs` 30/30, `fresh-profile` 13/13, `ref-press` 42/42; typecheck, boundaries, HKL build. Not yet tried on the hardware.
 
 **Where:** `apps/hkl/src/games/{board,snake,motifs,discovery}.ts` (new), `ui/secrets.ts` (new), `ui/{toolbars,tooltips,init}.ts`, `input/held.ts`, `state/persistence.ts`, `render/draw.ts` (`getOutlineMode` exported), `index.html`, `test/games/` (new); docs/architecture/hkl.md (Controls; Hidden games).
+
+## Hidden games: Snake runs (2026-11-12, Max)
+
+**Amends** "Hidden games: Snake on the physical keys, revealed by a motif" (above): its "the running game is not yet" no longer holds. The Secrets toolbar's Snake button starts the game.
+
+**Context:** the third phase of the design approved that day: showing the game on the device and the canvas, taking its input, playing its notes, and starting and ending it.
+
+**Picked (Max, with the design):**
+- **The layout stays visible**: every key is darkened except the food, which flashes at its normal color, and the snake is white. The device and the canvas show the same picture.
+- **One hook on the device**: `syncLumatoneColors` passes each key's color through the game's look last. Nothing else in the sync changes, so both transports show the game and a ref change slides the darkened layout under it.
+- **A captured press is not a note**, and capture sits where the ref pick sits: in the MIDI handler's note-on, after the ref-edit branch (which keeps precedence), and in the canvas click. Clicks steer too, so the game is playable and testable without the hardware. The computer keyboard and the piano input are not captured.
+- **The snake plays its notes as a held source through the selection** (`'game'` in `input/held.ts`). Its notes therefore behave like a player's: selected on the canvas, in the analysis panel, on Piano output, sustained by the damper, broadcast to Composer, and recorded. Recording them is wanted, not guarded.
+- **The first press starts the clock and is not a turn**, so there is time to get from the mouse to the keys.
+- **The step and the food's flash have separate clocks**: 300 ms a step, constant (length is the difficulty), and 200 ms a flash. First built as one 200 ms clock with a 400 ms step; Max decoupled them and sped the step up the same day.
+- **A game-over sequence, then the modal**: the background stays dark while the snake flashes off and on three times, then a second's wait, then the game exits and a modal on the HKL side reports the cause and the score. Text on the Lumatone waits on finding out what numbers can be shown there.
+- **Leaving the Lumatone outline ends a game without a modal; a hidden page pauses it.**
+- **Keystroke lighting stays on** during a game. Turning it off is possible and would be a separate decision.
+- **No user-guide entry**: the games are secret.
+
+**Picked (agent):**
+- **The picture is a state-only module** (`games/display.ts`: one function from key index to `'normal'`, `'dim'` or `'white'`). The color sync and the canvas import that and nothing of the game driver, which pulls in the audio and input paths; the lean overlay build stays free of the engines.
+- **The device's dim level is its own constant**, `GAME_DIM_LED` = 0.3, starting at the ref-edit dim's level and to be set by eye. The canvas uses the ref-edit dim's cover (`REF_DIM_FILL`), which keeps note names readable.
+- **Velocities**: pp (25) for the line, f (74) for the note where the snake ate. To be picked by ear.
+- **Starting a game switches the Outline dropdown to Lumatone**, through its own handler. The game's button shows as playing and, pressed again, stops the game. A game whose button goes away (Hide, Reset) is stopped.
+- **The clocks are `setInterval`**, not the audio clock, so the snake's line has a timer's jitter.
+- **In the game-over sequence** the food goes dark with the rest, the snake's note stops at the crash, each change of the flash is 100 ms, and presses are taken but do nothing. The snake is off through the wait (Max; first built lit).
+- **Modal copy**: "Game over", then "The snake hit the wall." or "The snake ran into itself." and "Score: N." ("Score" is Max's word; N is the food eaten.)
+
+**Rejected:**
+- **Sounding the snake's notes straight through `noteOn`**: `syncAudio` stops every live voice that is not selected, so it would need an exemption there.
+- **Capturing in `pressHeld`**, one site for three sources: the handler has already taken velocity statistics and told Composer of the strike by then.
+- **Requiring firmware 1.5.0**: the hook is in the target both transports share, so the per-key path shows the game with one message per changed key.
+
+**Known, not guarded:**
+- The OBS overlay does not mirror a game; the picture is not in the published render state.
+- With Composer open, the snake's notes arrive there as held keys.
+- Three taps within one step reverse the snake into its body.
+- With Auto-sync off the device shows nothing, and the game runs on the canvas.
+- After a ref change mid-game the snake's sounding note keeps its old pitch until the next step.
+
+**Gates:** `test/games/snake.mjs` (new page gate, 67 checks; before the game mode it could not run, and before the separate clocks and the game-over sequence it failed 22 of the 48 checks it reached); `test/hkl-midi/frame-sync.mjs` section L (new, 22 checks in all): the picture in one frame, through a ref slide, restored, and per key below 1.5.0. Unchanged and passing: `oracle` 73/73, `secrets` 19/19, `held-inputs` 30/30, `ref-press` 42/42, `departure` 72/72, `pedal-roles` 70/70, `velocity-owners` 22/22, `damper` 23/23, `fresh-profile` 13/13, `anchor` 23/23, `banded-toggle` 39/39, `alignment` 18/18, `ref-centering` 26/26, `ref-validity` 26/26, `mapping-switch` 63/63, `keycal-overlay` 18/18, `lattice-scroll` 19/19, `layer-sync` 4/4, `preset-resync` 7, `keycal` 9, `sync-order`; typecheck, boundaries, HKL build; the lean overlay build contains none of the four engine symbols. Not yet tried on the hardware: the dim level, the two velocities, the step rate.
+
+**Where:** `apps/hkl/src/games/{mode,display}.ts` (new), `ui/secrets.ts`, `ui/init.ts`, `midi/handler.ts`, `input/held.ts`, `lumatone/sync.ts`, `render/draw.ts`, `index.html`; `test/games/snake.mjs` (new), `test/hkl-midi/frame-sync.mjs`; docs/architecture/hkl.md (Lumatone output; Lumatone input; Hidden games), `test/games/README.md`, `test/hkl-midi/README.md`.

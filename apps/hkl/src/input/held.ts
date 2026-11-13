@@ -26,12 +26,16 @@ import { markFirstNote } from './first-note.js';
 import { hearKeyPress } from '../games/discovery.js';
 import type { KeyId } from '../types.js';
 
-export type HeldSource = 'lumatone' | 'qwerty' | 'piano';
+/* 'game' is a running hidden game playing its own notes (games/mode.ts): the
+   snake strikes the key under its head the way a player would, through the same
+   bodies, so its notes select, sound, sustain and record like any others. */
+export type HeldSource = 'lumatone' | 'qwerty' | 'piano' | 'game';
 
 const held: Record<HeldSource, Map<string, KeyId>> = {
   lumatone: new Map(),
   qwerty: new Map(),
   piano: new Map(),
+  game: new Map(),
 };
 
 /** The KeyId physical input `id` struck, if it is still held. */
@@ -57,6 +61,7 @@ export function clearAllHeld(): void {
   held.lumatone.clear();
   held.qwerty.clear();
   held.piano.clear();
+  held.game.clear();
 }
 
 /** Strike `key` for physical input `id`. A voice already sounding on `key`
@@ -71,10 +76,12 @@ export function pressHeld(source: HeldSource, id: string, key: KeyId, velocity: 
   selection.selectedKeys.add(key);
   audio.keyVelocity[key] = velocity;
   held[source].set(id, key);
-  markFirstNote(source);
+  if (source !== 'game') markFirstNote(source);
   restrikePianoOut(key); /* re-attack on the external synth if already sounding */
   onSelectionChanged();
-  hearKeyPress(key); /* the motif listener hears every strike; it changes none */
+  /* The motif listener hears every strike a person makes; it changes none. A
+     game's own notes are not a person's. */
+  if (source !== 'game') hearKeyPress(key);
 }
 
 /** Release physical input `id`. The damper or a sostenuto lock keeps the note
