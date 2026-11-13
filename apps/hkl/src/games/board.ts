@@ -72,6 +72,18 @@ export function halfOf(i: number): Half {
   return halves[i];
 }
 
+/** True for a key whose center is exactly on the midline: (0, 1) and (1, −3).
+ *  `halfOf` still gives each a half; a game may treat them as nobody's. */
+export function onCenterLine(i: number): boolean {
+  return along[i] === alongMid;
+}
+
+/** How many key steps apart keys `a` and `b` are. */
+export function keyDistance(a: number, b: number): number {
+  const du = baseKeys[a][0] - baseKeys[b][0], dv = baseKeys[a][1] - baseKeys[b][1];
+  return Math.max(Math.abs(du), Math.abs(dv), Math.abs(du + dv));
+}
+
 /* The case's frame, for a game that draws shapes between the keys: lengths in
    key widths (the distance between neighboring keys' centers, on regular
    hexagons), x along the case's long direction toward the right half, y toward
@@ -97,3 +109,39 @@ const points: ReadonlyArray<readonly [number, number]> =
 export function keyPoint(i: number): readonly [number, number] {
   return points[i];
 }
+
+/** The key whose tile holds point (x, y) of the frame, or −1 where the board
+ *  has none there. */
+export function keyAtPoint(x: number, y: number): number {
+  /* Back to offsets: undo the turn, then the hexagons' slant. */
+  const fx = (6 * x + ROOT3 * y) / CASE_STEP, fy = (-ROOT3 * x + 6 * y) / CASE_STEP;
+  const v = fy / (ROOT3 / 2) + meanV, u = fx - (fy / (ROOT3 / 2)) / 2 + meanU;
+  /* The nearest key center: round the three hexagon coordinates (u, v and
+     w = −u − v), then recompute the one that moved most from the other two. */
+  const w = -u - v;
+  let ru = Math.round(u), rv = Math.round(v);
+  const rw = Math.round(w);
+  const du = Math.abs(ru - u), dv = Math.abs(rv - v), dw = Math.abs(rw - w);
+  if (du > dv && du > dw) ru = -rv - rw;
+  else if (dv > dw) rv = -ru - rw;
+  return keyAt(ru, rv);
+}
+
+/* The playing field of a game with walls: the rectangle-like region the keys
+   fill, squared off. Its long sides are level lines through the outer extents
+   of the corner keys (five on each side lie exactly on one line, a board step
+   apart), so between corner keys a point inside the field is over no key. Its
+   ends run square to the key rows, so they are tilted 16.1° from square. Nine
+   rows reach each end, alternating half a key back, and the end's line goes
+   through the outer extents of the outermost keys (four at the right end, five
+   at the left). Both pairs of lines are the same distance from the origin. */
+
+/** The key rows' direction in the frame, a unit vector. */
+export const ROW: readonly [number, number] = frameStep(1, 0);
+
+/** The long sides are at y = ±FIELD_WALL. */
+export const FIELD_WALL = Math.max(...points.map((p) => p[1])) + 0.5;
+
+/** The ends are where a point's position along the rows, x·ROW[0] + y·ROW[1],
+ *  is ±FIELD_END. */
+export const FIELD_END = Math.max(...points.map((p) => p[0] * ROW[0] + p[1] * ROW[1])) + 0.5;

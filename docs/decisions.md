@@ -11074,3 +11074,40 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/games/host.mjs` (new page gate, 47 checks: a stub game through the host); `test/games/oracle.mjs` section D (new; 100 checks in all): the frame and the shares against a brute-force count; `test/hkl-midi/frame-sync.mjs` section L (restated for scenes, plus a ball's partial shares; 23 checks in all); `test/games/snake.mjs` unchanged in what it checks, 67/67 before and after; `test/games/secrets.mjs` 19/19 before and after.
 
 **Where:** `apps/hkl/src/games/{mode,display,board}.ts`, `games/{scene,snake-game,drivers}.ts` (new), `lumatone/sync.ts`, `render/draw.ts`, `midi/handler.ts`, `ui/init.ts`, `ui/secrets.ts`; `test/games/{host.mjs (new),oracle.mjs,snake.mjs,README.md}`, `test/hkl-midi/{frame-sync.mjs,README.md}`; docs/architecture/hkl.md (Lumatone output; Lumatone input; Hidden games).
+
+## Hidden games: Pong's rules (2026-11-13, Max)
+
+**Context:** the second hidden game. Its rules are written as a pure module (`games/pong.ts`) with a Node oracle; the driver that makes it playable is the next phase. Spec and the full list of rulings: docs/local/easter-egg-games.md.
+
+**Picked (Max):**
+- **Two players, a half each, paddles made by holding keys**: a first key is a bumper, a second within 4 key steps makes a round-ended paddle between them. A paddle cannot move, so it adds nothing to the ball's motion. Reflection is real: about the surface's normal at the point of contact.
+- **The long sides are straight lines** through the outer extents of the corner keys, not drawn; the ball may leave the keys briefly before it bounces. The ends are the goals.
+- **A press is refused entirely** if the bumper or paddle it would make touches the ball.
+- **The serve is from (0, 1), and a key exactly on the center line is never honored.** The central key (0, 0), first chosen, is in the left half: keeping its space clear cost the left player a key and 55 paddles against the right's 19. The layout has no symmetry that swaps the halves, so no mirror key could be blocked to even it. (0, 1) is exactly on the line; with it and (1, −3) taken from both players, each half has 139 keys and 2,812 paddles.
+- **No paddle may go through the starting key's space**: the ball's place there is kept clear always, so nothing has to be dropped when the ball returns.
+- **Serve angles are worked out ahead of time and hardcoded**, never traced in play: the starting key and the field are facts of the hardware. Approved numbers, in degrees from the case's long direction: toward the right 49 up and 48 down, toward the left 46 up and 52 down. A serve picks a half at random, then an angle inside its range.
+- **Before every serve the ball flashes three times on the starting key.** After a goal: a one-second pause with no sound. First to 3. The end goes straight to the modal.
+- **The field has no ball until the ball is about to be in play**: it first appears with the warning's first flash, lit, before the first serve and after every goal. First built with the ball lit while the game waited and the warning going off first; that would have needed a rule for when the ball returns to the starting key after a goal.
+- **A dotted center line**, as in the original, so each player sees the border of their half.
+
+**Picked (agent):**
+- **The ranges are the largest whole degrees that reach the end with at most two bounces**, where a bounce is the ball's edge meeting a long side and reaching the end is the whole ball passing it. Traced limits from (0, 1): 49.91° and 48.78° toward the right, 46.08° and 52.56° toward the left. They differ because the ends are tilted 16.1° and the starting key is 0.90 above the middle.
+- **"The starting key's space" is the ball's disc on that key**: the same overlap test as against the ball, at a second, fixed position. Nothing is tabulated but the two center-line keys.
+- **A bounce is taken at the point of first contact**, found within the step by halving. Using the position a 0.1 step left the ball in put the normal a few degrees off on a glancing hit.
+- **Paddles can be set whenever the match is not over**, also while the game waits and during the pause.
+- **Sizes and speeds**, all to be tuned by eye: ball one key wide; paddle and bumper 0.8; center line 0.2 thick in dashes one key long and one apart, one centered on the middle (so the starting key is in a gap); speed 8 key widths a second, +0.25 a second of play, at most 24, halfway back after a goal.
+
+**Rejected:**
+- **Blocking a second key on the right to match the central key**: by distance to the field's center the candidate is (1, 0), which evens the paddles to 55 and 51 but names a key with no geometric reason; by horizontal distance to the center line, which is what Max cares about, the central key's removal already leaves the halves level near the line, and the left still has a key fewer.
+- **Serving from the field's exact center**, between keys: it blocks one key a side from one rule, but leaves the paddles at 37 lost against 60, and the ball's flash smears over four keys (65%, 16%, 5%, 5%).
+- **Dropping a paddle when a goal returns the ball into it**: unnecessary once the starting place is always clear.
+- **Tracing each serve at run time**: the answer never changes.
+
+**Known, not guarded:**
+- The serve is 0.90 above the field's middle, and the ends are tilted, so a level run from it is 16.13 to the left end and 15.61 to the right.
+- A ball sent straight up and down never reaches an end unless a player puts something in its way.
+- A paddle along a line of keys right beside the starting key overlaps the starting place by 0.03 and is refused; at a thickness of 0.73 or less it would not be.
+
+**Gates:** `test/games/oracle.mjs` section E (new, 85 checks; 185 in all). Two deliberate breaks were caught before it was trusted: without the contact search both off-center reflection checks failed, and with one serve limit a degree wider the range checks failed.
+
+**Where:** `apps/hkl/src/games/pong.ts` (new), `games/board.ts` (the field, `onCenterLine`, `keyDistance`, `keyAtPoint`), `games/scene.ts`; `test/games/{oracle.mjs,README.md}`; docs/architecture/hkl.md (Hidden games).

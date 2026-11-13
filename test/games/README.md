@@ -30,6 +30,20 @@ is `N/N checks passed`, and it exits 1 on any failure.
   a bumper, a paddle along and across the rows, a dash, and a ball over a dash,
   each within 1% of a brute-force count made in the gate; and a ball's total
   light the same at 300 seeded positions.
+- **E, Pong** (`pong.ts`, and the field in `board.ts`): the long sides through
+  five corner keys each and the ends square to the rows, both pairs symmetric;
+  the two keys on the center line; the key under a point; the paddle table;
+  over every key and every pair, a press honored exactly when the gate's own
+  geometry says its shape clears the ball's starting place (139 keys and 2,812
+  paddles a half); a press refused against the ball in play; the serve's
+  warning; 2,000 seeded serves inside the ruled ranges, and the ranges against
+  paths traced in the gate (every whole degree inside bounces at most twice,
+  one degree more bounces a third time, and the module's ball agrees bounce for
+  bounce); reflection off a long side, a bumper, a paddle's side and its round
+  end against the gate's own contact point; several hundred shots at a paddle at top
+  speed, in 16 ms and 100 ms frames, each a hit with the ball never left inside; a
+  goal, the pause and the next warning; first to 3; the speed's rise, cap and
+  drop; and the shapes drawn.
 
 **Run it before declaring any change to `apps/hkl/src/games/` done.**
 

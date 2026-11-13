@@ -12,7 +12,7 @@
 // Pure: no DOM and no state, so the device sync, the canvas and the Node oracle
 // all import it.
 
-import { KEY_COUNT, keyPoint, frameStep } from './board.js';
+import { KEY_COUNT, keyPoint, ROW } from './board.js';
 
 export type Shape =
   /** The whole tile of key `key`. */
@@ -38,7 +38,7 @@ export interface Scene {
    (X along a row, Y across the rows), every tile is the same upright hexagon:
    corners at Y = ±1/√3 above and below its key, and at height y from the key
    it reaches min(1/2, 1 − √3|y|) to each side. */
-const [ROW_X, ROW_Y] = frameStep(1, 0);
+const [ROW_X, ROW_Y] = ROW;
 const alongRows = (x: number, y: number): readonly [number, number] =>
   [x * ROW_X + y * ROW_Y, y * ROW_X - x * ROW_Y];
 const ROOT3 = Math.sqrt(3);
