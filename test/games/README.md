@@ -21,6 +21,15 @@ is `N/N checks passed`, and it exits 1 on any failure.
 - **C, motifs** (`motifs.ts`): the table, the Nokia tune from any E, a wrong
   octave, an enharmonic, a false start, two motifs sharing a start, and the
   Pong motif, which is defined here and not yet registered.
+- **D, the case's frame and the scene** (`board.ts` `keyPoint`, `scene.ts`):
+  every key where the gate's own turn of `baseKeys` puts it (centroid at the
+  origin, the board step along x, neighbors one key apart, the long sides at
+  ±4.31, each key's x on the side of its half, two keys on the center line);
+  a tile shape exactly 1, no shape exactly 0, a shape over everything exactly 1
+  everywhere; a ball on a key covering π/(2√3) of it and nothing else; a ball,
+  a bumper, a paddle along and across the rows, a dash, and a ball over a dash,
+  each within 1% of a brute-force count made in the gate; and a ball's total
+  light the same at 300 seeded positions.
 
 **Run it before declaring any change to `apps/hkl/src/games/` done.**
 
@@ -59,7 +68,8 @@ Requires `pnpm dev`. Plays a whole game in headless, muted Chromium against a
 simulated Lumatone on firmware 1.5.0 that ACKs every message. The game's clocks
 are driven by hand: the gate takes the intervals the game asks for (its step,
 its food flash, its game-over flash, recognized by the tick function's name:
-`stepTick`, `flashTick`, `overTick`) and calls them, so each step is
+`stepTick`, `flashTick`, `overTick`; the host names each interval's callback
+after the tick it wraps) and calls them, so each step is
 deterministic and nothing waits on real time. It also pins the ruled timings:
 300 ms a step, 200 ms a flash, three game-over flashes, a one-second hold. The
 gate states the board itself (white, the food's own color, the dim level it
@@ -87,6 +97,41 @@ starting under another outline switches to the Lumatone outline.
 The picture on the per-key path of older firmware, and through a ref slide, is
 pinned hardware-free by section L of `test/hkl-midi/frame-sync.mjs`.
 
-**Run it before declaring any change to `games/mode.ts`, `games/display.ts`, the
-game hooks in `lumatone/sync.ts`, `render/draw.ts`, `midi/handler.ts` and the
-canvas click, or the game buttons and modal in `ui/secrets.ts` done.**
+**Run it before declaring any change to `games/snake-game.ts`, `games/mode.ts`,
+`games/display.ts`, the game hooks in `lumatone/sync.ts`, `render/draw.ts`,
+`midi/handler.ts` and the canvas click, or the game buttons and modal in
+`ui/secrets.ts` done.**
+
+## The host, with a stub game (page gate)
+
+```sh
+node test/games/host.mjs
+```
+
+Requires `pnpm dev`. Snake uses only part of what the host (`games/mode.ts`)
+offers, so this gate starts a driver of its own, under Snake's id (the toolbar
+stops a game it has no button for), against the same simulated Lumatone. The
+stub shows a ball on a key, a paddle along a row and a square-ended dash, plays
+a press of one key at velocity 33 and swallows every other. The gate drives the
+host's interval and its animation frames by hand (the frame callback is
+`gameFrame`).
+
+Checks that the device shows each key blended toward white by the share of its
+tile under the shapes (the shares are the oracle's business; the OKLab blend
+over the darkened color is stated in the gate), with the undarkened key
+untouched; that the canvas is white at the ball's center and between two keys
+under the paddle, and not on a key the shapes miss; that a played press is a
+note at the game's velocity whatever the touch, a swallowed one is no note, and
+the game hears both and their releases; that a canvas click goes to the game
+and selects nothing; that a clock runs at its period, stays one clock when
+asked for twice, does nothing on a hidden page, and stops; that the frame clock
+hands over the time since the last frame, 0 on the first and on the first after
+a hidden page, capped at `MAX_FRAME_MS`; that the game's line is one note at a
+time and `hush` ends it; that `end(text)` takes the game off the keys, shows
+the text in the modal and restores the device and the canvas, and that the
+host does nothing afterward; that a second game replaces the first; and that
+leaving the Lumatone outline ends a game on its next frame.
+
+**Run it before declaring any change to `games/mode.ts`, `games/scene.ts`,
+`games/display.ts`, or the game hooks in `lumatone/sync.ts`, `render/draw.ts`
+and `midi/handler.ts` done.**

@@ -35,7 +35,8 @@ import {
   type HejiGlyphInfo,
 } from "../tuning/heji.js";
 import { isRefEditHeld } from '../input/ref-edit.js';
-import { gameShowing, gameKeyLook, type KeyLook } from '../games/display.js';
+import { gameScene } from '../games/display.js';
+import { keyAt, keyPoint } from '../games/board.js';
 import { overlayPublishTick } from '../bridge/overlay-publish.js';
 import type { KeyId } from '../types.js';
 
@@ -1421,29 +1422,70 @@ export function draw(): void {
     }
   }
 
-  /* === a running game's picture (games/display.ts) ===
-     The same looks the device sync sends to the LEDs, painted over the Lumatone
-     outline's keys: a dim cover on darkened keys (the ref-edit dim's cover, so
-     note names stay readable) and white on white keys. A game lives on the
-     physical keys, so the hexes sit at the outline's own static positions
-     (lumatoneCells offsets), not on the lattice, which may be sliding under
-     them. Before the outline pass, so its white stroke stays crisp. */
-  if (gameShowing() && getOutlineMode() === "lumatone") {
+  /* === a running game's scene (games/display.ts, games/scene.ts) ===
+     The scene the device sync turns into LED colors, painted over the Lumatone
+     outline: a dim cover on its darkened keys (the ref-edit dim's cover, so
+     note names stay readable), then its white shapes as they are. The device
+     shows each key's share of them; here they keep their outlines, so a ball
+     between keys is a disc. A game lives on the physical keys, so everything
+     sits at the outline's own static positions (lumatoneCells offsets), not on
+     the lattice, which may be sliding underneath. Before the outline pass, so
+     its white stroke stays crisp. */
+  const scene = getOutlineMode() === "lumatone" ? gameScene() : null;
+  if (scene) {
     ctx.save();
     ctx.translate(view.CW / 2, cyC);
     ctx.rotate(-tiltAngle);
-    const fillLook = (look: KeyLook, style: string): void => {
-      ctx.beginPath();
-      for (let i = 0; i < lumatoneCells.length; i++) {
-        if (gameKeyLook(i) !== look) continue;
-        const [u, v] = lumatoneCells[i];
-        hexSubpath(u * dxH + v * dxH * 0.5, -v * dyH, hexR - 0.5);
+    const keyX = (i: number): number => lumatoneCells[i][0] * dxH + lumatoneCells[i][1] * dxH * 0.5;
+    const keyY = (i: number): number => -lumatoneCells[i][1] * dyH;
+    ctx.beginPath();
+    for (let i = 0; i < lumatoneCells.length; i++) {
+      if (scene.dark(i)) hexSubpath(keyX(i), keyY(i), hexR - 0.5);
+    }
+    ctx.fillStyle = REF_DIM_FILL;
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "#fff";
+    /* A whole tile is its key's hexagon, drawn as every other key effect is. */
+    ctx.beginPath();
+    for (const s of scene.shapes) {
+      if (s.kind === "tile") hexSubpath(keyX(s.key), keyY(s.key), hexR - 0.5);
+    }
+    ctx.fill();
+    if (scene.shapes.some((s) => s.kind !== "tile")) {
+      /* The other shapes are in the case's frame (games/board.ts keyPoint). A
+         key's place there and its place here are both linear in its physical
+         offset, under every alignment, so three keys fix the one map between
+         them: it takes the frame's steps a and b from the first key to the
+         pixel steps p and q. */
+      const k0 = keyAt(0, 0), k1 = keyAt(1, 0), k2 = keyAt(0, 1);
+      const [fx, fy] = keyPoint(k0);
+      const ax = keyPoint(k1)[0] - fx, ay = keyPoint(k1)[1] - fy;
+      const bx = keyPoint(k2)[0] - fx, by = keyPoint(k2)[1] - fy;
+      const px = keyX(k1) - keyX(k0), py = keyY(k1) - keyY(k0);
+      const qx = keyX(k2) - keyX(k0), qy = keyY(k2) - keyY(k0);
+      const det = ax * by - ay * bx;
+      const m11 = (px * by - qx * ay) / det, m12 = (qx * ax - px * bx) / det;
+      const m21 = (py * by - qy * ay) / det, m22 = (qy * ax - py * bx) / det;
+      ctx.transform(
+        m11, m21, m12, m22,
+        keyX(k0) - m11 * fx - m12 * fy, keyY(k0) - m21 * fx - m22 * fy,
+      );
+      for (const s of scene.shapes) {
+        if (s.kind === "circle") {
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (s.kind === "line") {
+          ctx.beginPath();
+          ctx.moveTo(s.x1, s.y1);
+          ctx.lineTo(s.x2, s.y2);
+          ctx.lineWidth = s.half * 2;
+          ctx.lineCap = s.round ? "round" : "butt";
+          ctx.stroke();
+        }
       }
-      ctx.fillStyle = style;
-      ctx.fill();
-    };
-    fillLook("dim", REF_DIM_FILL);
-    fillLook("white", "#fff");
+    }
     ctx.restore();
   }
 

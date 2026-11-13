@@ -47,7 +47,7 @@ import {
 } from '../input/held.js';
 import { isRefEditHeld } from '../input/ref-edit.js';
 import { pickRef } from '../input/ref-pick.js';
-import { captureGamePress } from '../games/mode.js';
+import { gamePress, gameRelease } from '../games/mode.js';
 import type { KeyId } from '../types.js';
 
 /* Lumatone physical inputs are tracked in input/held.ts under source
@@ -206,12 +206,15 @@ function routeChannelMessage(data: Uint8Array): void {
       }
       return;
     }
-    /* A running hidden game takes the press as its input (games/mode.ts): a
-       turn, or the start of its clock. Like the ref pick above it is not a
-       note — no velocity statistics, no Composer strike, no held record, so its
-       note-off and aftertouch find nothing. The ref-edit modifier, checked
-       first, keeps precedence. The index is fixedMidiToKey's. */
-    if (captureGamePress((ch - 1) * 56 + d1)) return;
+    /* A running hidden game decides what the press is (games/mode.ts). Swallowed,
+       it is the game's input alone and, like the ref pick above, not a note —
+       no velocity statistics, no Composer strike, no held record, so its
+       note-off and aftertouch find nothing. Otherwise the game names the
+       velocity and the press is an ordinary note at it, whatever the touch.
+       The ref-edit modifier, checked first, keeps precedence. The index is
+       fixedMidiToKey's. */
+    const fromGame = gamePress((ch - 1) * 56 + d1);
+    if (fromGame === 'swallow') return;
     const key = heldKey('lumatone', physId) ?? fixedMidiToKey(ch, d1);
     if (!key) return;
     /* Per-key velocity statistics: always-on rolling sample collection when
@@ -231,7 +234,9 @@ function routeChannelMessage(data: Uint8Array): void {
        correction) then the decompression input curve, both at input time.
        keyVelocity now holds musical velocity (the house curve maps it to gain at
        audio time). */
-    const velocity = velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(physId, d2));
+    const velocity = fromGame !== null
+      ? fromGame
+      : velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(physId, d2));
     /* Per-key gain auto-capture samples RAW d2 — per-key gain corrects the raw
        firmware velocity before the curve. Keyed by the physical key, like the
        gain and the stats. Out of capture mode, a boolean check. */
@@ -248,6 +253,8 @@ function routeChannelMessage(data: Uint8Array): void {
        synth, then onSelectionChanged. */
     pressHeld('lumatone', physId, key, velocity);
   } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
+    /* A running hidden game hears every release, whatever it made of the press. */
+    gameRelease((ch - 1) * 56 + d1);
     /* damper or sostenuto keeps the note sounding (→ sustainedKeys) */
     releaseHeld('lumatone', physId);
   }

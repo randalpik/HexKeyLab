@@ -11043,3 +11043,34 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/games/snake.mjs` (new page gate, 67 checks; before the game mode it could not run, and before the separate clocks and the game-over sequence it failed 22 of the 48 checks it reached); `test/hkl-midi/frame-sync.mjs` section L (new, 22 checks in all): the picture in one frame, through a ref slide, restored, and per key below 1.5.0. Unchanged and passing: `oracle` 73/73, `secrets` 19/19, `held-inputs` 30/30, `ref-press` 42/42, `departure` 72/72, `pedal-roles` 70/70, `velocity-owners` 22/22, `damper` 23/23, `fresh-profile` 13/13, `anchor` 23/23, `banded-toggle` 39/39, `alignment` 18/18, `ref-centering` 26/26, `ref-validity` 26/26, `mapping-switch` 63/63, `keycal-overlay` 18/18, `lattice-scroll` 19/19, `layer-sync` 4/4, `preset-resync` 7, `keycal` 9, `sync-order`; typecheck, boundaries, HKL build; the lean overlay build contains none of the four engine symbols. Not yet tried on the hardware: the dim level, the two velocities, the step rate.
 
 **Where:** `apps/hkl/src/games/{mode,display}.ts` (new), `ui/secrets.ts`, `ui/init.ts`, `midi/handler.ts`, `input/held.ts`, `lumatone/sync.ts`, `render/draw.ts`, `index.html`; `test/games/snake.mjs` (new), `test/hkl-midi/frame-sync.mjs`; docs/architecture/hkl.md (Lumatone output; Lumatone input; Hidden games), `test/games/README.md`, `test/hkl-midi/README.md`.
+
+## Hidden games: a host for any game, and a scene of shapes (2026-11-13, Max)
+
+**Context:** Pong is the second hidden game, and it differs from Snake where Snake's code was most specific: its shapes sit between keys, its clock is the animation frame, and the keys the players press are notes. Before writing it, what the two share was split out of Snake's driver. This entry is that split; it changes nothing Snake does.
+
+**Picked (Max):**
+- **One approach to partial colors**: the actual shape is drawn on the screen's lattice, and each key on the device shows the actual proportion of its tile the shape covers, blended as the lattice slide blends. The shapes read clearly on screen and the device shows their light.
+
+**Picked (agent):**
+- **A host that knows no game** (`games/mode.ts`): lifecycle, clocks, the line of notes, input, the listener. A game is a driver over its rules (`games/snake-game.ts` over `games/snake.ts`), and `games/drivers.ts` maps ids to drivers, apart from the host so that the host imports no game.
+- **A scene, not a look per key** (`games/scene.ts`): `dark(key)` plus white shapes in the case's frame: a whole tile, a circle, a line with round or square ends. Snake's body is tiles, so it is the same model with nothing between keys.
+- **A key's share is exact along 96 strips of its tile**, not counted at sample points. Every shape is convex, so a strip's middle line crosses it in one stretch, and overlaps are merged. Measured: a ball one key wide on a key reads 0.9069 (true π/(2√3) = 0.9069) with exactly nothing on its neighbors, and its total over 400 positions stays within 0.9064–0.9071.
+- **A press has three outcomes**: no game running; swallowed (not a note); or played as a note at a velocity the game names. Snake swallows everything. The game also hears every release.
+- **A clock is known by its tick** (`every(ms, tick)`, `stop(tick)`), with no names to keep in step. The host names the interval's callback after the tick so the gates can still drive a game's clocks by hand.
+- **The frame clock hands over elapsed time capped at 100 ms**, and 0 on the first frame and the first after a hidden page, so a stalled tab does not make a game jump.
+- **The modal's sentence comes from the game** (`host.end(text)`), not from a result the toolbar interprets.
+- **The canvas places shapes with one affine map** from the case's frame to the outline's pixels, fixed by three keys: both are linear in a key's physical offset under every alignment.
+
+**Rejected:**
+- **Counting sample points in each tile**, as first proposed (about a hundred): 98 points in a pattern with the hexagon's symmetry read a centered ball at 0.857, 5% low, and 0.898 in total halfway between two keys, so the ball's light would pulse as it crossed keys. 1,568 points were still 1% low on a key.
+- **Ramping each sample across the shape's edge**: the total steadied to within 1%, but a ball on a key read 0.883 there against the true 0.907, because the ramp reaches past the tile's edges where the ball touches them. A ball sitting on one key should light that key alone.
+- **A ramp of each key's distance to the shape** (the first Pong proposal): not the actual proportion (Max).
+- **Reading the shares back from the canvas's pixels**: the device would depend on the canvas's size and visibility.
+
+**Known, not guarded:**
+- The shares are computed again at every sync: about 0.5 ms for a whole Pong-like scene (ball, two paddles, center line), nothing measurable for Snake. A static shape is not cached.
+- A press a game plays still feeds the per-key velocity statistics with its raw velocity, which is what they collect.
+
+**Gates:** `test/games/host.mjs` (new page gate, 47 checks: a stub game through the host); `test/games/oracle.mjs` section D (new; 100 checks in all): the frame and the shares against a brute-force count; `test/hkl-midi/frame-sync.mjs` section L (restated for scenes, plus a ball's partial shares; 23 checks in all); `test/games/snake.mjs` unchanged in what it checks, 67/67 before and after; `test/games/secrets.mjs` 19/19 before and after.
+
+**Where:** `apps/hkl/src/games/{mode,display,board}.ts`, `games/{scene,snake-game,drivers}.ts` (new), `lumatone/sync.ts`, `render/draw.ts`, `midi/handler.ts`, `ui/init.ts`, `ui/secrets.ts`; `test/games/{host.mjs (new),oracle.mjs,snake.mjs,README.md}`, `test/hkl-midi/{frame-sync.mjs,README.md}`; docs/architecture/hkl.md (Lumatone output; Lumatone input; Hidden games).

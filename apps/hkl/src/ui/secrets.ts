@@ -9,7 +9,8 @@
 // forgets every discovery and removes button and group again, so a hidden
 // toolbar only ever coexists with nothing discovered.
 //
-// A game's button starts it (games/mode.ts), shown as playing while it runs;
+// A game's button starts it (its driver in games/drivers.ts, under the host in
+// games/mode.ts), shown as playing while it runs;
 // pressed again it stops the game. A game is played on the Lumatone outline, so
 // starting one switches the Outline dropdown to it. When a game ends by its
 // rules, a modal reports the result.
@@ -22,6 +23,7 @@ import { loadPrefs } from '../state/persistence.js';
 import { MOTIFS } from '../games/motifs.js';
 import { setDiscoveryListener, forgetDiscoveries } from '../games/discovery.js';
 import { runningGame, startGame, stopGame, setGameListener, type GameResult } from '../games/mode.js';
+import { DRIVERS } from '../games/drivers.js';
 import { applyToolbarVisibility } from './toolbars.js';
 
 const HIDE_CONFIRM =
@@ -65,6 +67,8 @@ export function renderSecrets(): void {
 
 function toggleGame(game: string): void {
   if (runningGame()?.id === game) { stopGame(); return; }
+  const driver = DRIVERS[game];
+  if (!driver) return;
   /* A game is played on the Lumatone's keys: show that outline, through the
      dropdown's own handler, as if the user had picked it. */
   const outline = document.getElementById('selOutline') as HTMLSelectElement | null;
@@ -72,15 +76,15 @@ function toggleGame(game: string): void {
     outline.value = 'lumatone';
     outline.dispatchEvent(new Event('change'));
   }
-  startGame(game);
+  startGame(driver);
 }
 
+/* The modal says what the game said about its own ending. */
 function showGameOver(result: GameResult): void {
   const dialog = document.getElementById('gameOverDialog') as HTMLDialogElement | null;
   const text = document.getElementById('gameOverText');
   if (!dialog || !text) return;
-  const how = result.over === 'wall' ? 'The snake hit the wall.' : 'The snake ran into itself.';
-  text.textContent = how + ' Score: ' + result.eaten + '.';
+  text.textContent = result.text;
   dialog.showModal();
 }
 

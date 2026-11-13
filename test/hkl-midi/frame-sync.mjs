@@ -412,17 +412,26 @@ selection.hoverKey = keyOf(k1); syncLumatoneKeyEffects();
 assert.equal(sent.length, 0, 'nothing without Auto-sync');
 ok('frame timings recorded; Auto-sync off sends nothing');
 
-// ── L: a running game's picture has the last word on each key (games/display.ts) ──
-// The gate's own statement of the rule: a white key is #ffffff, a dimmed key keeps
-// GAME_DIM_LED of each channel of what it would otherwise show (the level is set by eye,
-// so the gate reads it), and a normal key is untouched. Both transports show it.
-const { setGamePicture, gameShowing, GAME_DIM_LED } = await import('../../apps/hkl/src/games/display.ts');
+// ── L: a running game's scene has the last word on each key (games/display.ts, games/scene.ts) ──
+// The gate's own statement of the rule: a key whose whole tile is a white shape is #ffffff,
+// a darkened key keeps GAME_DIM_LED of each channel of what it would otherwise show (the
+// level is set by eye, so the gate reads it), and a key the scene leaves alone is untouched.
+// A key partly under a shape is the OKLab blend of what it would show and white, by the
+// share of its tile the shape covers. Both transports show it.
+const { setGameScene, gameShowing, GAME_DIM_LED } = await import('../../apps/hkl/src/games/display.ts');
 assert(GAME_DIM_LED > 0 && GAME_DIM_LED < 1, 'the game dim is a fraction');
 const gameDim = (hex) => '#' + [1, 3, 5]
   .map((a) => Math.round(parseInt(hex.slice(a, a + 2), 16) * GAME_DIM_LED).toString(16).padStart(2, '0')).join('');
 const look = (i) => (i % 7 === 0 ? 'white' : i % 7 === 1 ? 'normal' : 'dim');
 const pictured = (colors, of = look) =>
   colors.map((c, i) => (of(i) === 'white' ? '#ffffff' : of(i) === 'normal' ? c : gameDim(c)));
+// The same looks as a scene: white keys are whole-tile shapes, and every key but the
+// untouched ones is darkened (under a white tile that shows nothing).
+const sceneOf = (of) => () => ({
+  dark: (i) => of(i) !== 'normal',
+  shapes: Array.from({ length: 280 }, (_, i) => i).filter((i) => of(i) === 'white').map((key) => ({ kind: 'tile', key })),
+});
+const setGamePicture = (of) => setGameScene(of ? sceneOf(of) : null);
 selection.hoverKey = null;
 fresh([1, 5, 0]); lumatone.keyEffects = false;
 setAnchor(q0, r0);
@@ -462,5 +471,37 @@ syncLumatoneColors(); drain();
 assert.deepEqual(lumatone.deviceColors, base(), 'restored on the per-key path');
 setAnchor(q0, r0);
 ok('firmware < 1.5.0 shows the picture per key, one message per changed key');
+
+// A shape that is not a whole tile: a ball one key wide, on a key and then halfway to
+// the next one. Each key blends toward white by its share, over its darkened color.
+const { whiteShares } = await import('../../apps/hkl/src/games/scene.ts');
+const { keyAt, keyPoint, neighbors } = await import('../../apps/hkl/src/games/board.ts');
+const toWhite = (hex, w) => {
+  const a = hexToOklab(hex), b = hexToOklab('#ffffff');
+  return oklabToHex([0, 1, 2].map((j) => a[j] + (b[j] - a[j]) * w));
+};
+const shaped = (colors, share) => colors.map((c, i) => (share[i] > 0 ? toWhite(gameDim(c), share[i]) : gameDim(c)));
+fresh([1, 5, 0]); lumatone.keyEffects = false;
+const under = keyAt(2, 1), beside = keyAt(3, 1);
+const [ux, uy] = keyPoint(under), [sx, sy] = keyPoint(beside);
+const onKey = [{ kind: 'circle', x: ux, y: uy, r: 0.5 }];
+const onShare = whiteShares(onKey);
+assert(Math.abs(onShare[under] - Math.PI / (2 * Math.sqrt(3))) < 0.01, 'a ball on a key covers π/(2√3) = 90.7% of its tile');
+assert.equal(onShare.filter((w) => w > 0).length, 1, 'and nothing of any other');
+setGameScene(() => ({ dark: () => true, shapes: onKey }));
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, shaped(base(), onShare), 'the key under the ball is blended toward white, the rest dimmed');
+assert(lumatone.deviceColors[under] !== '#ffffff' && lumatone.deviceColors[under] !== gameDim(base()[under]), 'neither white nor dim');
+const between = [{ kind: 'circle', x: (ux + sx) / 2, y: (uy + sy) / 2, r: 0.5 }];
+const halfShare = whiteShares(between);
+assert(Math.abs(halfShare[under] - halfShare[beside]) < 1e-9, 'halfway between two keys the ball is shared equally');
+assert(halfShare[under] > 0.3 && halfShare[under] < 0.45 && neighbors(under).includes(beside), 'well under half each, on neighboring keys');
+setGameScene(() => ({ dark: () => true, shapes: between }));
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, shaped(base(), halfShare), 'both keys blended by their shares');
+setGameScene(null);
+syncLumatoneColors(); drain();
+assert.deepEqual(lumatone.deviceColors, base(), 'restored');
+ok('a shape between keys: each key blends toward white by the share of its tile under it');
 
 console.log(`frame-sync: ${checks} checks passed`);

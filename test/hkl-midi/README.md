@@ -23,9 +23,11 @@ held — the out-of-range keys at the device's own level (`REF_DIM_LED`, which t
 gate reads and requires to be darker than the canvas's 50% cover; the piano range
 is stated independently in the gate), hover composing with it, the dim following a ref change and riding the
 slide, release, two sources holding the modifier, the checkbox gating, and no
-dim below 1.5.0; and a hidden game's picture (`games/display.ts`) — white,
+dim below 1.5.0; and a hidden game's scene (`games/display.ts`, `games/scene.ts`) — white,
 dimmed and untouched keys in one frame, riding a ref slide, restored when the
-game goes, and shown per key below 1.5.0 with one message per changed key. No
+game goes, and shown per key below 1.5.0 with one message per changed key; and
+a ball on a key and halfway to the next, each key blended toward white in
+OKLab by the share of its tile under it. No
 dev server or MIDI device is needed. **Run it
 before declaring any change to `lumatone/sync.ts`, `lumatone/sysex.ts` or the
 frame builder done.**

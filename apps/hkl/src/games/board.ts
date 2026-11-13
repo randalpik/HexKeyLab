@@ -71,3 +71,29 @@ const halves: ReadonlyArray<Half> = baseKeys.map((_, i) => {
 export function halfOf(i: number): Half {
   return halves[i];
 }
+
+/* The case's frame, for a game that draws shapes between the keys: lengths in
+   key widths (the distance between neighboring keys' centers, on regular
+   hexagons), x along the case's long direction toward the right half, y toward
+   the top wall, and the origin at the centroid of the keys, which is on the
+   halves' midline and midway between the long sides. The board step (+7, −2)
+   is the vector (6, −√3) there, and the frame is turned so that it lies along
+   x: the key rows come out tilted 16.1° from it. */
+const ROOT3 = Math.sqrt(3);
+const CASE_STEP = Math.hypot(6, ROOT3);
+
+/** The frame vector of a physical offset step (du, dv); fractions are allowed. */
+export function frameStep(du: number, dv: number): readonly [number, number] {
+  const x = du + dv / 2, y = dv * ROOT3 / 2;
+  return [(6 * x - ROOT3 * y) / CASE_STEP, (ROOT3 * x + 6 * y) / CASE_STEP];
+}
+
+const meanU = baseKeys.reduce((sum, k) => sum + k[0], 0) / KEY_COUNT;
+const meanV = baseKeys.reduce((sum, k) => sum + k[1], 0) / KEY_COUNT;
+const points: ReadonlyArray<readonly [number, number]> =
+  baseKeys.map(([u, v]) => frameStep(u - meanU, v - meanV));
+
+/** The center of key `i` in the case's frame. */
+export function keyPoint(i: number): readonly [number, number] {
+  return points[i];
+}

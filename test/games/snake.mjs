@@ -1,5 +1,6 @@
-// Hidden games: Snake, running (apps/hkl/src/games/mode.ts and its hooks in
-// lumatone/sync.ts, render/draw.ts, midi/handler.ts, ui/init.ts, ui/secrets.ts;
+// Hidden games: Snake, running (its driver apps/hkl/src/games/snake-game.ts
+// under the host games/mode.ts, and the host's hooks in lumatone/sync.ts,
+// render/draw.ts, midi/handler.ts, ui/init.ts, ui/secrets.ts;
 // docs/local/easter-egg-games.md).
 //
 // The REAL modules imported live from the dev server, against a simulated
@@ -73,6 +74,9 @@ const SCRIPT = `(async () => {
   const engineUrl = await depUrl(handlerUrl, '/src/midi/engine.ts');
   const secretsUrl = await depUrl(root, '/src/ui/secrets.ts');
   const modeUrl = await depUrl(secretsUrl, '/src/games/mode.ts');
+  const driversUrl = await depUrl(secretsUrl, '/src/games/drivers.ts');
+  /* The driver's own constants: its timings. */
+  const snakeMod = await import(await depUrl(driversUrl, '/src/games/snake-game.ts'));
   const [prefsMod, viewMod, drawMod, handler, selMod, audioMod, midiMod, lumMod, refState, secrets, mode, board, display, held, physical, colors] =
     await Promise.all([
       import(await depUrl(root, '/src/state/persistence.ts')),
@@ -189,7 +193,7 @@ const SCRIPT = `(async () => {
   check('setup: the two steering keys are on opposite halves', [board.halfOf(RIGHT), board.halfOf(LEFT)], ['right', 'left']);
   check('setup: the dim level is a fraction', DIM > 0 && DIM < 1, true);
   check('setup: quiet is softer than the accent', mode.QUIET_VELOCITY < mode.ACCENT_VELOCITY, true);
-  check('T: the ruled timings', [mode.STEP_MS, mode.FLASH_MS, mode.OVER_FLASHES, mode.OVER_HOLD_MS], [300, 200, 3, 1000]);
+  check('T: the ruled timings', [snakeMod.STEP_MS, snakeMod.FLASH_MS, snakeMod.OVER_FLASHES, snakeMod.OVER_HOLD_MS], [300, 200, 3, 1000]);
   const plainFar = cellPixels(cellOf(at(-12, 2)));
 
   /* ── N1 ── */
@@ -202,7 +206,7 @@ const SCRIPT = `(async () => {
   if (!g()) return { pass: false, results };
   check('N1d: the start body', [bodyOffsets(), g().snake.heading], [[[0, 0], [-1, 0], [-2, 0], [-3, 0]], 0]);
   check('N1e: the button is marked as playing', snakeButton().classList.contains('playing'), true);
-  check('N1f: the flash clock runs, at its own period; no step clock yet', [running(), periods.flashTick], [['flashTick'], mode.FLASH_MS]);
+  check('N1f: the flash clock runs, at its own period; no step clock yet', [running(), periods.flashTick], [['flashTick'], snakeMod.FLASH_MS]);
 
   /* ── N2 ── */
   g().snake.food = FAR;
@@ -227,7 +231,7 @@ const SCRIPT = `(async () => {
   check('N4b: and is not a turn', g().snake.heading, 0);
   check('N4c: nor a note', [selection.selectedKeys.size, held.heldCount('lumatone')], [0, 0]);
   off(RIGHT);
-  check('N4d: the step clock starts, at its own period', [running(), periods.stepTick], [['flashTick', 'stepTick'], mode.STEP_MS]);
+  check('N4d: the step clock starts, at its own period', [running(), periods.stepTick], [['flashTick', 'stepTick'], snakeMod.STEP_MS]);
   await flashes(3);
   check('N4e: the flash still moves nothing', head(), [0, 0]);
 
@@ -309,7 +313,7 @@ const SCRIPT = `(async () => {
   check('N12d: the background stays dark, the snake off, the food dark', [wrong(boardColors()), whites(), wrong(normal().map(dim))], [0, 0, 0]);
   check('N12e: no modal yet', dialog().open, false);
   const seen = [];
-  for (let k = 0; k < 2 * mode.OVER_FLASHES; k++) {
+  for (let k = 0; k < 2 * snakeMod.OVER_FLASHES; k++) {
     await overs(1);
     seen.push([g() ? g().snakeLit : null, whites(), g() ? wrong(boardColors()) : -1]);
   }
@@ -317,7 +321,7 @@ const SCRIPT = `(async () => {
   on(RIGHT);
   check('N12g: a press during the sequence is swallowed', [selection.selectedKeys.size, held.heldCount('lumatone')], [0, 0]);
   off(RIGHT);
-  const hold = mode.OVER_HOLD_MS / mode.OVER_FLASH_MS;
+  const hold = snakeMod.OVER_HOLD_MS / snakeMod.OVER_FLASH_MS;
   await overs(hold - 1);
   check('N12h: the game stays up through the hold, the snake off', [!!g(), g() && g().snakeLit, whites(), wrong(normal().map(dim)), dialog().open], [true, false, 0, 0, false]);
   await overs(1);

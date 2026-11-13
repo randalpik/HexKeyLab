@@ -26,7 +26,8 @@ import { animation, smoothstep } from '../render/animation.js';
 import { keyColorHex, lightenHex, HOVER_LIGHTEN } from '../render/colors.js';
 import { isRefEditHeld } from "../input/ref-edit.js";
 import { isValidRef } from "../state/reference.js";
-import { gameKeyLook, GAME_DIM_LED } from "../games/display.js";
+import { gameScene, GAME_DIM_LED } from "../games/display.js";
+import { whiteShares, type Scene } from "../games/scene.js";
 import {
   sysexBoardFor, fixedMidiChannelMap,
   SYSEX_CMD_SET_AFTERTOUCH_FLAG, SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES,
@@ -73,14 +74,37 @@ function ledDimHex(hex: string, level: number): string {
   return '#' + ((1 << 24) + (dim(1) << 16) + (dim(3) << 8) + dim(5)).toString(16).slice(1);
 }
 
-/* What Lumatone key `i` shows, given its layout color `c`: while a game runs
-   (games/display.ts), the game's look of that key — white, the color darkened,
-   or the color itself. Applied last, to whatever the key would otherwise show,
-   so a game needs nothing from the layout: a ref change slides the darkened
-   colors under it like any others. Both transports show it. */
-function gameLedColor(i: number, c: string): string {
-  const look = gameKeyLook(i);
-  return look === 'white' ? '#ffffff' : look === 'dim' ? ledDimHex(c, GAME_DIM_LED) : c;
+/* A running game's scene (games/display.ts) as one sync reads it: the scene,
+   and the share of each key's tile its white shapes cover (games/scene.ts). */
+interface GameFrame { scene: Scene; white: number[] }
+function gameFrame(): GameFrame | null {
+  const scene = gameScene();
+  return scene ? { scene, white: whiteShares(scene.shapes) } : null;
+}
+
+const WHITE_LAB = hexToOklab('#ffffff');
+
+/* What Lumatone key `i` shows, given its layout color `c`: while a game runs,
+   that color, darkened if the scene darkens the key, blended toward white by
+   the share of the key's tile the scene's shapes cover. The blend is in OKLab,
+   as the ref slide's is (sampleField), so a shape moving across the keys keeps
+   its perceived brightness. A whole tile is exactly white and an untouched one
+   exactly its color, which the diff compares as strings. Applied last, to
+   whatever the key would otherwise show, so a game needs nothing from the
+   layout: a ref change slides the darkened colors under it like any others.
+   Both transports show it. */
+function gameLedColor(game: GameFrame | null, i: number, c: string): string {
+  if (!game) return c;
+  const w = game.white[i];
+  if (w >= 1) return '#ffffff';
+  const under = game.scene.dark(i) ? ledDimHex(c, GAME_DIM_LED) : c;
+  if (w <= 0) return under;
+  const lab = hexToOklab(under);
+  return oklabToHex([
+    lab[0] + (WHITE_LAB[0] - lab[0]) * w,
+    lab[1] + (WHITE_LAB[1] - lab[1]) * w,
+    lab[2] + (WHITE_LAB[2] - lab[2]) * w,
+  ]);
 }
 
 /* Color of lattice cell (q, r) as the frame path shows it: the key color, and with
@@ -191,15 +215,16 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
      game then has the last word on each key (gameLedColor). */
   const anchor =
     frames && slideState ? slideAnchor(slideState, Date.now()) : null;
+  const game = gameFrame();
   const target: string[] = [];
   for (let i = 0; i < 280; i++) {
     if (anchor) {
       const [u, v] = lumatoneCells[i];
-      target.push(gameLedColor(i, sampleField(u + anchor[0], v + anchor[1], frameCellColor)));
+      target.push(gameLedColor(game, i, sampleField(u + anchor[0], v + anchor[1], frameCellColor)));
       continue;
     }
     const [q, r] = lumatoneCell(i);
-    target.push(gameLedColor(i, frames ? frameCellColor(q, r) : keyColorHex(q, r)));
+    target.push(gameLedColor(game, i, frames ? frameCellColor(q, r) : keyColorHex(q, r)));
   }
   if (!lumatone.deviceColors)
     lumatone.deviceColors = new Array<string | null>(280).fill(null);

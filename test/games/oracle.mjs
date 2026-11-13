@@ -24,6 +24,14 @@
 //      completes on its last note only; a wrong octave or an enharmonic does
 //      not; a false start still matches; two motifs sharing a start; the Pong
 //      motif (all B) with one bounce too many
+//   D  the case's frame and the scene (games/board.ts keyPoint, games/scene.ts):
+//      every key where the gate's own turn of baseKeys puts it (centroid at the
+//      origin, the board step along x, neighbors one apart, the long sides at
+//      ±4.31, x on the side of the key's half); a tile shape is exactly 1, no
+//      shape exactly 0, a shape over everything exactly 1 everywhere; a ball on
+//      a key covers π/(2√3) of it and nothing of its neighbors; ball, bumper,
+//      paddle, dash, and a ball over a dash each within 1% of a brute-force
+//      count made here; a ball's total light the same wherever it sits
 
 import { baseKeys } from '../../apps/hkl/src/layout/baseKeys.ts';
 import { hexToScreen, setRotation } from '../../apps/hkl/src/layout/geometry.ts';
@@ -35,6 +43,8 @@ import {
   newSnake, turn, step, directPath, foodTiers, placeFood, START_LENGTH,
 } from '../../apps/hkl/src/games/snake.ts';
 import { MOTIFS, parseMotif, createMotifListener } from '../../apps/hkl/src/games/motifs.ts';
+import { keyPoint, frameStep } from '../../apps/hkl/src/games/board.ts';
+import { whiteShares, TILE_STRIPS } from '../../apps/hkl/src/games/scene.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 
 let pass = 0, fail = 0;
@@ -358,6 +368,115 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
   let threw = false;
   try { parseMotif('bad', 'H0'); } catch { threw = true; }
   check('C parseMotif rejects nonsense', threw, true);
+}
+
+/* ── D: the case's frame and the scene ─────────────────────────────────────── */
+{
+  /* The gate's own frame: regular hexagons one key apart, turned so the board
+     step (+7, −2) lies along x, the origin at the keys' centroid. */
+  const R3 = Math.sqrt(3);
+  const flat = baseKeys.map(([u, v]) => [u + v / 2, v * R3 / 2]);
+  const mid = [0, 1].map((j) => flat.reduce((s, p) => s + p[j], 0) / flat.length);
+  const stepAngle = Math.atan2(-2 * R3 / 2, 7 - 1);
+  const turned = ([x, y]) => {
+    const dx = x - mid[0], dy = y - mid[1], c = Math.cos(-stepAngle), s = Math.sin(-stepAngle);
+    return [dx * c - dy * s, dx * s + dy * c];
+  };
+  const own = flat.map(turned);
+  const close = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
+  let offKeys = 0;
+  for (let i = 0; i < KEY_COUNT; i++) {
+    const p = keyPoint(i);
+    if (!close(p[0], own[i][0]) || !close(p[1], own[i][1])) offKeys++;
+  }
+  check('D every key is where the gate puts it', offKeys, 0);
+  check('D the centroid is the origin', [0, 1].map((j) => close(own.reduce((s, p) => s + p[j], 0), 0, 1e-6)), [true, true]);
+  const from = own[keyAt(0, 0)], to = own[keyAt(7, -2)];
+  check('D the board step lies along x', [close(to[1], from[1]), close(to[0] - from[0], Math.hypot(6, R3))], [true, true]);
+  check('D frameStep is a key\'s step', frameStep(7, -2).map((x) => +x.toFixed(9)), [+Math.hypot(6, R3).toFixed(9), 0]);
+  let apart = 0;
+  for (let i = 0; i < KEY_COUNT; i++) for (const n of neighbors(i)) if (!close(Math.hypot(own[i][0] - own[n][0], own[i][1] - own[n][1]), 1)) apart++;
+  check('D neighbors are one key width apart', apart, 0);
+  const ys = own.map((p) => p[1]);
+  check('D the long sides are at ±4.31', [(Math.max(...ys) + 0.5).toFixed(2), (Math.min(...ys) - 0.5).toFixed(2)], ['4.31', '-4.31']);
+  let wrongSide = 0;
+  const onLine = [];
+  for (let i = 0; i < KEY_COUNT; i++) {
+    const x = keyPoint(i)[0];
+    if (close(x, 0)) onLine.push(keyOffset(i).join(','));
+    else if ((x < 0 ? 'left' : 'right') !== halfOf(i)) wrongSide++;
+  }
+  check('D x is on the side of the key\'s half', wrongSide, 0);
+  check('D two keys are on the center line', onLine.sort(), ['0,1', '1,-3']);
+  check('D the central key', keyPoint(keyAt(0, 0)).map((x) => x.toFixed(2)), ['-0.24', '-0.07']);
+
+  /* Brute force: the share of key k's tile under the shapes, counted on a fine
+     grid. A point is in the tile when no neighboring center (a key or not) is
+     nearer; the shapes are tested by their definitions. */
+  const AROUND = STEPS.map(([du, dv]) => turned([du + dv / 2 + mid[0], dv * R3 / 2 + mid[1]]));
+  const inShape = (s, x, y) => {
+    if (s.kind === 'circle') return Math.hypot(x - s.x, y - s.y) <= s.r;
+    const lx = s.x2 - s.x1, ly = s.y2 - s.y1, len = Math.hypot(lx, ly);
+    const along = ((x - s.x1) * lx + (y - s.y1) * ly) / len, across = Math.abs((x - s.x1) * ly - (y - s.y1) * lx) / len;
+    if (along >= 0 && along <= len) return across <= s.half;
+    return s.round && Math.min(Math.hypot(x - s.x1, y - s.y1), Math.hypot(x - s.x2, y - s.y2)) <= s.half;
+  };
+  const counted = (k, shapes) => {
+    const [kx, ky] = own[k], N = 260, span = 1.2;
+    let tile = 0, lit = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const dx = (i + 0.5) / N * span - span / 2, dy = (j + 0.5) / N * span - span / 2;
+      const d = dx * dx + dy * dy;
+      if (AROUND.some(([ax, ay]) => (dx - ax) ** 2 + (dy - ay) ** 2 < d)) continue;
+      tile++;
+      if (shapes.some((s) => inShape(s, kx + dx, ky + dy))) lit++;
+    }
+    return lit / tile;
+  };
+  const K = keyAt(2, 1), E = keyAt(3, 1), E3 = keyAt(5, 1), UP = keyAt(2, 2);
+  const [kx, ky] = own[K], [ex, ey] = own[E], [fx, fy] = own[E3], [ux, uy] = own[UP];
+  const TRUE_BALL = Math.PI / (2 * R3);
+  const within = (a, b, eps) => Math.abs(a - b) <= eps;
+
+  check('D the strips are a multiple of 4', TILE_STRIPS % 4, 0);
+  check('D no shapes: nothing', whiteShares([]).every((w) => w === 0), true);
+  const tiles = whiteShares([{ kind: 'tile', key: K }, { kind: 'tile', key: E }]);
+  check('D a tile shape is exactly 1 on its key alone', [tiles[K], tiles[E], tiles.filter((w) => w !== 0).length], [1, 1, 2]);
+  check('D a shape over everything is exactly 1 everywhere', whiteShares([{ kind: 'circle', x: 0, y: 0, r: 50 }]).every((w) => w === 1), true);
+
+  const ball = [{ kind: 'circle', x: kx, y: ky, r: 0.5 }];
+  const onKey = whiteShares(ball);
+  check('D a ball on a key covers π/(2√3) of its tile', within(onKey[K], TRUE_BALL, 0.002), true);
+  check('D and exactly nothing of any other', onKey.filter((w) => w !== 0).length, 1);
+  const cases = {
+    'a ball on a key': [ball, [K]],
+    'a ball between two keys': [[{ kind: 'circle', x: (kx + ex) / 2, y: (ky + ey) / 2, r: 0.5 }], [K, E]],
+    'a ball off-center': [[{ kind: 'circle', x: kx + 0.31, y: ky + 0.17, r: 0.5 }], [K, E, UP]],
+    'a bumper': [[{ kind: 'circle', x: kx, y: ky, r: 0.4 }], [K]],
+    'a paddle along a row': [[{ kind: 'line', x1: kx, y1: ky, x2: fx, y2: fy, half: 0.4, round: true }], [K, E, E3]],
+    'a paddle across the rows': [[{ kind: 'line', x1: kx, y1: ky, x2: ux, y2: uy, half: 0.4, round: true }], [K, UP, E]],
+    'a dash': [[{ kind: 'line', x1: kx, y1: ky - 0.5, x2: kx, y2: ky + 0.5, half: 0.1, round: false }], [K, UP]],
+    'a ball over a dash': [[...ball, { kind: 'line', x1: kx, y1: ky - 0.9, x2: kx, y2: ky + 0.1, half: 0.1, round: false }], [K, keyAt(2, 0), keyAt(3, 0)]],
+  };
+  for (const [name, [shapes, keys]] of Object.entries(cases)) {
+    const got = whiteShares(shapes);
+    check('D ' + name + ': within 1% of the count', keys.map((k) => within(got[k], counted(k, shapes), 0.01)), keys.map(() => true));
+  }
+  const between = whiteShares(cases['a ball between two keys'][0]);
+  check('D between two keys the ball is shared equally', within(between[K], between[E], 1e-9), true);
+  const row = whiteShares(cases['a paddle along a row'][0]);
+  check('D a paddle 0.8 thick covers 87% of a key along its row', row[E].toFixed(2), '0.87');
+  check('D a bumper 0.8 wide covers 58%', whiteShares(cases['a bumper'][0])[K].toFixed(2), '0.58');
+
+  /* The same ball anywhere over the keys throws the same light in all. */
+  const random = seeded(11);
+  let low = Infinity, high = -Infinity;
+  for (let n = 0; n < 300; n++) {
+    const x = kx + (random() - 0.5) * 3, y = ky + (random() - 0.5) * 3;
+    const light = whiteShares([{ kind: 'circle', x, y, r: 0.5 }]).reduce((a, b) => a + b, 0);
+    low = Math.min(low, light); high = Math.max(high, light);
+  }
+  check('D a ball\'s total light is the same wherever it sits', [within(low, TRUE_BALL, 0.003), within(high, TRUE_BALL, 0.003)], [true, true]);
 }
 
 console.log(`${pass}/${pass + fail} checks passed`);
