@@ -17,7 +17,8 @@
 //     again under their own held notes, so they sound on until let go.
 //   - A goal ends the line; the pause after it is silent, and so is every
 //     serve's warning.
-//   - The match ends straight into the modal, with the winner and the score.
+//   - The match ends straight into the modal, with the winner, the score and
+//     the highest speed the ball reached, in key widths a second, rounded.
 
 import { keyAtPoint } from './board.js';
 import { QUIET_VELOCITY, ACCENT_VELOCITY, type Game, type Host } from './mode.js';
@@ -71,7 +72,8 @@ export function pongGame(host: Host): PongGame {
         lineKey = -1;
       } else if (event.kind === 'over') {
         const won = state.score[event.winner], lost = state.score[event.winner === 'left' ? 'right' : 'left'];
-        host.end('The ' + event.winner + ' player wins, ' + won + ' to ' + lost + '.');
+        host.end('The ' + event.winner + ' player wins, ' + won + ' to ' + lost + '.'
+          + ' Max speed: ' + Math.round(state.maxSpeed) + '.');
         return;
       }
     }

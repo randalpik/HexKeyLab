@@ -46,7 +46,8 @@ is `N/N checks passed`, and it exits 1 on any failure.
   the ball never left inside; a goal, the pause and the next warning; first to 3;
   an end and a long side met inside one step, in the order the path meets them
   (a goal that comes first is no bounce); the speed's rise with no limit and its
-  drop after a goal; and the shapes drawn.
+  drop after a goal; the match's highest speed, held through the drop and a
+  slower rally; and the shapes drawn.
 
 **Run it before declaring any change to `apps/hkl/src/games/` done.**
 
@@ -152,8 +153,8 @@ nothing; that a hit turns the ball back, strikes the paddle's keys again at the
 accent velocity as the players' own notes, and accents the ball's key with
 them; that releasing a paddle key leaves a bumper; that a goal counts, ends the
 line and removes the ball for the one-second pause before the next warning;
-that the third goal ends the match with the modal naming the winner and the
-score, the device and the canvas restored, and a key still held still sounding
+that the third goal ends the match with the modal naming the winner, the score
+and the match's highest speed (set in an earlier rally, not its last), the device and the canvas restored, and a key still held still sounding
 for its player; and that the Pong button again stops a game without a modal.
 
 Its last INFO line reports, without judging, what one canvas redraw costs with

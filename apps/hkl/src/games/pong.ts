@@ -91,6 +91,8 @@ export interface PongState {
   /** The ball's direction in play, a unit vector. */
   dir: { x: number; y: number };
   speed: number;
+  /** The highest speed the ball has had in this match. */
+  maxSpeed: number;
   score: Record<Half, number>;
   /** Each half's honored keys in the order they were pressed: none, one (a
    *  bumper) or two (a paddle). */
@@ -115,7 +117,7 @@ const [START_X, START_Y] = keyPoint(SERVE_KEY);
 export function newPong(): PongState {
   return {
     phase: 'waiting', clock: 0,
-    ball: null, dir: { x: 1, y: 0 }, speed: START_SPEED,
+    ball: null, dir: { x: 1, y: 0 }, speed: START_SPEED, maxSpeed: START_SPEED,
     score: { left: 0, right: 0 }, held: { left: [], right: [] }, winner: null,
   };
 }
@@ -222,6 +224,7 @@ function step(state: PongState, ms: number, events: PongEvent[]): void {
   ball.x += dir.x * far;
   ball.y += dir.y * far;
   state.speed += SPEED_GAIN * ms / 1000;
+  state.maxSpeed = Math.max(state.maxSpeed, state.speed);
 
   /* The long sides: the ball's edge meets the wall. If the whole ball was past
      an end where it met one, the goal came first and there is no bounce. */

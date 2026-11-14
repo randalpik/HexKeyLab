@@ -321,6 +321,9 @@ const SCRIPT = `(async () => {
     st().dir.x = board.ROW[0]; st().dir.y = board.ROW[1];
     st().phase = 'play';
   };
+  /* A fast rally before the first goal: the match's highest speed. The goal
+     drops it halfway back to the start (about 11.7), where the match ends. */
+  st().speed = 17.3;
   toEnd(0.3);
   frames = 0;
   while (frames < 40 && st().phase === 'play') { now += 16; runFrame(); frames++; }
@@ -333,13 +336,14 @@ const SCRIPT = `(async () => {
   check('G10d: then the next warning begins, lit on the starting key', [st().phase, hasBall(), shares()[START] > 0.9, wrong(board280())], ['serve', true, true, 0]);
 
   /* ── G11 ── */
+  const st0 = st();   /* the state outlives the game */
   st().score.left = 2;
   toEnd(0.3);
   frames = 0;
   while (frames < 40 && g()) { now += 16; runFrame(); frames++; }
   await wait(120);
   check('G11a: the third goal ends the match and the game leaves the keys', [frames < 40, g(), !!frame], [true, null, false]);
-  check('G11b: the modal names the winner and the score', [dialog()?.open === true, document.getElementById('gameOverText')?.textContent], [true, 'The left player wins, 3 to 0.']);
+  check('G11b: the modal names the winner, the score and the match\\'s highest speed, not its last', [dialog()?.open === true, document.getElementById('gameOverText')?.textContent, Math.round(st0.speed)], [true, 'The left player wins, 3 to 0. Max speed: 17.', 12]);
   check('G11c: the device and the canvas are back to the layout', [wrong(normal()), white(middle, 1), white(startAt)], [0, false, false]);
   check('G11d: a key still held is still its player\\'s note', [held.heldCount('lumatone'), selection.selectedKeys.has(cellOf(L1)), held.heldCount('game')], [1, true, 0]);
   off(L1);

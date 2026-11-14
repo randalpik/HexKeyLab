@@ -879,6 +879,18 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
     inPlay(s, 14.9, 0, rowDir[0], rowDir[1]);
     for (let t = 0; t < 3000 && s.phase === 'play'; t++) { before = s.speed; advance(s, 1, () => 0.5); }
     check('E after a goal it is halfway back', [s.phase, near(s.speed, (before + pong.START_SPEED) / 2, 1e-3)], ['pause', true]);
+    /* The match's highest speed: the starting speed at first, the speed while
+       it rises, and unchanged by the drop after a goal or a slower rally. This
+       state flew at 500.5 above, before its goal at 40. */
+    check('E the highest speed starts as the starting speed', newPong().maxSpeed, pong.START_SPEED);
+    check('E it holds through a slower flight and the drop after its goal', [near(s.maxSpeed, 500.5, 1e-6), near(before, 40, 0.1), s.speed < 24], [true, true, true]);
+    inPlay(s, 0, 0, 0, 1);
+    advance(s, 2000, () => 0.5);
+    check('E and through a slower rally', [near(s.speed, (before + pong.START_SPEED) / 2 + 0.5, 1e-3), near(s.maxSpeed, 500.5, 1e-6)], [true, true]);
+    const r = newPong();
+    inPlay(r, 0, 0, 0, 1);
+    advance(r, 4000, () => 0.5);
+    check('E in a rally it is the speed reached', [near(r.maxSpeed, pong.START_SPEED + 1, 1e-6), r.maxSpeed === r.speed], [true, true]);
   }
 
   /* What is drawn is what the ball meets. */
