@@ -40,8 +40,9 @@
 //        and flash clocks stop, the background stays dark with the food dark,
 //        and the snake goes off, then on and off three times; presses are
 //        swallowed; the game stays up, the snake off, through the hold and then
-//        exits: the modal reports the score, the device and the canvas are back
-//        to the normal layout
+//        exits: the modal reports the score, the board stays dark until the
+//        modal is closed, and then the device and the canvas are back to the
+//        normal layout
 //   N13  leaving the Lumatone outline ends a game without a modal
 //   N14  the Snake button again stops a running game without a modal, also in
 //        the middle of the game-over sequence
@@ -327,12 +328,15 @@ const SCRIPT = `(async () => {
   await overs(1);
   check('N12i: then it exits', g(), null);
   check('N12j: the modal reports the score', [dialog()?.open === true, /wall/.test(dialog()?.textContent ?? ''), /Score: 1\\./.test(document.getElementById('gameOverText')?.textContent ?? ''), /Food eaten/.test(dialog()?.textContent ?? '')], [true, true, true, false]);
-  check('N12k: the device is back to the layout', wrong(normal()), 0);
+  check('N12k: under the modal the board stays dark: every key dimmed, nothing white', [wrong(normal().map(dim)), whites()], [0, 0]);
   check('N12l: the clocks are gone and the button is idle', [running(), snakeButton().classList.contains('playing')], [[], false]);
-  const after = cellPixels(headCell);
-  check('N12m: the canvas is back too', !!after && after.white < 0.2, true);
+  const during = cellPixels(headCell);
+  check('N12m: the canvas shows no snake', !!during && during.white < 0.2, true);
   document.getElementById('gameOverClose').click();
   check('N12n: the modal closes', dialog().open, false);
+  await wait(150);
+  const after = cellPixels(headCell);
+  check('N12o: and only then the device and the canvas are back to the layout', [wrong(normal()), !!after && after.white < 0.2, !!during && !!after && after.mean > during.mean + 5], [0, true, true]);
 
   /* ── N13 ── */
   snakeButton().click();

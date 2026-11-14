@@ -20,6 +20,10 @@
 //     selects nothing (ui/init.ts).
 //   - Its own notes are a held source of their own (input/held.ts 'game'), so
 //     they behave like a player's: selected, recorded, sent to the output.
+//   - When it ends by its own rules, the board stays dark (every key darkened,
+//     nothing drawn) until its result is dismissed; only then does the layout
+//     come back. The game itself is off the keys from the moment it ends. A
+//     game stopped without a result gives the layout back at once.
 
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { lumatoneCell } from '../layout/physical.js';
@@ -81,7 +85,8 @@ export interface Host {
    *  player is holding as a note. The notes stay the players': they sound until
    *  the keys are let go. */
   accent(keys: ReadonlyArray<number>, velocity: number): void;
-  /** The game is over by its own rules: take it off the keys and report `text`. */
+  /** The game is over by its own rules: take it off the keys and report `text`.
+   *  The board stays dark until that result is dismissed. */
   end(text: string): void;
 }
 
@@ -110,6 +115,11 @@ interface Run {
 
 let run: Run | null = null;
 
+/* A game ended by its rules and its result has not been dismissed yet: the
+   board shows this, every key darkened and nothing on it. */
+const DARK_BOARD: Scene = { dark: () => true, shapes: [] };
+let resultUp = false;
+
 /* Told when a game starts or stops (null) and when one ends by its rules (the
    result). Registered by ui/secrets.ts, which owns the toolbar and the modal. */
 let listener: ((result: GameResult | null) => void) | null = null;
@@ -122,6 +132,8 @@ export function runningGame(): Game | null {
 /** Start the game `driver` makes, replacing any game in progress. */
 export function startGame(driver: GameDriver): void {
   if (run) stopGame();
+  /* A result still up no longer holds the board: the new game's scene does. */
+  resultUp = false;
   const r: Run = {
     game: null as unknown as Game,
     clocks: new Map(), frameTick: null, frame: null, lastFrame: 0, note: null, notes: 0,
@@ -140,8 +152,18 @@ export function stopGame(): void {
   if (listener) listener(null);
 }
 
-/* Take the game off the keys: clocks, scene, note. */
-function clear(): void {
+/** The result of the game that ended has been dismissed: the layout comes back.
+ *  Called by whoever shows the result (ui/secrets.ts, when its modal closes). */
+export function dismissResult(): void {
+  if (!resultUp) return;
+  resultUp = false;
+  setGameScene(null);
+  show();
+}
+
+/* Take the game off the keys: clocks, note, and its scene, for the layout or
+   for the scene `after` it. */
+function clear(after: (() => Scene) | null = null): void {
   const r = run;
   if (!r) return;
   r.clocks.forEach((timer) => clearInterval(timer));
@@ -150,7 +172,7 @@ function clear(): void {
   r.frame = null;
   r.frameTick = null;
   run = null;
-  setGameScene(null);
+  setGameScene(after);
   hush(r);
   show();
 }
@@ -249,8 +271,11 @@ function hostOf(r: Run): Host {
     end(text) {
       if (run !== r) return;
       const game = r.game.id;
-      clear();
+      resultUp = true;
+      clear(() => DARK_BOARD);
+      /* With nobody to show the result, nobody would dismiss it. */
       if (listener) listener({ game, text });
+      else dismissResult();
     },
   };
 }

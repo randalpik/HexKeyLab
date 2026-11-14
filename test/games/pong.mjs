@@ -38,8 +38,9 @@
 //   G10  a goal: the score counts, the line ends, the ball is gone for the
 //        one-second pause, then the next warning begins lit
 //   G11  the third goal ends the match: the game leaves the keys, the modal
-//        names the winner and the score, the device and the canvas are back to
-//        the layout, the players' held notes are still theirs
+//        names the winner, the score and the highest speed, the board stays
+//        dark until the modal is closed and the layout is back then, the
+//        players' held notes are still theirs
 //   G12  the Pong button again stops a running game without a modal
 // It also reports (without judging) what one canvas redraw costs with the game
 // on screen and without it.
@@ -344,11 +345,13 @@ const SCRIPT = `(async () => {
   await wait(120);
   check('G11a: the third goal ends the match and the game leaves the keys', [frames < 40, g(), !!frame], [true, null, false]);
   check('G11b: the modal names the winner, the score and the match\\'s highest speed, not its last', [dialog()?.open === true, document.getElementById('gameOverText')?.textContent, Math.round(st0.speed)], [true, 'The left player wins, 3 to 0. Max speed: 17.', 12]);
-  check('G11c: the device and the canvas are back to the layout', [wrong(normal()), white(middle, 1), white(startAt)], [0, false, false]);
+  check('G11c: under the modal the board stays dark: every key dimmed, no line, paddle or ball', [wrong(normal().map(dim)), white(middle, 1), white(startAt)], [0, false, false]);
   check('G11d: a key still held is still its player\\'s note', [held.heldCount('lumatone'), selection.selectedKeys.has(cellOf(L1)), held.heldCount('game')], [1, true, 0]);
   off(L1);
   check('G11e: until it is let go', [held.heldCount('lumatone'), selection.selectedKeys.size, pongButton().classList.contains('playing')], [0, 0, false]);
   document.getElementById('gameOverClose').click();
+  await wait(150);
+  check('G11f: closing the modal brings the layout back', [dialog().open, wrong(normal())], [false, 0]);
 
   /* ── G12, and what a redraw costs ── */
   pongButton().click();

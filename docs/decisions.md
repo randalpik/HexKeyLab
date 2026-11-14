@@ -11161,3 +11161,20 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/games/oracle.mjs` 193 (the highest speed: at the start, in a rally, held through a goal's drop and a slower rally; the fast shots at speed 100, no limit, the solid line and the starting key's two shares, and two new checks of a goal and a side in one step, proven by turning the fix off); `test/games/pong.mjs` 51 (the starting key now holds the line with the ball off; the ball is told apart on the canvas beside the line; the modal's speed is the peak of an earlier rally, 17, not the match's last, 12).
 
 **Where:** `apps/hkl/src/games/pong.ts`; `test/games/{oracle.mjs,README.md}`; docs/architecture/hkl.md (Hidden games).
+
+## Hidden games: the board stays dark until the result is dismissed (2026-11-13, Max)
+
+**Context:** a game that ended by its rules gave the layout back at the moment its modal opened, so the board lit up behind the result.
+
+**Picked (Max):** when a game ends through the modal, the board stays dark until the modal is dismissed. For every game.
+
+**Picked (agent):**
+- **Dark means every key darkened and nothing drawn**: no snake, no center line, no paddles. It is Snake's own last picture, and one rule for any game. Keeping a game's last scene instead would leave Pong's paddles drawn after their keys are let go, since the game is off the keys by then.
+- **The host holds it, not the game.** `end(text)` still takes the game off the keys at once (clocks, line, presses), and swaps its scene for the host's dark one; `dismissResult()` drops that and re-syncs. So a driver changes nothing, and a later game gets it for free.
+- **Dismissal is the dialog's `close` event**, so the Close button and Esc do the same thing.
+- **Not held** when a game stops without a result (the button again, leaving the outline, Hide: the layout is back at once), when a new game starts under an open result (the new game's scene takes the board, and the later dismissal changes nothing), or when nobody is registered to show the result.
+- **Keys play as ordinary notes under the modal**, as before: only the picture is held.
+
+**Gates:** `test/games/host.mjs` 52 (dark under the modal, back on Close, back when closed without the button, a game started under a result; the two dark checks failed before the change); `test/games/snake.mjs` 68; `test/games/pong.mjs` 52; `test/games/secrets.mjs` 21.
+
+**Where:** `apps/hkl/src/games/mode.ts` (`dismissResult`, the dark scene), `ui/secrets.ts`; `test/games/{host,snake,pong}.mjs`, `test/games/README.md`; docs/architecture/hkl.md (Hidden games).

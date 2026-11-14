@@ -110,8 +110,9 @@ that the wall starts the game-over sequence (the note released, the step and
 flash clocks stopped, the whole board dark, the snake going off and then on and
 off three times, presses swallowed, the game still up through the hold with the
 snake off) and that the
-game then exits with the modal reporting the score and the device and canvas
-restored; that leaving the Lumatone outline, the button again (also in the
+game then exits with the modal reporting the score, the board staying dark
+(every key dimmed, nothing white) on the device and the canvas until the modal
+is closed, and the layout back only then; that leaving the Lumatone outline, the button again (also in the
 middle of the sequence), and Hide each stop a game without a modal; and that
 starting under another outline switches to the Lumatone outline.
 
@@ -154,7 +155,9 @@ accent velocity as the players' own notes, and accents the ball's key with
 them; that releasing a paddle key leaves a bumper; that a goal counts, ends the
 line and removes the ball for the one-second pause before the next warning;
 that the third goal ends the match with the modal naming the winner, the score
-and the match's highest speed (set in an earlier rally, not its last), the device and the canvas restored, and a key still held still sounding
+and the match's highest speed (set in an earlier rally, not its last), the
+board dark under the modal with no line, paddle or ball and the layout back
+when it is closed, and a key still held still sounding
 for its player; and that the Pong button again stops a game without a modal.
 
 Its last INFO line reports, without judging, what one canvas redraw costs with
@@ -188,8 +191,11 @@ and selects nothing; that a clock runs at its period, stays one clock when
 asked for twice, does nothing on a hidden page, and stops; that the frame clock
 hands over the time since the last frame, 0 on the first and on the first after
 a hidden page, capped at `MAX_FRAME_MS`; that the game's line is one note at a
-time and `hush` ends it; that `end(text)` takes the game off the keys, shows
-the text in the modal and restores the device and the canvas, and that the
+time and `hush` ends it; that `end(text)` takes the game off the keys and shows
+the text in the modal, with the device dark (every key dimmed, no shapes) until
+the modal is closed, by its button or without it as Esc does, and the layout
+back only then; that a game started under an open result keeps its picture
+when the result is closed; that the
 host does nothing afterward; that a second game replaces the first; and that
 leaving the Lumatone outline ends a game on its next frame.
 

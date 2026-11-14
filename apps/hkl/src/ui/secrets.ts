@@ -13,7 +13,8 @@
 // games/mode.ts), shown as playing while it runs;
 // pressed again it stops the game. A game is played on the Lumatone outline, so
 // starting one switches the Outline dropdown to it. When a game ends by its
-// rules, a modal reports the result.
+// rules, a modal reports the result, and the board stays dark until the modal
+// is closed, by its button or by Esc.
 //
 // Everything shown is derived from the prefs (secretGames, toolbars.secrets)
 // and the running game, so the Reset button's cleared prefs hide it the same
@@ -22,7 +23,7 @@
 import { loadPrefs } from '../state/persistence.js';
 import { MOTIFS } from '../games/motifs.js';
 import { setDiscoveryListener, forgetDiscoveries } from '../games/discovery.js';
-import { runningGame, startGame, stopGame, setGameListener, type GameResult } from '../games/mode.js';
+import { runningGame, startGame, stopGame, dismissResult, setGameListener, type GameResult } from '../games/mode.js';
 import { DRIVERS } from '../games/drivers.js';
 import { applyToolbarVisibility } from './toolbars.js';
 
@@ -83,7 +84,7 @@ function toggleGame(game: string): void {
 function showGameOver(result: GameResult): void {
   const dialog = document.getElementById('gameOverDialog') as HTMLDialogElement | null;
   const text = document.getElementById('gameOverText');
-  if (!dialog || !text) return;
+  if (!dialog || !text) { dismissResult(); return; }
   text.textContent = result.text;
   dialog.showModal();
 }
@@ -99,8 +100,9 @@ export function initSecrets(): void {
     forgetDiscoveries();
     renderSecrets();
   });
-  document.getElementById('gameOverClose')?.addEventListener('click', () => {
-    (document.getElementById('gameOverDialog') as HTMLDialogElement | null)?.close();
-  });
+  const gameOver = document.getElementById('gameOverDialog') as HTMLDialogElement | null;
+  document.getElementById('gameOverClose')?.addEventListener('click', () => gameOver?.close());
+  /* However the modal closes, the game's result is dismissed with it. */
+  gameOver?.addEventListener('close', dismissResult);
   renderSecrets();
 }

@@ -33,8 +33,10 @@
 //   H8   the frame clock: the time since the last frame, 0 on the first, capped;
 //        nothing on a hidden page and 0 on the first frame back; stops
 //   H9   the game's line: one note at a time, at the velocity asked; hush ends it
-//   H10  the game's end: off the keys, its own text in the modal, the device
-//        and the canvas restored, the clocks gone; its host does nothing after
+//   H10  the game's end: off the keys, its own text in the modal, the clocks
+//        gone; the board dark until the modal is closed (by its button, or
+//        without it as Esc does), then the layout back; a game started under
+//        an open result keeps its picture; its host does nothing after
 //   H11  a second game replaces the first: the first's clocks and line are gone
 //   H12  leaving the Lumatone outline ends a game on its next frame
 
@@ -309,22 +311,47 @@ const SCRIPT = `(async () => {
   check('H10a: the game is off', g(), null);
   check('H10b: the modal says what the game said', [dialog()?.open === true, document.getElementById('gameOverText')?.textContent], [true, 'The stub is over.']);
   check('H10c: the clocks, the frame and the line are gone', [running(), !!frame, held.heldCount('game'), selection.selectedKeys.size], [[], false, 0, 0]);
-  check('H10d: the device is back to the layout', wrong(normal()), 0);
-  check('H10e: the canvas too', [white(...ballAt), white(...between)], [false, false]);
+  check('H10d: under the modal the device stays dark: every key dimmed, no shapes', wrong(normal().map(dim)), 0);
+  check('H10e: the canvas shows no shapes', [white(...ballAt), white(...between)], [false, false]);
   check('H10f: the button is idle', snakeButton()?.classList.contains('playing'), false);
   host.sound(BALL, 40); host.every(40, tickB); host.show(); host.end('again');
   check('H10g: a finished game\\'s host plays nothing and ends nothing', [held.heldCount('game'), document.getElementById('gameOverText')?.textContent], [0, 'The stub is over.']);
   check('H10h: nor starts a clock', [running(), b], [[], 0]);
   document.getElementById('gameOverClose').click();
+  await wait(120);
+  check('H10i: closing the modal brings the layout back', [dialog().open, wrong(normal())], [false, 0]);
+  /* Closed without the button, as Esc closes a dialog. */
+  mode.startGame(stub);
+  g().host.end('Over again.');
+  await wait(120);
+  check('H10j: dark again under the next result', [dialog().open, g(), wrong(normal().map(dim))], [true, null, 0]);
+  dialog().close();
+  await wait(120);
+  check('H10k: closed without the button, the layout is back as well', wrong(normal()), 0);
+  /* A game started while a result is still up keeps its picture when the
+     result is closed. */
+  mode.startGame(stub);
+  g().host.end('Over a third time.');
+  await wait(120);
+  mode.startGame(stub);
+  await wait(120);
+  const underResult = wrong(want);
+  dialog().close();
+  await wait(120);
+  check('H10l: a game started under a result keeps its picture when the result is closed', [underResult, wrong(want), !!g()], [0, 0, true]);
+  mode.stopGame();
+  await wait(80);
+  check('H10m: and stopping it brings the layout back', wrong(normal()), 0);
 
   /* ── H11 ── */
+  const before11 = made.length;
   mode.startGame(stub);
   const first = g().host;
   first.every(40, tickA);
   first.sound(BALL, 40);
   mode.startGame(stub);
   await wait(80);
-  check('H11a: a second game replaces the first', [g() === made[2], made.length], [true, 3]);
+  check('H11a: a second game replaces the first', [g() === made[before11 + 1], made.length], [true, before11 + 2]);
   check('H11b: the first\\'s clock and line are gone', [running(), held.heldCount('game')], [[], 0]);
   check('H11c: no modal', dialog().open, false);
 
