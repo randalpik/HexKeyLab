@@ -1,6 +1,6 @@
 // Snake, running: the driver that plays the rules of games/snake.ts under the
 // host (games/mode.ts). Its clocks, its notes, what it shows and what a press
-// does (docs/local/easter-egg-games.md):
+// does (docs/architecture/hkl.md → Hidden games):
 //   - Starting shows the board — the layout darkened, the snake white, the food
 //     flashing at its normal color — and waits. The first press on a Lumatone
 //     key (or a click on one in the canvas) starts the snake and is not a turn.

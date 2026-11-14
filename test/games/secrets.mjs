@@ -1,5 +1,5 @@
 // Hidden games: the motif listener's wiring and the Secrets toolbar
-// (apps/hkl/src/games/discovery.ts, ui/secrets.ts; docs/local/easter-egg-games.md).
+// (apps/hkl/src/games/discovery.ts, ui/secrets.ts; docs/architecture/hkl.md → Hidden games).
 //
 // The REAL modules imported live from the dev server (resolved through their
 // importers, as in test/hkl-midi/ref-press.mjs), Lumatone presses through the

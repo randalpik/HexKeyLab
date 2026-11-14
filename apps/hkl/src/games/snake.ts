@@ -2,7 +2,7 @@
 // lives here; games/mode.ts drives this state and shows it. Keys are indices
 // into the board (games/board.ts).
 //
-// Rules (docs/local/easter-egg-games.md):
+// Rules (docs/architecture/hkl.md → Hidden games):
 //   - The snake starts with its head on the key at offset (0, 0) and three body
 //     keys behind it on the same row, heading along the row toward higher u.
 //   - Each step moves the head one key along the heading. Leaving the board or

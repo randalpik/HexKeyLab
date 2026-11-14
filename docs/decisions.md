@@ -11178,3 +11178,30 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/games/host.mjs` 52 (dark under the modal, back on Close, back when closed without the button, a game started under a result; the two dark checks failed before the change); `test/games/snake.mjs` 68; `test/games/pong.mjs` 52; `test/games/secrets.mjs` 21.
 
 **Where:** `apps/hkl/src/games/mode.ts` (`dismissResult`, the dark scene), `ui/secrets.ts`; `test/games/{host,snake,pong}.mjs`, `test/games/README.md`; docs/architecture/hkl.md (Hidden games).
+
+## Layout presets: the measurements behind the eight (recorded 2026-11-13)
+
+**Context:** the local spec the layout work was planned in is removed, now that every phase has landed. Its model, rulings and rejected candidates are in the entries of 2026-10-29 to 2026-11-09 and in docs/architecture.md → Note-name mapping. What follows was only in that spec. Every figure was measured on the real `coordExps` with throwaway probes during the theory exercise of 2026-10-29; the oracle pins the model, not these.
+
+**The eight presets cover every pitch-class class once.** A hex layout's three steps are {a, b, a + b}. The classes for spines up to a fifth match Catanzaro's generalized Tonnetze one to one: C(1,1,10) Janko, C(1,2,9) Accordion, C(1,3,8) Gerhard, C(1,4,7) Randal (and the removed Bass), C(1,5,6) Chromatic, C(2,3,7) Park, C(2,5,5) Wicki-Hayden, C(3,4,5) Euler. Larger spines are octave displacements of these. The octave spines (1 + 11, 7 + 5) are rank 1 modulo the octave; 7 + 5 is forced Pythagorean and is Wicki-Hayden's lattice.
+
+**Per preset.** "Twin" is the nearest key of the same equal-tempered pitch. "Span" is the Lumatone's range in semitones under the Vertical / Left / Right alignments. "Reach" counts a key when its close-position chord tones (exact ratios, octave included) all lie within 4 keys of it.
+
+| preset | twin | span |
+|---|---|---|
+| Euler | (−7, 4), 7 keys | 109 / 186 / 215 |
+| Wicki-Hayden | (−7, 2), 7 keys | 55 / 226 / 202 |
+| Chromatic | (−7, 1), 7 keys | 90 / 246 / 199 |
+| Janko | (−1, 2), 2 keys | 59 / 27 / 56 |
+| Accordion | (−3, 2), 3 keys | 55 / 74 / 97 |
+| Gerhard | (−3, 4), 4 keys | 115 / 36 / 132 |
+| Randal | (−5, 4), 5 keys | 111 / 110 / 173 |
+| Park | (−5, 2), 5 keys | 54 / 150 / 146 |
+
+- **Janko.** Its two semitone diagonals cannot be the same interval in JI: one is a minor second and the other an augmented unison wherever the row is a major second. Its twin in Ptolemaic is 1/1 on 50% of keys, 81/80 on 33% and a diaschisma on 17%. Reach: just major triad 67% in Ptolemaic and Semiditonal (33% in Septimal); Pythagorean minor triad 100% in all three. Stacking chromatic rows instead was rejected: its row octave is never 2/1 in Ptolemaic. Maupin's layout from the 2011 paper is this keyboard up to rotation, and adds no class.
+- **Gerhard.** The Harmonic Table's line set in the opposite tessellation; Musix Pro ships it, Park and Maupin. Against Euler every span grows by one: the fifth goes from 1 key to 2, and Ptolemaic just triads from triangles to arcs, on the same 67% of keys. In return the close-position Pythagorean minor triad and minor seventh come within span 4 from every key in Ptolemaic, against Euler's 5 or more.
+- **Randal.** The band plus a fourth down, (3, −1), is an exact fifth in Ptolemaic, Pythagorean, Semiditonal and Septimal, 3 keys away; Park's nearest exact fifth is 6 away. Ptolemaic reach: fifth 100% (span 3), just triads 67% (span 3), Pythagorean minor triad and minor seventh 100% (span 6; span 3 in Semiditonal). Against Euler it trades the fifth's reach for the fourth's and loses Septimal's dominant seventh and half-diminished (33% to 0%).
+- **Park.** Park(Q, R) = Wicki-Hayden(Q, −R)·2^R. The trade mirrors Wicki-Hayden's 27/20 fourths: in Ptolemaic the fifth vector (1, 1) is 3/2 about half the time, otherwise 40/27 or 1024/675. Octaves: (6, 0) exact; (1, 2) exact on 50%.
+- **The 4-wide Accordion** (the preset until 2026-11-01, now a builder layout): each row is one of the ref duodene's diminished-seventh cycles, 6/5, 75/64, 32/27, 6/5 in Ptolemaic and 32/27, 1215/1024, 32/27, 6/5 in Semiditonal. Pythagorean minor triad and minor seventh are reachable from every key in Ptolemaic, Semiditonal and Septimal, with span 3 to 4.
+
+**Left open:** whether any of the other 40 builder layouts earns a preset name; whether division 4 has musical merit (it works; the old Accordion exercised it); and Composer's layout handling, which Max expects to redesign to be more flexible than eight presets in Setup.

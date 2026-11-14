@@ -1,7 +1,7 @@
 // Hidden games: Snake, running (its driver apps/hkl/src/games/snake-game.ts
 // under the host games/mode.ts, and the host's hooks in lumatone/sync.ts,
 // render/draw.ts, midi/handler.ts, ui/init.ts, ui/secrets.ts;
-// docs/local/easter-egg-games.md).
+// docs/architecture/hkl.md → Hidden games).
 //
 // The REAL modules imported live from the dev server, against a simulated
 // Lumatone on firmware 1.5.0 that ACKs every message. The game's clocks are

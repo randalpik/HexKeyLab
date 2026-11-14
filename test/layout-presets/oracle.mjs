@@ -3,7 +3,7 @@
 // Pure Node gate — no dev server, no browser. Imports the REAL @hkl/shared modules through the
 // repo's TS loader and checks the matrix model on EVERY layout the bound allows — all 48: the
 // eight presets (MAPPINGS) and every other valid (division, shear, invert), which only the layout
-// builder reaches (docs/local/layout-presets.md §6):
+// builder reaches (docs/architecture.md → Note-name mapping):
 //   T  the ids and the bound: the presets' values; the 48 layouts, each with exactly one id that
 //      round-trips; the shear ranges and row steps per division and orientation; malformed,
 //      out-of-bound and preset-aliasing ids rejected; shear clamping
@@ -81,7 +81,7 @@ for (const L of MAPPINGS) {
   check(`label ${L} via mappingLabel`, mappingLabel(L), MAPPING_LABELS[L]);
 }
 
-/* T — the ids and the bound (docs/local/layout-presets.md §6: the presets in (W, k, invert), the
+/* T — the ids and the bound (docs/architecture.md → Note-name mapping, `PRESETS` in @hkl/shared/mapping: the presets in (W, k, invert), the
    shear ranges and their row steps) */
 const ALL = allMappings();
 const PRESET_VALUES = {

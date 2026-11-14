@@ -1,6 +1,6 @@
 // Pong, running: the driver that plays the rules of games/pong.ts under the
 // host (games/mode.ts). Its clock, its notes, what it shows and what a press
-// does (docs/local/easter-egg-games.md):
+// does (docs/architecture/hkl.md → Hidden games):
 //   - Starting shows the field — the layout darkened, the dotted center line —
 //     with no ball, and waits. The first press on a Lumatone key starts the
 //     first serve's warning, and is an ordinary press besides.

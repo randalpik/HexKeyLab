@@ -1,4 +1,4 @@
-// Easter egg games oracle (docs/local/easter-egg-games.md).
+// Easter egg games oracle (docs/architecture/hkl.md → Hidden games).
 //
 // Pure Node gate — no dev server, no browser, no device. Imports the REAL
 // modules through the repo's TS loader:
@@ -381,7 +381,7 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
   check('C shared start, neither', seq([x, y], 'C4 D4 G4 E4'), [null, null, null, null]);
   check('C failing press heard as a first note', seq([x, y], 'C4 D4 C5 D5 F5'), [null, null, null, null, 'y']);
 
-  /* the Pong motif, as the spec writes it (docs/local/easter-egg-games.md) */
+  /* the Pong motif, as the spec writes it (docs/architecture/hkl.md → Hidden games) */
   const pong = parseMotif('pong', 'B0 B-1 B-1 B-1 B-1 B-1 B-2', 'Pong');
   check('C Pong is registered as the spec writes it', MOTIFS.find((m) => m.game === 'pong'), pong);
   check('C Pong round', seq([snake, pong], 'B5 B4 B4 B4 B4 B4 B3').pop(), 'pong');

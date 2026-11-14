@@ -1,6 +1,6 @@
 // Hidden games: Pong, running (its driver apps/hkl/src/games/pong-game.ts under
 // the host games/mode.ts; the rules, games/pong.ts, are the Node oracle's;
-// docs/local/easter-egg-games.md).
+// docs/architecture/hkl.md → Hidden games).
 //
 // The REAL modules imported live from the dev server, against a simulated
 // Lumatone on firmware 1.5.0 that ACKs every message. The game's clock is the

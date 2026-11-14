@@ -2,7 +2,7 @@
 // gate's own. Snake uses only part of what the host offers; this gate runs a
 // stub driver through the rest: shapes that are not whole keys, a press played
 // as a note at the game's velocity, releases, the animation-frame clock, and an
-// ending in the game's own words (docs/local/easter-egg-games.md).
+// ending in the game's own words (docs/architecture/hkl.md → Hidden games).
 //
 // The REAL modules imported live from the dev server, against a simulated
 // Lumatone on firmware 1.5.0 that ACKs every message. The host's clocks are

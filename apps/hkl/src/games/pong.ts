@@ -1,7 +1,7 @@
 // Pong's rules, as pure functions over a state: no clocks, no notes, no DOM. A
 // driver plays them under the host (games/mode.ts), as Snake's does; the Node
 // oracle (test/games/oracle.mjs) checks them alone. Spec and rulings:
-// docs/local/easter-egg-games.md.
+// docs/architecture/hkl.md → Hidden games.
 //
 // Everything is in the case's frame (games/board.ts): lengths in key widths,
 // origin at the field's center, x toward the right half, y toward the top wall.

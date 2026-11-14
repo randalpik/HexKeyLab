@@ -9,7 +9,7 @@
 // under them only supplies colors and notes, so a ref, mode, mapping or
 // alignment change mid-game needs no handling here.
 //
-// What holds for every game (docs/local/easter-egg-games.md):
+// What holds for every game (docs/architecture/hkl.md → Hidden games):
 //   - It is played on the Lumatone outline. Leaving that outline ends it at
 //     once, without a result.
 //   - Its clocks do nothing while the page is hidden, where browsers slow
