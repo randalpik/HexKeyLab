@@ -60,7 +60,8 @@ const PRELUDE = `
   });
   const stored = () => { const p = prefsMod.loadPrefs(); return { games: p.secretGames, toolbar: p.toolbars.secrets }; };
   const HIDDEN = { button: false, active: false, toolbar: false, games: [], count: '' };
-  const FOUND = { button: true, active: true, toolbar: true, games: ['snake:Snake'], count: 'All secrets found' };
+  const FOUND = { button: true, active: true, toolbar: true, games: ['snake:Snake'], count: '1/2 secrets found' };
+  const BOTH = { button: true, active: true, toolbar: true, games: ['snake:Snake', 'pong:Pong'], count: 'All secrets found' };
 `;
 
 const SCRIPT_A = `(async () => {
@@ -108,21 +109,26 @@ const SCRIPT_A = `(async () => {
   };
   /* A physical key [channel, note] for each motif note, in the first base
      octave the Lumatone holds all of them in. */
-  let keys = null, base = null;
-  for (const b of [5, 4, 3, 6, 2]) {
-    const found = MOTIF.map((n) => {
-      for (let ch = 1; ch <= 5; ch++) for (let k = 0; k < 56; k++) {
-        const c = eng.fixedMidiToKey(ch, k);
-        if (!c) continue;
-        const s = spelled(c);
-        if (s.name === n.name && s.oct === b + n.octave) return [ch, k];
-      }
-      return null;
-    });
-    if (found.every(Boolean)) { keys = found; base = b; break; }
-  }
-  check('setup: the Lumatone holds every note of the motif', keys !== null, true);
-  if (!keys) return { pass: false, results };
+  const locate = (motif) => {
+    for (const b of [5, 4, 3, 6, 2]) {
+      const found = motif.map((n) => {
+        for (let ch = 1; ch <= 5; ch++) for (let k = 0; k < 56; k++) {
+          const c = eng.fixedMidiToKey(ch, k);
+          if (!c) continue;
+          const s = spelled(c);
+          if (s.name === n.name && s.oct === b + n.octave) return [ch, k];
+        }
+        return null;
+      });
+      if (found.every(Boolean)) return { keys: found, base: b };
+    }
+    return { keys: null, base: null };
+  };
+  const { keys, base } = locate(MOTIF);
+  /* The Pong motif, from the spec: a B, five an octave below, one two below. */
+  const pongKeys = locate('B0 B-1 B-1 B-1 B-1 B-1 B-2'.split(' ').map((t) => ({ name: t[0], octave: +t.slice(1) }))).keys;
+  check('setup: the Lumatone holds every note of both motifs', [keys !== null, pongKeys !== null], [true, true]);
+  if (!keys || !pongKeys) return { pass: false, results };
   const cellOf = ([ch, n]) => eng.fixedMidiToKey(ch, n);
   const tap = (k) => { on(k); off(k); };
   const clickCell = (cell) => {
@@ -186,13 +192,19 @@ const SCRIPT_A = `(async () => {
   check('S8a: the last note is on screen to click', clicked, true);
   check('S8b: a canvas click completes the motif', [ui(), stored()], [FOUND, { games: ['snake'], toolbar: true }]);
   if (clicked) clickCell(cellOf(keys[12]));   /* deselect */
+
+  /* ── S9 ── */
+  for (let i = 0; i < 6; i++) tap(pongKeys[i]);
+  check('S9a: six notes of the Pong motif reveal nothing more', [ui(), stored()], [FOUND, { games: ['snake'], toolbar: true }]);
+  tap(pongKeys[6]);
+  check('S9b: the seventh adds Pong, and every secret is found', [ui(), stored()], [BOTH, { games: ['snake', 'pong'], toolbar: true }]);
   window.confirm = realConfirm;
   return { pass: results.every((r) => r.ok), results, base };
 })()`;
 
 const SCRIPT_B = `(async () => {
   ${PRELUDE}
-  check('R1: after a reload the prefs bring the button and toolbar back', [ui(), stored()], [FOUND, { games: ['snake'], toolbar: true }]);
+  check('R1: after a reload the prefs bring the button and toolbar back', [ui(), stored()], [BOTH, { games: ['snake', 'pong'], toolbar: true }]);
   const realConfirm = window.confirm;
   window.confirm = () => true;
   document.getElementById('btnResetPrefs').click();

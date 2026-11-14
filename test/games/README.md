@@ -20,7 +20,7 @@ is `N/N checks passed`, and it exits 1 on any failure.
   and distinct, the food stays off the snake, and length is 4 plus foods eaten.
 - **C, motifs** (`motifs.ts`): the table, the Nokia tune from any E, a wrong
   octave, an enharmonic, a false start, two motifs sharing a start, and the
-  Pong motif, which is defined here and not yet registered.
+  Pong motif, registered as the spec writes it.
 - **D, the case's frame and the scene** (`board.ts` `keyPoint`, `scene.ts`):
   every key where the gate's own turn of `baseKeys` puts it (centroid at the
   origin, the board step along x, neighbors one key apart, the long sides at
@@ -32,7 +32,8 @@ is `N/N checks passed`, and it exits 1 on any failure.
   light the same at 300 seeded positions.
 - **E, Pong** (`pong.ts`, and the field in `board.ts`): the long sides through
   five corner keys each and the ends square to the rows, both pairs symmetric;
-  the two keys on the center line; the key under a point; the paddle table;
+  the two keys on the center line; the key under a point, and none in a notch
+  of the staircase along a long side; the paddle table;
   over every key and every pair, a press honored exactly when the gate's own
   geometry says its shape clears the ball's starting place (139 keys and 2,812
   paddles a half); a press refused against the ball in play; the serve's
@@ -40,10 +41,12 @@ is `N/N checks passed`, and it exits 1 on any failure.
   paths traced in the gate (every whole degree inside bounces at most twice,
   one degree more bounces a third time, and the module's ball agrees bounce for
   bounce); reflection off a long side, a bumper, a paddle's side and its round
-  end against the gate's own contact point; several hundred shots at a paddle at top
-  speed, in 16 ms and 100 ms frames, each a hit with the ball never left inside; a
-  goal, the pause and the next warning; first to 3; the speed's rise, cap and
-  drop; and the shapes drawn.
+  end against the gate's own contact point; several hundred shots at a paddle at
+  speed 100 (the speed has no limit), in 16 ms and 100 ms frames, each a hit with
+  the ball never left inside; a goal, the pause and the next warning; first to 3;
+  an end and a long side met inside one step, in the order the path meets them
+  (a goal that comes first is no bounce); the speed's rise with no limit and its
+  drop after a goal; and the shapes drawn.
 
 **Run it before declaring any change to `apps/hkl/src/games/` done.**
 
@@ -54,17 +57,20 @@ node test/games/secrets.mjs
 ```
 
 Requires `pnpm dev` (the proxy at :5170). Loads the real page in headless,
-muted Chromium, pinned to a private overlay relay, and plays the Nokia tune
-through the input handler against a simulated Lumatone. The motif is written out
-in the gate from the spec, not read from the module under test.
+muted Chromium, pinned to a private overlay relay, and plays the Nokia tune and
+then the Pong motif through the input handler against a simulated Lumatone. The
+motifs are written out in the gate from the spec, not read from the module
+under test.
 
 Checks that a fresh profile shows no Secrets button or toolbar; that the first
 twelve notes reveal nothing and each is still an ordinary note; that the
-thirteenth reveals the button and the toolbar with a Snake button and the count,
-and saves both prefs; that the button toggles its toolbar; that Hide does
-nothing when declined and removes everything when confirmed; that the motif is
-not heard under the QWERTY outline; that a canvas click is heard as a note; that
-a reload restores the toolbar from the prefs; and that Reset clears it. Any
+thirteenth reveals the button and the toolbar with a Snake button and the count
+("1/2 secrets found"), and saves both prefs; that the button toggles its
+toolbar; that Hide does nothing when declined and removes everything when
+confirmed; that the motif is not heard under the QWERTY outline; that a canvas
+click is heard as a note; that six notes of the Pong motif add nothing and the
+seventh adds a Pong button, with "All secrets found"; that a reload restores
+the toolbar from the prefs; and that Reset clears it. Any
 console error fails the gate, except the "MIDI access denied" line every
 headless run logs.
 
@@ -115,6 +121,46 @@ pinned hardware-free by section L of `test/hkl-midi/frame-sync.mjs`.
 `games/display.ts`, the game hooks in `lumatone/sync.ts`, `render/draw.ts`,
 `midi/handler.ts` and the canvas click, or the game buttons and modal in
 `ui/secrets.ts` done.**
+
+## Pong, running (page gate)
+
+```sh
+node test/games/pong.mjs
+```
+
+Requires `pnpm dev`. Plays a match in headless, muted Chromium against the same
+simulated Lumatone. The game's clock is the host's animation frame, driven by
+hand in steps of 50 ms or less (the host caps a frame at 100 ms), and
+`Math.random` is pinned for the first serve, so the ball's path is known. Where
+a step needs the ball somewhere, the gate sets it there, the way the Snake gate
+parks the food. The rules themselves are the oracle's (section E); this gate is
+about the driver and what reaches the device, the canvas and the notes.
+
+Checks that the Pong button starts a game that waits with no frame clock and no
+ball, the device showing the darkened layout and the solid center line, which
+runs through the starting key; that the first press starts the warning and is a
+bumper besides, sounding at the quiet velocity whatever the touch, with the
+ball lit on the starting key at once, wider than the line;
+that the warning is lit, dark, three times at 200 ms a change, in silence, and
+the ball is served at 1.2 s; that in play the ball is where its speed puts it
+along the pinned serve, shown on the device by tile share and on the canvas as
+a disc; that the ball's line sounds the key under it quietly, one note at a
+time, and holds the last note in a notch of the staircase; that a second key
+makes a paddle with both keys sounding, while a third key, a key on the center
+line and a key in the ball's way are swallowed; that a canvas click does
+nothing; that a hit turns the ball back, strikes the paddle's keys again at the
+accent velocity as the players' own notes, and accents the ball's key with
+them; that releasing a paddle key leaves a bumper; that a goal counts, ends the
+line and removes the ball for the one-second pause before the next warning;
+that the third goal ends the match with the modal naming the winner and the
+score, the device and the canvas restored, and a key still held still sounding
+for its player; and that the Pong button again stops a game without a modal.
+
+Its last INFO line reports, without judging, what one canvas redraw costs with
+Pong on screen and without it, and what the scene's tile shares cost.
+
+**Run it before declaring any change to `games/pong-game.ts`, `games/pong.ts`,
+`games/mode.ts`, `games/scene.ts`, or `restrikeHeld` in `input/held.ts` done.**
 
 ## The host, with a stub game (page gate)
 

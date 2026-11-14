@@ -42,9 +42,11 @@ export function parseMotif(game: string, text: string, label: string = game): Mo
 
 /** The motifs of the games that exist. Snake: the Nokia tune (bars 13–16 of
  *  Francisco Tárrega's Gran Vals, 1902), the ringtone of the phones Snake
- *  shipped on. */
+ *  shipped on. Pong: a round of the original's three sounds, each an octave
+ *  below the last: the serve, five bounces, the goal. */
 export const MOTIFS: ReadonlyArray<Motif> = [
   parseMotif('snake', 'E0 D0 F#-1 G#-1 C#0 B-1 D-1 E-1 B-1 A-1 C#-1 E-1 A-1', 'Snake'),
+  parseMotif('pong', 'B0 B-1 B-1 B-1 B-1 B-1 B-2', 'Pong'),
 ];
 
 interface Attempt {

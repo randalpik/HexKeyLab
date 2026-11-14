@@ -35,20 +35,16 @@ export const BALL_RADIUS = 0.5;
 export const PADDLE_HALF = 0.4;
 /** The farthest apart, in key steps, two keys may be to make a paddle. */
 export const PADDLE_REACH = 4;
-/** The center line: dashes this long with gaps this long, this far to each
- *  side of x = 0. One dash is centered on the field's center. */
-export const LINE_DASH = 1;
-export const LINE_GAP = 1;
-export const LINE_HALF = 0.1;
+/** The center line: solid, from wall to wall, this far to each side of x = 0. */
+export const LINE_HALF = 0.25;
 
-/** The ball's speed at the first serve; what it gains each second of play; and
- *  its limit. After a goal it drops halfway back to the starting speed. All
- *  guesses, to be tuned. */
-export const START_SPEED = 8;
+/** The ball's speed at the first serve, and what it gains each second of play.
+ *  It has no limit. After a goal it drops halfway back to the starting speed.
+ *  To be tuned. */
+export const START_SPEED = 6;
 export const SPEED_GAIN = 0.25;
-export const TOP_SPEED = 24;
-/** The ball moves in steps no longer than this, so it cannot pass through a
- *  bumper or a paddle between two of them. */
+/** The ball moves in steps no longer than this, at any speed, so it cannot pass
+ *  through a bumper or a paddle between two of them. */
 export const MAX_STEP = 0.1;
 
 /** The key the ball starts on: the key on the center line nearest the middle. */
@@ -225,16 +221,20 @@ function step(state: PongState, ms: number, events: PongEvent[]): void {
   const far = state.speed * ms / 1000;
   ball.x += dir.x * far;
   ball.y += dir.y * far;
-  state.speed = Math.min(TOP_SPEED, state.speed + SPEED_GAIN * ms / 1000);
+  state.speed += SPEED_GAIN * ms / 1000;
 
-  /* The long sides: the ball's edge meets the wall. */
+  /* The long sides: the ball's edge meets the wall. If the whole ball was past
+     an end where it met one, the goal came first and there is no bounce. */
   const limit = FIELD_WALL - BALL_RADIUS;
-  if (ball.y > limit && dir.y > 0) {
-    ball.y = 2 * limit - ball.y;
-    dir.y = -dir.y;
-    events.push({ kind: 'wall' });
-  } else if (ball.y < -limit && dir.y < 0) {
-    ball.y = -2 * limit - ball.y;
+  const over = dir.y > 0 ? ball.y - limit : dir.y < 0 ? -limit - ball.y : 0;
+  if (over > 0) {
+    const back = over / Math.abs(dir.y);
+    const scorer = scorerAt(ball.x - dir.x * back, ball.y - dir.y * back);
+    if (scorer) {
+      goal(state, scorer, events);
+      return;
+    }
+    ball.y = (dir.y > 0 ? 2 : -2) * limit - ball.y;
     dir.y = -dir.y;
     events.push({ kind: 'wall' });
   }
@@ -278,10 +278,15 @@ function step(state: PongState, ms: number, events: PongEvent[]): void {
     }
   }
 
-  /* A goal: the whole ball is past an end. */
-  const along = ball.x * ROW[0] + ball.y * ROW[1];
-  if (along > FIELD_END + BALL_RADIUS) goal(state, 'left', events);
-  else if (along < -FIELD_END - BALL_RADIUS) goal(state, 'right', events);
+  const scorer = scorerAt(ball.x, ball.y);
+  if (scorer) goal(state, scorer, events);
+}
+
+/* A goal: the whole ball, centered at (x, y), is past an end. Who scores by
+   it, the player of the other half, or null when it is past neither. */
+function scorerAt(x: number, y: number): Half | null {
+  const along = x * ROW[0] + y * ROW[1];
+  return along > FIELD_END + BALL_RADIUS ? 'left' : along < -FIELD_END - BALL_RADIUS ? 'right' : null;
 }
 
 /** Let `ms` pass. Nothing happens while the game waits or is over. `random`
@@ -314,25 +319,15 @@ export function advance(state: PongState, ms: number, random: () => number): Pon
   return events;
 }
 
-/* The center line's dashes, from wall to wall: one centered on the field's
-   center, the rest a dash and a gap apart, cut off at the walls. */
-const CENTER_LINE: ReadonlyArray<Shape> = (() => {
-  const dashes: Shape[] = [];
-  for (let c = 0; c - LINE_DASH / 2 < FIELD_WALL; c += LINE_DASH + LINE_GAP) {
-    for (const mid of c === 0 ? [0] : [c, -c]) {
-      dashes.push({
-        kind: 'line', x1: 0, y1: Math.max(-FIELD_WALL, mid - LINE_DASH / 2),
-        x2: 0, y2: Math.min(FIELD_WALL, mid + LINE_DASH / 2), half: LINE_HALF, round: false,
-      });
-    }
-  }
-  return dashes;
-})();
+/* The center line: one square-ended line from wall to wall. */
+const CENTER_LINE: Shape = {
+  kind: 'line', x1: 0, y1: -FIELD_WALL, x2: 0, y2: FIELD_WALL, half: LINE_HALF, round: false,
+};
 
 /** What Pong shows on top of the darkened keys: the center line, each player's
  *  bumper or paddle, and the ball while it is lit. */
 export function pongShapes(state: PongState): Shape[] {
-  const shapes: Shape[] = [...CENTER_LINE];
+  const shapes: Shape[] = [CENTER_LINE];
   for (const half of HALVES) {
     const keys = state.held[half];
     if (keys.length === 1) {

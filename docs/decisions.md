@@ -11111,3 +11111,51 @@ A webcam reaches OBS later than the overlay's browser source: a press showed on 
 **Gates:** `test/games/oracle.mjs` section E (new, 85 checks; 185 in all). Two deliberate breaks were caught before it was trusted: without the contact search both off-center reflection checks failed, and with one serve limit a degree wider the range checks failed.
 
 **Where:** `apps/hkl/src/games/pong.ts` (new), `games/board.ts` (the field, `onCenterLine`, `keyDistance`, `keyAtPoint`), `games/scene.ts`; `test/games/{oracle.mjs,README.md}`; docs/architecture/hkl.md (Hidden games).
+
+## Hidden games: Pong runs (2026-11-13, Max)
+
+**Context:** the driver that plays `games/pong.ts` under the game host, its motif and its button. Pong is playable from the Secrets toolbar. The rules and their rulings are the entry before this one.
+
+**Picked (Max, with the design):**
+- **The motif**: a B, five more an octave below it, one two octaves below (`B0 B-1 B-1 B-1 B-1 B-1 B-2`), after the original's three sounds as he hears them in recordings: the serve, a bounce, a goal.
+- **Pressed keys play, quietly.** A key the rules honor is a real held note at the quiet velocity, whatever the touch. A press that is not honored (a third key, one too far, one on the center line, one that would touch the ball) is swallowed in silence.
+- **The ball traces a quiet legato line** of the keys under it, and **a hit is a louder chord**: the ball's key with both ends of the paddle.
+- **Canvas clicks do nothing** while Pong runs; there is no one-player mode.
+- **The end goes straight to the modal**, which names the winner and the score.
+
+**Picked (agent):**
+- **The first press starts the first serve's warning and is an ordinary press besides**, so a player's first bumper both begins the game and stands.
+- **The hit chord strikes the players' keys again under their own held notes** (`restrikeHeld`, new in `input/held.ts`, through `host.accent`): the notes are re-articulated at the accent velocity and stay the players' until the keys are let go. It is apart from `pressHeld` because it is not a person's strike: it is no first note and the motif listener does not hear it.
+- **The host's line strikes the same key again in place.** Pressing a new note and letting go of the old one, as for a new key, let go of the note itself when both were the same key, which a hit on the key the ball is already over is.
+- **The picture is shown on every frame only in play**; in the warning and the pause, only when the ball goes on or off or the phase turns.
+- **Silence** through every warning and pause; a goal ends the line.
+- **Modal copy**: "Game over", then "The left player wins, 3 to 1." (the winner and both scores).
+- **No rule for the ball's line skipping a held key** (the design had one): the ball's center is never within 0.9 of a held key's center, so it is never over one.
+
+**Known, not guarded:**
+- On firmware below 1.5.0 the game runs and the device lags: every frame in play is per-key messages.
+- A wall bounce makes no sound of its own.
+- With Composer open, the line and the chords arrive there as held keys, as Snake's notes do.
+
+**Measured:** one canvas redraw costs 1.9 ms with Pong on screen against 1.1 ms without, and the scene's tile shares 0.17 ms a sync (headless Chromium, a 1576 × 515 canvas; Firefox on the hardware is Max's to judge).
+
+**Gates:** `test/games/pong.mjs` (new page gate, 51 checks: a match against a simulated 1.5.0 device, frames driven by hand, the serve pinned); `test/games/secrets.mjs` (the Pong motif and the count, 21 checks); `test/games/oracle.mjs` (186: the motif registered as the spec writes it, and the no-key check moved to a real notch of the staircase, after the page gate showed the old point sat on a tile's edge and had passed by rounding); Snake 67/67 and the host 47/47 unchanged.
+
+**Where:** `apps/hkl/src/games/{pong-game.ts (new),drivers.ts,motifs.ts,mode.ts}`, `input/held.ts`; `test/games/{pong.mjs (new),secrets.mjs,oracle.mjs,README.md}`; docs/architecture/hkl.md (Hidden games).
+
+## Hidden games: Pong, first hardware pass (2026-11-13, Max)
+
+**Context:** Max played Pong on the Lumatone and sent three points: the speed, the center line, and whether the ball can pass between a paddle's end on an outermost key and the long side.
+
+**Picked (Max):**
+- **Speed starts at 6 and has no limit** (it was 8, capped at 24; `TOP_SPEED` is gone). The rate of rise (0.25 a second) is to be tuned after he has tried it uncapped. The step stays at most 0.1 at any speed, so nothing passes through a paddle however fast the ball is.
+- **The center line is solid and 0.5 thick**, wall to wall. It was dashes 0.2 thick, too faint on the keys; at 0.8 the dashes still did not read on the board. A solid line runs through the starting key, which the dashes had kept in a gap: at 0.8 that key was 87% white under the line and 96% with the ball on it, so the serve's warning barely showed. Max narrowed the solid line to 0.5: the key is 58% under the line alone and 94% with the ball lit, and the line lights 16 keys, 2% to 58%.
+
+**Picked (agent):**
+- **A goal that comes before a long side in the same step is not also a bounce.** `step` tested the wall first and the end afterward, so a ball whose edge would meet the wall just after the whole ball passed the end reported `wall`, then `goal` (served right at 31 degrees up, the two are 0.065 apart along the path). The end is now tested at the point where the ball met the side. Nothing audible or visible rode on it; the oracle's bounce-for-bounce trace caught it once the starting speed changed the step length.
+
+**Measured (the edge question):** 71 keys have no key between them and a long side. A bumper or a paddle's end on one leaves 0.10 to 0.93 of room under the wall, less than the ball's width, on 70 of them; fired at through the real rules (2,107 paddles, about 35,000 shots at speeds 6 and 60, and bumpers at 6, 24 and 60), the ball never crossed between such a key and the wall, and no step left it inside a paddle. The 71st is key (16, -2), the topmost of the four keys on the right end line: 1.49 of room, and the ball does pass. **Ruled (Max):** that key is next to a goal line, not a wall, so the room above it is part of the way to the goal and nothing is to be closed. The rules have no notion of a key being next to a wall; the classification was the probe's only.
+
+**Gates:** `test/games/oracle.mjs` 189 (the fast shots at speed 100, no limit, the solid line and the starting key's two shares, and two new checks of a goal and a side in one step, proven by turning the fix off); `test/games/pong.mjs` 51 (the starting key now holds the line with the ball off; the ball is told apart on the canvas beside the line).
+
+**Where:** `apps/hkl/src/games/pong.ts`; `test/games/{oracle.mjs,README.md}`; docs/architecture/hkl.md (Hidden games).

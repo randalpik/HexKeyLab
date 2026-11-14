@@ -46,10 +46,11 @@
 //      degree inside bounces at most twice, one degree more bounces a third
 //      time, and the module's ball agrees bounce for bounce); reflection off a
 //      long side, a bumper, a paddle's side and its round end against the
-//      gate's own contact point; no passing through a paddle at top speed; a
+//      gate's own contact point; no passing through a paddle at speed 100; a
 //      goal when the whole ball is past an end, to the other half's player,
-//      the pause, the next warning; first to 3; the speed's rise, its cap and
-//      its drop after a goal; the shapes drawn
+//      the pause, the next warning; first to 3; a goal and a long side met in
+//      one step, in the order the path meets them; the speed's rise, with no
+//      limit, and its drop after a goal; the shapes drawn
 
 import { baseKeys } from '../../apps/hkl/src/layout/baseKeys.ts';
 import { hexToScreen, setRotation } from '../../apps/hkl/src/layout/geometry.ts';
@@ -380,9 +381,9 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
   check('C shared start, neither', seq([x, y], 'C4 D4 G4 E4'), [null, null, null, null]);
   check('C failing press heard as a first note', seq([x, y], 'C4 D4 C5 D5 F5'), [null, null, null, null, 'y']);
 
-  /* the Pong motif (docs/local/easter-egg-games.md): not registered until Pong exists */
-  const pong = parseMotif('pong', 'B0 B-1 B-1 B-1 B-1 B-1 B-2');
-  check('C Pong not registered yet', MOTIFS.some((m) => m.game === 'pong'), false);
+  /* the Pong motif, as the spec writes it (docs/local/easter-egg-games.md) */
+  const pong = parseMotif('pong', 'B0 B-1 B-1 B-1 B-1 B-1 B-2', 'Pong');
+  check('C Pong is registered as the spec writes it', MOTIFS.find((m) => m.game === 'pong'), pong);
   check('C Pong round', seq([snake, pong], 'B5 B4 B4 B4 B4 B4 B3').pop(), 'pong');
   check('C Pong, one bounce too many', seq([snake, pong], 'B5 B4 B4 B4 B4 B4 B4 B3').some((g) => g !== null), false);
   check('C Pong after a stray B', seq([snake, pong], 'B5 B5 B4 B4 B4 B4 B4 B3').pop(), 'pong');
@@ -571,8 +572,16 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
     }
     check('E the key under any point, or none', [wrong, none > 100], [0, true]);
   }
-  const between = [(own[keyAt(0, 4)][0] + own[keyAt(7, 2)][0]) / 2, wall - 0.5];
-  check('E between two corner keys the field is over no key', [Math.abs(between[1]) < FIELD_WALL, keyAtPoint(...between)], [true, -1]);
+  /* A notch of the staircase along the top side: where key (4, 3) would be,
+     beside (3, 3). The ball's center can be 0.3 below that place, and no key is
+     under it there. */
+  const notch = [own[keyAt(3, 3)][0] + rowDir[0], own[keyAt(3, 3)][1] + rowDir[1] - 0.3];
+  check('E in a notch of the staircase the field is over no key', [keyAt(4, 3), notch[1] < wall - pong.BALL_RADIUS, keyAtPoint(...notch)], [-1, true, -1]);
+  {
+    let none = 0, places = 0;
+    for (let x = -15; x <= 15; x += 0.05) for (let y = 0.5 - wall; y <= wall - 0.5; y += 0.05) { places++; if (keyAtPoint(x, y) < 0) none++; }
+    check('E the notches are about 3% of where the ball\'s center can be', (100 * none / places).toFixed(0), '3');
+  }
   let distWrong = 0;
   for (let n = 0; n < KEY_COUNT; n += 7) for (let m = 0; m < KEY_COUNT; m += 11) if (keyDistance(n, m) !== hexd(n, m)) distWrong++;
   check('E key distance', [distWrong, keyDistance(keyAt(0, 0), keyAt(4, 0)), keyDistance(keyAt(0, 0), keyAt(2, -4)), keyDistance(keyAt(0, 0), keyAt(3, 2))], [0, 4, 4, 5]);
@@ -779,9 +788,12 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
     check('E reflected about the normal of the end\'s disc', [near(s2.dir.x, want2[0], 1e-6), near(s2.dir.y, want2[1], 1e-6)], [true, true]);
   }
   {
-    /* Top speed, aimed at a four-key paddle from both sides and many angles, in
-       frames of 16 ms and of 100 ms: every shot is a hit, and the ball is never
-       left inside the paddle. */
+    /* The speed has no limit, so this is far past what a match reaches (from
+       6, at +0.25 a second, 100 is six minutes of one rally): aimed at a
+       four-key paddle from both sides and many angles, in frames of 16 ms and
+       of 100 ms, every shot is a hit and the ball is never left inside the
+       paddle. */
+    const FAST = 100;
     const P1 = keyAt(-6, 2), P2 = keyAt(-6, -2);
     const a = own[P1], b = own[P2];
     const random = seeded(31);
@@ -794,7 +806,7 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
       const p = [target[0] + from, target[1] + slant];
       if (Math.abs(p[1]) > wall - 1) continue;
       inPlay(s, p[0], p[1], target[0] - p[0], target[1] - p[1]);
-      s.speed = pong.TOP_SPEED;
+      s.speed = FAST;
       shots++;
       let hit = false;
       for (let ms = 0; ms < 400 && s.phase === 'play'; ms += frame) {
@@ -804,7 +816,7 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
       if (hit) hits++;
     }
     check('E a paddle keys 4 apart', [hexd(P1, P2), playerOf(P1), playerOf(P2)], [4, 'left', 'left']);
-    check('E at top speed every shot at a paddle hits it', [shots > 300, hits === shots], [true, true]);
+    check('E at speed 100 every shot at a paddle hits it', [shots > 300, hits === shots], [true, true]);
     check('E and the ball is never left inside it', inside, 0);
     check('E the step is short enough', pong.MAX_STEP < REACH, true);
   }
@@ -836,17 +848,37 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
     check('E after the match, time does nothing', [advance(s, 5000, () => 0.5), s.phase], [[], 'over']);
   }
   {
+    /* A long side and an end met inside one step (0.096 at the starting speed
+       in a 16 ms frame), the ball flying up and to the right at 45 degrees:
+       whichever comes first along the path happens first. */
+    const d = Math.SQRT1_2, lim = wall - pong.BALL_RADIUS, goalAt = end + pong.BALL_RADIUS;
+    const perPath = d * rowDir[0] + d * rowDir[1];
+    const near2 = (toWall, toEnd) => {
+      const y = lim - toWall * d;
+      const x = (goalAt - toEnd * perPath - y * rowDir[1]) / rowDir[0];
+      const s = newPong();
+      inPlay(s, x, y, d, d);
+      const kinds = [];
+      for (let i = 0; i < 3; i++) kinds.push(...advance(s, 16, () => 0.5).map((e) => e.kind));
+      return [kinds, s.score];
+    };
+    check('E the end 0.02 ahead and the wall 0.05: a goal and no bounce', near2(0.05, 0.02), [['goal'], { left: 1, right: 0 }]);
+    check('E the wall 0.02 ahead and the end 0.05: a bounce, then the goal', near2(0.02, 0.05), [['wall', 'goal'], { left: 1, right: 0 }]);
+  }
+  {
     const s = newPong();
     inPlay(s, 0, 0, 0, 1);
     advance(s, 4000, () => 0.5);
     check('E the speed rises 0.25 a second of play', [s.phase, near(s.speed, pong.START_SPEED + 1, 1e-6), pong.SPEED_GAIN], ['play', true, 0.25]);
-    s.speed = pong.TOP_SPEED - 0.1;
+    s.speed = 500;
     advance(s, 2000, () => 0.5);
-    check('E to its limit and no further', [s.speed, pong.TOP_SPEED], [24, 24]);
-    const before = s.speed;
+    check('E and has no limit', [s.phase, near(s.speed, 500.5, 1e-6), 'TOP_SPEED' in pong], ['play', true, false]);
+    /* The speed in the millisecond before the goal: it rises until then. */
+    s.speed = 40;
+    let before = s.speed;
     inPlay(s, 14.9, 0, rowDir[0], rowDir[1]);
-    for (let t = 0; t < 3000 && s.phase === 'play'; t += 16) advance(s, 16, () => 0.5);
-    check('E after a goal it is halfway back', [s.phase, near(s.speed, (before + pong.START_SPEED) / 2, 1e-9)], ['pause', true]);
+    for (let t = 0; t < 3000 && s.phase === 'play'; t++) { before = s.speed; advance(s, 1, () => 0.5); }
+    check('E after a goal it is halfway back', [s.phase, near(s.speed, (before + pong.START_SPEED) / 2, 1e-3)], ['pause', true]);
   }
 
   /* What is drawn is what the ball meets. */
@@ -854,10 +886,10 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
     const s = newPong();
     const lines = pongShapes(s).filter((x) => x.kind === 'line');
     const ranges = lines.map((l) => [l.y1.toFixed(2), l.y2.toFixed(2)]).sort((p, q) => p[0] - q[0]);
-    check('E the center line: five square-ended dashes on x = 0, one key long, one key apart, cut at the walls',
-      [ranges, lines.every((l) => l.x1 === 0 && l.x2 === 0 && l.half === 0.1 && l.round === false)],
-      [[['-4.31', '-3.50'], ['-2.50', '-1.50'], ['-0.50', '0.50'], ['1.50', '2.50'], ['3.50', '4.31']], true]);
-    check('E waiting, only the center line is drawn', pongShapes(s).length, 5);
+    check('E the center line: one square-ended line on x = 0 from wall to wall, 0.5 thick',
+      [ranges, lines.every((l) => l.x1 === 0 && l.x2 === 0 && l.half === 0.25 && l.round === false)],
+      [[['-4.31', '4.31']], true]);
+    check('E waiting, only the center line is drawn', pongShapes(s).length, 1);
     begin(s);
     const ballShape = pongShapes(s).filter((x) => x.kind === 'circle');
     check('E the ball: a disc one key wide on the starting key', [ballShape.length, ballShape[0].r, near(ballShape[0].x, own[START][0]), near(ballShape[0].y, own[START][1])], [1, 0.5, true, true]);
@@ -869,10 +901,19 @@ const offsets = (keys) => keys.map((k) => [...keyOffset(k)]);
     press(s, L2);
     const paddle = pongShapes(s).filter((x) => x.kind === 'line' && x.round);
     check('E a paddle: a round-ended line 0.8 thick between its keys', [paddle.length, paddle[0].half, near(paddle[0].x1, own[L1][0]) && near(paddle[0].y1, own[L1][1]), near(paddle[0].x2, own[L2][0]) && near(paddle[0].y2, own[L2][1])], [1, 0.4, true, true]);
-    check('E the sizes drawn are the sizes met', [pong.BALL_RADIUS, pong.PADDLE_HALF, pong.LINE_HALF], [0.5, 0.4, 0.1]);
+    check('E the sizes drawn are the sizes met', [pong.BALL_RADIUS, pong.PADDLE_HALF, pong.LINE_HALF], [0.5, 0.4, 0.25]);
     const K = keyAt(2, 1), [kx, ky] = own[K];
     const dash = whiteShares([{ kind: 'line', x1: kx, y1: ky - 2, x2: kx, y2: ky + 2, half: pong.LINE_HALF, round: false }])[K];
-    check('E the center line through a key\'s center covers about 24% of it', dash.toFixed(2), '0.24');
+    check('E the center line through a key\'s center covers about 58% of it', dash.toFixed(2), '0.58');
+    {
+      /* The starting key is on the line: the warning's flash is the step from
+         the line alone to the line with the ball on it. */
+      const w = newPong();
+      const dark = whiteShares(pongShapes(w))[START];
+      begin(w);
+      const lit = whiteShares(pongShapes(w))[START];
+      check('E the starting key: 58% under the line alone, 94% with the ball lit', [dark.toFixed(2), lit.toFixed(2)], ['0.58', '0.94']);
+    }
   }
 }
 

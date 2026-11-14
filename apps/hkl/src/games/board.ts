@@ -130,7 +130,8 @@ export function keyAtPoint(x: number, y: number): number {
 /* The playing field of a game with walls: the rectangle-like region the keys
    fill, squared off. Its long sides are level lines through the outer extents
    of the corner keys (five on each side lie exactly on one line, a board step
-   apart), so between corner keys a point inside the field is over no key. Its
+   apart). Between corner keys the rows step back from that line, and in the
+   notches of that staircase a point inside the field is over no key. Its
    ends run square to the key rows, so they are tilted 16.1° from square. Nine
    rows reach each end, alternating half a key back, and the end's line goes
    through the outer extents of the outermost keys (four at the right end, five

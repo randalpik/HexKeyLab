@@ -84,6 +84,24 @@ export function pressHeld(source: HeldSource, id: string, key: KeyId, velocity: 
   if (source !== 'game') hearKeyPress(key);
 }
 
+/** Strike again the key that held input `id` is holding, at `velocity`: the
+ *  note is re-articulated and stays that input's until it is released. No-op
+ *  for an input that is not held. This is a running game's accent on a key a
+ *  player holds (games/mode.ts), not a person's strike, so it is not a first
+ *  note and the motif listener does not hear it. */
+export function restrikeHeld(source: HeldSource, id: string, velocity: number): void {
+  const key = held[source].get(id);
+  if (key === undefined) return;
+  if (audio.activeOscs[key]) {
+    noteOff(key);
+    flashKey(key);
+  }
+  audio.sustainedKeys.delete(key);
+  audio.keyVelocity[key] = velocity;
+  restrikePianoOut(key);
+  onSelectionChanged();
+}
+
 /** Release physical input `id`. The damper or a sostenuto lock keeps the note
  *  sounding (moved to sustainedKeys); otherwise it is deselected and its
  *  per-key state cleared. No-op for an input that is not held. */

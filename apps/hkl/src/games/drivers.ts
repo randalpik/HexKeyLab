@@ -4,7 +4,9 @@
 
 import type { GameDriver } from './mode.js';
 import { snakeGame } from './snake-game.js';
+import { pongGame } from './pong-game.js';
 
 export const DRIVERS: Readonly<Record<string, GameDriver>> = {
   snake: snakeGame,
+  pong: pongGame,
 };

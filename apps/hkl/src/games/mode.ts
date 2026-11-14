@@ -23,7 +23,7 @@
 
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
 import { lumatoneCell } from '../layout/physical.js';
-import { pressHeld, releaseHeld } from '../input/held.js';
+import { pressHeld, releaseHeld, restrikeHeld, heldKey } from '../input/held.js';
 import { syncLumatoneColors } from '../lumatone/sync.js';
 import { requestDraw, getOutlineMode } from '../render/draw.js';
 import { KEY_COUNT } from './board.js';
@@ -77,6 +77,10 @@ export interface Host {
   sound(key: number, velocity: number): void;
   /** End the line. */
   hush(): void;
+  /** Strike again, at `velocity`, each of the Lumatone keys `keys` that a
+   *  player is holding as a note. The notes stay the players': they sound until
+   *  the keys are let go. */
+  accent(keys: ReadonlyArray<number>, velocity: number): void;
   /** The game is over by its own rules: take it off the keys and report `text`. */
   end(text: string): void;
 }
@@ -222,12 +226,26 @@ function hostOf(r: Run): Host {
     sound(key, velocity) {
       if (run !== r) return;
       const [q, c] = lumatoneCell(key);
+      const cell = q + ',' + c;
+      /* The same key again is struck again in place: letting go of the note
+         before would let go of this one. */
+      if (r.note && heldKey('game', r.note) === cell) {
+        pressHeld('game', r.note, cell, velocity);
+        return;
+      }
       const id = 'line' + (++r.notes);
-      pressHeld('game', id, q + ',' + c, velocity);
+      pressHeld('game', id, cell, velocity);
       if (r.note) releaseHeld('game', r.note);
       r.note = id;
     },
     hush() { hush(r); },
+    accent(keys, velocity) {
+      if (run !== r) return;
+      /* A Lumatone key's held input is "channel,note" (midi/handler.ts). */
+      for (const key of keys) {
+        restrikeHeld('lumatone', (Math.floor(key / 56) + 1) + ',' + (key % 56), velocity);
+      }
+    },
     end(text) {
       if (run !== r) return;
       const game = r.game.id;
