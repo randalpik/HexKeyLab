@@ -5719,3 +5719,11 @@ With Extend pattern off, a click near the rim of the outline could select and so
 - **The fix is one set of candidates, not a narrower polygon.** When the overlay hides the outside keys, only the outline's keys can be the answer, and the strip goes to the rim key it borders. Shrinking the polygon to the key edges would have left a dead band under the stroke.
 - **When two conditions are meant to agree, ask where they do not.** Each was right by itself; the bug was the region between their boundaries.
 - **A whole-canvas scan found it in one pass** (`test/hkl-midi/outline-clicks.mjs`): every point must resolve to nothing or to a key of the outline. Checking a handful of clicks at key centers never would have.
+
+## "The first one past this line" finds something else when the line is wrong (2026-11-15)
+
+`trim.py` found the overlay's outline as the topmost always-white pixel below the top of a fixed crop, per column. With the lattice moved 29 px up for a tall score, the crop's top row was already inside the lattice in a quarter of the columns, and there the first white pixel was a note label, or the bottom outline. The camera mask swallowed those columns of the overlay and shifted them 10 frames with the camera; the cut showed stripes.
+- **A search bounded by an assumed position does not fail when the assumption does; it returns the next thing that matches.** Identify the object by what it is (here: the one large, thin, connected white shape in the frame) and let the position be a result.
+- **The guard counted the wrong thing.** "Outline found in at least 90% of the columns" counted columns with any white pixel, so labels satisfied it. A sanity check has to test a property the wrong answer lacks.
+- **The run printed the evidence**: `outline top y 950-1301`, where a zigzag spans about 40 rows. A range that should be narrow is worth a threshold or at least a second look.
+- **Every earlier session was fine by luck of direction**: the lattice had been moved before, but only downward, where the top-down search still met the outline first.

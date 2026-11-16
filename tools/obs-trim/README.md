@@ -22,15 +22,17 @@ off the overlay's lattice.
   it with `--audio-track N`.
 - **Takes separated by at least 2 s of silence.** One `.mkv` can hold a whole
   session; each stretch of sound is a take.
-- **The overlay's lattice in the frame.** `trim.py` reads onsets from a crop
-  rectangle around the lattice. Two presets are chosen by frame size:
-  1080×1920 (vertical: the lattice in a full-width band at y 970–1350) and
-  1920×1080 (horizontal: x 40–1880, y 580–1060). For any other scene,
-  including a different layout at one of those sizes, pass
-  `--lattice W:H:X:Y` (ffmpeg crop order: width, height, left, top) and check
-  it with `--onsets --crop-png crop.png`. The rectangle should cover the whole
-  lattice and nothing else that moves; a "crop noise" warning means it caught
-  camera.
+- **The overlay's lattice in the frame, with its white outline.** `trim.py`
+  finds the lattice by that outline, so the scene may put it anywhere (moved
+  up to make room for a tall score, say). Onsets are read from a crop
+  rectangle around the lattice: one of two presets by frame size — 1080×1920
+  (vertical: the lattice in a full-width band at y 970–1350) and 1920×1080
+  (horizontal: x 40–1880, y 580–1060) — when the lattice sits inside it, and
+  otherwise the outline's bounding box, which `trim.py` prints. For an overlay
+  with no outline, pass `--lattice W:H:X:Y` (ffmpeg crop order: width, height,
+  left, top) and check it with `--onsets --crop-png crop.png`. The rectangle
+  should cover the whole lattice and nothing else that moves; a "crop noise"
+  warning means it caught camera.
 
 ## Workflow
 
@@ -92,7 +94,8 @@ $T $S out.mp4 --end last+0.5            # encode
 ## Onsets come from the lattice video, not the audio
 
 `--onsets` (and `--end last±D`) read key events off the overlay's lattice. The
-crop (a preset per frame size, covering the whole lattice; `--lattice`
+crop (covering the whole lattice: the preset for the frame size, or the
+outline's box when the lattice is not inside the preset; `--lattice`
 overrides, `--crop-png` shows it) is reduced to a grid of 24 px cells, mean
 luma each, so a hex spans two or three cells. Per cell, a lightening is a
 key-down. A darkening that is re-lit within 6 frames is HKL's re-strike flash —
@@ -138,13 +141,20 @@ reference because it is what the audio is heard against, and it can't be moved
 without re-breaking that.
 
 - **The camera part** is, per column, everything above the overlay's white
-  outline: the topmost pixel inside the lattice crop that is white (min RGB ≥
-  200) in eight frames sampled across the cut. The lattice's top edge zigzags,
-  so the boundary follows it rather than a straight line; three rows above the
-  outline, and ±2 columns along its slopes, stay unshifted so its antialiased
-  edge never mixes two frames. Columns past the lattice's ends take the
-  nearest column's boundary (the backdrop there is static). The scene has to
-  have the camera above the lattice, as both presets do.
+  outline. The outline is found by shape, anywhere in the frame: of the pixels
+  that are white (min RGB ≥ 200) in eight frames sampled across the cut (across
+  the take, when the onsets were read from it too), the largest connected group, which must be a thin line (it covers about 5% of
+  its bounding box; lit keys on camera and other solid shapes cover most of
+  theirs, and note labels are small). Its topmost pixel in a column is that
+  column's boundary, so no part of the overlay can land on the camera side.
+  The lattice's top edge zigzags, so the boundary follows it rather than a
+  straight line; three rows above the outline, and ±2 columns along its
+  slopes, stay unshifted so its antialiased edge never mixes two frames.
+  Columns past the lattice's ends take the nearest column's boundary (the
+  backdrop there is static). The scene has to have the camera above the
+  lattice, and the outline has to cross at least 90% of the frame's columns.
+  The encode prints the outline's top range (`outline top y 967-1008`): it
+  spans one zigzag, a few dozen rows.
 - **Frame-exact.** Both branches of one decode are rebased to a one-frame
   timebase and the camera branch is delayed by exactly N frames
   (`trim` + `setpts`), then merged through the mask (`maskedmerge`); a

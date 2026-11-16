@@ -114,10 +114,12 @@ def aubio_onsets(wav, threshold):
     return [float(x) for x in r.stdout.split()]
 
 
-# Lattice crops per OBS frame size, covering the WHOLE lattice. The overlay is opaque
-# inside its outline and the area around it in both layouts is static (black band /
-# dark backdrop), so the rectangle may extend past the outline: measured 2026-10-14,
-# no cell outside the hexes changes in >0.1% of frames. ffmpeg crop order w:h:x:y.
+# Lattice crops per OBS frame size, covering the WHOLE lattice where the scene usually puts
+# it; a lattice that is not inside its preset is read from its outline's box instead
+# (lattice_crop). The overlay is opaque inside its outline and the area around it in both
+# layouts is static (black band / dark backdrop), so the rectangle may extend past the
+# outline: measured 2026-10-14, no cell outside the hexes changes in >0.1% of frames.
+# ffmpeg crop order w:h:x:y.
 LAYOUTS = {
     (1080, 1920): "1080:420:0:950",    # vertical: lattice band y 970-1350, full width
     (1920, 1080): "1900:520:10:560",   # horizontal: lattice parallelogram x 40-1880, y 580-1060
@@ -322,15 +324,16 @@ def video_onsets(src, audio_track, crop, onset, seg_end, workdir, thr=CELL_THR, 
                      lag_p25=q(0.25), lag_p75=q(0.75))
 
 
-# Camera shift. A webcam reaches OBS later than the overlay's browser source, so a press
-# shows on camera some frames after the overlay lights its key. --cam-shift N takes the
-# camera part of every frame from N frames later. The camera part is, per column, every
-# row above the overlay's white outline (the lattice's top edge zigzags, so the boundary
-# is not a straight line); below it the overlay and the rest of the scene stay as recorded.
-WHITE = 200          # min(R, G, B) of an outline pixel, in every sampled frame
-MASK_SAMPLES = 8     # frames sampled across the cut to find the outline
-MASK_MARGIN = 3      # rows above the outline left unshifted: its antialiased edge
-MASK_SPREAD = 2      # columns each side: on a steep edge the antialiasing sits beside the line
+# Overlay outline. The overlay draws a white line around the whole lattice, and the scene may
+# put the lattice anywhere in the frame, so the outline is found by shape, not by position: of
+# the pixels that are white in every sampled frame, the largest connected group, which must be
+# thin. Everything else that stays white is small or solid (note labels, lit keys on camera),
+# and a search for "the first white pixel below some row" lands on a label wherever that row
+# is already inside the lattice.
+WHITE = 200            # min(R, G, B) of an outline pixel, in every sampled frame
+OUTLINE_SAMPLES = 8    # frames sampled across the take
+OUTLINE_FILL = 0.15    # most of its bounding box an outline may cover: a line around the lattice
+                       # covers ~0.05 of it, a solid white shape most of it
 
 
 def probe_video(path):
@@ -340,37 +343,118 @@ def probe_video(path):
     return dict(line.split("=", 1) for line in r.stdout.strip().splitlines() if "=" in line)
 
 
-def camera_limits(src, crop, times, width):
-    """Per frame column, the first row that is not camera: the top of the overlay's outline
-    (the topmost pixel inside the lattice crop that is white in every sampled frame; the
-    crop's non-hex area is static dark, and camera never reaches into it) minus MASK_MARGIN,
-    min-filtered over ±MASK_SPREAD columns. Columns with no outline (past the lattice's ends,
-    over static backdrop) take the nearest column's value. Returns (limits, n_extrapolated)."""
-    cw, ch, cx, cy = (int(v) for v in crop.split(":"))
+def always_white(src, times, width, height):
+    """One byte per frame pixel: 1 where min(R, G, B) >= WHITE in the frame at every time."""
     table = bytes(1 if v >= WHITE else 0 for v in range(256))
     acc = None
     for t in times:
         r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.6f}", "-i", src,
-                            "-frames:v", "1", "-an", "-vf", f"crop={crop},format=rgb24", "-f", "rawvideo", "-"],
+                            "-frames:v", "1", "-an", "-vf", "format=rgb24", "-f", "rawvideo", "-"],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if r.returncode != 0 or len(r.stdout) != cw * ch * 3:
+        if r.returncode != 0 or len(r.stdout) != width * height * 3:
             die(f"outline sample at {t:.3f}s failed: " + r.stderr.decode(errors="replace").strip()[-200:])
         b = r.stdout.translate(table)     # 0/1 per byte; ANDing the planes as big ints is bytewise
         w = int.from_bytes(b[0::3], "big") & int.from_bytes(b[1::3], "big") & int.from_bytes(b[2::3], "big")
         acc = w if acc is None else acc & w
-    white = acc.to_bytes(cw * ch, "big")
+    return acc.to_bytes(width * height, "big")
+
+
+def largest_component(white, width, height):
+    """The largest 8-connected group of 1s in a byte map, as its row runs [(y, x0, x1)] in row
+    order (x1 exclusive); [] when the map is empty. Runs are joined with union-find."""
+    parent, runs, prev = [], [], []
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    blank = bytes(width)
+    for y in range(height):
+        row = white[y * width:(y + 1) * width]
+        cur = []
+        if row != blank:
+            x = row.find(1)
+            while x != -1:
+                e = row.find(0, x)
+                if e == -1:
+                    e = width
+                parent.append(len(parent))
+                runs.append((y, x, e))
+                cur.append((x, e, len(parent) - 1))
+                x = row.find(1, e)
+            j = 0
+            for x, e, i in cur:
+                while j < len(prev) and prev[j][1] < x:       # ends left of this run, not even diagonal
+                    j += 1
+                k = j
+                while k < len(prev) and prev[k][0] <= e:      # touches it, diagonals included
+                    a, b = find(prev[k][2]), find(i)
+                    if a != b:
+                        parent[b] = a
+                    k += 1
+        prev = cur
+    size = {}
+    for i, (y, x, e) in enumerate(runs):
+        root = find(i)
+        size[root] = size.get(root, 0) + e - x
+    if not size:
+        return []
+    best = max(size, key=size.get)
+    return [run_ for i, run_ in enumerate(runs) if find(i) == best]
+
+
+def find_outline(src, t0, t1, width, height):
+    """The overlay's outline between t0 and t1: (top, box), top = per frame column the outline's
+    first row (None where it has none), box = (x0, y0, x1, y1) inclusive. None when the frame
+    holds no such shape."""
+    times = [t0 + (t1 - t0) * (i + 0.5) / OUTLINE_SAMPLES for i in range(OUTLINE_SAMPLES)]
+    runs = largest_component(always_white(src, times, width, height), width, height)
+    if not runs:
+        return None
     top = [None] * width
-    for y in range(ch):
-        row = white[y * cw:(y + 1) * cw]
-        x = row.find(1)
-        while x != -1:
-            if top[cx + x] is None:
-                top[cx + x] = cy + y
-            x = row.find(1, x + 1)
+    for y, x, e in runs:
+        for c in range(x, e):
+            if top[c] is None:
+                top[c] = y
+    box = (min(x for _, x, _ in runs), runs[0][0], max(e for _, _, e in runs) - 1, runs[-1][0])
+    if sum(e - x for _, x, e in runs) > OUTLINE_FILL * (box[2] - box[0] + 1) * (box[3] - box[1] + 1):
+        return None
+    return top, box
+
+
+def lattice_crop(box, preset):
+    """The onset crop for a lattice whose outline has this bounding box: the frame size's preset
+    when the lattice sits inside it, else the box itself, widened to even pixels (ffmpeg crops
+    yuv420p on its chroma grid). Returns (crop, is_preset)."""
+    x0, y0, x1, y1 = box
+    if preset:
+        cw, ch, cx, cy = (int(v) for v in preset.split(":"))
+        if cx <= x0 and cy <= y0 and x1 < cx + cw and y1 < cy + ch:
+            return preset, True
+    x0, y0 = x0 - x0 % 2, y0 - y0 % 2
+    return f"{x1 + 1 + (x1 + 1 - x0) % 2 - x0}:{y1 + 1 + (y1 + 1 - y0) % 2 - y0}:{x0}:{y0}", False
+
+
+# Camera shift. A webcam reaches OBS later than the overlay's browser source, so a press
+# shows on camera some frames after the overlay lights its key. --cam-shift N takes the
+# camera part of every frame from N frames later. The camera part is, per column, every
+# row above the overlay's white outline (the lattice's top edge zigzags, so the boundary
+# is not a straight line); below it the overlay and the rest of the scene stay as recorded.
+MASK_MARGIN = 3      # rows above the outline left unshifted: its antialiased edge
+MASK_SPREAD = 2      # columns each side: on a steep edge the antialiasing sits beside the line
+
+
+def camera_limits(top, width):
+    """Per frame column, the first row that is not camera: the outline's top (find_outline)
+    minus MASK_MARGIN, min-filtered over ±MASK_SPREAD columns. Columns the outline does not
+    cross (past the lattice's ends, over static backdrop) take the nearest column's value.
+    Returns (limits, n_extrapolated)."""
     found = [x for x in range(width) if top[x] is not None]
     if len(found) < 0.9 * width:
-        die(f"overlay outline found in only {len(found)} of {width} columns of the lattice crop {crop}; "
-            "check --lattice, or encode with --cam-shift 0")
+        die(f"the overlay's outline crosses only {len(found)} of the frame's {width} columns, so the camera "
+            "has no boundary beside it; encode with --cam-shift 0")
     filled, j = list(top), 0
     for x in range(width):                # nearest found column
         while j + 1 < len(found) and abs(found[j + 1] - x) <= abs(found[j] - x):
@@ -412,7 +496,8 @@ def main():
     ap.add_argument("--list", action="store_true", help="print the take table and exit")
     ap.add_argument("--onsets", action="store_true", help="print the take's onsets (from the lattice video) and exit")
     ap.add_argument("--audio-onsets", action="store_true", help="use aubio on the audio instead of the lattice video")
-    ap.add_argument("--lattice", help="crop W:H:X:Y fully inside the lattice outline (default: preset by frame size)")
+    ap.add_argument("--lattice", help="onset crop W:H:X:Y around the whole lattice (default: the preset for the frame size, "
+                    "or the box of the overlay's outline when the lattice is not inside the preset)")
     ap.add_argument("--cell-thr", type=int, default=CELL_THR, help="luma-level change of a lattice cell that counts as a key event (default 10; noise ~1-2)")
     ap.add_argument("--crop-png", help="write the lattice crop of one frame here, to check --lattice")
     ap.add_argument("--take", default="-1", help="take from --list: N (negative = from end; default -1), a range A-B, or 'all' — "
@@ -479,6 +564,7 @@ def main():
     # --- onsets --------------------------------------------------------------
     need_onsets = a.onsets or (a.end or "").startswith("last")
     onsets = []  # absolute source times, audio-aligned
+    outline = None  # (top, box) from find_outline, once looked for; the overlay holds still through a take
     # A >1 s digital-silence rest splits a piece into two "takes"; an explicit end past the
     # take boundary extends the analysis window to it.
     e = (a.end or "").strip()
@@ -491,9 +577,17 @@ def main():
             onsets = [onset + t for t in aubio_onsets(take_wav, a.onset_threshold)]
             print(f"audio onsets (aubio): {len(onsets)}")
         else:
-            crop = a.lattice or LAYOUTS.get(probe_size(a.src))
+            crop = a.lattice
             if not crop:
-                die("no lattice preset for this frame size; pass --lattice W:H:X:Y (a rect inside the lattice outline)")
+                size = probe_size(a.src)
+                outline = find_outline(a.src, onset, seg_end, *size)
+                crop, preset = lattice_crop(outline[1], LAYOUTS.get(size)) if outline else (LAYOUTS.get(size), True)
+                if not crop:
+                    die("no overlay outline found and no lattice preset for this frame size; pass --lattice W:H:X:Y "
+                        "(a rect around the whole lattice)")
+                if not preset:
+                    print(f"lattice outline at x {outline[1][0]}-{outline[1][2]}, y {outline[1][1]}-{outline[1][3]}: "
+                          f"outside the preset crop {LAYOUTS.get(size) or '(none for this frame size)'}, reading {crop}")
             if a.crop_png:
                 run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{onset + 1.0:.3f}",
                      "-i", a.src, "-frames:v", "1", "-vf", f"crop={crop}", a.crop_png])
@@ -588,10 +682,11 @@ def main():
         if cut_start + L + S / fps > total:
             die(f"--cam-shift {S}: the camera needs {S / fps:.3f}s of source past the cut end, but the file ends "
                 f"at {total:.3f}")
-        crop = a.lattice or LAYOUTS.get((W, H))
-        if not crop:
-            die("no lattice preset for this frame size; pass --lattice W:H:X:Y")
-        lim, extra = camera_limits(a.src, crop, [cut_start + L * (i + 0.5) / MASK_SAMPLES for i in range(MASK_SAMPLES)], W)
+        outline = outline or find_outline(a.src, cut_start, cut_start + L, W, H)
+        if not outline:
+            die("--cam-shift: no overlay outline in the frame (a thin white line around the lattice, white in "
+                f"{OUTLINE_SAMPLES} frames across the cut); encode with --cam-shift 0")
+        lim, extra = camera_limits(outline[0], W)
         mask = os.path.join(workdir, "cammask.yuv")
         write_mask(mask, lim, W, H)
         print(f"camera shift {S} frames ({S / fps * 1000:.0f} ms): outline top y {min(lim) + MASK_MARGIN}-"
