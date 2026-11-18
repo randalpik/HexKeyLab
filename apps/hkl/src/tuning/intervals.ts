@@ -476,6 +476,12 @@ export function shortenInterval(name: string, short: boolean): string {
   name = name.replace(/Pythagorean comma/g, 'PC');
   name = name.replace(/septimal diesis/g, '7D');
   name = name.replace(/chromatic semitone/g, 'A1');
+  /* An octave shortens by the rules of a 4th or 5th. After a quality word it
+     is the interval's number ("perfect octave", "lesser diminished octave"),
+     so it becomes 8 and the quality supplies the letter: P8, <d8. Only a bare
+     octave, an addend ("octave + syntonic comma"), becomes P8 by itself
+     below; shortening both gave "PP8" and "dP8". */
+  name = name.replace(/([a-z]) octave\b/g, '$1 8th');
   /* Pythagorean → P (no collision with 'perfect → P' since ordinals differ:
      Pm3/PM3/Pm6/PM6/Pm2/PM7 vs P1/P4/P5/P8) */
   name = name.replace(/\bPythagorean\b/g, 'P');
@@ -496,6 +502,6 @@ export function shortenInterval(name: string, short: boolean): string {
   name = name.replace(/ /g, '');
   name = name.replace(/\+/g, ' + ').replace(/−/g, ' − ');
   name = name.replace(/× /g, '×');
-  name = name.replace(/([7W])([45])(?!\d)/g, '$1P$2');
+  name = name.replace(/([7W])([458])(?!\d)/g, '$1P$2');
   return name;
 }

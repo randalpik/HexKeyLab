@@ -19,5 +19,15 @@ export default defineConfig({
     strictPort: true,
     hmr: { clientPort: 5170, path: '/' },
   },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    /* two pages: the app, and the shape guide (src/shapes/page.ts), which
+       shares the lattice's painters but none of its audio, MIDI or toolbar */
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        shapes: path.resolve(__dirname, 'shapes.html'),
+      },
+    },
+  },
 });

@@ -17,6 +17,18 @@ export type TuningMode = 'E' | '5' | 'P' | 'D' | '7' | 'V' | 'S' | 'Y';
 
 export const TUNING_MODES: ReadonlyArray<TuningMode> = ['E', '5', 'P', 'D', '7', 'V', 'S', 'Y'];
 
+/** Each mode's name as the Tuning dropdown shows it. */
+export const TUNING_LABELS: Readonly<Record<TuningMode, string>> = {
+  E: 'Equal',
+  '5': 'Ptolemaic',
+  P: 'Pythagorean',
+  D: 'Semiditonal',
+  '7': 'Septimal',
+  V: 'Schismatic',
+  S: 'Syntonic',
+  Y: 'Polysyntonic',
+};
+
 /** The anchor (home band) for a reference cell: its band in its own frame.
  *  Syntonic / Polysyntonic leave this band unaltered (Pythagorean) and shift
  *  every other band by whole syntonic commas (`bandOffset`). */

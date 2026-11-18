@@ -268,7 +268,7 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
   update both, plus `TUNING_MODES` in `@hkl/shared/freq.js` (every `isTuningMode` guard derives from it).
 - `Record<TuningMode, …>` tables the compiler flags: `MODE_LABELS`
   (`apps/composer/src/notation/retune.ts`) and `TUNING_LABELS` (`apps/composer/src/setupDialog.ts`,
-  `apps/hkl/src/bridge/hkl-side.ts`). One it won't: the `Record<string, …>` `TUNING_LABELS` in
+  and `@hkl/shared/freq.js`, which HKL's bridge and the shape guide read). One it won't: the `Record<string, …>` `TUNING_LABELS` in
   `apps/composer/src/input.ts`.
 - The selector `<option>` in `apps/hkl/index.html` and the `tuningDescription()` switch in
   `apps/hkl/src/bridge/hkl-side.ts`.

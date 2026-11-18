@@ -39,6 +39,8 @@ The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/Luma
 
    These are loaded when TC starts (`loadKeySetting`/`loadKeyThresholds`) and pushed to the PICs over UART as part of bootSequence. A confirmed built-in calibration rewrites rows 1, 2 and 4.
 
+   **What the built-in routine puts in rows 1 and 2** (read from the 1.5.0 PIC image; lessons.md → "The PIC's calibration mode"): MAX is the highest sensor reading the key reached at any moment of the routine, and MIN is its rest reading when the routine started. In play, the press timer starts at MIN plus the board's `min lo` and the note-on fires above MAX minus the board's `max` (`ThresholdData_N` rows 4 and 1), so a key's timing window is MAX − MIN − (`max` + `min lo`) sensor counts. Two things follow. A key squeezed harder during the routine than it is in normal play gets a note-on point that normal play reaches late, or never. And the overhead is the same number of counts for every key, so a key with a small swing keeps a small window and reads loud.
+
 2. **In running memory**: the `boardId[5]` array in TC's `.bss` (`board_properties`, 638 bytes per board; same layout in 1.4.0 and 1.5.0, different address). Earlier notes called it `kbd_preset_params`, which is really a 5-byte flags struct. Same four rows at offsets `+0x118`, `+0x150`, `+0x1c0`, `+0x1fe` relative to that board's slot. Slot `i` (0..4) corresponds to `KeyData_(i+1)`. Editing a file does not touch this copy: the new values load when TC next starts.
 
 The per-board thresholds and sensitivities (the sliders in Calibrate Keys) are a separate layer, stored in `files/ThresholdData_1..5`: ten rows of one value each.
@@ -56,7 +58,7 @@ For a key at HKL coords (q, r):
 
 ### Direction reality check
 
-The PIC's sensor reading is **low at rest and rises as the key is pressed** (read from the PIC's calibration routine, and visible in the key diagnostic display; earlier versions of this guide had it the other way round). So MAX threshold = "how far the reading must rise from rest before triggering." A high MAX value means the key has to travel a long way — if its physical sensor swing is small (weak magnet, alignment drift), it can't reach the threshold and appears dead. Lowering MAX makes the key responsive at lighter touches.
+The PIC's sensor reading is **low at rest and rises as the key is pressed** (read from the PIC's calibration routine, and visible in the key diagnostic display; earlier versions of this guide had it the other way round). The note-on fires once the reading exceeds MAX minus the board's `max` threshold, so MAX sets how deep the press must go. A high MAX value means the key has to travel a long way — if its physical sensor swing is small (weak magnet, alignment drift), it can't reach the threshold and appears dead. Lowering MAX makes the key responsive at lighter touches.
 
 Velocity is computed as `time(MAX crossing) - time(MIN crossing)`. The **gap** between MIN and MAX thresholds is the resolution budget for press-time measurement. Smaller gap = press-time always short = velocities skew high (compressed). Wider gap = more dynamic range, but only if the sensor can swing that far.
 
@@ -120,6 +122,23 @@ python3 tools/lumatone-cal/keydata-locate.py [--swap-boards-34] <q> <r> <dir>
 
 `<dir>` is the same kind of folder `keydata-backup.sh` takes. Its key table is a copy of `apps/hkl/src/layout/baseKeys.ts`.
 
+### `keydata-compare.py` (run locally)
+
+Compares saved folders, one per confirmed run of the built-in calibration, without touching the device.
+
+```bash
+python3 tools/lumatone-cal/keydata-compare.py [--swap-boards-34] [--top N] [--level L] [--write DIR] [--maps DIR] <run-dir> [<run-dir> ...]
+```
+
+A run stores one number per key (the deepest reading it saw), so the only way to tell a key's real swing from one unusual press is to repeat the run. Give the folders in the order they were saved. The report has:
+
+- **Runs**: each folder's MAX and MIN ranges, and the board's `max` + `min lo` overhead read from its `ThresholdData`.
+- **Repeatability** (two or more runs): each run's overall level (its mean MAX), the per-key spread of MAX as stored and with the run levels removed, the run-to-run spread against the spread between keys, how each pair of runs correlates, and the least repeatable keys with their value in every run. A whole run can sit several counts above or below another while the key-to-key pattern stays the same, so the level-removed figures are the ones that say whether the pattern is repeatable; `--write`'s plain median then mostly follows the middle run, and says so.
+- **Timing window**: MAX − MIN − (`max` + `min lo`) from the per-key medians, smallest first. A shorter window reads louder at the same touch.
+- **Siblings**: each key's window against the median of the same slot on the other four boards, in both directions. Slot position explains about half of the variation in MAX, so a key far from its siblings is a better suspect than a key that is merely low.
+
+`--write DIR` writes a folder whose MAX and MIN rows are the per-key medians (validity, AT MAX and `ThresholdData` come from the last run), ready for `keydata-backup.sh check` and `restore`. `--level L` separates the two things a run measures: it takes the key-to-key pattern from every run, with each run's level removed, and places the median at a level you choose, given as run labels (`R3,R4`: the mean of those runs' levels) or as a number (a mean MAX). Pressing more firmly raises a run's level and, with it, every key's note-on depth and timing window by the same count, so the level is a choice and the pattern is the measurement. With `--level`, the windows, the sibling comparison and the maps describe what `--write` would store. `--maps DIR` draws `window.png`, `siblings.png` and, with two or more runs, `spread.png`: the keyboard as HKL's Lumatone rotation shows it, each key labeled with its value and (q, r). Maps need matplotlib; keep them in a folder under `tools/lumatone-cal/backups/`.
+
 ### `KeyData_default`
 
 A uniform baseline (MAX=70 / MIN=0 / valid=1 / AT_MAX=200) for a board that has no usable calibration; see "Seeding a baseline" below.
@@ -150,6 +169,8 @@ tools/lumatone-cal/keydata-backup.sh save
 2. Press every key all the way down. Don't rush: the routine marks a key learned only once it has seen it pressed.
 3. Click **Confirm (save)**. HKL waits for every board to leave calibration, then re-reads the board values. **Cancel (discard)** leaves the files as they were.
 4. Save again (`keydata-backup.sh save`) so the result has its own snapshot.
+
+One run is one sample per key: the routine keeps the deepest reading it saw, so a key squeezed harder or lighter than usual gets a value that is off. To check a calibration, or to build one from several, repeat steps 2–4 and compare the saved folders with `keydata-compare.py`; its `--write` makes the per-key median, which goes back with `keydata-backup.sh restore`. Press each key once, firmly, the way it bottoms out in normal play, and keep hands off the keys when starting: the rest reading is taken at that moment.
 
 During calibration a board's own macro buttons still act on that board alone: pressed and released, one saves and the other discards. Holding one while pressing a key opens that board's key diagnostic display instead (each key colored by its raw sensor reading), which only pressing both of its buttons leaves (lessons.md → "The PIC's calibration mode").
 

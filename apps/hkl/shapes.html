@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Lattice shapes</title>
+<style>
+/* BravuraText: the lattice's label font (see index.html). */
+@font-face {
+  font-family: 'BravuraText';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('/BravuraText.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/steinbergmedia/bravura@master/redist/woff/BravuraText.woff2') format('woff2');
+}
+@page { size: letter portrait; margin: 0.6in; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #ddd; }
+body { font-family: system-ui, -apple-system, sans-serif; font-size: 10pt; line-height: 1.3; color: #111; }
+/* on screen: one sheet's printable width, as paper */
+#guide { width: 7.3in; margin: 0.4in auto; padding: 0.6in; box-sizing: content-box; background: #fff; }
+h1 { font-size: 17pt; font-weight: 600; margin-bottom: 6pt; }
+h2 { font-size: 13pt; font-weight: 600; margin: 14pt 0 6pt; padding-bottom: 2pt; border-bottom: 1.5pt solid #111; break-after: avoid; }
+.legend { color: #333; max-width: 6.2in; margin-bottom: 10pt; }
+.index { columns: 3; column-gap: 0.25in; font-size: 8.5pt; margin-bottom: 4pt; }
+.index-group { break-inside: avoid; margin-bottom: 6pt; }
+.index h4 { font-size: 9pt; font-weight: 600; }
+.index ol { padding-left: 2.2em; }
+.index a { color: inherit; text-decoration: none; }
+/* every section starts a sheet, the first too: left to flow under the index, Firefox and
+   Chromium break the first section's rows differently */
+.section { break-before: page; }
+/* a row is three entries, two or one, sharing it equally (src/shapes/rows.ts), and never
+   splits across sheets */
+.row { font-size: 0; break-inside: avoid; }
+.entry { display: inline-block; vertical-align: top; font-size: 9pt; padding: 0 10pt 12pt 0; }
+.row[data-columns="3"] > .entry { width: 33.3333%; }
+.row[data-columns="2"] > .entry { width: 50%; }
+.row[data-columns="1"] > .entry { width: 100%; }
+.name { font-size: 10pt; font-weight: 600; }
+.num { display: inline-block; min-width: 1.7em; color: #777; font-weight: 400; font-variant-numeric: tabular-nums; }
+/* under the title, at the title's indent (1.7em of 9pt) */
+.position { padding-left: 1.9125em; font-size: 8pt; color: #444; }
+.facts, .intervals { padding-left: 1.7em; }
+.facts { color: #333; }
+.ratio, .cents { font-variant-numeric: tabular-nums; }
+.cents { margin-left: 0.7em; }
+.intervals { font-size: 8.5pt; color: #333; }
+/* "steps" and "also" each hold together: on one line when both fit, otherwise "also" starts the
+   next line (and wraps within itself if it is longer than a line) */
+.part { display: inline-block; vertical-align: top; }
+.part.steps { margin-right: 0.9em; }
+.label { color: #888; }
+.diagram { display: block; margin: 5pt 0 0 1.7em; }
+.missing { padding-left: 1.7em; color: #999; font-style: italic; }
+@media print {
+  html { background: #fff; }
+  #guide { width: auto; margin: 0; padding: 0; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+<main id="guide"></main>
+<script type="module" src="/src/shapes/page.ts"></script>
+</body>
+</html>

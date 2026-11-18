@@ -48,7 +48,7 @@ import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffers
 import { setTuning, applyMapping } from '../ui/controls.js';
 import { convertCell, isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
-import { TUNING_MODES } from '@hkl/shared/freq.js';
+import { TUNING_MODES, TUNING_LABELS } from '@hkl/shared/freq.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
 import { voiceId, coordOf } from '../types.js';
 import type { KeyId, VoiceId } from '../types.js';
@@ -1275,16 +1275,6 @@ function isTuningMode(s: string): s is TuningMode {
   return (TUNING_MODES as ReadonlyArray<string>).includes(s);
 }
 
-const TUNING_LABELS: Record<TuningMode, string> = {
-  E: 'Equal',
-  '5': 'Ptolemaic',
-  P: 'Pythagorean',
-  D: 'Semiditonal',
-  '7': 'Septimal',
-  V: 'Schismatic',
-  S: 'Syntonic',
-  Y: 'Polysyntonic',
-};
 function tuningLabelFor(m: string): string {
   return TUNING_LABELS[m as TuningMode] ?? m;
 }
