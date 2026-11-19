@@ -11362,3 +11362,23 @@ A reference guide to the lattice shapes of chords, intervals and scales, first f
   - **Mine, then overruled**: I first kept the picture at the indent too, which made the picture's room, and so the rows and the scale-down width, depend on the entry count.
 - **The picture is not subject to the indent (Max)**: "let the diagram fill the full width". It has its entry's whole width less the gutter. That gives every picture about 20 px more room (a third is 220 px, a half 337, a row 687), so more entries share rows: Randal in Ptolemaic prints on 10 sheets where it had 11, Chromatic in Ptolemaic on 14 where it had 15. The rows no longer depend on the indent.
 - **And it is centered in its cell (Max)**: between the entry's left edge and its gutter.
+
+## Composer: a clef belongs to the staff, not to a voice (2026-11-18, Max)
+
+**Found**: a clef was read by four rules: Verovio's (per layer within the measure), the edit model's (`clefSlotAt`, `effectiveClefForVoice`, `relocateInitialClefs`: the voice's own layer), `middleSteps`' (document order), and the layout readers' (the staff's last clef in document order: MusicXML export, signature ranges, line-start keys, the range-render context). The MusicXML importer already works per staff and tick and copies the clef into every content layer.
+
+**Picked (Max)**:
+- "A clef must logically not be tied to any specific voice. Entering a clef at a certain moment in Voice 1 should produce an identical model change to entering the same clef at the same moment in Voice 2. The model then gives to Verovio whatever it needs to render the clef and the notes within its region correctly."
+- A clef is not pinned to a beat: inserting and deleting notes change a measure's length, and a pinned clef could hang on a partial measure where no cursor reaches it. "When a note is edited in a given measure, its clefs need to evaluate whether they would be orphaned if they didn't move. If the non-edited voice has a structure the clef can stay on, it does, otherwise it moves with the edited voice."
+- "A structure the clef can stay on" is a cursor position of the other voice at that moment, outside a tuplet (confirmed).
+- Beams: "Currently it's not possible to put a beam over a clef even via manual override. We should change this now that clefs are staff-wide. But by default, only tuplet beams should span clefs."
+- The rest pass stays as it is: "The constants are tuned from real measurements." (Mine, overruled: replacing it with an engrave, measure, pin, engrave-again cycle.)
+
+**Design (mine, approved)**:
+- A clef governs every voice of its staff from its moment to the next clef; one resolver answers "the clef at this staff, measure and tick" for every reader.
+- It stays an inline `<clef>` layer child, one element per change. The layer is its seat, the structure it sits on, and means nothing else; the canonical seat is the lowest-numbered voice that can reach the moment. No file-format change. (Mine, withdrawn: a tick-keyed store under `<staff>`. It is what can orphan a clef.)
+- The edit rule is one normalizer beside `normalizeTies`: a clef whose seat moved since the last normalization is put back on its old moment when another voice still reaches it, and otherwise has moved with the edited voice. Moments are compared as exact fractions (`realTicks` is floating point through a tuplet).
+- For Verovio, every other layer of the staff gets a `sameas` carrier before its first event at or after the moment (lessons.md, 2026-11-18), inserted before beaming.
+- Beams: the first note of each voice at or after a clef takes a natural break that `/` inverts; a tuplet is beamed inside its `<tuplet>`, where the model never holds a clef, so its beam spans one by default.
+
+**Built so far**: the `middleSteps` fix only (a layer with no clef of its own reads the staff's clef as of the measure's start). Still to build, in order: a census of the measures whose layers disagree on the clef, for Max's review; the resolver, the carriers and the beam rule; the seats and the edit rule.

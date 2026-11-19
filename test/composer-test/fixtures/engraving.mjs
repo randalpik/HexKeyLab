@@ -861,6 +861,31 @@ export const FIXTURES = {
       m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
+  /* Max's 2026-11-18 regression (mazeppa.hkc m. 8): the bass staff's upper
+     voice hops to treble and back and ENDS the bar on an unrestored G clef,
+     while the lower voice holds half notes topping at a3 (the top line). The
+     rest pass read the lower voice under the upper voice's LAST clef of the
+     bar (notation/staffpos.ts `middleSteps` wrote an inline clef into the
+     staff's running clef at once), saw a3 far below the staff, and pinned
+     both eighth rests to loc 6 — inside the chords. A layer with no clef of
+     its own draws in the clef the staff had when the measure began. */
+  engr_twoVoiceRestUnderOtherVoiceClef: {
+    setup: `
+      const N = (pname, oct, midi) => ({ q: 0, r: 0, pname, accid: '', oct, midi, colorHex: '#888', velocity: 80 });
+      const E8 = (pname, oct, midi) => m.insertChordAtCursor({ notes: [N(pname, oct, midi)], duration: '8', dots: 0 });
+      m.setVoice(3); m.setCursor(0, 3);
+      m.insertRestAtCursor({ duration: '8', dots: 0 }); E8('a', 3, 57);
+      m.setClefAt('G', '2', null, null);
+      E8('e', 4, 64); E8('a', 4, 69);
+      m.setClefAt('F', '4', null, null);
+      m.insertRestAtCursor({ duration: '8', dots: 0 }); E8('a', 3, 57);
+      m.setClefAt('G', '2', null, null);            /* never restored: the bar ends in treble */
+      E8('e', 4, 64); E8('a', 4, 69);
+      m.setVoice(4); m.setCursor(0, 4);
+      for (let i = 0; i < 2; i++) m.insertChordAtCursor({ notes: [N('a', 2, 45), N('a', 3, 57)], duration: '2', dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
   /* Tempo markings are restated above EVERY part (notation/parts.ts,
      2026-09-09): the model keeps one score-global <tempo>, so
      before this a two-part score drew "Allegro" above the top staff only —
@@ -1972,6 +1997,34 @@ export const ASSERTIONS = {
           const headTop = Math.min(...under.map(h => h.top));
           const gap = headTop - r.bottom;
           if (!(gap >= 0.5 * space - 1)) return { ok: false, detail: 'rest bottom ' + r.bottom.toFixed(1) + ' vs head top ' + headTop.toFixed(1) + ': gap ' + gap.toFixed(1) + 'px < half a space (' + (0.5 * space).toFixed(1) + ')' };
+        }
+        return { ok: true };
+      })()` },
+  ],
+  engr_twoVoiceRestUnderOtherVoiceClef: [
+    { name: 'the document is the intended one: three inline clefs in the upper voice, the last one G, none in the lower',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const st = m.getDoc().querySelector('measure > staff[n="2"]');
+        const up = [...st.querySelectorAll('layer[n="1"] > clef')].map(c => c.getAttribute('shape')).join('');
+        const low = st.querySelectorAll('layer[n="2"] > clef').length;
+        return up === 'GFG' && low === 0 ? { ok: true } : { ok: false, detail: 'upper clefs ' + up + ', lower clefs ' + low };
+      })()` },
+    { name: 'both upper-voice eighth rests sit above the half-note heads of the lower voice (a3, top line)',
+      expr: `(() => {
+        const staff = document.querySelector('#score g.measure g.staff[data-n="2"]');
+        if (!staff) return { ok: false, detail: 'no staff 2' };
+        const lines = [...staff.querySelectorAll(':scope > path')].map(p => p.getBoundingClientRect().top);
+        const space = (Math.max(...lines) - Math.min(...lines)) / 4;
+        const rests = [...staff.querySelectorAll('g.layer[data-n="1"] g.rest')].map(r => r.getBoundingClientRect());
+        const heads = [...staff.querySelectorAll('g.layer[data-n="2"] g.notehead')].map(h => h.getBoundingClientRect());
+        if (rests.length !== 2 || heads.length !== 4) return { ok: false, detail: 'rests ' + rests.length + ' heads ' + heads.length };
+        for (const r of rests) {
+          const under = heads.filter(h => h.right > r.left - space && h.left < r.right + space);
+          if (!under.length) return { ok: false, detail: 'no lower-voice head under the rest at x ' + r.left.toFixed(1) };
+          const headTop = Math.min(...under.map(h => h.top));
+          const gap = headTop - r.bottom;
+          if (!(gap >= 0.25 * space)) return { ok: false, detail: 'rest bottom ' + r.bottom.toFixed(1) + ' vs head top ' + headTop.toFixed(1) + ': gap ' + gap.toFixed(1) + 'px (a space is ' + space.toFixed(1) + ')' };
         }
         return { ok: true };
       })()` },

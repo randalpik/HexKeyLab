@@ -3,8 +3,11 @@
 // A note's vertical place on its staff is its diatonic step relative to the
 // middle line's step under the clef in effect. `middleSteps` resolves the clef
 // for every note by a document-order walk over staffDefs (head and interior
-// scoreDefs reset a staff) and inline `<clef>`s (set their own layer for the
-// rest of the measure, then become the staff's running clef). Extracted from
+// scoreDefs reset a staff) and inline `<clef>`s, by Verovio's own rule
+// (measured on 6.3.0, 2026-11-18): an inline clef sets ITS layer for the rest
+// of the measure; any other layer of the staff keeps the clef the staff had
+// when the measure began; from the next measure on, every layer starts in the
+// last clef of the measure in document order. Extracted from
 // notation/slurStems.ts (2026-09-06) for notation/restlayout.ts.
 
 /** A note's vertical position as a diatonic step count (octave × 7 + letter). */
@@ -30,10 +33,15 @@ export function clefMiddleStep(shape: string | null, line: string | null, dis: s
 /** The middle-line step in effect at every note, by a document-order walk:
  *  `staffDef` clefs (head and interior scoreDefs) reset a staff, an inline
  *  `<clef>` sets its own layer for the rest of the measure and becomes the
- *  staff's running clef from the next measure on. */
+ *  staff's running clef from the next measure on. A layer with no clef of its
+ *  own in a measure reads the staff's clef as of the measure's START
+ *  (`staffEntry`), never the running one: the other layer's later clefs do
+ *  not reach it (mazeppa m. 8, 2026-11-18 — the lower voice was read in the
+ *  upper voice's last clef of the bar). */
 export function middleSteps(doc: Document): Map<Element, number> {
   const out = new Map<Element, number>();
   const staffCur = new Map<string, number | null>();
+  let staffEntry = new Map<string, number | null>();
   let layerCur = new Map<string, number | null>();
   let curMeasure: Element | null = null;
   for (const el of Array.from(doc.querySelectorAll('staffDef, clef, note'))) {
@@ -47,7 +55,7 @@ export function middleSteps(doc: Document): Map<Element, number> {
     const staff = el.closest('staff'), layer = el.closest('layer');
     if (!staff || !layer) continue;
     const measure = staff.closest('measure');
-    if (measure !== curMeasure) { curMeasure = measure; layerCur = new Map(); }
+    if (measure !== curMeasure) { curMeasure = measure; layerCur = new Map(); staffEntry = new Map(staffCur); }
     const sn = staff.getAttribute('n') ?? '1', key = sn + '/' + (layer.getAttribute('n') ?? '1');
     if (ln === 'clef') {
       const mid = clefMiddleStep(el.getAttribute('shape'), el.getAttribute('line'), el.getAttribute('dis'), el.getAttribute('dis.place'));
@@ -55,7 +63,7 @@ export function middleSteps(doc: Document): Map<Element, number> {
       staffCur.set(sn, mid);
       continue;
     }
-    const mid = layerCur.has(key) ? layerCur.get(key) : staffCur.get(sn);
+    const mid = layerCur.has(key) ? layerCur.get(key) : staffEntry.get(sn);
     if (mid !== null && mid !== undefined) out.set(el, mid);
   }
   return out;

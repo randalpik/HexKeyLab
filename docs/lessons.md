@@ -5749,3 +5749,20 @@ The lattice shape guide's solver gave identical shapes from every starting note,
 - **The data comparison could not see it.** The roots gate compares keys; only the page gate, comparing rendered sizes entry for entry against the C page, did.
 
 A second one from the same day: **a per-key cache in a pure module is a leak in a sweep.** The solver keeps its lookups per reference, which is right for a page (one reference) and took a 2 GB heap for fifteen roots over forty-eight layouts in one process. `forgetShapes()` clears them; the roots gate calls it after each root.
+
+## Verovio's clefs are per layer; a `sameas` clef is the carrier that draws nothing (2026-11-18)
+
+An eighth rest sat inside a half-note chord in the last bar of a two-voice bass staff (mazeppa.hkc m. 8). The upper voice hopped to treble and back and ended the bar on a G clef; the lower voice held half notes. The rest pass (`notation/restlayout.ts`) was right; its clef input was not.
+
+- **`middleSteps` (`notation/staffpos.ts`) wrote an inline clef into the staff's running clef at once**, so a layer walked later in document order was read in the earlier layer's LAST clef of the bar. Its own comment said "from the next measure on". The lower voice's a3 was read as treble (four locations under the staff), and both rests were pinned to loc 6.
+- **It had been right by luck**: every earlier bar ended in the clef it began in. A rule that is only tested where two readings agree is not tested. In the sonata it misread one chord (a closing barline clef in an otherwise empty layer), with no consumer.
+- **Fix**: a layer with no clef of its own in a measure reads the staff's clef as of the measure's start. Fixture `engr_twoVoiceRestUnderOtherVoiceClef`.
+
+Measured on the bare toolkit, Verovio 6.3.0:
+
+- An inline `<clef>` sets ITS layer for the rest of the measure. Another layer of the staff keeps the old clef until the barline, then every layer starts in the last clef of the measure in document order.
+- With the clef in one layer only, notes of the two layers on the same beat are drawn at different x (107 against 103 at scale 40).
+- A plain second `<clef>` in the other layer at the same moment overprints the first; before a later onset it draws a second glyph at that onset.
+- **`<clef sameas="#id">` in the other layer draws no glyph and takes no space, puts that layer's notes in the clef, and leaves the next system's leading clef alone.** It works inside a `<tuplet>`, a `<beam>`, a beam in a tuplet and a tuplet in a beam: the later members are drawn in the new clef, the number, bracket and beam stay whole.
+- `visible="false"` on a clef is honored (unlike on a rest) and does the same, **but when it is the last clef of the measure in document order the next system's leading clef is not drawn.**
+- A drawn clef inside one `<beam>` is drawn between the notes under a single beam.
