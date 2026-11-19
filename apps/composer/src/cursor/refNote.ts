@@ -20,53 +20,15 @@
 
 import type { ComposerModel } from '../model/index.js';
 import { keySigToTonic } from '../notation/accidentals.js';
-import { fifthName } from '@hkl/shared/notes.js';
-import { coordToMidi } from '@hkl/shared/freq.js';
-import { fromEuler, type Mapping } from '@hkl/shared/mapping.js';
+import { findTonicCoord } from '@hkl/shared/tonic.js';
 
 export interface RefCoord { q: number; r: number; }
 
-/** tonic → r on the qm=0 spine (fifth-chain from A). Derived once from
- *  fifthName() so the table stays in sync with the lattice naming algorithm.
- *  Major tonics span r ∈ [-10, 4] (C♭ … C♯); relative-minor tonics shift up by
- *  three fifths, so a♭…a♯ spans r ∈ [-7, 7]. The combined range is [-10, 7]. */
-const TONIC_R: Map<string, number> = (() => {
-  const m = new Map<string, number>();
-  for (let r = -10; r <= 7; r++) m.set(fifthName(r), r);
-  return m;
-})();
-
-const tonicCache: Map<string, RefCoord> = new Map(); /* key: tonic + '|' + mapping */
-
-/** Place the song-key tonic on the qm=0 Pythagorean spine at the octave
- *  CLOSEST TO C4 (MIDI 60). The spine *is* the fifth-chain, so r is fixed by
- *  tonic identity and only the octave is free; walk q by ±3 (one octave per
- *  step) into the 12-semitone window [54, 66).
- *
- *  That window is exactly "nearest C4": tonics a fifth-or-less above C land in
- *  C4..F4, the rest in F#3..B3. The tritone (F#/Gb) is genuinely equidistant
- *  (54 and 66 are both 6 semitones out) and the half-open window resolves it
- *  DOWNWARD, to F#3.
- *
- *  Every tonic coord lands in MIDI 54–65, inside HKL's piano range
- *  (validateRefNoteCandidate), so a key-derived ref is never rejected on arrival.
- *
- *  Placed in Euler coordinates, then expressed in the score's `mapping` by
- *  fromEuler (the cell with that Euler-equivalent; under Wicki-Hayden the
- *  spine's original column, with its copy to the right). */
-export function findTonicCoord(tonic: string, mapping: Mapping): RefCoord {
-  const key = tonic + '|' + mapping;
-  const cached = tonicCache.get(key);
-  if (cached) return cached;
-  const r = TONIC_R.get(tonic) ?? -3; /* fall back to C-spine coord if somehow off-table */
-  let q = 0;
-  while (coordToMidi(q, r, 'euler') < 54) q += 3;
-  while (coordToMidi(q, r, 'euler') >= 66) q -= 3;
-  const [fq, fr] = fromEuler(q, r, mapping);
-  const found: RefCoord = { q: fq, r: fr };
-  tonicCache.set(key, found);
-  return found;
-}
+/* The tonic's key: on the qm=0 Pythagorean spine at the octave closest to C4,
+   expressed in the score's mapping. The rule lives in @hkl/shared/tonic.js,
+   where the lattice shape guide's starting note reads it too; it was defined
+   here, with a cache, until 2026-11-18. */
+export { findTonicCoord };
 
 /** Parse a note element's (data-q, data-r) attributes. Returns null when
  *  either is missing or non-numeric — defensive but should not happen for

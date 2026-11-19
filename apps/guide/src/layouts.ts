@@ -6,7 +6,8 @@
 // chooses the layout. Served on the shared origin; under the Guide's own dev
 // server (:5177) there is no /shapes.html to show.
 //
-// The choice lives in the hash, #layouts/<mapping>/<mode>, as preset ids only.
+// The choice lives in the hash, #layouts/<mapping>/<mode>, with /<starting note>
+// after it when that is not C, as preset ids only.
 // The Guide's URL is part of every usage-analytics payload, so it may carry a
 // short enumeration and never anything typed (docs/architecture.md → Usage
 // analytics); a hash that names anything else falls back to the default.
@@ -19,6 +20,7 @@
 
 import { MAPPINGS, MAPPING_LABELS, isPresetMapping, type PresetMapping } from '@hkl/shared/mapping.js';
 import { SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
+import { MAJOR_TONICS, tonicId, tonicLabel, tonicOfId } from '@hkl/shared/tonic.js';
 
 export const LAYOUTS_ID = 'layouts';
 export const LAYOUTS_LABEL = 'Layouts';
@@ -26,10 +28,15 @@ export const LAYOUTS_LABEL = 'Layouts';
 export interface LayoutChoice {
   mapping: PresetMapping;
   mode: TuningMode;
+  /** The note every shape starts on: one of MAJOR_TONICS. */
+  root: string;
 }
 
-/* The first guide written: Randal in Ptolemaic. */
-const DEFAULT: LayoutChoice = { mapping: 'randal', mode: '5' };
+/* The first guide written: Randal in Ptolemaic, from C. */
+const DEFAULT: LayoutChoice = { mapping: 'randal', mode: '5', root: 'C' };
+/* The starting notes on offer: the fifteen major-key tonics, in fifths, by their URL ids. */
+const ROOT_IDS: ReadonlyArray<string> = MAJOR_TONICS.map(tonicId);
+const ROOT_LABELS: Readonly<Record<string, string>> = Object.fromEntries(MAJOR_TONICS.map((t) => [tonicId(t), tonicLabel(t)]));
 /* The tunings the shape guide is made for: not Equal, not Schismatic. */
 const MODES = SHAPE_GUIDE_MODES;
 
@@ -42,22 +49,24 @@ function savedTheme(): LayoutsTheme {
   try { return localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
 }
 
-/** The choice a hash section names, "<mapping>/<mode>"; each half falls back
- *  to the default when it is not one of the presets on offer. */
+/** The choice a hash section names, "<mapping>/<mode>" or
+ *  "<mapping>/<mode>/<starting note>"; each part falls back to the default
+ *  when it is not one of the presets on offer. */
 export function parseChoice(section: string | null): LayoutChoice {
-  const [mapping, mode] = (section ?? '').split('/');
+  const [mapping, mode, root] = (section ?? '').split('/');
   return {
     mapping: isPresetMapping(mapping) ? mapping : DEFAULT.mapping,
     mode: MODES.find((m) => m === mode) ?? DEFAULT.mode,
+    root: tonicOfId(root) ?? DEFAULT.root,
   };
 }
 
-/** The hash section for a choice. */
-export const choiceSection = (c: LayoutChoice): string => c.mapping + '/' + c.mode;
+/** The hash section for a choice; C, the default starting note, is left unsaid. */
+export const choiceSection = (c: LayoutChoice): string => c.mapping + '/' + c.mode + (c.root === DEFAULT.root ? '' : '/' + tonicId(c.root));
 
 /** The shape guide's page for a choice, in a theme. */
 export const shapesUrl = (c: LayoutChoice, theme: LayoutsTheme = 'light'): string =>
-  `/shapes.html?mapping=${c.mapping}&mode=${c.mode}` + (theme === 'dark' ? '&theme=dark' : '');
+  `/shapes.html?mapping=${c.mapping}&mode=${c.mode}` + (c.root === DEFAULT.root ? '' : '&root=' + tonicId(c.root)) + (theme === 'dark' ? '&theme=dark' : '');
 
 /** A dropdown in the bar, with its label before it. */
 function select<T extends string>(label: string, values: ReadonlyArray<T>, labels: Readonly<Record<T, string>>): [HTMLLabelElement, HTMLSelectElement] {
@@ -69,10 +78,10 @@ function select<T extends string>(label: string, values: ReadonlyArray<T>, label
   return [wrap, sel];
 }
 
-/** The tab's section: the mapping, tuning and theme dropdowns, a link that
- *  opens the guide in a tab of its own (to print it; always light), and the
- *  frame. `onChoose` is told of a new mapping or tuning; `show` puts a choice
- *  on screen, in the theme chosen. */
+/** The tab's section: the mapping, tuning, starting-note and theme dropdowns,
+ *  a link that opens the guide in a tab of its own (to print it; always
+ *  light), and the frame. `onChoose` is told of a new mapping, tuning or
+ *  starting note; `show` puts a choice on screen, in the theme chosen. */
 export function buildLayouts(onChoose: (c: LayoutChoice) => void): { el: HTMLElement; show(c: LayoutChoice): void } {
   const el = document.createElement('section');
   el.className = 'g-layouts';
@@ -81,13 +90,14 @@ export function buildLayouts(onChoose: (c: LayoutChoice) => void): { el: HTMLEle
   bar.className = 'g-layouts-bar';
   const [mapField, mapSel] = select('Mapping', MAPPINGS, MAPPING_LABELS);
   const [modeField, modeSel] = select('Tuning', MODES, TUNING_LABELS);
+  const [rootField, rootSel] = select('Starting note', ROOT_IDS, ROOT_LABELS);
   const [themeField, themeSel] = select('Theme', THEMES, THEME_LABELS);
   const open = document.createElement('a');
   open.className = 'g-layouts-open';
   open.target = '_blank';
   open.rel = 'noopener';
   open.textContent = 'Open in new tab';
-  bar.append(mapField, modeField, themeField, open);
+  bar.append(mapField, modeField, rootField, themeField, open);
   const frame = document.createElement('iframe');
   frame.className = 'g-layouts-frame';
   frame.title = 'Lattice shapes';
@@ -95,10 +105,11 @@ export function buildLayouts(onChoose: (c: LayoutChoice) => void): { el: HTMLEle
 
   let theme = savedTheme();
   themeSel.value = theme;
-  const chosen = (): LayoutChoice => parseChoice(mapSel.value + '/' + modeSel.value);
+  const chosen = (): LayoutChoice => parseChoice(mapSel.value + '/' + modeSel.value + '/' + rootSel.value);
   const show = (c: LayoutChoice): void => {
     mapSel.value = c.mapping;
     modeSel.value = c.mode;
+    rootSel.value = tonicId(c.root);
     const url = shapesUrl(c, theme);
     open.href = shapesUrl(c);
     /* the frame's own ground is the page's (guide.css), so it does not flash while the page loads */
@@ -108,6 +119,7 @@ export function buildLayouts(onChoose: (c: LayoutChoice) => void): { el: HTMLEle
   };
   mapSel.addEventListener('change', () => onChoose(chosen()));
   modeSel.addEventListener('change', () => onChoose(chosen()));
+  rootSel.addEventListener('change', () => onChoose(chosen()));
   themeSel.addEventListener('change', () => {
     theme = themeSel.value === 'dark' ? 'dark' : 'light';
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode / quota: the choice lasts the visit */ }

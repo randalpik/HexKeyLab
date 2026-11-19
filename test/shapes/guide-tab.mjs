@@ -23,6 +23,9 @@
 //       ground is the page's dark, and the hash is unchanged (the theme is not part of the URL
 //       the Guide reports); the "Open in new tab" link stays on the light page, whatever the
 //       theme; a reload of the Guide keeps Dark; Light puts everything back
+//   T8  Starting note: the fifteen major-key tonics in fifths, C chosen; choosing one adds it to
+//       the hash (#layouts/<mapping>/<mode>/<id>), to the frame and to the link, and the frame's
+//       page is that note's; a hash naming one opens on it; C again drops it from all three
 //   T7  no page errors, in the Guide or in the frame
 //
 //   node test/shapes/guide-tab.mjs [--shot <png>] [--dark-shot <png>]
@@ -65,7 +68,8 @@ try {
       docs: [...document.querySelectorAll('.g-doc')].filter((d) => !d.hidden).length,
       mappings: sels[0] ? [...sels[0].options].map((o) => o.value + '=' + o.textContent).join(' ') : '', mapping: sels[0]?.value,
       tunings: sels[1] ? [...sels[1].options].map((o) => o.value + '=' + o.textContent).join(' ') : '', tuning: sels[1]?.value,
-      themes: sels[2] ? [...sels[2].options].map((o) => o.value + '=' + o.textContent).join(' ') : '', theme: sels[2]?.value,
+      roots: sels[2] ? [...sels[2].options].map((o) => o.value + '=' + o.textContent).join(' ') : '', root: sels[2]?.value,
+      themes: sels[3] ? [...sels[3].options].map((o) => o.value + '=' + o.textContent).join(' ') : '', theme: sels[3]?.value,
       labels: sels.map((x) => x.parentElement.firstChild.textContent.trim()).join(' '), fields: sels.length,
       openText: document.querySelector('.g-layouts-open')?.textContent ?? null,
       frameGround: frame ? getComputedStyle(frame).backgroundColor : null,
@@ -104,13 +108,14 @@ try {
   check('T1 the tab bar has nothing to scroll (px)', s.tabsScroll, 'down 0, across 0');
   check('T2 mappings', s.mappings, 'euler=Euler wickiHayden=Wicki-Hayden chromatic=Chromatic gerhard=Gerhard janko=Janko accordion=Accordion randal=Randal park=Park');
   check('T2 tunings', s.tunings, '5=Ptolemaic P=Pythagorean D=Semiditonal 7=Septimal S=Syntonic Y=Polysyntonic');
-  check('T2 the three dropdowns, each labeled', `${s.fields}: ${s.labels}`, '3: Mapping Tuning Theme');
+  check('T2 the four dropdowns, each labeled', `${s.fields}: ${s.labels}`, '4: Mapping Tuning Starting note Theme');
+  check('T2 starting notes', `${s.roots} | ${s.root}`, 'Cb=C♭ Gb=G♭ Db=D♭ Ab=A♭ Eb=E♭ Bb=B♭ F=F C=C G=G D=D A=A E=E B=B Fs=F♯ Cs=C♯ | C');
   check('T2 themes', `${s.themes} | ${s.theme}`, 'light=Light dark=Dark | light');
   check('T2 light: the frame\'s ground and its page\'s', `${s.frameGround} | ${s.pageTheme} ${s.pageGround}`, 'rgb(221, 221, 221) | null rgb(221, 221, 221)');
   check('T2 chosen', `${s.mapping} ${s.tuning}`, 'randal 5');
   check('T2 frame source', s.src, '/shapes.html?mapping=randal&mode=5');
   check('T2 the frame\'s page finished', `${s.ready} entries, ${s.entries} shown, ${s.pictures} pictures`, '94 entries, 94 shown, 94 pictures');
-  check('T2 the frame\'s page', s.heading, 'Lattice shapes: Randal mapping, Ptolemaic tuning');
+  check('T2 the frame\'s page', s.heading, 'Lattice shapes from C: Randal mapping, Ptolemaic tuning');
   check('T2 open link', `${s.openText} | ${s.open} ${s.openTarget}`, 'Open in new tab | /shapes.html?mapping=randal&mode=5 _blank');
   check('T2 the frame is as wide as the tab', Math.abs(s.frame.width - s.content.width) < 1, true);
   check('T2 the frame runs from the bar to the bottom of the tab', Math.abs(s.frame.top - s.bar.bottom) < 1.5 && Math.abs(s.frame.bottom - s.content.bottom) < 1.5 && s.frame.height > 300, true);
@@ -124,11 +129,11 @@ try {
   await choose(0, 'park');
   s = await settle('?mapping=park&mode=5');
   check('T3 mapping → hash', s.hash, '#layouts/park/5');
-  check('T3 mapping → frame', `${s.src} | ${s.heading} | ${s.ready}/${s.entries}/${s.pictures}`, '/shapes.html?mapping=park&mode=5 | Lattice shapes: Park mapping, Ptolemaic tuning | 94/94/94');
+  check('T3 mapping → frame', `${s.src} | ${s.heading} | ${s.ready}/${s.entries}/${s.pictures}`, '/shapes.html?mapping=park&mode=5 | Lattice shapes from C: Park mapping, Ptolemaic tuning | 94/94/94');
   await choose(1, 'P');
   s = await settle('?mapping=park&mode=P');
   check('T3 tuning → hash', s.hash, '#layouts/park/P');
-  check('T3 tuning → frame', `${s.src} | ${s.heading}`, '/shapes.html?mapping=park&mode=P | Lattice shapes: Park mapping, Pythagorean tuning');
+  check('T3 tuning → frame', `${s.src} | ${s.heading}`, '/shapes.html?mapping=park&mode=P | Lattice shapes from C: Park mapping, Pythagorean tuning');
   check('T3 tuning → the frame shows what that layout holds', Number(s.ready) >= 1 && Number(s.ready) < 94 && s.entries === Number(s.ready) && s.pictures === s.entries, true);
   check('T3 open link follows', s.open, '/shapes.html?mapping=park&mode=P');
   check('T3 title still names the tab only', s.title, 'HexKeyLab Guide — Layouts');
@@ -137,13 +142,13 @@ try {
   /* T4 */
   await cdp.evalJSON(`(location.hash = '#layouts/euler/7', true)`);
   s = await settle('?mapping=euler&mode=7');
-  check('T4 a hash names a layout', `${s.mapping} ${s.tuning} ${s.heading}`, 'euler 7 Lattice shapes: Euler mapping, Septimal tuning');
+  check('T4 a hash names a layout', `${s.mapping} ${s.tuning} ${s.heading}`, 'euler 7 Lattice shapes from C: Euler mapping, Septimal tuning');
   await cdp.evalJSON(`(location.hash = '#layouts/4:2:i/E', true)`);
   s = await settle('?mapping=randal&mode=5');
   check('T4 anything but a preset on offer falls back', `${s.mapping} ${s.tuning} ${s.src}`, 'randal 5 /shapes.html?mapping=randal&mode=5');
   await cdp.evalJSON(`(location.hash = '#layouts/park/V', true)`);
   s = await settle('?mapping=park&mode=5');
-  check('T4 Schismatic is not on offer', `${s.mapping} ${s.tuning} ${s.heading}`, 'park 5 Lattice shapes: Park mapping, Ptolemaic tuning');
+  check('T4 Schismatic is not on offer', `${s.mapping} ${s.tuning} ${s.heading}`, 'park 5 Lattice shapes from C: Park mapping, Ptolemaic tuning');
   await cdp.evalJSON(`(location.hash = '#layouts', true)`);
   s = await settle('?mapping=randal&mode=5');
 
@@ -161,7 +166,7 @@ try {
 
   /* T6: the theme */
   const hashBefore = s.hash;
-  await choose(2, 'dark');
+  await choose(3, 'dark');
   s = await settle('?mapping=randal&mode=5&theme=dark');
   check('T6 dark → the frame; the link stays light', `${s.src} | ${s.open}`, '/shapes.html?mapping=randal&mode=5&theme=dark | /shapes.html?mapping=randal&mode=5');
   check('T6 dark → the frame\'s page', `${s.pageTheme} ${s.pageGround} | ${s.ready}/${s.entries}/${s.pictures}`, 'dark rgb(22, 22, 22) | 94/94/94');
@@ -181,9 +186,27 @@ try {
   await reloaded;
   s = await settle('?mapping=euler&mode=5&theme=dark');
   check('T6 a reload keeps dark', `${s.theme} | ${s.src} | ${s.pageTheme} | ${s.frameGround}`, 'dark | /shapes.html?mapping=euler&mode=5&theme=dark | dark | rgb(22, 22, 22)');
-  await choose(2, 'light');
+  await choose(3, 'light');
   s = await settle('?mapping=euler&mode=5');
   check('T6 light puts it back', `${s.stored} | ${s.src} | ${s.open} | ${s.pageTheme} | ${s.frameGround}`, 'light | /shapes.html?mapping=euler&mode=5 | /shapes.html?mapping=euler&mode=5 | null | rgb(221, 221, 221)');
+
+  /* T8: the starting note (the layout is Euler in Ptolemaic here) */
+  await choose(2, 'Eb');
+  s = await settle('?mapping=euler&mode=5&root=Eb');
+  check('T8 E♭ → hash, frame, link', `${s.hash} | ${s.src} | ${s.open}`, '#layouts/euler/5/Eb | /shapes.html?mapping=euler&mode=5&root=Eb | /shapes.html?mapping=euler&mode=5&root=Eb');
+  check('T8 E♭ → the frame\'s page', `${s.heading} | ${s.ready}/${s.entries}/${s.pictures}`, 'Lattice shapes from E♭: Euler mapping, Ptolemaic tuning | 94/94/94');
+  check('T8 the title still names the tab only', s.title, 'HexKeyLab Guide — Layouts');
+  await cdp.evalJSON(`(location.hash = '#layouts/randal/7/Fs', true)`);
+  s = await settle('?mapping=randal&mode=7&root=Fs');
+  check('T8 a hash names a starting note', `${s.mapping} ${s.tuning} ${s.root} | ${s.heading}`, 'randal 7 Fs | Lattice shapes from F♯: Randal mapping, Septimal tuning');
+  await cdp.evalJSON(`(location.hash = '#layouts/randal/7/H', true)`);
+  s = await settle('?mapping=randal&mode=7');
+  check('T8 anything but one of the fifteen is C', `${s.root} | ${s.src}`, 'C | /shapes.html?mapping=randal&mode=7');
+  await choose(2, 'Fs');
+  s = await settle('?mapping=randal&mode=7&root=Fs');
+  await choose(2, 'C');
+  s = await settle('?mapping=randal&mode=7');
+  check('T8 C again → hash, frame, link', `${s.hash} | ${s.src} | ${s.open} | ${s.heading}`, '#layouts/randal/7 | /shapes.html?mapping=randal&mode=7 | /shapes.html?mapping=randal&mode=7 | Lattice shapes from C: Randal mapping, Septimal tuning');
 
   check('T7 no page errors', errors.join(' | '), '');
 } finally {

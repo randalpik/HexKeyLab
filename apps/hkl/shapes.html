@@ -45,11 +45,18 @@ h2 { font-size: 13pt; font-weight: 600; margin: 14pt 0 6pt; padding-bottom: 2pt;
 .row[data-columns="3"] > .entry { width: 33.3333%; }
 .row[data-columns="2"] > .entry { width: 50%; }
 .row[data-columns="1"] > .entry { width: 100%; }
-.name { font-size: 10pt; font-weight: 600; }
-.num { display: inline-block; min-width: 1.7em; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+/* The hanging label. An entry's title and the lines under it start at one indent, --indent, and
+   its number hangs in that indent, right-aligned, so it ends the same distance before the title
+   whatever its digits. src/shapes/page.ts sets --indent on #guide from the number of entries
+   (src/shapes/rows.ts indentOf: 15.3pt, and a digit's width more for a guide of a hundred entries
+   or more). A title that wraps keeps to the indent. The picture is not indented: it has the
+   entry's whole width, less its gutter, and sits in the middle of it (Max, 2026-11-18). */
+#guide { --indent: 15.3pt; }
+.name { font-size: 10pt; font-weight: 600; padding-left: var(--indent); text-indent: calc(-1 * var(--indent)); }
+.num { display: inline-block; width: var(--indent); padding-right: 0.38em; text-align: right; text-indent: 0; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
 /* under the title, at the title's indent (1.7em of 9pt) */
-.position { padding-left: 1.9125em; font-size: 8pt; color: var(--soft); }
-.facts, .intervals { padding-left: 1.7em; }
+.position { padding-left: var(--indent); font-size: 8pt; color: var(--soft); }
+.facts, .intervals { padding-left: var(--indent); }
 .facts { color: var(--text); }
 .ratio, .cents { font-variant-numeric: tabular-nums; }
 .cents { margin-left: 0.7em; }
@@ -59,7 +66,7 @@ h2 { font-size: 13pt; font-weight: 600; margin: 14pt 0 6pt; padding-bottom: 2pt;
 .part { display: inline-block; vertical-align: top; }
 .part.steps { margin-right: 0.9em; }
 .label { color: var(--label); }
-.diagram { display: block; margin: 5pt 0 0 1.7em; }
+.diagram { display: block; margin: 5pt auto 0; }
 /* a sheet is the page's own ground, whichever theme: the pictures are drawn for it */
 @media print {
   html { background: var(--paper); }

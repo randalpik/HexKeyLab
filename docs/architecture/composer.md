@@ -102,7 +102,7 @@ unions (with doc comments). The channel is `'hkl-composer-bridge'`
   cursor (sent only when there is one). `set-score-ref` carries the
   key-signature tonic at the cursor's measure — or the sounding measure while
   a transport runs — on the Pythagorean spine nearest C4
-  (`computeSongKeyRefAt`, `cursor/refNote.ts`). It is derived, never stored,
+  (`computeSongKeyRefAt`, `cursor/refNote.ts`; where a tonic's key lies is `findTonicCoord` in `@hkl/shared/tonic.js`, which HKL's lattice shape guide reads for its starting note too). It is derived, never stored,
   and diff-gated. In HKL the cursor note fills its own selection slot: in the
   `piano` outline it is the ref when newer than the user's Ctrl+click,
   elsewhere it is ignored (a cursor move never displaces a Ctrl+click); with

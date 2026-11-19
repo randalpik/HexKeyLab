@@ -4,6 +4,14 @@
 // A structure or an interval the layout cannot hold is simply not in its
 // guide, so the catalog can list shapes that only some layouts have.
 //
+// Every shape starts on the guide's root, C or another of the fifteen major-key
+// tonics. The reference is put on the root's own key, where Composer puts a
+// key's reference (findTonicCoord: on the spine column, at the octave nearest
+// C4), and the anchor on that key's band. A step along the pure line, or a
+// band over with the anchor following, keeps every interval a key has to its
+// reference, so a root's guide is C's with other names on the keys, and other
+// colors, which go with pitch (test/shapes/roots.mjs).
+//
 // Names come from HKL's interval namer (tuning/intervals.ts), read off the
 // solved keys. An interval is named once, from the bass, and a structure's step
 // and inner intervals quote that name, so a ratio reads the same everywhere in
@@ -11,14 +19,16 @@
 //
 // Pure: no DOM and no live state, so the Node oracle (test/shapes/) imports it.
 
+import { anchorOf } from '@hkl/shared/freq.js';
 import { bandWidth } from '@hkl/shared/mapping.js';
+import { findTonicCoord } from '@hkl/shared/tonic.js';
 import { classifyDiatonic, intervalNameFromCoords, shortenInterval } from '../tuning/intervals.js';
 import type { TuningStateLike } from '../tuning/regions.js';
 import {
   OCTAVE, POSITION, STRUCTURES, UNISON, centsOf, combinedRatio, expsKey, intervalSet, intervalsWithin, ratioOf, subExps,
   type Exps, type Family, type Structure,
 } from './catalog.js';
-import { positionLabel, solve, type Shape, type ShapeLayout } from './solve.js';
+import { positionLabel, solve, type Cell, type Shape, type ShapeLayout } from './solve.js';
 
 export interface GuideEntry {
   kind: 'chord' | 'scale' | 'interval';
@@ -67,10 +77,21 @@ const shortText = (name: string): string =>
 
 /** Every interval of the catalog under `layout`, by number and then size. One
  *  the layout cannot hold keeps its ratio as its name and sorts by size alone. */
-function nameIntervals(layout: ShapeLayout): Named[] {
+/** What a guide is asked for: a mapping, a tuning, banded or not. The anchor
+ *  is not the asker's to give: it follows the root (`rootedLayout`). */
+export type GuideLayout = Pick<ShapeLayout, 'mode' | 'mapping' | 'banded'>;
+
+/** The layout a root's guide is solved and drawn in, and its reference: the
+ *  root's tonic key, with the anchor on that key's band. */
+export function rootedLayout(at: GuideLayout, root = 'C'): { layout: ShapeLayout; ref: Cell } {
+  const t = findTonicCoord(root, at.mapping);
+  return { layout: { mode: at.mode, mapping: at.mapping, banded: at.banded, anchor: anchorOf(t.q, t.r, at.mapping) }, ref: [t.q, t.r] };
+}
+
+function nameIntervals(layout: ShapeLayout, root: string, ref: Cell): Named[] {
   const state: TuningStateLike = { ...layout, equalEnabled: false, septimalEnabled: layout.mode === '7', septimalW: 1 };
   const named = intervalSet().map((exps): Named => {
-    const shape = solve([UNISON, exps], layout);
+    const shape = solve([UNISON, exps], layout, root, ref);
     if (!shape) return { exps, name: fraction(exps), short: fraction(exps), number: 0, shape };
     const [[q1, r1], [q2, r2]] = shape.cells;
     const cls = classifyDiatonic(q1, r1, q2, r2, state);
@@ -80,11 +101,12 @@ function nameIntervals(layout: ShapeLayout): Named[] {
   return named.sort((a, b) => a.number - b.number || centsOf(a.exps) - centsOf(b.exps));
 }
 
-/** The guide for `layout`, in order: the catalog's chords and scales, then the
- *  intervals; only those the layout holds. */
-export function buildGuide(layout: ShapeLayout): GuideEntry[] {
+/** The guide for a layout and a root, in order: the catalog's chords and
+ *  scales, then the intervals; only those the layout holds. */
+export function buildGuide(at: GuideLayout, root = 'C'): GuideEntry[] {
+  const { layout, ref } = rootedLayout(at, root);
   const width = bandWidth(layout.mapping);
-  const intervals = nameIntervals(layout);
+  const intervals = nameIntervals(layout, root, ref);
   const order = new Map(intervals.map((n, i) => [expsKey(n.exps), i]));
   const short = (e: Exps): string => intervals[order.get(expsKey(e))!].short;
 
@@ -94,7 +116,7 @@ export function buildGuide(layout: ShapeLayout): GuideEntry[] {
     const others = intervalsWithin(s)
       .filter((e) => !stepKeys.has(expsKey(e)) && expsKey(e) !== expsKey(OCTAVE))
       .sort((a, b) => order.get(expsKey(a))! - order.get(expsKey(b))!);
-    const shape = solve(s.members, layout);
+    const shape = solve(s.members, layout, root, ref);
     if (!shape) return null;
     return {
       kind: s.kind, family: s.family, name: s.name, title: s.title, subtitle: s.kind === 'chord' ? POSITION[s.position] : '',

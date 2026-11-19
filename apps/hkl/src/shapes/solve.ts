@@ -150,6 +150,15 @@ function bassCells(name: string, layout: ShapeLayout, ref: Cell): Bass[] {
   return basses;
 }
 
+/** Forget the keys found so far. The solver keeps, for every reference it has
+ *  solved from, the keys around each bass, by pitch; a page solves from one
+ *  reference and never needs this, but a run over many references (the roots
+ *  gate) fills gigabytes without it. */
+export function forgetShapes(): void {
+  bassCache.clear();
+  indexCache.clear();
+}
+
 /* ── the members ── */
 
 const indexCache = new Map<string, Map<string, Cell[]>>();

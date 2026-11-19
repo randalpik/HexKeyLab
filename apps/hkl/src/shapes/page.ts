@@ -5,17 +5,20 @@
 //   /shapes.html                       Randal in Ptolemaic (the first guide)
 //   /shapes.html?mapping=…&mode=…      another mapping (a layout id) and tuning (5 P D 7 S Y,
 //                                      SHAPE_GUIDE_MODES); the page shows the shapes that layout holds
+//   /shapes.html?root=…                the note every shape starts on: one of the fifteen major-key
+//                                      tonics, by its id (Cb Gb Db Ab Eb Bb F C G D A E B Fs Cs)
 //   /shapes.html?theme=dark            the dark theme: a dark page with light text, and in the
 //                                      pictures white seams and a white border on the member keys.
 //                                      shapes.html reads the parameter itself, before the first paint,
 //                                      and leaves it on <html data-theme>.
 
-import { anchorOf, SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
+import { SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
+import { tonicLabel, tonicOfId } from '@hkl/shared/tonic.js';
 import { bandWidth, isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { setHexSize, setRotation } from '../layout/geometry.js';
-import { buildGuide, type GuideEntry } from './guide.js';
+import { buildGuide, rootedLayout, type GuideEntry, type GuideLayout } from './guide.js';
 import { renderDiagram, type DiagramStyle } from './diagram.js';
-import { rowsOf, type Fit } from './rows.js';
+import { indentOf, room, rowsOf, shownSize, type Fit } from './rows.js';
 import { GUIDE_ALIGNMENT, GUIDE_ROTATION, type ShapeLayout } from './solve.js';
 
 /* How the pictures are drawn. The page is Lumatone rotation at Vertical
@@ -32,7 +35,10 @@ const query = new URLSearchParams(location.search);
 const wantMapping = query.get('mapping') ?? 'randal', wantMode = query.get('mode') ?? '5';
 const mapping: Mapping = isMapping(wantMapping) ? wantMapping : 'randal';
 const mode: TuningMode = SHAPE_GUIDE_MODES.find((m) => m === wantMode) ?? '5';
-const layout: ShapeLayout = { mode, mapping, anchor: anchorOf(0, 0, mapping), banded: true };
+const root = tonicOfId(query.get('root')) ?? 'C';
+const at: GuideLayout = { mode, mapping, banded: true };
+/* the layout the pictures are drawn in: the reference on the root, the anchor following it */
+const layout: ShapeLayout = rootedLayout(at, root).layout;
 
 const SECTIONS: ReadonlyArray<readonly [string, (g: GuideEntry) => boolean]> = [
   ['Triads', (g) => g.family === 'triad'],
@@ -49,12 +55,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   return e;
 }
 const capital = (s: string): string => s[0].toUpperCase() + s.slice(1);
-
-/* The sheet in CSS px: 7.3 in of Letter between its 0.6 in margins. An entry
-   gives up a 10pt gutter on its right and sets its picture in by 1.7em of 9pt
-   (shapes.html); what is left of its share of the row is room for the picture. */
-const SHEET = 7.3 * 96, GUTTER = (10 * 96) / 72, INDENT = (1.7 * 9 * 96) / 72;
-const room = (columns: number): number => SHEET / columns - GUTTER - INDENT;
 
 /** How many entries can share a row with `g`: as many as leave room for its
  *  picture. A scale lists many intervals, so never more than two (Max,
@@ -94,10 +94,13 @@ function entry(g: GuideEntry, n: number): { box: HTMLElement; fit: Fit } {
   const d = renderDiagram(g.shape, layout, STYLE);
   const img = el('img', 'diagram');
   img.src = d.canvas.toDataURL('image/png');
-  img.width = d.width; img.height = d.height;
+  /* shown as drawn, or scaled down to its row when it is wider than one (./rows.ts) */
+  const shown = shownSize(d.width, d.height);
+  img.width = shown.width; img.height = shown.height;
+  if (shown.scale < 1) img.dataset.scaled = shown.scale.toFixed(3);
   img.alt = g.name;
   box.append(img);
-  return { box, fit: fitOf(g, d.width) };
+  return { box, fit: fitOf(g, shown.width) };
 }
 
 async function main(): Promise<void> {
@@ -105,15 +108,18 @@ async function main(): Promise<void> {
   /* the pose the solver's "higher on the page" is measured in */
   setRotation(GUIDE_ROTATION, mapping, GUIDE_ALIGNMENT);
   await document.fonts.load('12px BravuraText');
-  const guide = buildGuide(layout);
+  const guide = buildGuide(at, root);
   const page = document.getElementById('guide')!;
-  const title = `Lattice shapes: ${mappingLabel(mapping)} mapping, ${TUNING_LABELS[mode]} tuning`;
+  /* the hanging indent of titles and text, wide enough for the guide's last number (shapes.html --indent) */
+  page.style.setProperty('--indent', indentOf(guide.length) + 'px');
+  const start = tonicLabel(root);
+  const title = `Lattice shapes from ${start}: ${mappingLabel(mapping)} mapping, ${TUNING_LABELS[mode]} tuning`;
   document.title = title;
   page.append(el('h1', '', title));
   const three = bandWidth(mapping) === 3;
   page.append(el('p', 'legend',
-    'Every shape starts on C. Solid keys are the notes of the shape; faint keys only show the way between them. '
-    + (three ? '“From” is where in its band of three columns the C may sit: left, center or right. ' : '“From” is the column of its band the C may sit in. ')
+    `Every shape starts on ${start}. Solid keys are the notes of the shape; faint keys only show the way between them. `
+    + (three ? `“From” is where in its band of three columns the ${start} may sit: left, center or right. ` : `“From” is the column of its band the ${start} may sit in. `)
     + `A heavy ${dark ? 'white' : 'black'} line is a band seam, drawn where the starting position matters and the shape crosses one.`));
 
   const index = el('nav', 'index');

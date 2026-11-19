@@ -4,6 +4,37 @@
 //
 // Pure: no DOM, so the Node oracle (test/shapes/) imports it.
 
+/* The sheet in CSS px: 7.3 in of Letter between its 0.6 in margins. An entry
+   gives up a 10pt gutter on its right (shapes.html); the rest of its share of
+   the row is room for its picture, which is centered in it. */
+export const SHEET = 7.3 * 96;
+const GUTTER = (10 * 96) / 72;
+/** The room a picture has in a row cut into `columns` equal parts. */
+export const room = (columns: number): number => SHEET / columns - GUTTER;
+
+/* An entry's title and text are set in by one indent, in which its number
+   hangs; the picture is not (Max, 2026-11-18), so the indent takes no room
+   from it and the rows do not depend on it. */
+const INDENT = (1.7 * 9 * 96) / 72, DIGIT = (0.6 * 10 * 96) / 72;
+/** The indent of a guide with `entries` entries, in CSS px: 15.3pt, which
+ *  holds a number of two digits and the gap after it, and a digit's width
+ *  (0.6em of the number's 10pt) more for every digit past two. One indent for
+ *  the whole guide, so its entries line up. */
+export const indentOf = (entries: number): number => INDENT + Math.max(0, String(entries).length - 2) * DIGIT;
+
+/** The size a picture is shown at. Every picture is drawn at one key size
+ *  and shown as drawn, but one wider than a row to itself is scaled down to
+ *  fit it (Max, 2026-11-18): a shape that sprawls on some layout stays in that
+ *  layout's guide, since "can be played there at all" is what puts a shape in
+ *  a guide, and its keys come out smaller than the rest. `scale` is 1 for a
+ *  picture shown as drawn. */
+export function shownSize(width: number, height: number): { width: number; height: number; scale: number } {
+  const most = Math.floor(room(1));
+  if (width <= most) return { width, height, scale: 1 };
+  const scale = most / width;
+  return { width: most, height: Math.round(height * scale), scale };
+}
+
 /** The most entries that can share a row with this one: 3 when it fits a
  *  third of the page, 2 when it needs half, 1 when it needs the whole width. */
 export type Fit = 1 | 2 | 3;

@@ -11326,3 +11326,39 @@ A reference guide to the lattice shapes of chords, intervals and scales, first f
   - **A section of their own (mine)**: with three notes or four, they would have fallen under "Triads" and "Seventh chords". The guide has an "Augmented sixth chords" section between the sevenths and the scales, and a structure carries its `family`.
   - Held by Ptolemaic on every mapping (and five mappings in Syntonic, three in Polysyntonic); no other tuning has keys two commas apart. In root position they start from the left C only.
 - **Counts after**: 75 chord entries, 9 scales, 53 intervals (four new, none with a 7: 225:128 the lesser augmented 6th, 256:225 the greater diminished 3rd, 25:18 the lesser augmented 4th, 36:25 the greater diminished 5th). Ptolemaic guides hold 94 entries on every mapping, Septimal 109, Pythagorean 24. Randal in Ptolemaic prints on 11 sheets.
+
+## Shape guide: a starting note, placed as Composer places a key's reference (2026-11-18, Max)
+
+**Asked for**: a dropdown for the starting note, among the fifteen key-signature roots. Max's expectation: with the reference always on the Pythagorean spine instance of that note, nothing changes but the names on the keys; "there might be edge cases. Report what those are before we commit to it."
+
+**Reported, before building** (probes over the eight presets in the six tunings, all fifteen roots):
+- **It holds exactly.** No shape differs from the same shape on C (keys, path keys, seams, positions, comma marks), nothing is held from one root and not another, and HKL gives every interval and chord the same name.
+- **The spine's own keys are not always valid references.** On Euler, Wicki-Hayden, Chromatic, Gerhard and Janko the spine instances of C♭, G♭, D♭, A♭ and E♭ lie below the piano (MIDI −13 to 15), and HKL takes a reference only inside it. Their copies whole bands to the right are in range and give the same shapes when the anchor follows the reference.
+- **Names**: up to four flats on a key from C♭, three from G♭ to F (and from C already), two sharps from the sharp roots.
+- **Colors change**: hue goes with pitch along the spine.
+- **The solver's lookups pile up per reference**: one process over every root and layout ran out of a 2 GB heap.
+
+**Picked (Max)**: "use the same process Composer uses to place refs."
+- That process is `findTonicCoord`: the tonic on the spine in Euler coordinates, at the octave nearest C4 (MIDI 54 to 65), expressed in the mapping. It was in `apps/composer/src/cursor/refNote.ts`, which HKL may not import. **Moved to `@hkl/shared/tonic.js`** (Composer re-exports it), so there is one rule and not a copy. Its small cache went with the move: `@hkl/shared` holds no state, and the function is a few additions. Composer's own suite was run on the change.
+- The guide's reference is that key, the anchor its band. For C that is C4 where the guide solved from A3 before; no picture changed (ten entries on Randal in Ptolemaic start an octave lower in the same column, and band copies share a color).
+- **Found while building**: the pictures were a CSS pixel wider or narrower from one root to another, because the painter rounded a picture's bounds from the keys' absolute places on the lattice. It now lays a shape out from its bass key. The page gate holds a root's page to C's, entry for entry, text and picture sizes.
+- **Mine**: the title names the starting note ("Lattice shapes from E♭: Randal mapping, Ptolemaic tuning"), for C too; the tab's dropdown is labeled "Starting note" and lists the roots in fifths; the hash carries the root's id after the tuning unless it is C (`Fs`, `Cs` for the sharps: fifteen fixed values, within the analytics rule).
+- Gate: `test/shapes/roots.mjs`, every root on every layout, forgetting the solver's lookups after each root.
+
+## Shape guide: a picture wider than a sheet is scaled down, not left out (2026-11-18, Max)
+
+**Asked**: is the German augmented sixth on Park in Syntonic, a shape 18 path keys wide, the widest anywhere, and does anything end up wider than a page?
+
+**Measured**, every picture on the eight presets in the six tunings (3,372), in the guide's pose and key size: that one is 563 px and fits a row to itself (667 px). Four are wider than the sheet: the Pythagorean natural minor scale (755 px) and the Pythagorean diminished 5th (754 px) on Chromatic, in Ptolemaic and in Septimal. On the page they ran 75 px past the sheet's text edge, more than the paper's 58 px margin. Nothing else is wider than 563 px, and nothing is taller than a sheet (468 px against 941). The page gate had looked for overflow on Randal only.
+
+**Picked (Max)**: scale those down to fit. "I'd rather scale down those edge cases than remove them, so we retain 'playable at all on the layout' as the gate." His reading of the cause: the Pythagorean diminished 5th already crosses four bands in Euler and three in Wicki-Hayden, and still two 12-wide bands in Chromatic even with copy columns.
+
+- **Built**: a picture wider than a row to itself is shown at that row's width, in proportion; every other picture is shown as drawn, at the one key size. (The row's width was 667 px when this was built and 88% for the four; it is 687 px and 91% since the picture lost its indent, below.) That also answers, for now, the question left open on 2026-11-17 (one key size, or fit each picture to a box): one size, with this one exception.
+- The oracle measures every layout's pictures and pins the four; the page gate holds the Chromatic page to it.
+
+## Shape guide: the hanging label, and the picture out of the indent (2026-11-18, Max)
+
+- **The number keeps one distance from the title (Max).** In guides of a hundred entries or more (Septimal has 109) the number ran into the title. The number sat left-aligned in a box that had only a minimum width, so the gap was whatever was left of the box: 15.0 px after one digit, 7.4 after two, nothing after three. **Built** as a hanging label: the number is right-aligned against the title with one gap (5.1 px), and the indent it hangs in grows by a digit's width for every digit past two, one indent for the whole guide so its entries line up. The title, the lines under it and a title's wrapped lines all start at that indent; they had been 2 to 3 px apart, each indented in its own font size.
+  - **Mine, then overruled**: I first kept the picture at the indent too, which made the picture's room, and so the rows and the scale-down width, depend on the entry count.
+- **The picture is not subject to the indent (Max)**: "let the diagram fill the full width". It has its entry's whole width less the gutter. That gives every picture about 20 px more room (a third is 220 px, a half 337, a row 687), so more entries share rows: Randal in Ptolemaic prints on 10 sheets where it had 11, Chromatic in Ptolemaic on 14 where it had 15. The rows no longer depend on the indent.
+- **And it is centered in its cell (Max)**: between the entry's left edge and its gutter.

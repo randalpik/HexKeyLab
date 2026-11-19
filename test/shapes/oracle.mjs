@@ -14,7 +14,8 @@
 //      closed under octave complement
 //   C  Randal in Ptolemaic, banded — every entry is on the lattice; each key sounds its member's
 //      ratio from the bass exactly; the bass is the C of its position (purple left, spring green
-//      center, pink right), the three pinned; the valid positions equal the closed form
+//      center, pink right), the three pinned, each the C nearest the reference, which is C's
+//      tonic key (C4, where Composer puts a key's reference); the valid positions equal the closed form
 //      −lo … 2 − hi over the members' 5-exponents; center is drawn whenever it is valid
 //   D  HKL's chord namer (analyzeChord) gives every chord entry the catalog's name, position
 //      and the ratio of the chord it is named as, in Randal in Ptolemaic and again in Randal in
@@ -57,6 +58,12 @@
 //      Cs of one column that hold the shape alike, the nearest the reference. What rule 1 costs
 //      rule 2 is measured and pinned: the shapes some marked C would hold nearer than the plain
 //      C drawn (9 of them, all in Syntonic, by at most 0.54 key widths in all). The
+//      pictures (diagram.ts's own measure, in the guide's pose and key size) all fit a sheet: one
+//      wider than a row to itself is shown scaled down to it, and those are pinned (four, the
+//      Pythagorean natural minor scale and diminished 5th on Chromatic in Ptolemaic and in
+//      Septimal, to the row's 687 px); every other picture is shown as drawn; none is taller than a
+//      sheet. A picture has its entry's whole width less the gutter: the hanging indent of the
+//      titles and text (a digit wider from a hundred entries) takes nothing from it. The
 //      positions listed are exactly the columns where the same keys, moved with a C of that
 //      column, sound the members. No choice is left to scan order (`undecided` is empty on
 //      every shape). Pinned: Wicki-Hayden in Syntonic draws its wolf 5th four steps and three
@@ -75,8 +82,9 @@ import {
 } from '../../apps/hkl/src/shapes/catalog.ts';
 import { solve, hexDistance, keyDistance, positionLabel, GUIDE_ROTATION, GUIDE_ALIGNMENT } from '../../apps/hkl/src/shapes/solve.ts';
 import { setHexSize, setRotation, hexToScreen, dxH } from '../../apps/hkl/src/layout/geometry.ts';
-import { buildGuide } from '../../apps/hkl/src/shapes/guide.ts';
-import { rowsOf } from '../../apps/hkl/src/shapes/rows.ts';
+import { buildGuide, rootedLayout } from '../../apps/hkl/src/shapes/guide.ts';
+import { rowsOf, room, shownSize, indentOf, SHEET } from '../../apps/hkl/src/shapes/rows.ts';
+import { diagramSize } from '../../apps/hkl/src/shapes/diagram.ts';
 import { analyzeChord } from '../../apps/hkl/src/tuning/chords.ts';
 import { intervalNameFromCoords, shortenInterval } from '../../apps/hkl/src/tuning/intervals.ts';
 import { coordExps, coordToMidi, freqAt, anchorOf, SHAPE_GUIDE_MODES } from '../../packages/shared/src/freq.ts';
@@ -194,7 +202,10 @@ check('B nothing in the set is unused', SET.every((e) => realized.has(expsKey(e)
 /* ── C–G. Randal in Ptolemaic ── */
 const L = layoutOf('randal', '5'), ST = stateOf(L);
 const guide = buildGuide(L);
-const HUE = { 0: 'PU', 1: 'SG', 2: 'PK' }, BASS = { 0: '2,-1', 1: '-3,3', 2: '-5,7' };
+/* the reference is C's tonic key, C4 at (-3, 3) (findTonicCoord, as Composer places a key's
+   reference), and each position's C is the one nearest it: C3, C4, C5 */
+const HUE = { 0: 'PU', 1: 'SG', 2: 'PK' }, BASS = { 0: '-1,-1', 1: '-3,3', 2: '-5,7' };
+check('C the reference', String(rootedLayout(L, 'C').ref), '-3,3');
 const DIRS = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
 /* the keys strictly between a and b on each shortest path that turns at most once, with its corner */
 function oneTurnPaths(a, b) {
@@ -420,7 +431,8 @@ check('R four halves (the scales)', rowsOf([2, 2, 2, 2]).map((r) => r.count + '/
 
 /* ── H. any layout ── */
 check('H the guide\'s modes', SHAPE_GUIDE_MODES.join(' '), '5 P D 7 S Y');
-const LAYOUTS = SHAPE_GUIDE_MODES.flatMap((mode) => MAPPINGS.map((m) => layoutOf(m, mode)));
+/* each layout as the guide solves it: the reference on C's tonic key, the anchor on its band */
+const LAYOUTS = SHAPE_GUIDE_MODES.flatMap((mode) => MAPPINGS.map((m) => rootedLayout({ mode, mapping: m, banded: true }, 'C')));
 /* how high a key stands on the page, in px, on HKL's own screen geometry in the guide's pose
    (sy grows downward); two heights within a thousandth of a px are level */
 setHexSize('medium');
@@ -443,28 +455,32 @@ const SAME = 1e-6;
   check('H HKL\'s screen geometry is that grid to within 1%', worst < 0.01, true);
 }
 const undecidedAll = {}, undecidedWhere = [];
+/* the pictures shown scaled down, the widest shown as drawn, and a sheet's height inside its margins (px) */
+const scaledAll = [];
+let widestAsDrawn = 0;
+const SHEET_TALL = (11 - 1.2) * 96;
 /* the shapes a marked C would hold nearer than the plain C drawn, by layout, and the most it costs */
 const plainCosts = {};
 let plainCostMost = 0;
 let decidedByArrows = 0, markedAll = 0, solvedAll = 0;
 /* how far the solver looks from a bass: four bands along q, nine rows along r */
 const REACH_BANDS = 4, REACH_ROWS = 9;
-for (const l of LAYOUTS) {
+for (const { layout: l, ref } of LAYOUTS) {
   let solved = 0, repeats = 0, marked = 0;
   const left = {};
   setRotation(GUIDE_ROTATION, l.mapping, GUIDE_ALIGNMENT);
   const tag = `H ${l.mapping} ${l.mode}`;
   const width = bandWidth(l.mapping), reachQ = REACH_BANDS * width, spine = Math.floor(4 / matrixOf(l.mapping).c);
-  /* the basses a shape may start from: every key named C in reach of (0, 0), each with its
-     column, its marks (its pitch's 5- and 7-exponents) and how near (0, 0) it is: by distance,
-     then in pitch, then lower, then higher on the page */
+  /* the basses a shape may start from: every key named C in reach of the reference, each with
+     its column, its marks (its pitch's 5- and 7-exponents) and how near the reference it is: by
+     distance, then in pitch, then lower, then higher on the page */
   const midi = (c) => coordToMidi(c[0], c[1], l.mapping);
   const marksOf = (c) => Math.abs(exps(c, l)[2]) + Math.abs(exps(c, l)[3]);
   const basses = [];
-  for (let q = -reachQ; q <= reachQ; q++) for (let r = -REACH_ROWS; r <= REACH_ROWS; r++) {
+  for (let q = ref[0] - reachQ; q <= ref[0] + reachQ; q++) for (let r = ref[1] - REACH_ROWS; r <= ref[1] + REACH_ROWS; r++) {
     if (noteName(q, r, l.mapping, l.anchor, l.banded) !== 'C') continue;
     const cell = [q, r];
-    basses.push({ p: posInBandOf(q, r, l.mapping), marks: marksOf(cell), cell, near: [hexDistance([0, 0], cell), Math.abs(midi(cell) - midi([0, 0])), midi(cell), -up(cell)] });
+    basses.push({ p: posInBandOf(q, r, l.mapping), marks: marksOf(cell), cell, near: [hexDistance(ref, cell), Math.abs(midi(cell) - midi(ref)), midi(cell), -up(cell)] });
   }
   const nearer = (a, b) => a.near[0] - b.near[0] || a.near[1] - b.near[1] || a.near[2] - b.near[2] || (Math.abs(a.near[3] - b.near[3]) < LEVEL ? 0 : a.near[3] - b.near[3]);
   /* every key in reach of a bass that sounds `m` above it (the keys around a bass, by pitch, kept) */
@@ -484,7 +500,7 @@ for (const l of LAYOUTS) {
   const apart = (cells) => { let n = 0; for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) n += real(cells[i], cells[j]); return n; };
   const all = [...STRUCTURES.map((s) => s.members), ...SET.map((e) => [UNISON, e])];
   for (const members of all) {
-    const sh = solve(members, l);
+    const sh = solve(members, l, 'C', ref);
     /* a position's arrangement: each member on a key of its pitch nearest the bass; of equally
        near keys the choices closest together; of those the ones that stand highest (one, unless
        two are level) */
@@ -577,8 +593,19 @@ for (const l of LAYOUTS) {
   const g = buildGuide(l);
   check(`H ${l.mapping} ${l.mode}: the guide holds what the layout holds`, g.length, solved);
   check(`H ${l.mapping} ${l.mode}: structures in catalog order`, g.filter((e) => e.kind !== 'interval').map((e) => e.name).join(';'),
-    STRUCTURES.filter((s) => solve(s.members, l)).map((s) => s.name).join(';'));
+    STRUCTURES.filter((s) => solve(s.members, l, 'C', ref)).map((s) => s.name).join(';'));
   check(`H ${l.mapping} ${l.mode}: every entry has its keys`, g.every((e) => e.shape && e.shape.cells.length === e.members.length), true);
+  /* every picture fits a sheet: as drawn, or, wider than a row to itself, scaled down to it. The
+     style is the page's (memberBorder 1.5, seamWidth 4: shapes/page.ts STYLE) */
+  for (const e of g) {
+    const d = diagramSize(e.shape, { memberBorder: 1.5, seamWidth: 4 }), shown = shownSize(d.width, d.height);
+    check(`H ${l.mapping} ${l.mode}, ${e.name}: its picture fits a row`, shown.width <= room(1), true);
+    check(`H ${l.mapping} ${l.mode}, ${e.name}: its picture keeps its proportions`, Math.abs(shown.width / d.width - shown.height / d.height) < 0.005, true);
+    check(`H ${l.mapping} ${l.mode}, ${e.name}: shown as drawn unless it is wider than a row`, shown.scale === 1, d.width <= room(1));
+    check(`H ${l.mapping} ${l.mode}, ${e.name}: with its text it is shorter than a sheet`, shown.height + 120 < SHEET_TALL, true);
+    if (shown.scale < 1) scaledAll.push(`${l.mapping} ${l.mode} ${e.name} ${d.width}→${shown.width} (${Math.round(shown.scale * 100)}%)`);
+    else widestAsDrawn = Math.max(widestAsDrawn, d.width);
+  }
   /* a ratio has one name in a guide, and a name one ratio, in full and in short */
   const ivs = g.filter((e) => e.kind === 'interval');
   check(`H ${l.mapping} ${l.mode}: interval names are distinct`, new Set(ivs.map((e) => e.name)).size, ivs.length);
@@ -587,14 +614,24 @@ for (const l of LAYOUTS) {
      septimal structure and interval, on every mapping */
   if (l.mode === '7') {
     check(`H ${l.mapping} 7: entries`, g.length, 109);
-    check(`H ${l.mapping} 7: every structure and interval with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).every((m) => solve(m, l)), true);
-  } else check(`H ${l.mapping} ${l.mode}: nothing with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).some((m) => solve(m, l)), false);
+    check(`H ${l.mapping} 7: every structure and interval with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).every((m) => solve(m, l, 'C', ref)), true);
+  } else check(`H ${l.mapping} ${l.mode}: nothing with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).some((m) => solve(m, l, 'C', ref)), false);
   markedAll += marked; solvedAll += solved;
 }
 /* Max, 2026-11-18: the plain C before a marked one; an exact tie between different keys to the
    one visually higher; between two equally plain columns for one shape, to the one with the
    fewest HEJI arrows. Over the 48 layouts nothing else is left to scan order */
 check('H no choice is left to scan order', undecidedWhere.join('; '), '');
+/* Max, 2026-11-18: a shape that can be played on a layout at all is in its guide; one too wide
+   for a sheet is scaled down, not left out. The Pythagorean diminished 5th is the culprit: it
+   crosses four bands in Euler, three in Wicki-Hayden, and still two 12-wide ones in Chromatic */
+check('H the pictures scaled down to fit', scaledAll.join('; '),
+  'chromatic 5 Pythagorean natural minor scale 755→687 (91%); chromatic 5 Pythagorean diminished 5th 754→687 (91%); '
+  + 'chromatic 7 Pythagorean natural minor scale 755→687 (91%); chromatic 7 Pythagorean diminished 5th 754→687 (91%)');
+check('H the sheet and a row\'s room, in px', `${Math.round(SHEET)} ${Math.floor(room(1))}`, '701 687');
+check('H the indent, in px: under a hundred entries, a hundred and more, a thousand', [9, 94, 99, 100, 109, 1000].map((n) => indentOf(n).toFixed(1)).join(' '), '20.4 20.4 20.4 28.4 28.4 36.4');
+check('H the room of a third, a half and a row, in px (a picture has the entry\'s width less its gutter)', [3, 2, 1].map((n) => Math.floor(room(n))).join(' '), '220 337 687');
+console.log(`  pictures: ${scaledAll.length} scaled down to a row (${Math.floor(room(1))} px); the widest shown as drawn is ${widestAsDrawn} px`);
 /* rule 1 before rule 2 (Max, 2026-11-18): the plain C is the example even where a marked C would
    hold the shape a little nearer. Where that happens, and by how much at most, is pinned */
 check('H shapes a marked C would hold nearer than the plain C drawn', Object.entries(plainCosts).map(([k, n]) => `${k} ×${n}`).join('; '), 'accordion S ×7; park S ×2');

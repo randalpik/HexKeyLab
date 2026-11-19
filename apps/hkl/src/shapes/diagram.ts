@@ -43,8 +43,12 @@ export interface Diagram {
   height: number;
 }
 
-/* A key's center before the rotation, as the lattice lays it out (y down)… */
-const flat = ([q, r]: Cell): [number, number] => [q * dxH + r * dxH * 0.5, -r * dyH];
+/* A key's center before the rotation, as the lattice lays it out (y down), from
+   the shape's bass key `o`. Measured from the bass, not from the lattice's
+   origin, so a shape is the same picture wherever on the lattice it lies: its
+   bounds are rounded to whole pixels, and from the origin the same shape on
+   another starting note came out a pixel wider or narrower… */
+const flat = ([q, r]: Cell, [oq, or]: Cell): [number, number] => [(q - oq) * dxH + (r - or) * dxH * 0.5, -(r - or) * dyH];
 /* …and a point turned by the rotation, which is where it lands on the page. */
 const turn = (x: number, y: number): [number, number] => [x * cosT + y * sinT, -x * sinT + y * cosT];
 
@@ -55,23 +59,23 @@ const LATTICE_BORDER_COLOR = '#111';
 
 /** Draw `cells` as lattice keys: the hexagon behind each, `border` wider than
  *  its color and filled `borderColor`, then its color and its label. `ox`,
- *  `oy` is where lattice (0, 0) lands on the canvas. */
-function drawKeys(ctx: CanvasRenderingContext2D, cells: ReadonlyArray<Cell>, state: TuningStateLike, style: DiagramStyle, border: number, borderColor: string, ox: number, oy: number): void {
+ *  `oy` is where the key `o` lands on the canvas. */
+function drawKeys(ctx: CanvasRenderingContext2D, cells: ReadonlyArray<Cell>, o: Cell, state: TuningStateLike, style: DiagramStyle, border: number, borderColor: string, ox: number, oy: number): void {
   const { mode, mapping, anchor, banded } = state;
   ctx.save();
   ctx.translate(ox, oy);
   ctx.rotate(-tiltAngle);
   ctx.fillStyle = borderColor;
-  for (const c of cells) { const [x, y] = flat(c); hexPath(ctx, x, y, hexR - 0.5 + border); ctx.fill(); }
+  for (const c of cells) { const [x, y] = flat(c, o); hexPath(ctx, x, y, hexR - 0.5 + border); ctx.fill(); }
   for (const c of cells) {
-    const [x, y] = flat(c);
+    const [x, y] = flat(c, o);
     hexPath(ctx, x, y, hexR - 0.5);
     ctx.fillStyle = keyColorHex(c[0], c[1], mode, mapping, anchor, banded);
     ctx.fill();
   }
   ctx.restore();
   for (const [q, r] of cells) {
-    const [x, y] = turn(...flat([q, r]));
+    const [x, y] = turn(...flat([q, r], o));
     const commas = style.heji ? hejiCommas(q, r, state) : { syn5: 0, sept7: 0 };
     const label = hejiLabel(noteName(q, r, mapping, anchor, banded), commas);
     const pc = ((coordToMidi(q, r, mapping) % 12) + 12) % 12;
@@ -79,15 +83,15 @@ function drawKeys(ctx: CanvasRenderingContext2D, cells: ReadonlyArray<Cell>, sta
   }
 }
 
-/** The picture of `shape` under `layout`. */
-export function renderDiagram(shape: Shape, layout: ShapeLayout, style: DiagramStyle): Diagram {
-  const state: TuningStateLike = { ...layout, equalEnabled: false, septimalEnabled: layout.mode === '7', septimalW: 1 };
-  const seams = shape.seams.map(([a, b]) => seamSegment(...flat(a), ...flat(b), hexR));
+/** The extent of everything a shape's picture draws, on the page, in whole CSS
+ *  px from the bass key's center, and the seams' segments before the rotation. */
+function extent(shape: Shape, style: Pick<DiagramStyle, 'memberBorder' | 'seamWidth'>): { left: number; top: number; width: number; height: number; seams: Array<[number, number, number, number]> } {
+  const o = shape.bass;
+  const seams = shape.seams.map(([a, b]) => seamSegment(...flat(a, o), ...flat(b, o), hexR));
   const seamW = style.seamWidth * hexScale;
-  /* the extent of everything drawn, on the page */
   const xs: number[] = [], ys: number[] = [];
   for (const c of [...shape.cells, ...shape.path]) {
-    const [x, y] = turn(...flat(c));
+    const [x, y] = turn(...flat(c, o));
     const reach = hexR + Math.max(style.memberBorder, LATTICE_BORDER);
     xs.push(x - reach, x + reach); ys.push(y - reach, y + reach);
   }
@@ -95,7 +99,23 @@ export function renderDiagram(shape: Shape, layout: ShapeLayout, style: DiagramS
     xs.push(x - seamW, x + seamW); ys.push(y - seamW, y + seamW);
   }
   const left = Math.floor(Math.min(...xs)), top = Math.floor(Math.min(...ys));
-  const width = Math.ceil(Math.max(...xs)) - left, height = Math.ceil(Math.max(...ys)) - top;
+  return { left, top, width: Math.ceil(Math.max(...xs)) - left, height: Math.ceil(Math.max(...ys)) - top, seams };
+}
+
+/** The size of a shape's picture in CSS px, without drawing it (no document
+ *  needed: the oracle measures every layout's pictures with it). As
+ *  `renderDiagram`, it reads the hex size and rotation the page has set. */
+export function diagramSize(shape: Shape, style: Pick<DiagramStyle, 'memberBorder' | 'seamWidth'>): { width: number; height: number } {
+  const { width, height } = extent(shape, style);
+  return { width, height };
+}
+
+/** The picture of `shape` under `layout`. */
+export function renderDiagram(shape: Shape, layout: ShapeLayout, style: DiagramStyle): Diagram {
+  const state: TuningStateLike = { ...layout, equalEnabled: false, septimalEnabled: layout.mode === '7', septimalW: 1 };
+  const o = shape.bass;
+  const { left, top, width, height, seams } = extent(shape, style);
+  const seamW = style.seamWidth * hexScale;
   const ox = -left, oy = -top;
 
   const sheet = (): [HTMLCanvasElement, CanvasRenderingContext2D] => {
@@ -111,14 +131,14 @@ export function renderDiagram(shape: Shape, layout: ShapeLayout, style: DiagramS
      paper, toward the dark of a dark page */
   if (shape.path.length) {
     const [faint, fctx] = sheet();
-    drawKeys(fctx, shape.path, state, style, LATTICE_BORDER, LATTICE_BORDER_COLOR, ox, oy);
+    drawKeys(fctx, shape.path, o, state, style, LATTICE_BORDER, LATTICE_BORDER_COLOR, ox, oy);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = style.pathAlpha;
     ctx.drawImage(faint, 0, 0);
     ctx.restore();
   }
-  drawKeys(ctx, shape.cells, state, style, style.memberBorder, style.memberBorderColor, ox, oy);
+  drawKeys(ctx, shape.cells, o, state, style, style.memberBorder, style.memberBorderColor, ox, oy);
   if (seams.length) {
     ctx.save();
     ctx.translate(ox, oy);

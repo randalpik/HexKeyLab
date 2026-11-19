@@ -5738,3 +5738,14 @@ The Guide's tab bar had a scrollbar that moved it by one pixel, on every tab, si
 - **Then a 1px overhang is 1px to scroll.** The active tab reached over the bar's bottom border with `margin-bottom: -1px`. Inside a scroll box that overhang is clipped, so the effect it was for never showed, and it is scrollable content, so a scrollbar did.
 - **Fix at the cause**: nothing sticks out. The bar's bottom line is an inset shadow inside the bar, and the active tab covers it with its own ground (`apps/guide/src/guide.css`). `overflow-y: hidden` would have hidden the scrollbar and kept the overhang.
 - `test/shapes/guide-tab.mjs` holds the bar to nothing to scroll, down or across (`scrollHeight − clientHeight`); it read 1 before the fix.
+
+## The same thing drawn in two places is not the same picture until it is measured from itself (2026-11-18)
+
+The lattice shape guide's solver gave identical shapes from every starting note, and the pictures still differed: 444 device pixels wide from E♭, 448 from C.
+
+- **Rounding a bounding box takes in where the thing is.** The painter floored and ceiled the picture's bounds from the keys' absolute lattice positions. The same shape somewhere else has the same extent and other fractions, so it rounds to another whole size, and its edges fall on other sub-pixels.
+- **A pixel was enough to matter**: the page decides how many entries share a row by picture width.
+- **Fix**: lay the shape out from one of its own keys (its bass). Then where it lies cannot reach the picture.
+- **The data comparison could not see it.** The roots gate compares keys; only the page gate, comparing rendered sizes entry for entry against the C page, did.
+
+A second one from the same day: **a per-key cache in a pure module is a leak in a sweep.** The solver keeps its lookups per reference, which is right for a page (one reference) and took a 2 GB heap for fifteen roots over forty-eight layouts in one process. `forgetShapes()` clears them; the roots gate calls it after each root.
