@@ -11381,4 +11381,10 @@ A reference guide to the lattice shapes of chords, intervals and scales, first f
 - For Verovio, every other layer of the staff gets a `sameas` carrier before its first event at or after the moment (lessons.md, 2026-11-18), inserted before beaming.
 - Beams: the first note of each voice at or after a clef takes a natural break that `/` inverts; a tuplet is beamed inside its `<tuplet>`, where the model never holds a clef, so its beam spans one by default.
 
-**Built so far**: the `middleSteps` fix only (a layer with no clef of its own reads the staff's clef as of the measure's start). Still to build, in order: a census of the measures whose layers disagree on the clef, for Max's review; the resolver, the carriers and the beam rule; the seats and the edit rule.
+**Built so far**: the `middleSteps` fix (a layer with no clef of its own reads the staff's clef as of the measure's start); then the resolver (`notation/staffclefs.ts`), the carriers and the beam rule (docs/architecture/composer.md → A clef belongs to the staff, Beaming). Still to build: the seats and the edit rule. Until then a clef sits in the layer it was entered in, two voices can each hold one at the same moment, and an edit carries a clef with its own voice only.
+
+**Changed while building**: carriers go in AFTER beaming, not before. The saved form passes through `regroupBeams` too and must never hold a carrier, so the beam pass asks the resolver for the staff's clef moments instead of finding carriers in the layer. The MusicXML importer no longer skips a beamable pair with a clef between them, so a source beam across a clef imports as written (it could not be represented before).
+
+**Cost** (sonata, 442 measures): the carrier pass 4.1 ms and the beam pass's clef lookups 0.9 ms on a 188 ms full render-serialize; a four-measure range serialize is 1.9 ms in all.
+
+**Census (2026-11-18)**: on the render clone of the sonata (442 measures, 49 inline clefs, 6,791 pitched events) and of mazeppa.hkc (8 measures, 31 clefs, 146 events), no event is drawn by Verovio in a clef other than the one the staff-wide rule gives it, no clef is duplicated across layers, and no staff cell holds clefs in two layers. The same census on a copy of mazeppa with one clef pair removed flags the two chords it should. So the drawing change moves nothing in either document.

@@ -33,6 +33,7 @@ import { layoutFlippedSlurs, liftSlursOffShiftedNumerals } from './slurlayout.js
 import { layoutCollidingTies, restoreTieRedraws } from './tielayout.js';
 import { layoutTupletNums } from './tupletnums.js';
 import { repairBarLines } from './barlines.js';
+import { dropClefCarriers } from '../notation/staffclefs.js';
 import type { ComposerModel } from '../model/index.js';
 
 function indexCheckEnabled(): boolean {
@@ -447,8 +448,9 @@ class Renderer {
       return;
     }
     v.module.onRuntimeInitialized = () => {
-      this.tk = new v.toolkit();
-      this.spliceTk = new v.toolkit();   // isolated toolkit for splicer offscreen renders
+      /* Both drop the clef carriers from their SVG (notation/staffclefs.ts). */
+      this.tk = dropClefCarriers(new v.toolkit());
+      this.spliceTk = dropClefCarriers(new v.toolkit());   // isolated toolkit for splicer offscreen renders
       /* Before the first render: both toolkits draw score SVG (see BASE_OPTIONS). */
       Promise.all([installMusicFont(this.tk), installMusicFont(this.spliceTk)])
         .catch((e) => console.error('[composer] music font install failed; C clefs fall back to Leipzig', e))
@@ -2367,7 +2369,7 @@ class Renderer {
     const ids = meas.map((m) => m.getAttribute('xml:id') ?? '');
     const idIdx = new Map(ids.map((id, i) => [id, i]));
     let lo = Math.min(run.lo, ids.length - 1);
-    if (lo > 0 && meas[lo]?.querySelector(':scope > staff > layer > clef')) lo--;
+    if (lo > 0 && meas[lo]?.querySelector(':scope > staff > layer clef')) lo--;
     const hi = Math.min(run.hi, ids.length - 1);
     const starts = newStartIds.map((id) => idIdx.get(id) ?? -1);
     for (let k = 0; k < newStartIds.length; k++) {

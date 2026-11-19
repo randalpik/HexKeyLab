@@ -54,6 +54,7 @@
 // Verovio. Runs on the render clone only.
 
 import { realTicks } from '../model/ticks.js';
+import { middleSteps } from './staffpos.js';
 
 /** Other-voice heads within this many diatonic steps (inclusive) of the
  *  slur's farthest own head on the flip side refuse the flip. 3 = a fourth. */
@@ -189,6 +190,7 @@ export function settleSlurSides(doc: Document): void {
   }
   const measures = Array.from(doc.querySelectorAll('measure'));
   const measureIndex = new Map<Element, number>(measures.map((m, i) => [m, i]));
+  let mids: Map<Element, number> | null = null;
   for (const slur of slurs) {
     if (slur.hasAttribute('curvedir')) continue;
     const sid = slur.getAttribute('startid')?.replace(/^#/, '');
@@ -201,14 +203,25 @@ export function settleSlurSides(doc: Document): void {
     const dir = stemDirOf(a);
     const heads = spanHeads(measureIndex, measures, a, b);
     if (!heads) continue;
-    const ownSteps = heads.own.map(stepOf).filter((v): v is number => v !== null);
+    /* Positions on the staff, not pitches: a head's step is read against the
+       clef it is drawn in (notation/staffpos.ts), so a clef change inside the
+       span compares where the heads ARE. When a clef is unknown for any head
+       the raw steps stand, as before. */
+    mids ??= middleSteps(doc);
+    const m = mids;
+    const clefKnown = [...heads.own, ...heads.other].every((n) => m.has(n));
+    const posOf = (n: Element): number | null => {
+      const v = stepOf(n);
+      return v === null ? null : clefKnown ? v - m.get(n)! : v;
+    };
+    const ownSteps = heads.own.map(posOf).filter((v): v is number => v !== null);
     if (!ownSteps.length) continue;
     /* The farthest own head on the flip side; an other-voice head less than
        `BLOCK_STEPS` beyond it — or inside the slur's range (negative) — is a
        collision the flip would cause, so the slur stays on Verovio's side. */
     const ext = dir === 'up' ? Math.min(...ownSteps) : Math.max(...ownSteps);
     const blocked = heads.other.some((n) => {
-      const v = stepOf(n);
+      const v = posOf(n);
       return v !== null && (dir === 'up' ? ext - v : v - ext) <= BLOCK_STEPS;
     });
     if (blocked) continue;

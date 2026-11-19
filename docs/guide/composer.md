@@ -97,7 +97,7 @@ In a voice, these keys act on the note or chord at the cursor:
 | `Alt+H` | string harmonic | sounds the harmonic pitch |
 | `P` | cautionary accidental (in parentheses) | |
 | `L` | flip the stem | |
-| `/` | split or join the beam at the cursor | |
+| `/` | split or join the beam at the cursor (a beam breaks at a clef change by default, except within a tuplet; `/` joins it across) | |
 | `H` | hide a rest (it still takes time) | |
 
 ### Slurs
@@ -137,7 +137,7 @@ On a grand-staff instrument, `Shift+P` puts the sustain pedal down and `Shift+O`
 These apply from the cursor's measure onward, or over the selection:
 
 - `Ctrl+Shift+S` sets the time and key signature, including common and cut time, and beat groups such as `2+2+3` for beaming.
-- `Ctrl+Shift+C` inserts a clef change at the cursor, even mid-measure: treble, bass, alto, tenor, treble 8va or 8vb, bass 8vb, or French violin. It lasts until the next change. Reopen the dialog at the same spot to change or remove it; deleting notes never removes a clef.
+- `Ctrl+Shift+C` inserts a clef change at the cursor, even mid-measure: treble, bass, alto, tenor, treble 8va or 8vb, bass 8vb, or French violin. It applies to both voices of the staff from that moment and lasts until the next change. Reopen the dialog at the same spot to change or remove it; deleting notes never removes a clef.
 - `Ctrl+Shift+A` sets a pickup measure at the start of a section. Give its length in eighth notes (`2` for a quarter-note pickup); `0` removes it.
 
 ### Bars and sections

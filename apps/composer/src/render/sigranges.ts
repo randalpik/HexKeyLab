@@ -116,7 +116,8 @@ export function clefsByStaff(measureXml: string): Map<string, string> {
   if (!meas) return out;
   for (const staff of Array.from(meas.children)) {
     if (staff.localName !== 'staff') continue;
-    const tags = Array.from(staff.querySelectorAll('layer > clef'))
+    /* Any depth: `/` can leave a clef inside a <beam> (notation/beams.ts). */
+    const tags = Array.from(staff.querySelectorAll('layer clef'))
       .map((c) => `${c.getAttribute('shape') ?? ''}${c.getAttribute('line') ?? ''}${c.getAttribute('dis') ?? ''}${c.getAttribute('dis.place') ?? ''}`);
     if (tags.length) out.set(staff.getAttribute('n') ?? '1', tags.join('|'));
   }
@@ -134,9 +135,9 @@ export function clefsByStaff(measureXml: string): Map<string, string> {
  *  later clef exists. */
 export function clefRangeEnd(measures: Element[], from: number, staff: string): number {
   for (let i = from + 1; i < measures.length; i++) {
-    const clef = measures[i].querySelector(`:scope > staff[n="${staff}"] > layer > clef`);
+    const clef = measures[i].querySelector(`:scope > staff[n="${staff}"] > layer clef`);
     if (!clef) continue;
-    const layer = clef.parentElement;
+    const layer = clef.closest('layer');
     return layer && layer.firstElementChild === clef ? i - 1 : i;
   }
   return measures.length - 1;

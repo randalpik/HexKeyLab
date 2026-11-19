@@ -130,6 +130,49 @@ export function realTicks(el: Element): number {
   return writtenTicks(el);
 }
 
+/** An exact tick count, reduced, `d > 0`. `realTicks` is floating point once a
+ *  tuplet scales it (a triplet eighth is 16/3, and three of them need not sum
+ *  to 16 bit for bit), so anything that asks whether two voices reach the
+ *  SAME moment — the staff's clefs (notation/staffclefs.ts) — compares these. */
+export interface Frac { n: number; d: number }
+
+const gcd = (a: number, b: number): number => {
+  a = Math.abs(a); b = Math.abs(b);
+  while (b) { const t = a % b; a = b; b = t; }
+  return a || 1;
+};
+
+export function frac(n: number, d = 1): Frac {
+  const g = gcd(n, d) * (d < 0 ? -1 : 1);
+  return { n: n / g, d: d / g };
+}
+
+export const FRAC_ZERO: Frac = { n: 0, d: 1 };
+
+export function fracAdd(a: Frac, b: Frac): Frac {
+  return frac(a.n * b.d + b.n * a.d, a.d * b.d);
+}
+
+/** Negative, zero or positive as `a` is before, at or after `b`. */
+export function fracCmp(a: Frac, b: Frac): number {
+  return a.n * b.d - b.n * a.d;
+}
+
+/** `realTicks` of one timed element (note, chord, rest, space, tremolo),
+ *  exactly: the written value, scaled by an enclosing tuplet's ratio. Written
+ *  values are binary fractions of a tick (a dotted 128th is 0.75), so 1/1024
+ *  holds every one. Not for the `<tuplet>` / `<beam>` wrappers — walk into
+ *  them, as `layerTimeline` does. */
+export function realTicksExact(el: Element): Frac {
+  const ln = el.localName;
+  if (ln === 'measure' || ln === 'clef' || el.hasAttribute('grace')) return FRAC_ZERO;
+  const w = frac(Math.round(writtenTicks(el) * 1024), 1024);
+  const t = enclosingTuplet(el);
+  if (!t) return w;
+  const { num, numbase } = tupletRatio(t);
+  return frac(w.n * numbase, w.d * num);
+}
+
 /* 64th-note tick table for representable durations (greedy decomposition).
    Largest first. The @dur values here MUST be consistent with ticksOf —
    e.g. dotted half = ticksOf('2', 1) = 48, so the 48-tick entry must carry

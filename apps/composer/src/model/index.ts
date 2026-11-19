@@ -27,6 +27,7 @@
 import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig, measureTimeSigs, type TimeSigInfo } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
+import { projectStaffClefs, staffClefs, lastStaffClef, layerTimeline } from '../notation/staffclefs.js';
 import { fillEmptyMeasureRests } from '../notation/measurerests.js';
 import { duplicateTempiAcrossParts, settleFermataSides } from '../notation/parts.js';
 import { applySectionRestarts } from '../notation/sectionRestart.js';
@@ -53,7 +54,7 @@ import { coordToMidi, anchorOf, readsAnchor, type TuningMode } from '@hkl/shared
 import type { Mapping } from '@hkl/shared/mapping.js';
 import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
 import { sanctionedLightForInk } from '@hkl/shared/colors.js';
-import { realTicks, writtenTicks, decomposeTicks, isGrace } from './ticks.js';
+import { realTicks, writtenTicks, decomposeTicks, isGrace, fracCmp } from './ticks.js';
 export { decomposeTicks };
 import {
   buildChordElement,
@@ -414,8 +415,10 @@ function scheduleIdleSnapshot(fn: () => void): void {
  *  measure (an inline `<clef>` at the head of a layer) must render BEFORE the
  *  barline — the standard engraving convention — but Verovio draws a
  *  measure-initial clef AFTER the barline. So on the render clone we move each
- *  measure-initial `<clef>` to the end of the same staff+layer in the PREVIOUS
- *  measure (a courtesy clef change). The live doc keeps clefs at measure heads
+ *  measure-initial `<clef>` to the end of the same staff in the PREVIOUS
+ *  measure (a courtesy clef change) — its own layer there, or the staff's
+ *  first layer when the previous measure has no such layer: a clef belongs to
+ *  the staff, the layer is only where it sits (notation/staffclefs.ts). The live doc keeps clefs at measure heads
  *  (natural for the cursor/editing); this runs only for rendering, so it applies
  *  uniformly to native clef edits and imports. `dropFirstMeasure`: in a range
  *  sub-render the first measure's leading clef belongs to the out-of-range
@@ -440,9 +443,9 @@ function relocateInitialClefs(doc: Document, dropFirstMeasure = false): void {
         const prevStaff = Array.from(measures[i - 1].children).find(
           (s) => s.localName === 'staff' && s.getAttribute('n') === g);
         const ln = layer.getAttribute('n');
-        const prevLayer = prevStaff && Array.from(prevStaff.children).find(
-          (l) => l.localName === 'layer' && l.getAttribute('n') === ln);
-        if (!prevLayer) continue;   // no matching previous layer → leave (can't relocate)
+        const prevLayers = prevStaff ? Array.from(prevStaff.children).filter((l) => l.localName === 'layer') : [];
+        const prevLayer = prevLayers.find((l) => l.getAttribute('n') === ln) ?? prevLayers[0];
+        if (!prevLayer) continue;   // no previous staff → leave (can't relocate)
         layer.removeChild(first);
         prevLayer.appendChild(first);
       }
@@ -926,7 +929,12 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone);
     regroupBeams(clone, readTimeSig(clone));
-    if (forRender) applyRenderConventions(clone, this.renderUnits(viewStaves));
+    if (forRender) {
+      /* Render only, and after beaming: the saved form passes through the two
+         passes above and must never hold a carrier. */
+      projectStaffClefs(clone);
+      applyRenderConventions(clone, this.renderUnits(viewStaves));
+    }
     return new XMLSerializer().serializeToString(clone);
   }
 
@@ -974,6 +982,7 @@ export class ComposerModel {
     if (viewStaves) filterToStaves(clone, new Set(viewStaves));
     relocateInitialClefs(clone, true);   // range: first measure's leading clef lives in the out-of-range prev
     regroupBeams(clone, readTimeSig(clone));
+    projectStaffClefs(clone);
     applyRenderConventions(clone, units);
     return new XMLSerializer().serializeToString(clone);
   }
@@ -1036,8 +1045,7 @@ export class ComposerModel {
         for (const sd of pendingSd.splice(0)) applySd(sd);
         for (const staff of Array.from(node.querySelectorAll('staff'))) {
           const sn = staff.getAttribute('n') ?? '1';
-          const clefs = staff.querySelectorAll('layer > clef');
-          const c = clefs[clefs.length - 1] as Element | undefined;
+          const c = lastStaffClef(staff);   // the last in TIME, whichever layer holds it
           if (c) ctx.clefByStaff.set(sn, clefOf(c));
         }
       }
@@ -2618,12 +2626,17 @@ export class ComposerModel {
   }
 
   /** Clef in effect for `voice` at `cursor`: the head `<staffDef>` default,
-   *  then every inline `<clef>` carried forward measure by measure up to the
-   *  cursor's slot (model/clef-slot.ts). Clefs sitting AT the slot count —
-   *  they are what the next note typed there is drawn in — unless listed in
-   *  `exclude` (the slot's own clefs, for the "what would be inherited without
-   *  them" question). At a barline slot the walk covers the previous measure's
-   *  tail run AND the next measure's head run (both spellings). */
+   *  then every inline `<clef>` of the voice's STAFF carried forward measure by
+   *  measure, in time order, up to the cursor's slot (model/clef-slot.ts) — a
+   *  clef governs the whole staff, whichever layer it sits in
+   *  (notation/staffclefs.ts). In the slot's own measure a clef of this layer
+   *  counts when it sits before the slot's insertion point, and a clef of
+   *  another layer when its moment is at or before the slot's. Clefs sitting
+   *  AT the slot count — they are what the next note typed there is drawn
+   *  in — unless listed in `exclude` (the slot's own clefs, for the "what
+   *  would be inherited without them" question). At a barline slot the walk
+   *  covers the previous measure's tail run AND the next measure's head run
+   *  (both spellings). */
   private effectiveClefForVoice(voice: Voice, cursor: number, opts?: { exclude?: ReadonlySet<Element> }): ClefSpec {
     const v = voice;
     const staffN = this.staffForVoice(v);
@@ -2647,18 +2660,32 @@ export class ComposerModel {
     else if (slot.kind === 'inTuplet') { lastMi = slot.measureIdx; limit = slot.limit; }
     else lastMi = measures.length - 1;
     const exclude = opts?.exclude;
+    const take = (c: Element): void => {
+      shape = c.getAttribute('shape') ?? shape;
+      line = c.getAttribute('line') ?? line;
+      dis = c.getAttribute('dis');
+      disPlace = c.getAttribute('dis.place');
+    };
     for (let mi = 0; mi <= lastMi && mi < measures.length; mi++) {
-      const layer = this.layerInMeasure(measures[mi], v);
-      if (!layer) continue;
-      for (const c of Array.from(layer.children)) {
-        if (mi === lastMi && limit && c === limit) break;
-        if (exclude && exclude.has(c)) continue;
-        if (c.localName === 'clef') {
-          shape = c.getAttribute('shape') ?? shape;
-          line = c.getAttribute('line') ?? line;
-          dis = c.getAttribute('dis');
-          disPlace = c.getAttribute('dis.place');
-        }
+      const staff = Array.from(measures[mi].children)
+        .find((s) => s.localName === 'staff' && s.getAttribute('n') === String(staffN));
+      if (!staff || !staff.querySelector('clef')) continue;
+      const clefs = staffClefs(staff);
+      if (mi < lastMi || !limit) {
+        for (const c of clefs) if (!exclude || !exclude.has(c.el)) take(c.el);
+        continue;
+      }
+      /* The slot's measure: everything up to the slot's moment. */
+      const own = this.layerInMeasure(measures[mi], v);
+      /* `limit` is a timed element, or a tuplet wrapper (its first member's onset). */
+      const lim: Element = limit;
+      const at = own ? layerTimeline(own).items.find((it) => it.el === lim || lim.contains(it.el))?.at : undefined;
+      for (const c of clefs) {
+        if (exclude && exclude.has(c.el)) continue;
+        const before = c.layer === own
+          ? (c.el.compareDocumentPosition(lim) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+          : at !== undefined && fracCmp(c.at, at) <= 0;
+        if (before) take(c.el);
       }
     }
     return { shape, line, dis, disPlace };

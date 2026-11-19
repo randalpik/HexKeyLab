@@ -47,7 +47,7 @@ Paths are under `apps/composer/src/` unless noted.
 | Wiring | `main.ts` (startup, the `window.__hkl_composer` handle, render orchestration, injected page text, transport), `input.ts` (key dispatch, `InputState`), `click.ts`, `keybindings.ts` (help catalog) |
 | Model | `model/index.ts` (`ComposerModel`), `cursor-location.ts`, `voice-index.ts`, `insertion-plan.ts`, `placeholders.ts`, `ties.ts`, `tuplet-ops.ts`, `measure-ops.ts`, `clef-slot.ts`, `empty-flags.ts`, `multirest.ts`, `note-elements.ts`, `restfill.ts`, `ticks.ts` |
 | Control events | `expressions.ts` (dynamics, hairpins, text, tempo, tstamp math, `<hkl:config>`), `pedal.ts`, `slurs.ts`, `articulations.ts` |
-| Render-clone rules | `notation/`: `accidentals.ts`, `beams.ts`, `measurerests.ts`, `restlayout.ts`, `parts.ts`, `sectionRestart.ts`, `slurSides.ts`, `slurStems.ts`, `unstack.ts`, `staffpos.ts`; edit helpers `retune.ts`, `scTranspose.ts` |
+| Render-clone rules | `notation/`: `accidentals.ts`, `beams.ts`, `measurerests.ts`, `restlayout.ts`, `parts.ts`, `sectionRestart.ts`, `slurSides.ts`, `slurStems.ts`, `unstack.ts`, `staffpos.ts`, `staffclefs.ts`; edit helpers `retune.ts`, `scTranspose.ts` |
 | Renderer | `render/render.ts` (`Renderer`: toolkits, both views, post-processing, mounting) |
 | Scroll view | `render/splice.ts` (`ScrollSplicer`), `render/scrollbox.ts` |
 | Page view | `render/linebreaks.ts` (`PageLineBreaks`), `balance.ts`, `sigranges.ts`, `pagesplice.ts` (`PageSystemSplicer`), `pagefit.ts` (placement, `ExtentsStore`), `pageassembly.ts` (`PageAssembler`), `systemrender.ts`, `pageshell.ts`, `pageheader.ts`, `hiddenstaves.ts`, `lockmarks.ts` |
@@ -261,9 +261,13 @@ under one beam.
   it. Shrinking a meter truncates overflowing content per measure (shorten the
   first overflowing element, drop the rest, drop an overflowing tuplet whole);
   there is no reflow.
-- **Clefs** are inline `<clef>` layer children (zero ticks, never a stop,
-  break beams), written only through the clef dialog (`Ctrl+Shift+C`) — no
-  delete path removes one. `clefSlotAt` (`model/clef-slot.ts`) resolves every
+- **Clefs** belong to the staff: a clef governs every voice of its staff
+  from its moment to the next clef (Serialize for render → A clef belongs to
+  the staff). It is stored as an inline `<clef>` layer child (zero ticks,
+  never a stop, a natural beam break) in the layer it was entered in, which is
+  only its seat, and written only through the clef dialog (`Ctrl+Shift+C`) —
+  no delete path removes one. The clef in force at a cursor
+  (`effectiveClefForVoice`) is the staff's, from either voice. `clefSlotAt` (`model/clef-slot.ts`) resolves every
   read and write: the barline after a full measure is ONE slot reachable from
   two cursors, and a new clef there is written at the head of the next
   measure. Choosing the inherited clef removes the change; the dialog
@@ -387,7 +391,8 @@ readers use `afterRender()`.
 the clone Verovio sees: `computeAccidentalDisplay` → `transformDocForHeji` →
 ignore-color strip → `duplicateTempiAcrossParts` → `filterToStaves`
 (single-part view) → `relocateInitialClefs` → `regroupBeams` →
-`applyRenderConventions`. Every render path goes through it, so a full render
+`projectStaffClefs` → `applyRenderConventions`. The saved form
+(`serialize()` with no render flag) stops after `regroupBeams`. Every render path goes through it, so a full render
 and a splice agree by construction. `filterToStaves` keeps the original staff
 numbers (the cursor resolves staves by them) and drops a brace from a group
 reduced to one staff.
@@ -400,10 +405,44 @@ reduced to one staff.
 | `fillEmptyMeasureRests` (`measurerests.ts`) | Every content-free staff cell gets a rest in its lowest layer: `<mRest>` for a full bar in any meter, pickup-sized rests in a pickup (marked `data-hkl-cosmetic`, which click skips). The only source of a whole-bar rest; the cursor never stops on one. |
 | `settleRestLocations` (`restlayout.ts`) | Two-layer staves: a rest meeting nothing visible in the other layer, or an identical rest, is pinned to its single-layer `@loc` (twins draw as one); a rest against notes stays on the staff above (voice 1) or below (voice 2) the other layer's predicted ink, half a space clear, else Verovio decides. Pinning `@loc` keeps every rest's element and id. |
 | `applySectionRestarts` (`sectionRestart.ts`) | A section (movement) break draws no courtesy key, meter or clef and restates no instrument names; the new section starts in its own signatures. Built from a `<section restart>` wrapper plus plain nested sections for abbreviated labels and the section's clef (Verovio mechanics: lessons.md). |
-| `settleSlurSides` (`slurSides.ts`) | A two-voice slur is flipped to its notehead side only when provably clear: every other-layer head in its span lies more than a fourth (`BLOCK_STEPS` 3) beyond the slur's farthest own head. Otherwise Verovio's side stays — it never collides; forced sides do. |
+| `settleSlurSides` (`slurSides.ts`) | A two-voice slur is flipped to its notehead side only when provably clear: every other-layer head in its span lies more than a fourth (`BLOCK_STEPS` 3) beyond the slur's farthest own head, by position on the staff (each head read in its clef). Otherwise Verovio's side stays — it never collides; forced sides do. |
 | `settleFermataSides` (`parts.ts`) | On a grand staff the top staff's fermata goes above, the bottom staff's below. |
 | `separateSameMomentMarks` (`unstack.ts`) | A `<dir>` sharing tstamp, staff and place with a `<dynam>` moves `NUDGE_BEATS` (0.25) past it, so Verovio engraves one row instead of a stack and reserves space for one. |
 | `collapseMultiRests` (`model/multirest.ts`) | Multimeasure-rest runs, one-staff views only. |
+
+#### A clef belongs to the staff
+
+`notation/staffclefs.ts` is the one reading of a clef (decisions.md,
+2026-11-18). `layerTimeline` gives a layer's events and clefs with exact
+onsets (`realTicksExact`, fractions: `realTicks` is floating point through a
+tuplet, and "the same moment in the other voice" is an equality);
+`staffClefs` lists the clefs of one measure's `<staff>` in time order,
+whichever layers hold them; `lastStaffClef` is the clef the staff is left in.
+Their readers: `effectiveClefForVoice`, the range render's running context,
+the line-start keys (`render/linebreaks.ts`), the MusicXML export, the beam
+pass, and `projectStaffClefs`.
+
+Verovio's clefs are per layer: an inline clef sets its own layer for the rest
+of the measure, and from the next measure every layer starts in the measure's
+last clef in document order. So `projectStaffClefs` gives every other layer of
+the staff a **carrier**, `<clef sameas="#seat">`, in front of its first note
+or rest at or after the clef's moment (in front of the `<beam>` or `<tuplet>`
+that event opens, inside one otherwise; at the layer's head for a leading
+clef, which `applySectionRestarts` lifts out of every layer together), skipped
+where the layer is already in that clef, plus one at the end of the layer
+holding the measure's last clef in document order when that is not the staff's
+last clef in time. A `sameas` clef draws no glyph and takes no space
+(lessons.md, 2026-11-18). Carriers exist on the render clone only. Each comes
+back from Verovio as an empty `<g class="clef">`; the renderer wraps both its
+toolkits in `dropClefCarriers`, which removes them from every SVG string, so
+no DOM pass sees one. After the pass each layer holds the clefs it is drawn
+in, which is what `middleSteps` (`staffpos.ts`) reads for the rest, slur-stem
+and slur-side passes.
+
+Not built yet: the clef still sits in the layer it was entered in, so two
+voices can each hold a clef at one moment, and an edit carries a clef with its
+own voice only. The canonical seat and the stay-or-move rule on edits are the
+next phase (decisions.md).
 
 `duplicateTempiAcrossParts` (`parts.ts`) copies each `<tempo>` onto every
 instrument's top staff (ids `<src>-p<staffN>`); it runs before
@@ -451,9 +490,14 @@ default.
 no `<beam>`. Groups, per measure's meter: an `hkl:beat-groups` pattern if
 present; in 4/4, each half bar is one group only when it is exactly four
 eighths, else quarters; compound meters group in threes; otherwise one beat
-unit per group. Rests and quarters or longer break a run, as does an inline
-clef; `/` (`@hkl-beam-break`) inverts the natural break at a note. Tuplets are
-beamed as their own group. Grace notes are outside all of this: consecutive
+unit per group. Rests and quarters or longer break a run. A clef is a natural
+break like a group boundary, in every voice of its staff: the first note at or
+after its moment starts a new beam (`naturalStarts`, the one definition the
+pass, the stem flip's `beamGroupForElement` and the importer's
+`naturalBeatGroupStarts` share). `/` (`@hkl-beam-break`) inverts the natural
+break at a note, so it joins a beam across a clef; the wrapper takes the whole
+sibling span, clef included. Tuplets are beamed as their own group inside the
+`<tuplet>`, which never holds a clef, so a tuplet's beam spans one by default. Grace notes are outside all of this: consecutive
 unslashed graces of an 8th or shorter beam among themselves (`graceBeamRuns`;
 a slashed or quarter grace, or `/` on a grace, splits the run), and a regular
 beam runs straight through any graces between its notes, wrapping the whole
@@ -464,8 +508,9 @@ span so a grace beam nests inside it (Verovio draws a grace in a regular
 
 The engraving convention puts a measure-initial clef change before the
 barline. `relocateInitialClefs` moves each measure-initial `<clef>` to the end
-of the previous measure's same staff and layer on the clone, so a rendered
-barline is never followed by a clef. Section starts keep their clef (the
+of the previous measure's same staff on the clone (its own layer there, or the
+staff's first layer when the previous measure has no such layer), so a
+rendered barline is never followed by a clef. Section starts keep their clef (the
 restart pass draws it). Because of this relocation a measure's render depends
 on the next measure's first clef, so both splicers widen a changed run one
 measure left when its first measure holds one. Saved documents carry the

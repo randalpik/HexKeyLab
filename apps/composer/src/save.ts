@@ -10,6 +10,7 @@
 
 import { ComposerModel } from './model/index.js';
 import { cellHasFlag } from './model/empty-flags.js';
+import { lastStaffClef } from './notation/staffclefs.js';
 import type { Voice, Duration, Dots, InstrumentEntry } from './model/index.js';
 import { collectTempi, dirIsItalic, dirText, parseTstamp2, type TempoRecord } from './expressions.js';
 import { noteAlter } from '@hkl/notation/accidentals.js';
@@ -452,14 +453,14 @@ function headClefForStaff(doc: Document, staffN: number): ClefSpec {
   };
 }
 
-/** The last inline `<clef>` in a staff's layers within a measure, or null. */
+/** The clef a staff is left in at the end of a measure — its last inline
+ *  `<clef>` in TIME, whichever layer holds it — or null. */
 function lastClefInMeasure(measureEl: Element, staffN: number): ClefSpec | null {
   const staff = Array.from(measureEl.querySelectorAll('staff'))
     .find((s) => s.getAttribute('n') === String(staffN));
   if (!staff) return null;
-  const clefs = Array.from(staff.querySelectorAll('layer > clef'));
-  if (clefs.length === 0) return null;
-  const c = clefs[clefs.length - 1];
+  const c = lastStaffClef(staff);
+  if (!c) return null;
   return {
     sign: c.getAttribute('shape') ?? 'G',
     line: c.getAttribute('line') ?? '2',

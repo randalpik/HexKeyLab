@@ -343,6 +343,148 @@ export const FIXTURES = {
       r();
     `,
   },
+  /* ── A clef belongs to the staff (2026-11-18, decisions.md) ─────────────
+     A clef governs every voice of its staff from its moment, whichever layer
+     it sits in. Verovio's clefs are per layer, so the render clone gives each
+     other layer a `sameas` carrier before its first event at or after the
+     moment (notation/staffclefs.ts). */
+  /* Entered in voice 1 at beat 2: voice 2's notes from beat 2 are drawn in the
+     new clef, one clef glyph is drawn, the voices stay aligned, and the clef
+     dialog's "clef in force" answers for the staff from either voice. */
+  clef_staffWide_otherVoiceFollows: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null);
+      for (let i = 0; i < 3; i++) put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '4'); for (let i = 0; i < 3; i++) put('c', 3, '4');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The same clef entered from voice 2: voice 1 follows. */
+  clef_staffWide_enteredInLowerVoice: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) put('c', 5, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '4'); m.setClefAt('F', '4', null, null);
+      for (let i = 0; i < 3; i++) put('c', 3, '4');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The other voice is in the middle of a note at the clef's moment: the clef
+     reaches it at its next onset, and no second glyph is drawn there. */
+  clef_staffWide_otherVoiceMidNote: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null);
+      for (let i = 0; i < 3; i++) put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '2'); put('c', 3, '4'); put('c', 3, '4');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The clef's moment (the half beat) falls INSIDE the other voice's triplet:
+     the carrier sits inside the <tuplet>, the third member is drawn in the new
+     clef, and the triplet keeps its one beam and its number — only a tuplet's
+     beam spans a clef by default. */
+  clef_staffWide_tupletSpansClef: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '8'); m.setClefAt('F', '4', null, null);
+      put('e', 4, '8'); put('e', 4, '4'); put('e', 4, '2');
+      m.setVoice(2); m.setCursor(0, 2);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      put('c', 4, '8'); put('c', 4, '8'); put('c', 3, '8');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+    visualBaseline: 'clef_staffWide_tupletSpansClef',
+  },
+  /* `/` on the triplet member after the clef breaks the triplet's beam there. */
+  clef_beam_slashBreaksTupletAtClef: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '8'); m.setClefAt('F', '4', null, null);
+      put('e', 4, '8'); put('e', 4, '4'); put('e', 4, '2');
+      m.setVoice(2); m.setCursor(0, 2);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      put('c', 4, '8'); put('c', 4, '8'); put('c', 3, '8');
+      const members = [...m.getDoc().querySelectorAll('staff[n="1"] layer[n="2"] tuplet > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      members[2].setAttribute('hkl-beam-break', 'true');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* A clef is a natural beam break in EVERY voice of the staff: voice 2's four
+     eighths, one beam without the clef, break at voice 1's clef on beat 2. */
+  clef_beam_breaksInEveryVoice: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null);
+      put('e', 4, '4'); put('e', 4, '2');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '8'); put('c', 4, '8'); put('c', 3, '8'); put('c', 3, '8');
+      put('c', 3, '2');
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* Four eighths with a clef after the second: two beams by default. */
+  clef_beam_breaksAtClefByDefault: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '8'); put('c', 5, '8'); m.setClefAt('F', '4', null, null);
+      put('c', 3, '8'); put('c', 3, '8'); put('c', 3, '2');
+      m.setCursor(0, 1); r();
+    `,
+  },
+  /* …and `/` on the note after the clef joins them: ONE beam over the clef,
+     the clef still between the second and third notes (it could not be done
+     before 2026-11-18 — the clef's break was unconditional). */
+  clef_beam_slashJoinsAcrossClef: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '8'); put('c', 5, '8'); m.setClefAt('F', '4', null, null);
+      put('c', 3, '8'); put('c', 3, '8'); put('c', 3, '2');
+      const els = [...m.getDoc().querySelectorAll('staff[n="1"] layer[n="1"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      els[2].setAttribute('hkl-beam-break', 'true');
+      m.setCursor(0, 1); r();
+    `,
+  },
+  /* A line that starts after a measure whose LAST clef in document order is a
+     carrier still leads in the new clef (a `visible="false"` carrier hides
+     it: lessons.md, 2026-11-18). */
+  clef_staffWide_nextLineLeadsInNewClef: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      window.__hkl_composer.renderer.setViewMode('page');
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null);
+      for (let i = 0; i < 3; i++) put('e', 4, '4');
+      put('e', 4, '1');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '4'); for (let i = 0; i < 3; i++) put('c', 3, '4');
+      m.setLineLockAt(1, true);
+      m.setVoice(1); m.setCursor(0, 1); r();
+      window.__hkl_composer.renderer.runExtentsJobNow();
+    `,
+    skipCursorTrace: true,
+  },
 };
 
 export const ASSERTIONS = {
@@ -625,6 +767,279 @@ export const ASSERTIONS = {
         const g = document.getElementById(ids[0]);
         const drawn = g ? [...g.querySelectorAll('g.clef use')].some((u) => (u.getAttribute('xlink:href') || '').startsWith('#E07C')) : false;
         return drawn ? { ok: true } : { ok: false, detail: 'the change clef is not drawn in M1' };
+      })()` },
+  ],
+  clef_staffWide_otherVoiceFollows: [
+    { name: 'one carrier before the second note of the lower voice, none in the upper voice, the DOM or the saved form',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const c = carriers(2);
+        if (c.length !== 1 || carriers(1).length !== 0) return { ok: false, detail: 'carriers: layer 2 ' + c.length + ', layer 1 ' + carriers(1).length };
+        const kids = [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="2"] > *')].map((e) => e.localName).join(' ');
+        if (!/^(note|chord) clef (note|chord) (note|chord) (note|chord)/.test(kids)) return { ok: false, detail: 'layer 2 of the clone: ' + kids };
+        if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
+      })()` },
+    { name: 'the lower voice is drawn in treble on beat 1 (c4 at -2) and in bass from beat 2 (c3 at 3); the upper voice c5 at 5 then e4 at 12',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        if (locs(2) !== '-2,3,3,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
+        if (locs(1) !== '5,12,12,12') return { ok: false, detail: 'layer 1 locations ' + locs(1) };
+        return { ok: true };
+      })()` },
+    { name: 'one clef glyph is drawn in the measure, and the two voices share an x on beats 2 to 4',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        if (glyphs.length !== 1) return { ok: false, detail: glyphs.length + ' clef glyphs in the layers' };
+        const x = (g) => (g.querySelector('g.notehead') || g).getBoundingClientRect().left;
+        const a = notes(1).map(x), b = notes(2).map(x);
+        for (let i = 1; i < 4; i++) if (Math.abs(a[i] - b[i]) > 1.5) return { ok: false, detail: 'beat ' + (i + 1) + ': x ' + a[i].toFixed(1) + ' vs ' + b[i].toFixed(1) };
+        return { ok: true };
+      })()` },
+    { name: 'the clef in force is that of the staff from either voice: treble at the start, bass from beat 2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const at = (v, c) => m.clefInEffectAt(v, c).shape;
+        const got = [at(1, 0), at(1, 1), at(1, 3), at(2, 0), at(2, 1), at(2, 3)].join('');
+        return got === 'GFFGFF' ? { ok: true } : { ok: false, detail: 'clefInEffectAt (voice 1 then 2, cursors 0,1,3): ' + got };
+      })()` },
+  ],
+  clef_staffWide_enteredInLowerVoice: [
+    { name: 'the clef sits in layer 2, the carrier in layer 1, and the upper voice is drawn in bass from beat 2 (c5 at 17)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const seat = clone.querySelectorAll('measure > staff[n="1"] > layer[n="2"] > clef:not([sameas])').length;
+        if (seat !== 1 || carriers(1).length !== 1 || carriers(2).length !== 0) return { ok: false, detail: 'seat in layer 2: ' + seat + ', carriers layer 1 ' + carriers(1).length + ', layer 2 ' + carriers(2).length };
+        if (locs(1) !== '5,17,17,17') return { ok: false, detail: 'layer 1 locations ' + locs(1) };
+        if (locs(2) !== '-2,3,3,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
+        if (glyphs.length !== 1) return { ok: false, detail: glyphs.length + ' clef glyphs in the layers' };
+        if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
+      })()` },
+  ],
+  clef_staffWide_otherVoiceMidNote: [
+    { name: 'the carrier precedes the next onset of the lower voice (beat 3): its half note stays in treble, the quarters are in bass, one glyph',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const kids = [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="2"] > *')].map((e) => e.localName).join(' ');
+        if (!/^(note|chord) clef (note|chord) (note|chord)/.test(kids) || carriers(2).length !== 1) return { ok: false, detail: 'layer 2 of the clone: ' + kids };
+        if (locs(2) !== '-2,3,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
+        if (glyphs.length !== 1) return { ok: false, detail: glyphs.length + ' clef glyphs in the layers' };
+        if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
+      })()` },
+  ],
+  clef_staffWide_tupletSpansClef: [
+    { name: 'the carrier is inside the tuplet before its third member, under the one beam of the tuplet',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const t = clone.querySelector('measure > staff[n="1"] > layer[n="2"] > tuplet');
+        if (!t) return { ok: false, detail: 'no tuplet in layer 2 of the clone' };
+        const shape = [...t.children].map((e) => e.localName === 'beam' ? 'beam(' + [...e.children].map((k) => k.localName === 'clef' ? 'clef' : 'n').join(' ') + ')' : e.localName).join(' ');
+        if (shape !== 'beam(n n clef n)' || t.querySelectorAll('clef[sameas]').length !== 1) return { ok: false, detail: 'tuplet in the clone: ' + shape };
+        if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
+      })()` },
+    { name: 'members 1 and 2 are drawn in treble (c4 at -2), member 3 in bass (c3 at 3); one beam of three, the number, no bracket',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        if (locs(2) !== '-2,-2,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
+        const lay = st.querySelector('g.layer[data-n="2"]');
+        const beams = [...lay.querySelectorAll('g.beam')];
+        if (beams.length !== 1 || beams[0].querySelectorAll('g.note').length !== 3) return { ok: false, detail: 'beams ' + beams.length + (beams[0] ? ' with ' + beams[0].querySelectorAll('g.note').length + ' notes' : '') };
+        const num = lay.querySelectorAll('g.tupletNum').length, br = [...lay.querySelectorAll('g.tupletBracket')].filter((g) => g.childElementCount > 0).length;
+        if (num !== 1 || br !== 0) return { ok: false, detail: 'tupletNum ' + num + ', drawn brackets ' + br };
+        if (glyphs.length !== 1) return { ok: false, detail: glyphs.length + ' clef glyphs in the layers' };
+        return { ok: true };
+      })()` },
+  ],
+  clef_beam_slashBreaksTupletAtClef: [
+    { name: 'the marked member starts a new beam: the tuplet holds a beam of two, the carrier, then the third member alone',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const t = clone.querySelector('measure > staff[n="1"] > layer[n="2"] > tuplet');
+        if (!t) return { ok: false, detail: 'no tuplet in layer 2 of the clone' };
+        const shape = [...t.children].map((e) => e.localName === 'beam' ? 'beam(' + [...e.children].map((k) => k.localName === 'clef' ? 'clef' : 'n').join(' ') + ')' : e.localName === 'clef' ? 'clef' : 'n').join(' ');
+        if (shape !== 'beam(n n) clef n') return { ok: false, detail: 'tuplet in the clone: ' + shape };
+        if (locs(2) !== '-2,-2,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
+        return { ok: true };
+      })()` },
+  ],
+  clef_beam_breaksInEveryVoice: [
+    { name: 'the four eighths of the lower voice are two beams of two, in the render clone and in the saved form',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const shapeOf = (doc) => [...doc.querySelectorAll('measure > staff[n="1"] > layer[n="2"] > *')].map((e) => e.localName === 'beam' ? 'beam' + e.querySelectorAll(':scope > note, :scope > chord').length : e.localName === 'clef' ? 'clef' : 'n').join(' ');
+        const r1 = shapeOf(clone), s1 = shapeOf(new DOMParser().parseFromString(m.serialize(), 'application/xml'));
+        if (r1 !== 'beam2 clef beam2 n') return { ok: false, detail: 'render clone layer 2: ' + r1 };
+        if (s1 !== 'beam2 beam2 n') return { ok: false, detail: 'saved form layer 2: ' + s1 };
+        if (locs(2) !== '-2,-2,3,3,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
+        if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
+      })()` },
+  ],
+  clef_beam_breaksAtClefByDefault: [
+    { name: 'two beams of two with the clef between them',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const shape = [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="1"] > *')].map((e) => e.localName === 'beam' ? 'beam' + e.querySelectorAll(':scope > note, :scope > chord').length : e.localName === 'clef' ? 'clef' : 'n').join(' ');
+        return shape === 'beam2 clef beam2 n' ? { ok: true } : { ok: false, detail: 'layer 1 of the clone: ' + shape };
+      })()` },
+  ],
+  clef_beam_slashJoinsAcrossClef: [
+    { name: 'one beam holds the four eighths with the clef in place between the second and third, and the clef glyph is drawn between them',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const b = clone.querySelector('measure > staff[n="1"] > layer[n="1"] > beam');
+        const shape = b ? [...b.children].map((k) => k.localName === 'clef' ? 'clef' : 'n').join(' ') : 'no beam';
+        if (shape !== 'n n clef n n') return { ok: false, detail: 'first beam of layer 1 in the clone: ' + shape };
+        const lay = st.querySelector('g.layer[data-n="1"]');
+        const beams = [...lay.querySelectorAll('g.beam')];
+        if (beams.length !== 1 || beams[0].querySelectorAll('g.note').length !== 4) return { ok: false, detail: 'drawn beams ' + beams.length };
+        if (glyphs.length !== 1) return { ok: false, detail: glyphs.length + ' clef glyphs in the layers' };
+        const x = (g) => g.getBoundingClientRect();
+        const ns = [...beams[0].querySelectorAll('g.note')].map((g) => x(g.querySelector('g.notehead') || g));
+        const c = x(glyphs[0]);
+        if (!(c.left > ns[1].right && c.right < ns[2].left)) return { ok: false, detail: 'clef x ' + c.left.toFixed(1) + '..' + c.right.toFixed(1) + ' not between note 2 (' + ns[1].right.toFixed(1) + ') and note 3 (' + ns[2].left.toFixed(1) + ')' };
+        if (locs(1) !== '5,5,3,3,3') return { ok: false, detail: 'layer 1 locations ' + locs(1) };
+        return { ok: true };
+      })()` },
+  ],
+  clef_staffWide_nextLineLeadsInNewClef: [
+    { name: 'measure 2 starts the second line, which leads in the bass clef; its voices are drawn in bass',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const st = document.querySelector('#score g.measure g.staff[data-n="1"]');
+        if (!st) return { ok: false, detail: 'no staff 1' };
+        const L = [...st.querySelectorAll(':scope > path')].map((p) => { const b = p.getBoundingClientRect(); return (b.top + b.bottom) / 2; }).sort((a, b) => a - b);
+        const loc = (g) => { const b = (g.querySelector('g.notehead') || g).getBoundingClientRect(); return Math.round((8 - ((b.top + b.bottom) / 2 - L[0]) / ((L[4] - L[0]) / 8)) * 2) / 2; };
+        const notes = (n) => [...st.querySelectorAll('g.layer[data-n="' + n + '"] g.note')];
+        const locs = (n) => notes(n).map(loc).join(',');
+        const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
+        const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
+        const systems = [...document.querySelectorAll('#score g.system')];
+        if (systems.length !== 2) return { ok: false, detail: systems.length + ' systems' };
+        const s2 = systems[1].querySelector('g.staff[data-n="1"]');
+        const lead = [...s2.querySelectorAll(':scope > g.clef')].map((g) => { const u = g.querySelector('use'); return u ? (u.getAttribute('xlink:href') || u.getAttribute('href') || '').slice(1, 5) : 'none'; }).join(',');
+        if (lead !== 'E062') return { ok: false, detail: 'second line leading clef glyph(s): ' + (lead || 'missing') };
+        if (carriers(2).length !== 1) return { ok: false, detail: 'carriers in layer 2 of measure 1: ' + carriers(2).length };
+        if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
       })()` },
   ],
 };

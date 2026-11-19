@@ -387,7 +387,7 @@ export class ScrollSplicer {
     // being so) re-engraves the predecessor — which this splice would otherwise
     // keep as its untouched anchor. Any layer clef in the run's first measure
     // pulls lo-1 into the run (same rule as the page splicer, 2026-09-01).
-    if (lo > 0 && meiMeasures[lo].querySelector(':scope > staff > layer > clef')) lo--;
+    if (lo > 0 && meiMeasures[lo].querySelector(':scope > staff > layer clef')) lo--;
     // Expand the NEW run outward until no spanner crosses its endpoints, then
     // until every touched <ending> is contained whole (run AND context slots).
     // Spanners the edit removed are gone from the live doc but still drawn, so

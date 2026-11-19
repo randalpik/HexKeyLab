@@ -5761,8 +5761,9 @@ An eighth rest sat inside a half-note chord in the last bar of a two-voice bass 
 Measured on the bare toolkit, Verovio 6.3.0:
 
 - An inline `<clef>` sets ITS layer for the rest of the measure. Another layer of the staff keeps the old clef until the barline, then every layer starts in the last clef of the measure in document order.
-- With the clef in one layer only, notes of the two layers on the same beat are drawn at different x (107 against 103 at scale 40).
 - A plain second `<clef>` in the other layer at the same moment overprints the first; before a later onset it draws a second glyph at that onset.
 - **`<clef sameas="#id">` in the other layer draws no glyph and takes no space, puts that layer's notes in the clef, and leaves the next system's leading clef alone.** It works inside a `<tuplet>`, a `<beam>`, a beam in a tuplet and a tuplet in a beam: the later members are drawn in the new clef, the number, bracket and beam stay whole.
 - `visible="false"` on a clef is honored (unlike on a rest) and does the same, **but when it is the last clef of the measure in document order the next system's leading clef is not drawn.**
 - A drawn clef inside one `<beam>` is drawn between the notes under a single beam.
+
+**A wrong reading from the same probes**: in the one-layer case the two voices' notes on a beat stood 4 px apart, and I reported it as the clef misaligning the layers. The test pitches made the voices CROSS once one of them changed clef, and Verovio offsets crossing voices on purpose. A probe that varies one thing has to keep the rest of the picture ordinary; a fixture with the same crossing failed its alignment check and showed it.

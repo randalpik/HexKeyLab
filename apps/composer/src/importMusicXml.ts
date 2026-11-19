@@ -334,7 +334,7 @@ function isBeamableElement(c: Element): boolean {
 
 /** Reproduce the source's beam grouping by diffing it against our auto-beamer.
  *  For each adjacent beamable pair in a layer with nothing between them that
- *  would break the run anyway (rest, quarter+, clef, tuplet, tremolo), set
+ *  would break the run anyway (rest, quarter+, tuplet, tremolo), set
  *  `@hkl-beam-break` iff the natural beat boundary disagrees with the source's
  *  "starts a new beam" flag (stashed as `data-imp-beamstart` during emission).
  *  The serializer XORs the marker against the natural boundary, so the result
@@ -343,14 +343,15 @@ function applyBeamMarkers(doc: Document): void {
   for (const layer of Array.from(doc.querySelectorAll('layer'))) {
     const naturalStarts = naturalBeatGroupStarts(doc, layer);
     let prevBeamable: Element | null = null;
-    let clefSince = false;
     /* Graces beam only among themselves (graceBeamRuns), where there is no
        natural boundary — so the marker IS the source's "starts a new beam" —
        and are transparent to the regular run around them. */
     let prevGrace: Element | null = null;
     for (const c of Array.from(layer.children)) {
       const ln = c.localName;
-      if (ln === 'clef') { clefSince = true; prevGrace = null; continue; }
+      /* A clef is a natural break like a beat boundary (naturalBeatGroupStarts
+         includes it), so a source beam across one gets the joining marker. */
+      if (ln === 'clef') { prevGrace = null; continue; }
       if ((ln === 'note' || ln === 'chord') && c.hasAttribute('grace')) {
         const beamable = c.getAttribute('grace') === 'acc' && isBeamableElement(c);
         if (beamable && prevGrace && c.getAttribute('data-imp-beamstart') === '1') c.setAttribute('hkl-beam-break', 'true');
@@ -360,17 +361,15 @@ function applyBeamMarkers(doc: Document): void {
       prevGrace = null;
       if (ln === 'note' || ln === 'chord' || ln === 'rest') {
         const beamable = isBeamableElement(c);
-        if (beamable && prevBeamable && !clefSince) {
+        if (beamable && prevBeamable) {
           const sourceStart = c.getAttribute('data-imp-beamstart') === '1';
           if (naturalStarts.has(c) !== sourceStart) c.setAttribute('hkl-beam-break', 'true');
         }
         prevBeamable = beamable ? c : null;
-        clefSince = false;
         continue;
       }
       /* tuplet / fTrem / bTrem / space / etc. break the layer-level run. */
       prevBeamable = null;
-      clefSince = false;
     }
   }
   /* Strip the temp flag everywhere (incl. tuplet/tremolo-internal notes). */

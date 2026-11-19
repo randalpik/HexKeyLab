@@ -64,6 +64,7 @@ import type { RenderUnitIndex } from '../model/multirest.js';
 import { expandForSpanners, expandForEndings } from './splice.js';
 import { captureSigState, signatureRanges, unionRun, type SigState } from './sigranges.js';
 import { partitionSection, sectionAtoms, greedyStarts, FINAL_GREEDY_BELOW } from './balance.js';
+import { staffClefs } from '../notation/staffclefs.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 
@@ -1814,8 +1815,11 @@ export class PageLineBreaks {
       }
       out.push(keyOf());
       seen.add(node);
-      /* Any other inline clef changes the clef for every LATER line. */
-      for (const c of Array.from(node.querySelectorAll('layer > clef'))) applyClef(c);
+      /* Any other inline clef changes the clef for every LATER line: each
+         staff is left in its last clef in TIME, whichever layer holds it. */
+      for (const st of Array.from(node.children)) {
+        if (st.localName === 'staff' && st.querySelector('clef')) for (const c of staffClefs(st)) applyClef(c.el);
+      }
     }
     /* A document whose measures are not the section's direct children (or a
        shape this walk does not recognize) gets no keys rather than wrong ones;

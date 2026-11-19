@@ -19,6 +19,12 @@
 //     the other splits.
 //   - Rests interrupt runs; quarter+ durations interrupt runs; singletons
 //     stay un-wrapped (Verovio renders a flag).
+//   - A clef is a NATURAL break, like a beat boundary, and staff-wide: in
+//     every voice of the staff the first note at or after the clef's moment
+//     starts a new beam, whichever layer the clef sits in. `/` inverts it
+//     like any other natural break, so a beam CAN span a clef. A tuplet is
+//     beamed inside its <tuplet>, which never holds a clef, so a tuplet's
+//     beam spans a clef by default (decisions.md, 2026-11-18).
 //   - An element belongs to the beat-group containing its startTick. An
 //     element overflowing the group end stays in its starting group.
 //   - Grace notes are outside all of the above: consecutive unslashed graces
@@ -29,7 +35,8 @@
 // before re-computing. This means the same function can be called repeatedly
 // on the same doc with no drift.
 
-import { realTicks } from '../model/ticks.js';
+import { realTicks, fracCmp } from '../model/ticks.js';
+import { layerTimeline, otherLayerClefMoments } from './staffclefs.js';
 
 const MEI_NS = 'http://www.music-encoding.org/ns/mei';
 const HKL_NS = 'https://hexkeylab.com/ns/mei';
@@ -145,12 +152,21 @@ export function beamGroupForElement(doc: Document, elem: Element): Element[] {
   const idx = stream.findIndex((s) => s.el === elem);
   if (idx < 0) return [elem];
   const groups = effectiveGroupsForLayerExported(stream, ts, measureTicks);
-  const groupStarts = new Set<number>();
+  return findRunIncluding(stream, idx, naturalStarts(stream, groups));
+}
+
+/** The stream indices that begin a new beam NATURALLY, before `/` has its
+ *  say: the first entry of each effective beat group, and the first entry at
+ *  or after a clef (`breakBefore`). The one definition `regroupOneLayer`,
+ *  `beamGroupForElement` and `naturalBeatGroupStarts` share. */
+function naturalStarts(stream: StreamEntry[], groups: Array<{ lo: number; hi: number }>): Set<number> {
+  const out = new Set<number>();
   for (const grp of groups) {
     const firstIdx = stream.findIndex((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
-    if (firstIdx >= 0) groupStarts.add(firstIdx);
+    if (firstIdx >= 0) out.add(firstIdx);
   }
-  return findRunIncluding(stream, idx, groupStarts);
+  stream.forEach((s, i) => { if (s.breakBefore) out.add(i); });
+  return out;
 }
 
 /** Walk left+right from `idx` in `stream`, collecting consecutive beamable
@@ -202,10 +218,7 @@ export function naturalBeatGroupStarts(doc: Document, layer: Element): Set<Eleme
   const stream = annotateLayer(layer);
   const groups = effectiveGroupsForLayer(stream, ts, measureTicks);
   const out = new Set<Element>();
-  for (const grp of groups) {
-    const firstIdx = stream.findIndex((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
-    if (firstIdx > 0) out.add(stream[firstIdx].el);   // i>0 mirrors the `i>0 &&` guard
-  }
+  for (const i of naturalStarts(stream, groups)) if (i > 0) out.add(stream[i].el);   // i>0 mirrors the `i>0 &&` guard
   return out;
 }
 
@@ -335,7 +348,8 @@ function regroupOneLayer(
 
   /* Per-element "starts a new beam" decision. Combines two signals:
        - natural: this element sits at the start of an effective beat group
-         (a natural beam break in the absence of overrides);
+         or is the first at or after a clef (`naturalStarts` — a natural beam
+         break in the absence of overrides);
        - marker:  @hkl-beam-break="true" was placed on this element by `/`.
      The decision is natural XOR marker:
        - natural=false, marker=false → continue current beam   (mid-beat)
@@ -344,11 +358,7 @@ function regroupOneLayer(
        - natural=true,  marker=true  → continue current beam   (cross-beat connect)
      This lets `/` *override* either case: forcing a break mid-beat OR
      dissolving a natural beat-boundary break to merge across beats. */
-  const groupStarts = new Set<number>();
-  for (const grp of groups) {
-    const firstIdx = stream.findIndex((s) => s.startTick >= grp.lo && s.startTick < grp.hi);
-    if (firstIdx >= 0) groupStarts.add(firstIdx);
-  }
+  const groupStarts = naturalStarts(stream, groups);
 
   const runs: StreamEntry[][] = [];
   let current: StreamEntry[] = [];
@@ -360,9 +370,7 @@ function regroupOneLayer(
     }
     const natural = i > 0 && groupStarts.has(i);
     const marker = entry.el.getAttribute('hkl-beam-break') === 'true';
-    /* A clef immediately before this note forces a new run (breakBefore), so
-       notes across a mid-measure clef change are never wrapped together. */
-    const startsNew = (natural !== marker) || entry.breakBefore === true;
+    const startsNew = natural !== marker;
     if (startsNew) {
       if (current.length > 0) runs.push(current);
       current = [entry];
@@ -378,7 +386,9 @@ function regroupOneLayer(
        them (Verovio draws a grace inside a <beam> outside its geometry, and a
        grace <beam> nested in it as its own beam). Wrap the whole sibling span,
        graces included — wrapping only the run's members would move them past
-       the graces between them and reorder the layer. */
+       the graces between them and reorder the layer. The same span keeps a
+       clef where it is when `/` joins a beam across it (Verovio draws a clef
+       inside a <beam> between its notes, under one beam). */
     const first = run[0].el, last = run[run.length - 1].el;
     const span: Element[] = [];
     for (let e: Element | null = first; e; e = e.nextElementSibling) {
@@ -442,9 +452,9 @@ interface StreamEntry { el: Element; startTick: number; durTicks: number; breakB
 function annotateLayer(layer: Element): StreamEntry[] {
   const out: StreamEntry[] = [];
   let t = 0;
-  /* An inline <clef> (mid-measure clef change) must break a beam: notes on
-     either side of it can't be wrapped into one <beam> (wrapInBeam moves the
-     run's notes together, which would reorder the clef). Mark the next note. */
+  /* A clef is a natural beam break: mark the next note after one in this
+     layer (`breakBefore`), and below the first note at or after one seated in
+     another layer of the staff. */
   let pendingBreak = false;
   for (const c of Array.from(layer.children)) {
     const ln = c.localName;
@@ -465,6 +475,17 @@ function annotateLayer(layer: Element): StreamEntry[] {
     out.push({ el: c, startTick: t, durTicks: ticks, breakBefore: pendingBreak });
     pendingBreak = false;
     t += ticks;
+  }
+  /* A clef belongs to the staff: one seated in another layer breaks this
+     layer's beams at the same moment. Onsets are compared exactly — the
+     moment may lie past a tuplet in either voice. */
+  const moments = otherLayerClefMoments(layer);
+  if (moments.length > 0 && out.length > 0) {
+    const onset = new Map(layerTimeline(layer).items.map((it) => [it.el, it.at] as const));
+    for (const m of moments) {
+      const hit = out.find((s) => { const at = onset.get(s.el); return at !== undefined && fracCmp(at, m) >= 0; });
+      if (hit) hit.breakBefore = true;
+    }
   }
   return out;
 }

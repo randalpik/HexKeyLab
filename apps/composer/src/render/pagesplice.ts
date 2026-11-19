@@ -466,7 +466,7 @@ export class PageSystemSplicer {
          pulls its predecessor into the run: cheap, and covers both directions
          without needing the pre-edit measure. */
       let cLo = Math.min(changedRun.lo, ids.length - 1);
-      if (cLo > 0 && meiMeasures[cLo].querySelector(':scope > staff > layer > clef')) cLo--;
+      if (cLo > 0 && meiMeasures[cLo].querySelector(':scope > staff > layer clef')) cLo--;
       let [rLo, rHi] = expandForRenderedSpanners(req.spanners ?? null, idIdx, cLo, Math.min(changedRun.hi, ids.length - 1));
       [rLo, rHi] = expandForSpannersOnce(meiMeasures, rLo, rHi, docVer);
       [rLo, rHi] = expandForEndings(meiMeasures, rLo, rHi);
