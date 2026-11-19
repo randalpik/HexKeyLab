@@ -5767,3 +5767,13 @@ Measured on the bare toolkit, Verovio 6.3.0:
 - A drawn clef inside one `<beam>` is drawn between the notes under a single beam.
 
 **A wrong reading from the same probes**: in the one-layer case the two voices' notes on a beat stood 4 px apart, and I reported it as the clef misaligning the layers. The test pitches made the voices CROSS once one of them changed clef, and Verovio offsets crossing voices on purpose. A probe that varies one thing has to keep the rest of the picture ordinary; a fixture with the same crossing failed its alignment check and showed it.
+
+## "Changed since I last looked" cannot tell who changed it (2026-11-18)
+
+The clef seat pass (`model/clef-seats.ts`) decides that an edit carried a clef by comparing its moment with the one remembered at the previous pass, and puts a carried clef back when the staff's other voice still holds the old moment.
+
+- **The range command moved a clef on purpose and the pass undid it.** It respells an existing barline clef from the next measure's head to this measure's tail, where it is drawn. To the pass that was a clef that had left its moment with another voice able to hold it, so it went back to the head. `clef_range_barlineEnd`, written weeks earlier for another bug, failed on it.
+- **A detector built on a remembered state needs to be told about deliberate writes**, or every command that places the thing itself has to be seen as an accident. The clef writers run the pass with `deliberate`, which seats and remembers without judging.
+- **Where the pass runs decided what it saw.** `normalizeTies` looked like the shared post-mutation hook, but on the insert path it runs before placeholder normalization, and that is the step that shifts a layer's content after a delete. Judged there, a clef had not moved yet; it would have been judged one edit late. The pass belongs after the last step that moves what it measures.
+
+A second one from the same day: **an A/B of two SVGs must not be order-sensitive when the change moves an element between groups.** Moving a clef from one layer to another reorders the `<use>` elements Verovio writes without moving a glyph; comparing the lists position by position reported a clef where a rest had been. Sorted, the 15,264 placements were identical.

@@ -45,7 +45,7 @@ Paths are under `apps/composer/src/` unless noted.
 | Area | Modules |
 |---|---|
 | Wiring | `main.ts` (startup, the `window.__hkl_composer` handle, render orchestration, injected page text, transport), `input.ts` (key dispatch, `InputState`), `click.ts`, `keybindings.ts` (help catalog) |
-| Model | `model/index.ts` (`ComposerModel`), `cursor-location.ts`, `voice-index.ts`, `insertion-plan.ts`, `placeholders.ts`, `ties.ts`, `tuplet-ops.ts`, `measure-ops.ts`, `clef-slot.ts`, `empty-flags.ts`, `multirest.ts`, `note-elements.ts`, `restfill.ts`, `ticks.ts` |
+| Model | `model/index.ts` (`ComposerModel`), `cursor-location.ts`, `voice-index.ts`, `insertion-plan.ts`, `placeholders.ts`, `ties.ts`, `tuplet-ops.ts`, `measure-ops.ts`, `clef-slot.ts`, `clef-seats.ts`, `empty-flags.ts`, `multirest.ts`, `note-elements.ts`, `restfill.ts`, `ticks.ts` |
 | Control events | `expressions.ts` (dynamics, hairpins, text, tempo, tstamp math, `<hkl:config>`), `pedal.ts`, `slurs.ts`, `articulations.ts` |
 | Render-clone rules | `notation/`: `accidentals.ts`, `beams.ts`, `measurerests.ts`, `restlayout.ts`, `parts.ts`, `sectionRestart.ts`, `slurSides.ts`, `slurStems.ts`, `unstack.ts`, `staffpos.ts`, `staffclefs.ts`; edit helpers `retune.ts`, `scTranspose.ts` |
 | Renderer | `render/render.ts` (`Renderer`: toolkits, both views, post-processing, mounting) |
@@ -200,6 +200,23 @@ other wrapper it moves left; at an empty tuplet it deletes the tuplet.
 - **Placeholders** (`normalizePlaceholders`): each layer's trailing `<space>`
   sums to the measure's budget minus its content. Idempotent (no id churn);
   also drops the empty-cell flags from a cell that gained content.
+- **Clef seats** (`normalizeClefSeats`, `model/clef-seats.ts`): the last step
+  of `normalizePlaceholdersAll`, over the staff cells of the layers the edit
+  touched, once those have settled. A clef's moment is its measure plus an
+  exact tick, or the tail (the trailing clef run: the barline clef as
+  stored). (1) Stay or move: a clef whose moment differs from the one
+  remembered at the last pass was carried by the edited voice; if another
+  voice of the staff has a boundary at the remembered moment — a position its
+  cursor reaches outside a tuplet: in front of a note, chord, rest, tremolo or
+  tuplet, the fill point, or the tail — the clef is put back there, otherwise
+  it stays where the edit left it. (2) Canonical seat: the clef moves to the
+  lowest-numbered layer with a boundary at its moment (across layers only; it
+  is never repositioned inside its own layer). (3) Identical adjacent clefs
+  collapse. (4) The moments are remembered in a `WeakMap` by element, so a
+  load, undo or redo starts with nothing to compare. A write that places
+  clefs on purpose (the clef dialog and range command) runs the pass with
+  `deliberate`, which skips step 1. Under `HKL_INDEX_CHECK` a whole-document
+  dry pass after each scoped one must find nothing to do.
 - **Insertion** (`planInsert`, `model/insertion-plan.ts`): a note longer than
   what remains splits at the barline into tied pieces (`decomposeTicks`); the
   cursor measure's later items and the next measure's items are repacked whole
@@ -263,14 +280,21 @@ under one beam.
   there is no reflow.
 - **Clefs** belong to the staff: a clef governs every voice of its staff
   from its moment to the next clef (Serialize for render → A clef belongs to
-  the staff). It is stored as an inline `<clef>` layer child (zero ticks,
-  never a stop, a natural beam break) in the layer it was entered in, which is
-  only its seat, and written only through the clef dialog (`Ctrl+Shift+C`) —
-  no delete path removes one. The clef in force at a cursor
-  (`effectiveClefForVoice`) is the staff's, from either voice. `clefSlotAt` (`model/clef-slot.ts`) resolves every
-  read and write: the barline after a full measure is ONE slot reachable from
-  two cursors, and a new clef there is written at the head of the next
-  measure. Choosing the inherited clef removes the change; the dialog
+  the staff). It is stored as one inline `<clef>` layer child (zero ticks,
+  never a stop, a natural beam break) in its SEAT, the lowest-numbered layer
+  of the staff with a cursor position at its moment (Mutation pipeline → Clef
+  seats), and written only through the clef dialog (`Ctrl+Shift+C`) — no
+  delete path removes one. The clef in force at a cursor
+  (`effectiveClefForVoice`) is the staff's, from either voice. `clefSlotAt`
+  (`model/clef-slot.ts`) resolves every read and write, and the voice only
+  supplies the moment: a slot's `existing` lists the clefs at that moment in
+  every layer of the staff, so a clef is read, replaced and removed from
+  either voice and entering one from either voice writes the same document.
+  The barline after a full measure is ONE slot reachable from two cursors,
+  and a clef there is stored at the end of the previous measure, where it is
+  drawn (Clefs before the barline). The range command (`applyClefRange`)
+  clears every clef of the staff strictly inside its span, whichever voice
+  holds it. Choosing the inherited clef removes the change; the dialog
   pre-selects the clef in force at the slot (`clefDialog.ts`).
 - **Pickup** (`Ctrl+Shift+A`, length in eighths): a dedicated measure 0 with
   `hkl:pickup-ticks` and `@metcon="false"`, numbered 0. Every budget-aware
@@ -439,10 +463,8 @@ no DOM pass sees one. After the pass each layer holds the clefs it is drawn
 in, which is what `middleSteps` (`staffpos.ts`) reads for the rest, slur-stem
 and slur-side passes.
 
-Not built yet: the clef still sits in the layer it was entered in, so two
-voices can each hold a clef at one moment, and an edit carries a clef with its
-own voice only. The canonical seat and the stay-or-move rule on edits are the
-next phase (decisions.md).
+Which layer holds a clef, and what an edit does to it, is the model's side:
+Mutation pipeline → Clef seats.
 
 `duplicateTempiAcrossParts` (`parts.ts`) copies each `<tempo>` onto every
 instrument's top staff (ids `<src>-p<staffN>`); it runs before
@@ -1118,7 +1140,7 @@ sent).
 - **MusicXML import** (`importMusicXml.ts`) brings in notes, chords, multiple
   voices and instruments, tuplets, ties, slurs, graces, articulations,
   dynamics, hairpins, every tempo marking (verbal, metronome, and Finale's
-  hidden playback tempi) and key / meter / clef changes. It reads Finale's encoding of hidden
+  hidden playback tempi) and key / meter / clef changes (one `<clef>` per change, in the first content layer with an event boundary at its tick). It reads Finale's encoding of hidden
   staves and multimeasure rests into the empty-cell flags, breath marks, and
   parenthesized accidentals; it spells pitches onto lattice cells
   (`coord-spelling.ts`) and turns `<rest measure="yes">` into an empty layer.

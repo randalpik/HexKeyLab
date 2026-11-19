@@ -288,6 +288,19 @@ function layerHasContent(layerEl: Element): boolean {
       || c.localName === 'tuplet' || c.localName === 'fTrem' || c.localName === 'bTrem');
 }
 
+/** Whether a direct child of the layer starts exactly at `meiTick`, or the
+ *  layer ends there — a position a clef can sit at without changing its
+ *  moment (the inside of a tuplet or of a long note is not one). */
+function layerHasBoundaryAt(layerEl: Element, meiTick: number): boolean {
+  let t = 0;
+  for (const c of Array.from(layerEl.children)) {
+    if (c.localName === 'clef') continue;
+    if (Math.abs(t - meiTick) < 1e-6) return true;
+    t += realTicks(c);
+  }
+  return Math.abs(t - meiTick) < 1e-6;
+}
+
 /** Insert an inline `<clef>` at MEI tick `meiTick` in a layer: before the first
  *  child whose cumulative start-tick reaches the clef's tick (a clef inside a
  *  long note lands just before the following event). The beam pass treats
@@ -1534,15 +1547,21 @@ export function importMusicXml(xmlText: string, report?: MusicXmlImportReport): 
         if (inMultiRest) staffEl.setAttribute(MULTIREST_ATTR, 'true');
       }
 
-      /* Clef changes → inline <clef> at their tick in EVERY content layer of the
-         staff (so the clef governs all voices — a change on a staff whose notes
-         are in layer 2 must not leave them in the old clef). A boundary change
-         (tick 0) lands at the layer head; the render-time pass
-         `relocateInitialClefs` moves any measure-initial clef before the barline
-         (globally, for native edits too). Mid-measure changes stay at their tick. */
+      /* Clef changes → ONE inline <clef> each, at its tick. A clef governs the
+         whole staff whichever layer holds it (notation/staffclefs.ts — the
+         render clone carries it into the other layers), so it goes into the
+         first content layer that has an event boundary AT that tick, where it
+         keeps its true moment; with none, into the first content layer, before
+         its next event. (Until 2026-11-18 a copy went into every content layer,
+         because Verovio's clefs are per layer; a copy landing at a later onset
+         drew a second clef glyph there.) The seat pass on load makes the choice
+         of layer canonical. A boundary change (tick 0) lands at the layer head;
+         the render-time pass `relocateInitialClefs` moves any measure-initial
+         clef before the barline. */
       const contentLayers = layerEls.filter(layerHasContent);
       for (const cc of clefChanges) {
-        for (const le of contentLayers) insertMidClef(doc, le, cc.meiTick, cc.spec);
+        const seat = contentLayers.find((le) => layerHasBoundaryAt(le, cc.meiTick)) ?? contentLayers[0];
+        if (seat) insertMidClef(doc, seat, cc.meiTick, cc.spec);
       }
       measureEl.appendChild(staffEl);
     }

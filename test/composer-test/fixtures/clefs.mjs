@@ -363,7 +363,9 @@ export const FIXTURES = {
       m.setVoice(1); m.setCursor(0, 1); r();
     `,
   },
-  /* The same clef entered from voice 2: voice 1 follows. */
+  /* The same clef entered from voice 2: voice 1 follows, and the clef is
+     seated in layer 1 — the lowest voice that reaches the moment
+     (model/clef-seats.ts), exactly where entering it from voice 1 puts it. */
   clef_staffWide_enteredInLowerVoice: {
     setup: `
       const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
@@ -484,6 +486,174 @@ export const FIXTURES = {
       window.__hkl_composer.renderer.runExtentsJobNow();
     `,
     skipCursorTrace: true,
+  },
+  /* ── Clef seats and the stay-or-move rule (2026-11-18, model/clef-seats.ts) ──
+     A clef is stored in one layer, its seat: the lowest-numbered voice of the
+     staff that has a cursor position at its moment. When an edit in a voice
+     carries a clef, it is put back if another voice still holds the moment,
+     and otherwise has moved with the edited voice (Max). */
+  /* Entering a clef at beat 2 from voice 1, removing it, and entering it at
+     the same moment from voice 2 gives the same document. */
+  clef_seat_sameDocumentFromEitherVoice: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1); for (let i = 0; i < 4; i++) put('c', 5, '4');
+      m.setVoice(2); m.setCursor(0, 2); for (let i = 0; i < 4; i++) put('c', 4, '4');
+      const strip = (x) => x.replace(/xml:id="clf-[^"]*"/g, 'xml:id="clf"');
+      m.setVoice(1); m.setCursor(1, 1); m.setClefAt('F', '4', null, null);
+      window.__seatFromV1 = strip(m.serialize());
+      m.setClefAt('G', '2', null, null);                       /* the inherited clef: removes it */
+      window.__seatCleared = m.getDoc().querySelectorAll('clef').length;
+      m.setVoice(2); m.setCursor(1, 2); m.setClefAt('F', '4', null, null);
+      window.__seatFromV2 = strip(m.serialize());
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* A clef on beat 3 in voice 1; voice 2 has a note on beat 3. Deleting the
+     note before the clef in voice 1 would carry it to beat 2: it stays on
+     beat 3. */
+  clef_seat_staysWhenOtherVoiceHoldsTheMoment: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); put('c', 5, '4'); m.setClefAt('F', '4', null, null); put('e', 4, '4'); put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '4'); put('c', 4, '4'); put('c', 3, '4'); put('c', 3, '4');
+      del(1, notesOf(1)[1]);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The same edit with a whole note in voice 2 — no position on beat 3 there:
+     the clef moves with voice 1, to beat 2. */
+  clef_seat_movesWithEditedVoiceOtherwise: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); put('c', 5, '4'); m.setClefAt('F', '4', null, null); put('e', 4, '4'); put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '1');
+      del(1, notesOf(1)[1]);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The clef is on beat 2, before a half note of voice 1. Deleting voice 1's
+     first quarter leaves voice 1 with no position on beat 2 (the half note now
+     covers it); voice 2 has one, so the clef stays on beat 2, seated there. */
+  clef_seat_staysOnTheOtherVoice: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null); put('e', 4, '2'); put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '4'); for (let i = 0; i < 3; i++) put('c', 3, '4');
+      del(1, notesOf(1)[0]);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* Voice 2 reaches beat 2 only INSIDE a quarter-note triplet, which is not a
+     position a clef can sit at: the clef moves with voice 1. */
+  clef_seat_tupletInteriorIsNotAStructure: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1);
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null); for (let i = 0; i < 3; i++) put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '4', spanDur: '2', spanDots: 0 });
+      for (let i = 0; i < 3; i++) put('c', 3, '4');
+      del(1, notesOf(1)[0]);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The clef's moment lies past a triplet in voice 1 (three thirds of a beat,
+     then a quarter): it is compared with voice 2's beat 3 exactly, and stays. */
+  clef_seat_exactAcrossTuplet: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1);
+      m.createTupletAtCursor({ num: 3, numbase: 2, atomicDur: '8', spanDur: '4', spanDots: 0 });
+      for (let i = 0; i < 3; i++) put('c', 5, '8');
+      put('c', 5, '4'); m.setClefAt('F', '4', null, null); put('e', 4, '4'); put('e', 4, '4');
+      m.setVoice(2); m.setCursor(0, 2);
+      put('c', 4, '4'); put('c', 4, '4'); put('c', 3, '4'); put('c', 3, '4');
+      del(1, notesOf(1)[0]);                                   /* the quarter after the triplet */
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* A clef entered from voice 1 is replaced, then removed, from voice 2 at the
+     same moment: one clef, then none — never one per voice. */
+  clef_seat_replaceAndRemoveFromOtherVoice: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1); for (let i = 0; i < 4; i++) put('c', 5, '4');
+      m.setVoice(2); m.setCursor(0, 2); for (let i = 0; i < 4; i++) put('c', 4, '4');
+      const list = () => [...m.getDoc().querySelectorAll('clef')].map((c) => c.getAttribute('shape') + c.getAttribute('line') + '@L' + c.parentElement.getAttribute('n')).join(',');
+      m.setVoice(1); m.setCursor(1, 1); m.setClefAt('F', '4', null, null);
+      window.__seatEntered = list();
+      window.__seatHasFromV2 = m.hasClefAt(2, 1);
+      m.setVoice(2); m.setCursor(1, 2); m.setClefAt('C', '3', null, null);
+      window.__seatReplaced = list();
+      m.setClefAt('G', '2', null, null);
+      window.__seatRemoved = list();
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* The range command sets the STAFF's span: a clef seated in voice 2 at a
+     moment inside one of voice 1's notes is inside the span and goes. */
+  clef_seat_rangeIsTheStaffs: {
+    setup: `
+      const N = (pname, oct) => ({ q: 0, r: 0, pname, accid: '', oct, midi: 60, colorHex: '#888', velocity: 80 });
+      const put = (pname, oct, dur) => m.insertChordAtCursor({ notes: [N(pname, oct)], duration: dur, dots: 0 });
+      const notesOf = (n) => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] > *')].filter((e) => e.localName === 'note' || e.localName === 'chord');
+      const del = (v, el) => { m.setVoice(v); m.setCursor(m['flatChildren'](v).indexOf(el), v); return m.deleteAtCursor(); };
+      m.setVoice(1); m.setCursor(0, 1); put('c', 5, '2'); put('c', 5, '2');
+      m.setVoice(2); m.setCursor(0, 2); for (let i = 0; i < 4; i++) put('c', 4, '4');
+      m.setCursor(1, 2); m.setClefAt('F', '4', null, null);    /* beat 2: inside voice 1's first half note */
+      window.__seatBeforeRange = [...m.getDoc().querySelectorAll('clef')].map((c) => c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n')).join(',');
+      m.setClefRange(1, 0, 1, 'C', '3', null, null);           /* voice 1, its first half note */
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
+  },
+  /* MusicXML import: a mid-measure clef on a two-voice staff is ONE clef in
+     the document (it used to be copied into every layer), carried into the
+     other voice on the render clone. */
+  clef_seat_importWritesOneClef: {
+    setup: `
+      const N = (s, o, v) => '<note><pitch><step>' + s + '</step><octave>' + o + '</octave></pitch><duration>24</duration><voice>' + v + '</voice><type>quarter</type></note>';
+      const xml = '<?xml version="1.0"?><score-partwise version="3.0">'
+        + '<part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>'
+        + '<part id="P1"><measure number="1">'
+        + '<attributes><divisions>24</divisions><key><fifths>0</fifths></key>'
+        + '<time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>'
+        + N('C', 5, 1) + N('D', 5, 1)
+        + '<attributes><clef><sign>F</sign><line>4</line></clef></attributes>'
+        + N('E', 4, 1) + N('F', 4, 1)
+        + '<backup><duration>96</duration></backup>'
+        + N('C', 4, 2) + N('C', 4, 2) + N('C', 3, 2) + N('C', 3, 2)
+        + '</measure></part></score-partwise>';
+      window.__composerImportMusicXml(xml);
+      m.setVoice(1); m.setCursor(0, 1); r();
+    `,
   },
 };
 
@@ -842,7 +1012,7 @@ export const ASSERTIONS = {
       })()` },
   ],
   clef_staffWide_enteredInLowerVoice: [
-    { name: 'the clef sits in layer 2, the carrier in layer 1, and the upper voice is drawn in bass from beat 2 (c5 at 17)',
+    { name: 'the clef is seated in layer 1, the carrier in layer 2, and the upper voice is drawn in bass from beat 2 (c5 at 17)',
       expr: `(() => {
         const m = window.__hkl_composer.model;
         const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
@@ -854,8 +1024,8 @@ export const ASSERTIONS = {
         const locs = (n) => notes(n).map(loc).join(',');
         const carriers = (n) => [...clone.querySelectorAll('measure > staff[n="1"] > layer[n="' + n + '"] clef[sameas]')];
         const glyphs = [...st.querySelectorAll('g.layer g.clef')].filter((g) => g.querySelector('use'));
-        const seat = clone.querySelectorAll('measure > staff[n="1"] > layer[n="2"] > clef:not([sameas])').length;
-        if (seat !== 1 || carriers(1).length !== 1 || carriers(2).length !== 0) return { ok: false, detail: 'seat in layer 2: ' + seat + ', carriers layer 1 ' + carriers(1).length + ', layer 2 ' + carriers(2).length };
+        const seat = clone.querySelectorAll('measure > staff[n="1"] > layer[n="1"] > clef:not([sameas])').length;
+        if (seat !== 1 || carriers(2).length !== 1 || carriers(1).length !== 0) return { ok: false, detail: 'seat in layer 1: ' + seat + ', carriers layer 2 ' + carriers(2).length + ', layer 1 ' + carriers(1).length };
         if (locs(1) !== '5,17,17,17') return { ok: false, detail: 'layer 1 locations ' + locs(1) };
         if (locs(2) !== '-2,3,3,3') return { ok: false, detail: 'layer 2 locations ' + locs(2) };
         if (glyphs.length !== 1) return { ok: false, detail: glyphs.length + ' clef glyphs in the layers' };
@@ -1038,6 +1208,113 @@ export const ASSERTIONS = {
         if (lead !== 'E062') return { ok: false, detail: 'second line leading clef glyph(s): ' + (lead || 'missing') };
         if (carriers(2).length !== 1) return { ok: false, detail: 'carriers in layer 2 of measure 1: ' + carriers(2).length };
         if (document.querySelector('#score [id*="-hklsa"]')) return { ok: false, detail: 'a carrier node reached the DOM' };
+        if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
+        return { ok: true };
+      })()` },
+  ],
+  clef_seat_sameDocumentFromEitherVoice: [
+    { name: 'removing leaves no clef, and the saved document is identical whichever voice entered the clef (seated in layer 1 on beat 2)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        if (window.__seatCleared !== 0) return { ok: false, detail: 'clefs left after removing: ' + window.__seatCleared };
+        if (window.__seatFromV1 !== window.__seatFromV2) return { ok: false, detail: 'documents differ: from voice 1 ' + window.__seatFromV1.length + ' chars, from voice 2 ' + window.__seatFromV2.length };
+        const got = clefs();
+        return got === 'F@L1:16' ? { ok: true } : { ok: false, detail: 'clefs ' + got + ', expected F@L1:16' };
+      })()` },
+  ],
+  clef_seat_staysWhenOtherVoiceHoldsTheMoment: [
+    { name: 'the clef is still on beat 3 (tick 32), in layer 1',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const got = clefs();
+        return got === 'F@L1:32' ? { ok: true } : { ok: false, detail: 'clefs (shape@layer:tick) ' + got + ', expected F@L1:32 (carried along it would be at tick 16)' };
+      })()` },
+  ],
+  clef_seat_movesWithEditedVoiceOtherwise: [
+    { name: 'the clef moved with voice 1 to beat 2 (tick 16)',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const got = clefs();
+        return got === 'F@L1:16' ? { ok: true } : { ok: false, detail: 'clefs (shape@layer:tick) ' + got + ', expected F@L1:16 (voice 2 has no position on beat 3)' };
+      })()` },
+  ],
+  clef_seat_staysOnTheOtherVoice: [
+    { name: 'the clef is still on beat 2 (tick 16), now seated in layer 2',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const got = clefs();
+        return got === 'F@L2:16' ? { ok: true } : { ok: false, detail: 'clefs (shape@layer:tick) ' + got + ', expected F@L2:16 (voice 1 has no position there any more)' };
+      })()` },
+  ],
+  clef_seat_tupletInteriorIsNotAStructure: [
+    { name: 'the clef moved with voice 1 to the start of the bar',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const got = clefs();
+        return got === 'F@L1:0' ? { ok: true } : { ok: false, detail: 'clefs (shape@layer:tick) ' + got + ', expected F@L1:0 (voice 2 reaches beat 2 only inside its triplet)' };
+      })()` },
+  ],
+  clef_seat_exactAcrossTuplet: [
+    { name: 'the clef is still on beat 3 (tick 32) after the triplet',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const got = clefs();
+        return got === 'F@L1:32' ? { ok: true } : { ok: false, detail: 'clefs (shape@layer:tick) ' + got + ', expected F@L1:32 (carried along it would be at tick 16)' };
+      })()` },
+  ],
+  clef_seat_replaceAndRemoveFromOtherVoice: [
+    { name: 'voice 2 sees the clef voice 1 entered, replaces it in place, then removes it',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const s = [window.__seatEntered, String(window.__seatHasFromV2), window.__seatReplaced, window.__seatRemoved].join(' / ');
+        return s === 'F4@L1 / true / C3@L1 / ' ? { ok: true } : { ok: false, detail: 'entered / seen from voice 2 / replaced / removed: ' + s };
+      })()` },
+  ],
+  clef_seat_rangeIsTheStaffs: [
+    { name: 'the alto clef starts the bar, the bass clef inside the span is gone, and the bass clef in force after the span is restored on beat 3',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        if (window.__seatBeforeRange !== 'F@L2') return { ok: false, detail: 'before the range command: ' + window.__seatBeforeRange + ' (expected the clef seated in layer 2)' };
+        const got = clefs();
+        return got === 'C@L1:0 F@L1:32' ? { ok: true } : { ok: false, detail: 'clefs ' + got + ', expected C@L1:0 F@L1:32' };
+      })()` },
+  ],
+  clef_seat_importWritesOneClef: [
+    { name: 'one clef in the document, on beat 3 in layer 1; one carrier in layer 2 of the render clone; none in the saved form',
+      expr: `(() => {
+        const m = window.__hkl_composer.model;
+        const T = (el) => { const d = 64 / parseInt(el.getAttribute('dur'), 10); const dots = parseInt(el.getAttribute('dots') || '0', 10); return dots === 1 ? d * 1.5 : dots === 2 ? d * 1.75 : d; };
+        const span = (el) => el.localName === 'clef' ? 0 : el.localName === 'tuplet' ? [...el.children].reduce((a, c) => a + T(c), 0) * parseInt(el.getAttribute('numbase'), 10) / parseInt(el.getAttribute('num'), 10) : T(el);
+        const clefs = () => [...m.getDoc().querySelectorAll('measure > staff[n="1"] > layer > clef')].map((c) => { let t = 0; for (let x = c.previousElementSibling; x; x = x.previousElementSibling) t += span(x); return c.getAttribute('shape') + '@L' + c.parentElement.getAttribute('n') + ':' + Math.round(t * 100) / 100; }).join(' ');
+        const got = clefs();
+        if (got !== 'F@L1:32') return { ok: false, detail: 'clefs ' + got + ', expected F@L1:32' };
+        const clone = new DOMParser().parseFromString(m.serialize({ hejiEnabled: false }), 'application/xml');
+        const car = clone.querySelectorAll('measure > staff[n="1"] > layer[n="2"] clef[sameas]').length;
+        if (car !== 1) return { ok: false, detail: 'carriers in layer 2 of the clone: ' + car };
         if (m.serialize().includes('sameas')) return { ok: false, detail: 'a carrier reached the saved form' };
         return { ok: true };
       })()` },

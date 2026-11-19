@@ -28,6 +28,7 @@ import type { ResolvedNote } from '@hkl/bridge/protocol.js';
 import { regroupBeams, readTimeSig, measureTimeSigs, type TimeSigInfo } from '../notation/beams.js';
 import { settleRestLocations } from '../notation/restlayout.js';
 import { projectStaffClefs, staffClefs, lastStaffClef, layerTimeline } from '../notation/staffclefs.js';
+import { normalizeClefSeats, clefMomentOf } from './clef-seats.js';
 import { fillEmptyMeasureRests } from '../notation/measurerests.js';
 import { duplicateTempiAcrossParts, settleFermataSides } from '../notation/parts.js';
 import { applySectionRestarts } from '../notation/sectionRestart.js';
@@ -54,7 +55,7 @@ import { coordToMidi, anchorOf, readsAnchor, type TuningMode } from '@hkl/shared
 import type { Mapping } from '@hkl/shared/mapping.js';
 import { inkColorHex, lightSourceHex } from '@hkl/shared/keycolor.js';
 import { sanctionedLightForInk } from '@hkl/shared/colors.js';
-import { realTicks, writtenTicks, decomposeTicks, isGrace, fracCmp } from './ticks.js';
+import { realTicks, writtenTicks, decomposeTicks, isGrace, fracCmp, FRAC_ZERO, type Frac } from './ticks.js';
 export { decomposeTicks };
 import {
   buildChordElement,
@@ -68,7 +69,7 @@ import {
   elementHasTieTerminal,
 } from './note-elements.js';
 import { isPlaceholder, normalizePlaceholders } from './placeholders.js';
-import { clefSlotAt, sameClefSlot } from './clef-slot.js';
+import { clefSlotAt, sameClefSlot, type ClefSlot } from './clef-slot.js';
 import {
   flatChildren as flatChildrenImpl,
   layerIsFull,
@@ -2761,6 +2762,7 @@ export class ComposerModel {
     if (sameClefSpec(inh, spec)) {
       if (slot.existing.length === 0) return 'noop';
       for (const e of slot.existing) e.remove();
+      this.settleClefSeats();
       return 'removed';
     }
     let clef: Element;
@@ -2798,6 +2800,8 @@ export class ComposerModel {
       setAttr('dis', null);
       setAttr('dis.place', null);
     }
+    /* The write went to this voice's layer; the seat is the staff's. */
+    this.settleClefSeats();
     return !had ? 'inserted' : changed ? 'replaced' : 'noop';
   }
 
@@ -2810,6 +2814,7 @@ export class ComposerModel {
     if (slot.kind !== 'slot') return slot.kind;
     if (slot.existing.length === 0) return 'noop';
     for (const e of slot.existing) e.remove();
+    this.settleClefSeats();
     return 'removed';
   }
 
@@ -2841,9 +2846,43 @@ export class ComposerModel {
       if (sameClefSlot(s, startSlot) || (endSlot !== null && sameClefSlot(s, endSlot))) continue;
       for (const e of s.existing) e.remove();
     }
+    /* The span is the STAFF's: a clef seated in another voice at a moment no
+       cursor of this voice reaches (inside one of its notes) is inside the
+       span too. Everything strictly between the two endpoint moments goes. */
+    const keep = new Set<Element>([...startSlot.existing, ...(endSlot ? endSlot.existing : [])]);
+    const lo = this.clefSlotKey(startSlot);
+    const hi = endSlot ? this.clefSlotKey(endSlot) : null;
+    const measures = this.allMeasures();
+    const staffN = String(this.staffForVoice(voice));
+    if (lo) {
+      for (let mi = Math.max(0, lo.mi - 1); mi < measures.length && (!hi || mi <= hi.mi); mi++) {
+        const staff = Array.from(measures[mi].children).find((x) => x.localName === 'staff' && x.getAttribute('n') === staffN);
+        if (!staff) continue;
+        for (const c of Array.from(staff.querySelectorAll(':scope > layer > clef'))) {
+          if (keep.has(c)) continue;
+          const m = clefMomentOf(c);
+          if (!m) continue;
+          const k = m.tail ? { mi: mi + 1, at: FRAC_ZERO } : { mi, at: m.at };
+          const after = k.mi > lo.mi || (k.mi === lo.mi && fracCmp(k.at, lo.at) > 0);
+          const before = !hi || k.mi < hi.mi || (k.mi === hi.mi && fracCmp(k.at, hi.at) < 0);
+          if (after && before) c.remove();
+        }
+      }
+    }
     const start = this.applyClefAt(voice, startCursor, spec);
     const end = endSlot ? this.applyClefAt(voice, endCursor, restore) : null;
     return { ok: true, start, end };
+  }
+
+  /** A clef slot's moment as a comparable key: the measure index and the
+   *  tick. A barline slot (and the tail of the last measure) is the downbeat
+   *  of the measure after it. */
+  private clefSlotKey(slot: Extract<ClefSlot, { kind: 'slot' }>): { mi: number; at: Frac } | null {
+    if (slot.barline) return { mi: slot.measureIdx, at: FRAC_ZERO };
+    if (!slot.ref) return { mi: slot.measureIdx + 1, at: FRAC_ZERO };
+    const ref = slot.ref;
+    const it = layerTimeline(slot.layer).items.find((x) => x.el === ref || ref.contains(x.el));
+    return it ? { mi: slot.measureIdx, at: it.at } : null;
   }
 
   /* ── pickup / anacrusis (Phase 4c) ────────────────────────────────────────
@@ -3059,6 +3098,21 @@ export class ComposerModel {
          between the two passes cannot be lost. */
       this.documentVersion();
     }
+    /* Clef seats, once the layers have settled (model/clef-seats.ts): a clef
+       an edit carried is put back when another voice still holds its moment,
+       and every clef sits in its staff's canonical layer. Same scope as the
+       placeholders — the layers this edit touched. */
+    normalizeClefSeats(this.doc, scoped);
+    if (indexCheckEnabled() && scoped !== null) {
+      const left = normalizeClefSeats(this.doc, null, { dry: true });
+      if (left > 0) throw new Error(`scoped normalizeClefSeats missed ${left} clef change(s) (scoped ${scoped.length})`);
+    }
+  }
+
+  /** Settle clef seats after a write that touched only clefs (the clef
+   *  dialog's paths end here; content edits end in `normalizePlaceholdersAll`). */
+  private settleClefSeats(): void {
+    normalizeClefSeats(this.doc, null, { deliberate: true });
   }
 
   /** Return the <layer> for (voice, measure). */

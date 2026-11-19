@@ -18,9 +18,19 @@
 // clef goes to M's tail, and an existing one edited here is moved there. A
 // movement start keeps its head clef (the restart pass draws it as the new
 // movement's own). Nothing here adds, removes or moves a cursor stop.
+//
+// A clef belongs to the STAFF (2026-11-18, model/clef-seats.ts): the voice
+// only supplies the cursor, i.e. the moment. `existing` therefore lists the
+// clefs at that moment in EVERY layer of the staff, so a clef seated in the
+// other voice is read, replaced and removed from this one. A new clef is
+// written into this voice's layer and the seat pass moves it to the staff's
+// canonical layer.
 
 import type { ComposerModel, Voice } from './index.js';
 import { locateCursor, layerIsFull } from './cursor-location.js';
+import { otherLayerClefsAt } from './clef-seats.js';
+import { layerTimeline } from '../notation/staffclefs.js';
+import { FRAC_ZERO, fracCmp } from './ticks.js';
 
 export type ClefSlot =
   | {
@@ -36,8 +46,9 @@ export type ClefSlot =
        *  where the clef is drawn and saved. */
       writeLayer: Element;
       writeRef: Element | null;
-      /** Every clef already attached to this position, document order —
-       *  at a barline both spellings (M's tail run, then M+1's head run). */
+      /** Every clef already attached to this position on the STAFF, document
+       *  order — at a barline both spellings (M's tail runs, then M+1's head
+       *  runs), in every layer. */
       existing: Element[];
       /** True when the slot is a barline (start of a measure after the first). */
       barline: boolean;
@@ -91,8 +102,46 @@ function headSlot(
   };
 }
 
+const staffIn = (measure: Element | undefined, n: string): Element | null =>
+  measure ? Array.from(measure.children).find((s) => s.localName === 'staff' && (s.getAttribute('n') ?? '1') === n) ?? null : null;
+
+/** Add the clefs the OTHER layers of the staff hold at the slot's moment. */
+function staffWide(model: ComposerModel, slot: ClefSlot): ClefSlot {
+  if (slot.kind !== 'slot') return slot;
+  const staff = slot.layer.parentElement;
+  if (!staff) return slot;
+  const n = staff.getAttribute('n') ?? '1';
+  const layerN = slot.layer.getAttribute('n') ?? '1';
+  const measures = model.allMeasures();
+  const extra: Element[] = [];
+  const tailsOf = (measure: Element | undefined): void => {
+    const st = staffIn(measure, n);
+    if (!st) return;
+    const own = Array.from(st.children).find((l) => l.localName === 'layer' && (l.getAttribute('n') ?? '1') === layerN) ?? null;
+    extra.push(...otherLayerClefsAt(st, own, { tail: true, at: FRAC_ZERO }));
+  };
+  const ref = slot.ref;
+  const it = ref ? layerTimeline(slot.layer).items.find((x) => x.el === ref || ref.contains(x.el)) : undefined;
+  if (it) {
+    extra.push(...otherLayerClefsAt(staff, slot.layer, { tail: false, at: it.at }));
+    /* A measure start is also the barline before it: the previous measure's tails. */
+    if (fracCmp(it.at, FRAC_ZERO) === 0 && slot.measureIdx > 0) tailsOf(measures[slot.measureIdx - 1]);
+  } else if (!ref) {
+    tailsOf(measures[slot.measureIdx]);
+  }
+  if (extra.length === 0) return slot;
+  const all = Array.from(new Set([...slot.existing, ...extra]))
+    .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  return { ...slot, existing: all };
+}
+
 /** Resolve the clef slot the cursor `cursor` of `voice` addresses. */
 export function clefSlotAt(model: ComposerModel, voice: Voice, cursor: number): ClefSlot {
+  return staffWide(model, ownSlotAt(model, voice, cursor));
+}
+
+/** The slot in the voice's own layer(s); `clefSlotAt` widens it to the staff. */
+function ownSlotAt(model: ComposerModel, voice: Voice, cursor: number): ClefSlot {
   const loc = locateCursor(model, voice, cursor);
   const measures = model.allMeasures();
   if (!loc || loc.measureIdx >= measures.length) return { kind: 'pastEnd' };

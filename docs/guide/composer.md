@@ -137,7 +137,7 @@ On a grand-staff instrument, `Shift+P` puts the sustain pedal down and `Shift+O`
 These apply from the cursor's measure onward, or over the selection:
 
 - `Ctrl+Shift+S` sets the time and key signature, including common and cut time, and beat groups such as `2+2+3` for beaming.
-- `Ctrl+Shift+C` inserts a clef change at the cursor, even mid-measure: treble, bass, alto, tenor, treble 8va or 8vb, bass 8vb, or French violin. It applies to both voices of the staff from that moment and lasts until the next change. Reopen the dialog at the same spot to change or remove it; deleting notes never removes a clef.
+- `Ctrl+Shift+C` inserts a clef change at the cursor, even mid-measure: treble, bass, alto, tenor, treble 8va or 8vb, bass 8vb, or French violin. It applies to both voices of the staff from that moment and lasts until the next change, and it is the same clef whichever voice you enter it from. When you insert or delete notes before it, it stays on its beat if the staff's other voice has a note or rest starting there; otherwise it moves with the notes you edited. Reopen the dialog at the same spot to change or remove it; deleting notes never removes a clef.
 - `Ctrl+Shift+A` sets a pickup measure at the start of a section. Give its length in eighth notes (`2` for a quarter-note pickup); `0` removes it.
 
 ### Bars and sections
