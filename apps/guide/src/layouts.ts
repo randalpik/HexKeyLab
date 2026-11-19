@@ -28,7 +28,8 @@ export const LAYOUTS_LABEL = 'Layouts';
 export interface LayoutChoice {
   mapping: PresetMapping;
   mode: TuningMode;
-  /** The note every shape starts on: one of MAJOR_TONICS. */
+  /** The starting note, one of MAJOR_TONICS: the reference is its unaltered key,
+   *  and a shape starts on it wherever it holds the shape as close as any note. */
   root: string;
 }
 

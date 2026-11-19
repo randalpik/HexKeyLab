@@ -74,20 +74,34 @@ const stack = (rs: ReadonlyArray<R>): Exps[] => [UNISON, ...rs.map(([n, d]) => e
 
 /* Root positions, as the ratios above the root. The third decides the triad;
    a minor third is 6/5 unless the name says Pythagorean (32/27) or septimal
-   (7/6). A septimal structure sits next to the one it retunes, and only a
-   layout with 7-limit keys holds it (Max, 2026-11-18). */
+   (7/6), a major third 5/4 unless it says Pythagorean (81/64). A structure's
+   retunings sit next to it: the 5-limit one, the Pythagorean, the septimal.
+
+   What is listed (Max, 2026-11-18 and -19): shapes that gain from just
+   intonation and have a function in tonal harmony, and, for every tuning, the
+   structures it takes to play in it. The second is why each chord and the
+   major scale has a Pythagorean tuning here, 3-limit throughout: leaving them
+   out would say that Pythagorean tuning cannot be played. Every lattice has
+   3-limit keys, so every layout's guide holds these; only a layout with
+   7-limit keys holds a septimal one. */
 const TRIADS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   ['major triad', [[5, 4], [3, 2]]],
+  /* 64:81:96 */
+  ['Pythagorean major triad', [[81, 64], [3, 2]]],
   ['minor triad', [[6, 5], [3, 2]]],
   ['Pythagorean minor triad', [[32, 27], [3, 2]]],
   /* 6:7:9 */
   ['septimal minor triad', [[7, 6], [3, 2]]],
   /* minor 3rd + Pythagorean minor 3rd */
   ['diminished triad', [[6, 5], [64, 45]]],
+  /* 729:864:1024, two Pythagorean minor 3rds */
+  ['Pythagorean diminished triad', [[32, 27], [1024, 729]]],
   /* 5:6:7, minor 3rd + septimal minor 3rd */
   ['septimal diminished triad', [[6, 5], [7, 5]]],
   /* 16:20:25, two major 3rds */
   ['augmented triad', [[5, 4], [25, 16]]],
+  /* 4096:5184:6561, two Pythagorean major 3rds */
+  ['Pythagorean augmented triad', [[81, 64], [6561, 4096]]],
   /* 6:8:9. Its first inversion, 8:9:12, is the suspended second chord (RENAMED below) */
   ['suspended fourth chord', [[4, 3], [3, 2]]],
 ];
@@ -100,6 +114,7 @@ const RENAMED: Readonly<Record<string, Readonly<Record<number, string>>>> = {
 const SEVENTHS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   /* major triad + Pythagorean minor 3rd */
   ['dominant seventh', [[5, 4], [3, 2], [16, 9]]],
+  ['Pythagorean dominant seventh', [[81, 64], [3, 2], [16, 9]]],
   /* 4:5:6:7: the septimal dominant seventh chord holds a harmonic 7th interval (HKL's two
      names, kept apart: Max, 2026-11-18) */
   ['septimal dominant seventh', [[5, 4], [3, 2], [7, 4]]],
@@ -108,12 +123,17 @@ const SEVENTHS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   /* 12:14:18:21, the septimal minor triad with a harmonic 7th */
   ['septimal minor seventh', [[7, 6], [3, 2], [7, 4]]],
   ['major seventh', [[5, 4], [3, 2], [15, 8]]],
+  ['Pythagorean major seventh', [[81, 64], [3, 2], [243, 128]]],
   /* minor 3rd + Pythagorean minor 3rd + minor 3rd */
   ['diminished seventh', [[6, 5], [64, 45], [128, 75]]],
+  /* three Pythagorean minor 3rds */
+  ['Pythagorean diminished seventh', [[32, 27], [1024, 729], [32768, 19683]]],
   /* 135:162:189:224, minor 3rd + septimal minor 3rd + Pythagorean minor 3rd */
   ['septimal diminished seventh', [[6, 5], [7, 5], [224, 135]]],
   /* Pythagorean minor 3rd + minor 3rd + major 3rd */
   ['half-diminished seventh', [[32, 27], [64, 45], [16, 9]]],
+  /* two Pythagorean minor 3rds + Pythagorean major 3rd */
+  ['Pythagorean half-diminished seventh', [[32, 27], [1024, 729], [16, 9]]],
   /* 5:6:7:9, minor 3rd + septimal minor 3rd + septimal major 3rd */
   ['septimal half-diminished seventh', [[6, 5], [7, 5], [9, 5]]],
 ];
@@ -130,25 +150,35 @@ const AUGMENTED_SIXTHS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   /* 128:160:192:225 */
   ['German augmented sixth chord', [[5, 4], [3, 2], [225, 128]]],
 ];
-/* Every scale has the same root, second (9/8), fourth, fifth and octave. A
-   Pythagorean scale takes the Pythagorean third. A lowered seventh is
-   Pythagorean (16/9), except in the Ptolemaic natural minor, which is 5-limit
-   throughout (6/5, 8/5, 9/5); a leading tone is always 5-limit (15/8). The
-   melodic minor is the ascending form, with a 5/3 sixth. A septimal minor
-   scale is the Pythagorean or Ptolemaic minor scale of its kind with its
-   minor third and minor sixth septimal (7/6, 14/9); the melodic minor's sixth
-   is major, so only its third moves. The Ptolemaic melodic minor has the
-   5-limit third (6/5) under the same sixth and seventh. The minors are
-   grouped by kind, so a scale sits next to its retunings. */
+/* Every scale has the same root, second (9/8), fourth, fifth and octave. What
+   its name says (Max, 2026-11-19):
+     Ptolemaic     5-limit throughout: major 5/4, 5/3, 15/8; minor 6/5, 8/5, 9/5.
+     Pythagorean   3-limit throughout, and nothing else: the scales Pythagorean
+                   tuning plays. 81/64, 27/16, 243/128; 32/27, 128/81, 16/9.
+     Semiditonal   the Pythagorean minor third (32/27) in a scale that is not
+                   3-limit throughout: its minor sixth is Pythagorean too
+                   (128/81), its major sixth and its leading tone 5-limit (5/3,
+                   15/8). (Until 2026-11-19 the melodic one was called
+                   Pythagorean, which broke the rule above.)
+     septimal      the minor third and minor sixth septimal (7/6, 14/9), the rest
+                   as the Semiditonal scale of its kind, or, for the natural
+                   minor, the Pythagorean one (16/9).
+   The harmonic minor has a minor sixth and a leading tone; the melodic minor is
+   the ascending form, a major sixth and a leading tone. The minors are grouped
+   by kind, so a scale sits next to its retunings. */
 const SCALES: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   ['Ptolemaic major scale', [[9, 8], [5, 4], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
+  ['Pythagorean major scale', [[9, 8], [81, 64], [4, 3], [3, 2], [27, 16], [243, 128], [2, 1]]],
   ['Ptolemaic natural minor scale', [[9, 8], [6, 5], [4, 3], [3, 2], [8, 5], [9, 5], [2, 1]]],
   ['Pythagorean natural minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [128, 81], [16, 9], [2, 1]]],
   ['septimal natural minor scale', [[9, 8], [7, 6], [4, 3], [3, 2], [14, 9], [16, 9], [2, 1]]],
   ['Ptolemaic harmonic minor scale', [[9, 8], [6, 5], [4, 3], [3, 2], [8, 5], [15, 8], [2, 1]]],
+  ['Semiditonal harmonic minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [128, 81], [15, 8], [2, 1]]],
+  ['Pythagorean harmonic minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [128, 81], [243, 128], [2, 1]]],
   ['septimal harmonic minor scale', [[9, 8], [7, 6], [4, 3], [3, 2], [14, 9], [15, 8], [2, 1]]],
   ['Ptolemaic melodic minor scale', [[9, 8], [6, 5], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
-  ['Pythagorean melodic minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
+  ['Semiditonal melodic minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
+  ['Pythagorean melodic minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [27, 16], [243, 128], [2, 1]]],
   ['septimal melodic minor scale', [[9, 8], [7, 6], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
 ];
 

@@ -73,7 +73,7 @@ export function fifthName(r: number): string {
 }
 
 /** Position of a spelled note on the line of fifths, A = 0 (fifthName's r). */
-function fifthIndex(name: string): number {
+export function fifthIndex(name: string): number {
   const p = parseNote(name);
   return 'FCGDAEB'.indexOf(p.letter) - 4 + 7 * accToVal(p.acc);
 }

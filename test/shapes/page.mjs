@@ -3,7 +3,7 @@
 // Needs `pnpm dev` (the page is /shapes.html on the shared origin). One muted headless Chromium
 // (test/composer-test/lib/chromium.mjs passes --mute-audio), stopped at the end. The page has no
 // audio, MIDI or overlay code of its own. Checks, for Randal in Ptolemaic:
-//   P1  the page finishes: 94 entries, numbered 1 to 94 in guide order, an index entry for each,
+//   P1  the page finishes: 129 entries, numbered 1 to 129 in guide order, an index entry for each,
 //       no page errors
 //   P2  every entry shows its picture, loaded, at 4 device px per CSS px
 //   P3  each picture holds its keys as the lattice colors them (keyColorHex, the page's own
@@ -22,24 +22,26 @@
 //       adjacent keys, says "from center or right" (the left C has that pitch only on a far key)
 //   P7  a tuning the guide is not made for (?mode=V, Schismatic; ?mode=E, Equal) falls back to
 //       Ptolemaic
-//   P9  Randal in Septimal shows the 109 entries it holds, the septimal chords and scales next to
+//   P9  Randal in Septimal shows the 144 entries it holds, the septimal chords and scales next to
 //       the ones they retune, every picture loaded, and no entry's text or picture reaches out
 //       of its share of the row
 //   P10 a starting note (?root=Eb, ?root=Fs): the title and the legend name it; the page holds
 //       the entries the C page holds, with the same titles, positions, ratios, "from" and
 //       intervals, and pictures of the same sizes; every entry's own guide shape starts on a key
-//       of that name; an id that is not one of the fifteen falls back to C
-//   P11 a layout with pictures wider than a sheet (Chromatic in Ptolemaic: the Pythagorean natural
-//       minor scale and diminished 5th): no picture reaches out of its entry or past the sheet's
-//       text edge; exactly those two are shown scaled down, in proportion, to the room of a row to
-//       themselves, and each has a row to itself; every other picture is shown as drawn
-//   P12 the hanging label, on a guide with fewer than 100 entries (Randal in Ptolemaic) and one
-//       with more (Randal in Septimal, 109): the number ends the same distance before the title in
+//       of that name (as every shape of Randal in Ptolemaic starts on C); an id that is not one
+//       of the fifteen falls back to C
+//   P11 a layout with pictures wider than a sheet (Chromatic in Ptolemaic: eleven shapes of
+//       Pythagorean thirds): no picture reaches out of its entry or past the sheet's text edge;
+//       exactly those are shown scaled down, in proportion, to the room of a row to themselves,
+//       each alone on its row, the widest (755 px as drawn) to 91%; every other picture is shown
+//       as drawn. The legend states the limit: a shape is listed only if it can be reached on the Lumatone
+//   P12 the hanging label, on a guide with fewer than 100 entries (Randal in Pythagorean, 56) and
+//       one with more (Randal in Septimal, 144): the number ends the same distance before the title in
 //       every entry, whatever its digits, and never touches it; the title and the lines under it
 //       start at one indent, and a title that wraps keeps to it; the picture is not indented: it
 //       is centered in its entry's cell (the entry less its gutter)
 //   P8  the dark theme (?theme=dark): <html data-theme="dark">, the ground and the sheet #161616,
-//       the text #f2f2f2, the legend's seam "white", all 94 entries. Each picture is compared
+//       the text #f2f2f2, the legend's seam "white", all 129 entries. Each picture is compared
 //       with the page's own painter run in the light style, pixel for pixel: it is the same size;
 //       every pixel inside a seam's black or a member key's dark border on paper is white; no
 //       other pixel is pure white; and no pure black is left
@@ -74,7 +76,7 @@ try {
   await loaded;
   let ready = null;
   for (let i = 0; i < 100 && !ready && !errors.length; i++) { ready = await cdp.evalJSON('document.body.dataset.ready ?? null'); if (!ready) await sleep(150); }
-  check('P1 the page finishes', ready, '94');
+  check('P1 the page finishes', ready, '129');
   check('P1 no page errors', errors.join(' | '), '');
 
   const report = ready ? await cdp.evalJSON(`(async () => {
@@ -136,8 +138,8 @@ try {
 
   if (report?.__error) { check('the in-page report runs', report.__error, ''); }
   else if (report) {
-    check('P1 entries', report.entries, 94);
-    check('P1 index entries', report.index, 94);
+    check('P1 entries', report.entries, 129);
+    check('P1 index entries', report.index, 129);
     const cap = (s) => s[0].toUpperCase() + s.slice(1);
     /* a key's colored hexagon is about 624 CSS px² less its label; at 4 device px per CSS px, 16× that */
     const SOLID = 0.6 * 624 * 16;
@@ -184,11 +186,11 @@ try {
         if (report.rows[e.n - 1].kind === 'scale') check(`P5 entry ${e.n}: a scale, at most two to a row`, row.columns <= 2, true);
       });
     }
-    check('P5 every entry is in a row', seen, 94);
+    check('P5 every entry is in a row', seen, 129);
     console.log('rows: ' + report.layout.map((r) => r.entries.length + '/' + r.columns).join(' '));
   }
 
-  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 24 of the 94, by
+  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 56 of the 129, by
      test/shapes/oracle.mjs) shows just those, numbered through, in the sections that have any.
      Saved first: --shot and --pdf are of the page as loaded above. */
   const saves = [];
@@ -220,10 +222,10 @@ try {
     m2: (() => { const a = [...document.querySelectorAll('article.entry')].find((e) => e.querySelector('.ratio')?.textContent === '256:243');
       return a ? a.querySelector('.name').textContent.replace(/^\\d+/, '') + ' | ' + a.querySelector('.facts b').textContent : null; })(),
   })`) : {};
-  check('P6 Randal in Pythagorean finishes with the 24 it holds', part, '24');
+  check('P6 Randal in Pythagorean finishes with the 56 it holds', part, '56');
   check('P6 heading', partial.heading, 'Lattice shapes from C: Randal mapping, Pythagorean tuning');
-  check('P6 entries numbered through', partial.nums, Array.from({ length: 24 }, (_, i) => i + 1).join());
-  check('P6 index and pictures', `${partial.index} ${partial.pictures}`, '24 24');
+  check('P6 entries numbered through', partial.nums, Array.from({ length: 56 }, (_, i) => i + 1).join());
+  check('P6 index and pictures', `${partial.index} ${partial.pictures}`, '56 56');
   check('P6 no section is empty, none says a shape is missing', /:0\b/.test(partial.sections ?? ':0') || partial.text, false);
   check('P6 the minor 2nd starts where its two adjacent keys work', partial.m2, 'Pythagorean minor 2nd | center or right');
   check('P6 no page errors', errors.join(' | '), '');
@@ -242,7 +244,7 @@ try {
   /* P7: Schismatic and Equal are not among the guide's tunings */
   for (const m of ['V', 'E']) {
     const n = await load('mapping=randal&mode=' + m);
-    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '94 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
+    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '129 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
   }
 
   /* P9: Randal in Septimal, where the septimal structures are */
@@ -257,9 +259,9 @@ try {
       pictures: [...document.querySelectorAll('img.diagram')].filter((i) => i.complete && i.naturalWidth > 0).length, out,
       sections: [...document.querySelectorAll('.section')].map((x) => x.querySelector('h2').textContent + ':' + x.querySelectorAll('article.entry').length).join(' ') };
   })()`) : {};
-  check('P9 Randal in Septimal finishes with the 109 it holds', septN, '109');
+  check('P9 Randal in Septimal finishes with the 144 it holds', septN, '144');
   check('P9 heading', sept.heading, 'Lattice shapes from C: Randal mapping, Septimal tuning');
-  check('P9 pictures', sept.pictures, 109);
+  check('P9 pictures', sept.pictures, 144);
   check('P9 nothing reaches out of its entry', sept.out, 0);
   console.log(`Randal in Septimal: ${sept.sections}`);
   console.log(`  in order: ${sept.roots}`);
@@ -295,7 +297,7 @@ try {
     return { flush, indent: [...indents].join(), digits: Object.keys(gaps).join(), spread: Math.max(...all) - Math.min(...all), least: Math.min(...all), wrapped, bad: bad.slice(0, 3).join(' | '), misaligned: bad.length,
       byDigits: Object.entries(gaps).map(([d, g]) => d + ' digit: ' + Math.min(...g).toFixed(1) + '…' + Math.max(...g).toFixed(1)).join(', ') };
   })()`;
-  for (const [what, query, digits] of [['Randal in Ptolemaic', 'mapping=randal&mode=5', '1,2'], ['Randal in Septimal', 'mapping=randal&mode=7', '1,2,3']]) {
+  for (const [what, query, digits] of [['Randal in Pythagorean', 'mapping=randal&mode=P', '1,2'], ['Randal in Septimal', 'mapping=randal&mode=7', '1,2,3']]) {
     await load(query);
     const lab = await cdp.evalJSON(LABELS);
     check(`P12 ${what}: numbers of ${digits} digits`, lab.digits, digits);
@@ -321,15 +323,15 @@ try {
       return { heading: document.querySelector('h1').textContent, title: document.title, legend: document.querySelector('.legend').textContent,
         starts: G.buildGuide(at, ${JSON.stringify(name)}).every((e) => N.noteName(e.shape.bass[0], e.shape.bass[1], 'randal', l.anchor, true) === ${JSON.stringify(name)}) };
     })()`) : {};
-    check(`P10 ${label}: the page finishes`, n, '94');
+    check(`P10 ${label}: the page finishes`, n, '129');
     check(`P10 ${label}: title`, `${got.heading} | ${got.title === got.heading}`, `Lattice shapes from ${label}: Randal mapping, Ptolemaic tuning | true`);
-    check(`P10 ${label}: the legend names it`, new RegExp(`^Every shape starts on ${label}\\. .* the ${label} may sit: left, center or right\\.`).test(got.legend ?? ''), true);
+    check(`P10 ${label}: the legend names it`, got.legend, `A shape is listed only if it can be reached on the Lumatone in this layout with the reference note set to the unaltered ${label}. Each is drawn in its closest reachable arrangement. Solid keys are the notes of the shape; faint keys only show the way between them. “From” is the possible alignments for the lowest note inside its band. A heavy black line is a band seam, drawn where the starting position matters and the shape crosses one.`);
     check(`P10 ${label}: every shape starts on a key of that name`, got.starts, true);
     const cards = n ? await cdp.evalJSON(CARD) : '', mine = cards.split('\n'), theirs = cCards.split('\n'), at = mine.findIndex((x, i) => x !== theirs[i]);
     check(`P10 ${label}: the entries, their text and their pictures' sizes are the C page's`, at < 0 && mine.length === theirs.length ? 'same' : `entry ${at + 1}: ${mine[at]}  ≠  ${theirs[at]}`, 'same');
   }
   const bad = await load('mapping=randal&mode=5&root=H');
-  check('P10 an unknown starting note falls back to C', `${bad} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '94 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
+  check('P10 an unknown starting note falls back to C', `${bad} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '129 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
 
   /* P11: pictures wider than a sheet are scaled down to their row */
   const wideN = await load('mapping=chromatic&mode=5');
@@ -341,21 +343,24 @@ try {
       if (b.right > e.right + 0.5) out++;
       if (b.right > edge + 0.5) past++;
       const k = i.naturalWidth / i.width / 4;
-      if (i.dataset.scaled) scaled.push(a.querySelector('.name').textContent.replace(/^\\d+/, '') + ' ' + i.width + 'px, ' + i.dataset.scaled + ', drawn ' + (i.naturalWidth / 4) + 'px, in proportion ' + (Math.abs(i.naturalHeight / i.naturalWidth - i.height / i.width) < 0.005)
-        + ', alone on its row ' + (a.parentElement.children.length === 1 && a.parentElement.dataset.columns === '1'));
+      if (i.dataset.scaled) scaled.push({ name: a.querySelector('.name').textContent.replace(/^\\d+/, ''), width: i.width, drawn: i.naturalWidth / 4, scale: Number(i.dataset.scaled),
+        ok: Math.abs(i.naturalHeight / i.naturalWidth - i.height / i.width) < 0.005 && Math.abs(i.width / (i.naturalWidth / 4) - Number(i.dataset.scaled)) < 0.002 && a.parentElement.children.length === 1 && a.parentElement.dataset.columns === '1' });
       else asDrawn.push(Math.abs(k - 1) < 0.001);
     }
-    return { n: document.querySelectorAll('article.entry').length, out, past, scaled: scaled.join(' | '), asDrawn: asDrawn.every(Boolean), others: asDrawn.length };
+    return { n: document.querySelectorAll('article.entry').length, out, past, asDrawn: asDrawn.every(Boolean), others: asDrawn.length,
+      scaled: scaled.length + ' scaled, all to ' + [...new Set(scaled.map((x) => x.width))].join('/') + ' px, each in proportion and alone on its row ' + scaled.every((x) => x.ok)
+        + ', all of Pythagorean thirds ' + scaled.every((x) => /^(Pythagorean|Semiditonal) /.test(x.name)) + ', the widest drawn ' + Math.max(...scaled.map((x) => x.drawn)) + ' px to ' + Math.round(Math.min(...scaled.map((x) => x.scale)) * 100) + '%' };
   })()`) : {};
-  check('P11 Chromatic in Ptolemaic finishes', wideN, '94');
+  check('P11 Chromatic in Ptolemaic finishes', wideN, '119');
+  check('P11 the legend states the limit', /^A shape is listed only if it can be reached on the Lumatone in this layout with the reference note set to the unaltered C\. Each is drawn in its closest reachable arrangement\./.test(await cdp.evalJSON(`document.querySelector('.legend').textContent`)), true);
   check('P11 no picture reaches out of its entry, or past the sheet\'s text edge', `${wide.out} ${wide.past}`, '0 0');
-  check('P11 the two pictures wider than a sheet are scaled down to a row', wide.scaled,
-    'Pythagorean natural minor scale 687px, 0.910, drawn 755px, in proportion true, alone on its row true | Pythagorean diminished 5th 687px, 0.911, drawn 754px, in proportion true, alone on its row true');
-  check('P11 every other picture is shown as drawn', `${wide.asDrawn} ${wide.others}`, 'true 92');
+  check('P11 the pictures wider than a sheet are scaled down to a row', wide.scaled,
+    '11 scaled, all to 687 px, each in proportion and alone on its row true, all of Pythagorean thirds true, the widest drawn 755 px to 91%');
+  check('P11 every other picture is shown as drawn', `${wide.asDrawn} ${wide.others}`, 'true 108');
 
   /* P8: the dark theme */
   const darkN = await load('theme=dark');
-  check('P8 the dark page finishes', darkN, '94');
+  check('P8 the dark page finishes', darkN, '129');
   const dark = darkN ? await cdp.evalJSON(`(async () => {
     const urls = performance.getEntriesByType('resource').map((e) => e.name);
     const find = (re) => urls.find((u) => re.test(u));
@@ -406,7 +411,7 @@ try {
     check('P8 <html data-theme>', dark.theme, 'dark');
     check('P8 ground, sheet, ink, rule', `${dark.ground} | ${dark.sheet} | ${dark.ink} | ${dark.rule}`, 'rgb(22, 22, 22) | rgb(22, 22, 22) | rgb(242, 242, 242) | rgb(242, 242, 242)');
     check('P8 the legend names the seam\'s color', /A heavy white line is a band seam/.test(dark.legend), true);
-    check('P8 entries', dark.entries, 94);
+    check('P8 entries', dark.entries, 129);
     let seamPx = 0, borderPx = 0;
     for (const r of dark.rows) {
       check(`P8 entry ${r.n}: the picture is the size of the light one`, r.sameSize, true);
@@ -418,7 +423,7 @@ try {
       check(`P8 entry ${r.n}: no pure black is left`, r.darkBlack, 0);
       seamPx += r.black; borderPx += r.border;
     }
-    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 94 pictures`);
+    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 129 pictures`);
   }
   if (arg('--dark-shot')) {
     const m = await cdp.send('Page.getLayoutMetrics');

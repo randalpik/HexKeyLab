@@ -490,6 +490,13 @@ export function shortenInterval(name: string, short: boolean): string {
      Pm3/PM3/Pm6/PM6/Pm2/PM7 vs P1/P4/P5/P8) */
   name = name.replace(/\bPythagorean\b/g, 'P');
   /* word-by-word */
+  /* A multiple quality: doubly augmented → AA, doubly diminished → dd, and the count before the
+     letter from three on, 3× augmented → 3A (Max, 2026-11-19). "doubly" had no short form
+     (PdoublyA1), and the × made P5×A4 read as two intervals multiplied. The × stays on what is
+     counted, commas and octaves (6×SC, 2×P8). Done before the single words below, which would
+     otherwise shorten the quality and leave "doubly" and the count behind. */
+  name = name.replace(/\bdoubly augmented\b/g, 'AA').replace(/\bdoubly diminished\b/g, 'dd');
+  name = name.replace(/\b(\d+)× augmented\b/g, '$1A').replace(/\b(\d+)× diminished\b/g, '$1d');
   /* subminor → sm, supermajor → SM (Max, 2026-11-18): 7sm2, 7SM7. No other short form holds
      either pair of letters (test/interval-names/short-forms.mjs) */
   name = name.replace(/\bsubminor\b/g, 'sm'); name = name.replace(/\bsupermajor\b/g, 'SM');
@@ -498,6 +505,11 @@ export function shortenInterval(name: string, short: boolean): string {
   name = name.replace(/\baugmented\b/g, 'A'); name = name.replace(/\bharmonic\b/g, '7m');
   name = name.replace(/\bseptimal\b/g, '7'); name = name.replace(/\blesser\b/g, '&lt;');
   name = name.replace(/\bgreater\b/g, '&gt;'); name = name.replace(/\bwolf\b/g, 'W');
+  /* acute → >>, grave → << (Max, 2026-11-19). An acute major interval is two syntonic commas
+     wider than the plain 5-limit one (one wider than the Pythagorean), a grave minor two
+     narrower: the doubled sign is the two commas. No class has both an acute or grave name and
+     a lesser or greater one. */
+  name = name.replace(/\bacute\b/g, '&gt;&gt;'); name = name.replace(/\bgrave\b/g, '&lt;&lt;');
   name = name.replace(/\bunison\b/g, '1');
   name = name.replace(/(\d+) octaves\b/g, '$1×P8');
   name = name.replace(/\boctave\b/g, 'P8');
@@ -509,6 +521,9 @@ export function shortenInterval(name: string, short: boolean): string {
   name = name.replace(/ /g, '');
   name = name.replace(/\+/g, ' + ').replace(/−/g, ' − ');
   name = name.replace(/× /g, '×');
-  name = name.replace(/([7W])([458])(?!\d)/g, '$1P$2');
+  /* a bare 7 or W before 4, 5 or 8 is septimal or wolf on a perfect interval: restore its P
+     (7P4, WP5). Only where the 7 starts the quality: not the 7 of a count (P7A4) or of an
+     interval's number (the 74th, 75th and 78th had a P put inside them: PA7P4) */
+  name = name.replace(/(?<![0-9A-Za-z])([7W])([458])(?!\d)/g, '$1P$2');
   return name;
 }

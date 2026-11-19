@@ -4,13 +4,16 @@
 // A structure or an interval the layout cannot hold is simply not in its
 // guide, so the catalog can list shapes that only some layouts have.
 //
-// Every shape starts on the guide's root, C or another of the fifteen major-key
+// A guide has a root, its starting note: C or another of the fifteen major-key
 // tonics. The reference is put on the root's own key, where Composer puts a
 // key's reference (findTonicCoord: on the spine column, at the octave nearest
-// C4), and the anchor on that key's band. A step along the pure line, or a
-// band over with the anchor following, keeps every interval a key has to its
-// reference, so a root's guide is C's with other names on the keys, and other
-// colors, which go with pitch (test/shapes/roots.mjs).
+// C4), and the anchor on that key's band; the Lumatone's 280 keys around it
+// are what a shape may use. A shape starts on any key that holds it, and on
+// the root wherever the root holds it as close as any note does (./solve.ts).
+// A step along the pure line, or a band over with the anchor following, keeps
+// every interval a key has to its reference, so a root's guide is C's with
+// other names on the keys, and other colors, which go with pitch
+// (test/shapes/roots.mjs).
 //
 // Names come from HKL's interval namer (tuning/intervals.ts), read off the
 // solved keys. An interval is named once, from the bass, and a structure's step

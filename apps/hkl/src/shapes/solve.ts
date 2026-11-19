@@ -3,23 +3,30 @@
 // A structure (./catalog.ts) is exact ratios from its bass. Under a layout — a
 // mapping, a JI tuning mode, banded or not — the solver finds the cells that
 // sound those ratios exactly (coordExps):
-//   - the bass: a key of the given name. Every such key in reach of the
-//     reference is tried: they differ in their band position, in the comma
-//     marks they carry (C, C↓, a hooked C) and, in the modes that tune each
-//     band differently, in what they hold. The plainest that holds the
-//     structure is the one drawn (Max, 2026-11-18);
+//   - the keyboard: what a shape may use is a Lumatone's 280 keys, set down
+//     with the reference on the starting note's unaltered key (`keyboard`);
+//     all its notes, and the path between them, lie on it (Max, 2026-11-19);
+//   - the bass: any key of that keyboard, whatever its name (Max, 2026-11-19):
+//     a shape is in the guide when the keyboard holds it from anywhere, not
+//     only from the starting note. Basses differ in their band position, in
+//     the comma marks they carry (C, C↓, a hooked C) and, in the modes that
+//     tune each band differently, in what they hold. The plainest that holds
+//     the structure is the one drawn (Max, 2026-11-18);
 //   - the arrangement: where a pitch has several keys, the one nearest the bass,
 //     and of the arrangements the plainest basses give, the closest one. That
-//     one is the shape; a farther copy of it is not shown;
+//     one is the shape; a farther copy of it is not shown. Of the basses that
+//     hold it as close, the one whose note is nearest the starting note by
+//     fifths: the starting note itself wherever it can be;
 //   - the positions the shape can start from: those where the same keys, moved
-//     with a bass of that position, sound the same members;
+//     with any bass of that position, lie on the keyboard and sound the same
+//     members;
 //   - the path keys that link the members;
 //   - the band seams the shape crosses.
 // A choice between different keys that the rules leave equal goes to the one
 // higher on the page; a choice between two equally plain basses for one shape,
-// to the one that writes the shape with the fewest HEJI arrows (Max,
-// 2026-11-18). What even those cannot tell apart is listed in the shape's
-// `undecided`.
+// to the one that writes the shape with the fewest HEJI arrows, then to the
+// one nearest the reference (Max, 2026-11-18 and -19). What even those cannot
+// tell apart is listed in the shape's `undecided`; on one keyboard nothing is.
 // Nothing here is specific to one mapping or mode: it searches the lattice the
 // layout defines. Equal has no exponent vectors, so it is not solved.
 //
@@ -28,7 +35,8 @@
 import { coordExps, coordToMidi, freqAt } from '@hkl/shared/freq.js';
 import { hejiCommasFor } from '@hkl/shared/heji.js';
 import { bandOfCell, bandWidth, layoutOf, posInBandOf } from '@hkl/shared/mapping.js';
-import { noteName } from '@hkl/shared/notes.js';
+import { baseKeys } from '../layout/baseKeys.js';
+import { fifthIndex, noteName } from '@hkl/shared/notes.js';
 import type { TuningStateLike } from '../tuning/regions.js';
 import { addExps, expsKey, type Exps } from './catalog.js';
 
@@ -64,11 +72,6 @@ export interface Shape {
   undecided: Array<'bass' | 'keys' | 'position' | 'column' | 'path'>;
 }
 
-/** How far the search reaches from a key: in bands along q, in rows along r. */
-const REACH_BANDS = 4;
-const REACH_ROWS = 9;
-
-/** How many key steps apart two keys are. */
 export function hexDistance(a: Cell, b: Cell): number {
   const dq = b[0] - a[0], dr = b[1] - a[1];
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
@@ -112,12 +115,14 @@ function marksOn(c: Cell, l: ShapeLayout): number {
 const layoutKey = (l: ShapeLayout): string => [l.mode, l.mapping, l.anchor, l.banded].join('|');
 const exps = (c: Cell, l: ShapeLayout): Exps => coordExps(c[0], c[1], l.mode, l.mapping, l.anchor, l.banded);
 
-/* ── the bass ── */
+/* ── the keyboard, and the basses on it ── */
 
 interface Bass {
   position: number;
   /** The comma marks on the key itself. */
   marks: number;
+  /** How many fifths its note is from the starting note, by name (a C↓ is a C). */
+  fifths: number;
   cell: Cell;
   /** How near `ref`: its distance, then its distance in pitch (MIDI), then its
    *  pitch, then how high it stands on the page (higher first); compared in
@@ -125,67 +130,75 @@ interface Bass {
   near: readonly [number, number, number, number];
 }
 const nearer = (a: Bass, b: Bass): number => a.near[0] - b.near[0] || a.near[1] - b.near[1] || a.near[2] - b.near[2] || a.near[3] - b.near[3];
-const bassCache = new Map<string, Bass[]>();
 
-/** The keys a shape may start from: every key named `name` in reach of `ref`.
- *  In most modes those of one band position are the same key an octave or a
- *  band apart, and hold the same shapes; Syntonic and Polysyntonic shift each
- *  band by commas, so there they differ in their marks and in what they hold.
- *  By position, then nearest `ref` first. */
-function bassCells(name: string, layout: ShapeLayout, ref: Cell): Bass[] {
+/** A Lumatone set down on the lattice: its 280 keys, each as a bass a shape
+ *  may start from, and its keys by pitch. */
+interface Keyboard {
+  center: Cell;
+  cells: ReadonlyArray<Cell>;
+  /** A key's number, by its place; and for each key the numbers of the keys it touches. */
+  at: ReadonlyMap<string, number>;
+  links: ReadonlyArray<ReadonlyArray<number>>;
+  has: ReadonlySet<string>;
+  basses: Bass[];
+  byPitch: Map<string, Cell[]>;
+}
+const keyboardCache = new Map<string, Keyboard>();
+
+/** The keyboard a guide's shapes are played on (Max, 2026-11-19). What a
+ *  layout holds is what a Lumatone holds: a shape is in a guide when all its
+ *  notes, and the path between them, lie on the instrument's 280 keys. A key's
+ *  place on the lattice is its offset from the reference (layout/baseKeys.ts;
+ *  in Vertical alignment, the guide's pose, the offset as it stands), and the
+ *  reference sits at the keyboard's center. The reference is the starting
+ *  note's unaltered key (`ref`, where Composer puts a key's reference), so a
+ *  starting note, a mapping and a tuning have exactly one set of 280 keys, and
+ *  every shape of their guide is drawn on it.
+ *
+ *  This replaces a window of four bands and nine rows around each bass, which
+ *  was arbitrary, and wider or narrower as the bands were (3 keys to 12). */
+function keyboard(name: string, layout: ShapeLayout, ref: Cell): Keyboard {
   const key = [layoutKey(layout), name, ref].join('|');
-  const hit = bassCache.get(key);
+  const hit = keyboardCache.get(key);
   if (hit) return hit;
   const { mapping, anchor, banded } = layout;
   const refMidi = coordToMidi(ref[0], ref[1], mapping);
-  const basses: Bass[] = [];
-  const reachQ = REACH_BANDS * bandWidth(mapping);
-  for (let q = ref[0] - reachQ; q <= ref[0] + reachQ; q++) for (let r = ref[1] - REACH_ROWS; r <= ref[1] + REACH_ROWS; r++) {
-    if (noteName(q, r, mapping, anchor, banded) !== name) continue;
-    const cell: Cell = [q, r], midi = coordToMidi(q, r, mapping);
-    basses.push({ position: posInBandOf(q, r, mapping), marks: marksOn(cell, layout), cell, near: [hexDistance(ref, cell), Math.abs(midi - refMidi), midi, -height(cell)] });
+  const cells: Cell[] = baseKeys.map(([u, v]) => [ref[0] + u, ref[1] + v]);
+  const byPitch = new Map<string, Cell[]>(), basses: Bass[] = [], home = fifthIndex(name);
+  for (const cell of cells) {
+    const k = expsKey(exps(cell, layout)), at = byPitch.get(k);
+    if (at) at.push(cell); else byPitch.set(k, [cell]);
+    const midi = coordToMidi(cell[0], cell[1], mapping);
+    basses.push({
+      position: posInBandOf(cell[0], cell[1], mapping), marks: marksOn(cell, layout),
+      fifths: Math.abs(fifthIndex(noteName(cell[0], cell[1], mapping, anchor, banded)) - home),
+      cell, near: [hexDistance(ref, cell), Math.abs(midi - refMidi), midi, -height(cell)],
+    });
   }
-  basses.sort((a, b) => a.position - b.position || nearer(a, b));
-  bassCache.set(key, basses);
-  return basses;
+  const at = new Map(cells.map((c, i) => [String(c), i]));
+  const links = cells.map(([q, r]) => AROUND.map(([dq, dr]) => at.get(`${q + dq},${r + dr}`)).filter((i): i is number => i !== undefined));
+  const board: Keyboard = { center: ref, cells, at, links, has: new Set(cells.map(String)), basses, byPitch };
+  keyboardCache.set(key, board);
+  return board;
 }
 
-/** Forget the keys found so far. The solver keeps, for every reference it has
- *  solved from, the keys around each bass, by pitch; a page solves from one
- *  reference and never needs this, but a run over many references (the roots
- *  gate) fills gigabytes without it. */
+/** Forget the keyboards laid down so far. The solver keeps one for every
+ *  reference it has solved from; a page solves from one reference and never
+ *  needs this, but a run over many (the roots gate) should not hold them all. */
 export function forgetShapes(): void {
-  bassCache.clear();
-  indexCache.clear();
+  keyboardCache.clear();
 }
 
 /* ── the members ── */
 
-const indexCache = new Map<string, Map<string, Cell[]>>();
-
-/** The keys in reach of `bass`, by pitch. */
-function pitchIndex(bass: Cell, layout: ShapeLayout): Map<string, Cell[]> {
-  const key = [layoutKey(layout), bass].join('|');
-  const hit = indexCache.get(key);
-  if (hit) return hit;
-  const index = new Map<string, Cell[]>();
-  const reachQ = REACH_BANDS * bandWidth(layout.mapping);
-  for (let q = bass[0] - reachQ; q <= bass[0] + reachQ; q++) for (let r = bass[1] - REACH_ROWS; r <= bass[1] + REACH_ROWS; r++) {
-    const k = expsKey(exps([q, r], layout)), at = index.get(k);
-    if (at) at.push([q, r]); else index.set(k, [[q, r]]);
-  }
-  indexCache.set(key, index);
-  return index;
-}
-
-/** The keys sounding `members` above `bass`, or null when one is not on the
- *  lattice. Where a pitch has several keys, the one nearest the bass, in real
+/** The keys of `board` sounding `members` above `bass`, or null when one is
+ *  not on it. Where a pitch has several keys, the one nearest the bass, in real
  *  space; where several are equally near, the choice that keeps the members
  *  closest together, by the distances between every two of them summed; of
  *  equally close choices, the one higher on the page, by its keys' heights
  *  summed (`tied` when even that is equal). */
-function place(bass: Cell, members: ReadonlyArray<Exps>, layout: ShapeLayout): { cells: Cell[]; tied: boolean } | null {
-  const index = pitchIndex(bass, layout), from = exps(bass, layout);
+function place(bass: Cell, members: ReadonlyArray<Exps>, layout: ShapeLayout, board: Keyboard): { cells: Cell[]; tied: boolean } | null {
+  const index = board.byPitch, from = exps(bass, layout);
   const nearest: Cell[][] = [];
   for (const m of members) {
     const at = index.get(expsKey(addExps(from, m)));
@@ -210,108 +223,108 @@ function place(bass: Cell, members: ReadonlyArray<Exps>, layout: ShapeLayout): {
 
 /* ── the path keys ── */
 
-/* The lattice's three straight axes: Q, R and the composed X = (−Q, +R). */
-const Q: Cell = [1, 0], R: Cell = [0, 1], X: Cell = [-1, 1];
-type Leg = readonly [axis: Cell, steps: number];
+/* The six neighbors of a key. */
+const AROUND: ReadonlyArray<Cell> = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]];
+/* A path key costs UNIT, less one for every member it touches: the fewest keys first, then the
+   most edges between a path key and a member (a key touches six keys at most). */
+const UNIT = 4096;
 
-/** (dq, dr) as its shortest walk: along one axis, or along two. */
-function legsOf(dq: number, dr: number): Leg[] {
-  const legs: Leg[] = dq * dr >= 0 ? [[Q, dq], [R, dr]]
-    : Math.abs(dq) >= Math.abs(dr) ? [[Q, dq + dr], [X, dr]]
-      : [[X, -dq], [R, dq + dr]];
-  return legs.filter(([, n]) => n !== 0);
-}
-
-/** The keys strictly between `a` and the end of `legs`, in walking order. */
-function walk(a: Cell, legs: ReadonlyArray<Leg>): Cell[] {
-  const out: Cell[] = [];
-  let [q, r] = a;
-  for (const [axis, n] of legs) for (let i = 0; i < Math.abs(n); i++) {
-    q += Math.sign(n) * axis[0]; r += Math.sign(n) * axis[1];
-    out.push([q, r]);
+/** The path keys (Max, 2026-11-17 and -19): the keys a player follows from one
+ *  note of the shape to the next. They are keys of the keyboard, the fewest
+ *  that join the members into one connected patch; of equally small sets, the
+ *  one whose path keys touch the members along the most edges, which keeps
+ *  the shape compact; of those, the highest: by its highest key in pitch, then
+ *  its next (two keys of one pitch by the higher on the page). Returned low
+ *  to high.
+ *
+ *  Between two members that is a shortest walk which turns once, through its
+ *  higher corner, wherever the keyboard has room for it: the rule this
+ *  replaced asked for one-turn walks outright, and could leave the keyboard.
+ *
+ *  A smallest connecting set is a Steiner tree, found the classical way
+ *  (Dreyfus and Wagner): the best tree over each group of members ending at
+ *  each key, built up from smaller groups. Members that already touch are one
+ *  to begin with, so a chord or a scale is seldom more than three groups. */
+function pathKeys(cells: ReadonlyArray<Cell>, layout: ShapeLayout, board: Keyboard): { keys: Cell[]; tied: boolean } {
+  const n = board.cells.length;
+  const isMember = new Uint8Array(n);
+  const members = cells.map((c) => board.at.get(String(c))!);
+  for (const m of members) isMember[m] = 1;
+  /* the members in touching groups */
+  const group = new Int32Array(n).fill(-1);
+  let groups = 0;
+  for (const m of members) {
+    if (group[m] >= 0) continue;
+    const stack = [m];
+    group[m] = groups;
+    while (stack.length) for (const u of board.links[stack.pop()!]) if (isMember[u] && group[u] < 0) { group[u] = groups; stack.push(u); }
+    groups++;
   }
-  out.pop();
-  return out;
-}
-
-/** The shortest paths from `a` to `b` that turn at most once, each as the keys
- *  strictly between them: one when the two share an axis, otherwise two. */
-function oneTurnPaths(a: Cell, b: Cell): Cell[][] {
-  const legs = legsOf(b[0] - a[0], b[1] - a[1]);
-  return legs.length < 2 ? [walk(a, legs)] : [walk(a, legs), walk(a, [legs[1], legs[0]])];
-}
-
-/** The path keys: the fewest keys that, with the members, hold a one-turn path
- *  between enough pairs of members to link them all. Any two members may be
- *  joined, not only neighbors in the structure's order. Of equally small sets,
- *  the one whose path keys touch the members along the most edges, which
- *  keeps the shape compact; of those, the one that reaches highest in pitch,
- *  by its highest key and then its next; of sets alike in pitch (where
- *  pitches repeat), the one higher on the page, by its keys' heights summed
- *  (`tied` when even that is equal). Returned low to high. */
-function pathKeys(cells: ReadonlyArray<Cell>, layout: ShapeLayout): { keys: Cell[]; tied: boolean } {
-  const pitch = (c: Cell): number => freqAt(c[0], c[1], layout.mode, layout.mapping, layout.anchor, layout.banded);
-  /* a against b in pitch: 0 for two keys of one pitch, exactly (their frequencies may round apart) */
-  const byPitch = (a: Cell, b: Cell): number => (expsKey(exps(a, layout)) === expsKey(exps(b, layout)) ? 0 : pitch(a) - pitch(b));
-  const members = new Set(cells.map(String));
-  /* every one-turn path between two members, as the keys on it that are not members */
-  const cellOf = new Map<string, Cell>();
-  const links: Array<{ i: number; j: number; keys: string[] }> = [];
-  for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
-    for (const path of oneTurnPaths(cells[i], cells[j])) {
-      const extra = path.filter((c) => !members.has(String(c)));
-      extra.forEach((c) => cellOf.set(String(c), c));
-      links.push({ i, j, keys: extra.map(String) });
+  if (groups === 1) return { keys: [], tied: false };
+  /* what a key costs, and its place from the highest down */
+  const weight = new Int32Array(n);
+  for (let v = 0; v < n; v++) if (!isMember[v]) weight[v] = UNIT - board.links[v].reduce((t, u) => t + isMember[u], 0);
+  const pitch = (v: number): number => freqAt(board.cells[v][0], board.cells[v][1], layout.mode, layout.mapping, layout.anchor, layout.banded);
+  const pitchKey = board.cells.map((c) => expsKey(exps(c, layout)));
+  const order = [...Array(n).keys()].sort((a, b) => (pitchKey[a] === pitchKey[b] ? 0 : pitch(b) - pitch(a)) || height(board.cells[b]) - height(board.cells[a]) || a - b);
+  const rank = new Int32Array(n);
+  order.forEach((v, i) => { rank[v] = i; });
+  /* a tree's path keys as their ranks, ascending: of two as long, the one that reads lower first is higher */
+  const higher = (a: number[], b: number[]): number => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+  const joined = (a: number[], b: number[], shared: number): number[] => {
+    const out: number[] = [];
+    let i = 0, j = 0, dropped = shared < 0;
+    while (i < a.length || j < b.length) {
+      const x = j >= b.length || (i < a.length && a[i] <= b[j]) ? a[i++] : b[j++];
+      if (!dropped && x === shared) { dropped = true; continue; }
+      out.push(x);
+    }
+    return out;
+  };
+  const withKey = (a: number[], r: number): number[] => { const i = a.findIndex((x) => x > r); return i < 0 ? [...a, r] : [...a.slice(0, i), r, ...a.slice(i)]; };
+  const FAR = 0x3fffffff, FULL = (1 << groups) - 1;
+  const cost: Int32Array[] = [], keys: Array<Array<number[] | null>> = [];
+  for (let S = 1; S <= FULL; S++) {
+    const c = new Int32Array(n).fill(FAR), k: Array<number[] | null> = new Array(n).fill(null);
+    cost[S] = c; keys[S] = k;
+    if ((S & (S - 1)) === 0) {
+      /* one group: its members cost nothing */
+      const g = Math.log2(S);
+      for (const m of members) if (group[m] === g) { c[m] = 0; k[m] = []; }
+    } else {
+      /* two smaller trees meeting at v; the key v, if it is a path key, is in both */
+      const low = S & -S;
+      for (let v = 0; v < n; v++) for (let A = (S - 1) & S; A > 0; A = (A - 1) & S) {
+        if (!(A & low)) continue;
+        const B = S ^ A, ca = cost[A][v], cb = cost[B][v];
+        if (ca === FAR || cb === FAR) continue;
+        const total = ca + cb - weight[v];
+        if (total > c[v]) continue;
+        const made = joined(keys[A][v]!, keys[B][v]!, isMember[v] ? -1 : rank[v]);
+        if (total < c[v] || higher(made, k[v]!) < 0) { c[v] = total; k[v] = made; }
+      }
+    }
+    /* and out from there, a key at a time */
+    const queue: number[] = [];
+    for (let v = 0; v < n; v++) if (c[v] !== FAR) queue.push(v);
+    for (let at = 0; at < queue.length; at++) {
+      const v = queue[at];
+      for (const u of board.links[v]) {
+        const total = c[v] + weight[u];
+        if (total > c[u]) continue;
+        const made = isMember[u] ? k[v]! : withKey(k[v]!, rank[u]);
+        if (total < c[u] || higher(made, k[u]!) < 0) { c[u] = total; k[u] = made; queue.push(u); }
+      }
     }
   }
-  /* which members are linked once `shown` is drawn: a group id per member */
-  const groups = (shown: ReadonlySet<string>): number[] => {
-    const parent = cells.map((_, i) => i);
-    const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
-    for (const l of links) if (l.keys.every((k) => shown.has(k))) parent[find(l.i)] = find(l.j);
-    return cells.map((_, i) => find(i));
-  };
-  /* grow sets one link at a time, smallest first, each link joining two groups (one inside a
-     group never helps); the first size at which a set links everything is the smallest */
-  const seen = new Set<string>(['']);
-  const bySize: Array<Array<Set<string>>> = [[new Set<string>()]];
-  const smallest: Array<Set<string>> = [];
-  for (let size = 0; size < bySize.length && !smallest.length; size++) for (const shown of bySize[size] ?? []) {
-    const g = groups(shown);
-    if (g.every((x) => x === g[0])) { smallest.push(shown); continue; }
-    for (const l of links) {
-      if (g[l.i] === g[l.j]) continue;
-      const next = new Set(shown);
-      l.keys.forEach((k) => next.add(k));
-      const id = [...next].sort().join(' ');
-      if (seen.has(id)) continue;
-      seen.add(id);
-      (bySize[next.size] ??= []).push(next);
-    }
-  }
-  /* of equally small sets: the most edges between a path key and a member, then the highest in
-     pitch, then the higher on the page */
-  const touches = (set: ReadonlySet<string>): number => {
-    let n = 0;
-    for (const k of set) for (const m of cells) if (hexDistance(cellOf.get(k)!, m) === 1) n++;
-    return n;
-  };
-  const most = Math.max(...smallest.map(touches));
-  const highFirst = smallest.filter((set) => touches(set) === most)
-    .map((set) => [...set].map((k) => cellOf.get(k)!).sort((a, b) => byPitch(b, a) || height(b) - height(a)));
-  const over = (x: Cell[], y: Cell[]): number => {
-    for (let i = 0; i < x.length; i++) { const d = byPitch(x[i], y[i]); if (d) return d; }
-    return heights(x) - heights(y);
-  };
-  let best = highFirst[0], tied = false;
-  for (const set of highFirst.slice(1)) {
-    const d = over(set, best);
-    if (d > 0) { best = set; tied = false; } else if (d === 0) tied = true;
-  }
-  return { keys: best.slice().reverse(), tied };
+  const best = keys[FULL][members[0]]!;
+  return { keys: best.map((r) => board.cells[order[r]]).reverse(), tied: false };
 }
 
 /* ── the seams ── */
+
+/* The lattice's three straight axes: Q, R and the composed X = (−Q, +R). */
+const Q: Cell = [1, 0], R: Cell = [0, 1], X: Cell = [-1, 1];
 
 /* Where things lie on the lattice as a regular hexagonal grid: keys one unit
    apart, each a hexagon with a corner straight up. */
@@ -379,37 +392,45 @@ function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<read
 
 /* ── the shape ── */
 
-/** `members` on the lattice of `layout`, with the bass on a key named
- *  `bassName` near `ref`; null when no such key holds every member.
+/** `members` on the keyboard of `layout` whose reference `ref` is the
+ *  unaltered key of the starting note `root`; null when no key of it holds
+ *  every member.
  *
- *  Every key named `bassName` in reach is tried, and the one drawn is chosen
- *  in this order (Max, 2026-11-17 and -18):
- *   1. the plainest: the fewest comma marks on the bass itself, so a plain C
- *      before a C↓ or a hooked C, wherever a plain one holds the structure;
+ *  Every key of the keyboard is tried as the bass, whatever its name (Max,
+ *  2026-11-19: in the key of C a diminished seventh is wanted on B or F♯, not
+ *  on C, and an isomorphic shape starts from any column it fits). The one
+ *  drawn is chosen in this order (Max, 2026-11-17 to -19):
+ *   1. the plainest: the fewest comma marks on the bass itself, so a plain key
+ *      before one with an arrow or a hook, wherever a plain one holds the
+ *      structure;
  *   2. the closest arrangement: where pitches repeat, basses hold the members
  *      on different keys, and the one whose keys lie nearest its bass, by
  *      their distances in real space summed (`keyDistance`), is the shape;
- *   3. the one from nearest the band's spine column;
- *   4. the one that stands higher above its bass on the page;
- *   5. the one that writes the shape with the fewest HEJI arrows: the
+ *   3. the bass whose note is nearest `root` by fifths, by name: C, then G or
+ *      F, then D or B♭. Closeness comes first; among equally close shapes
+ *      the starting note itself is drawn wherever it holds one;
+ *   4. the one from nearest the band's spine column;
+ *   5. the one that stands higher above its bass on the page;
+ *   6. the one that writes the shape with the fewest HEJI arrows: the
  *      syntonic arrows on the members' labels, summed (septimal hooks and the
- *      path keys' labels do not count). This is what tells two columns apart
- *      for one shape;
- *   6. the left one, which no ruling stands behind (`undecided`).
- *  Basses of one position that hold the shape alike are the same shape in
- *  another octave or band: of those, the one nearest `ref`.
+ *      path keys' labels do not count);
+ *   7. the one nearest `ref`: by its distance, then in pitch, then the lower,
+ *      then the higher on the page. It settles the octaves of one column;
+ *   8. the left one, which no ruling stands behind (`undecided`).
  *
- *  Rule 1 stands before rule 2 (Max, 2026-11-18): the plain C is the example
- *  even where a marked one would hold the shape a little nearer. Over the 48
- *  layouts the gate runs that happens in 9 shapes, all in Syntonic, by at most
- *  0.54 key widths summed over the shape (test/shapes/oracle.mjs pins them). */
-export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, bassName = 'C', ref: Cell = [0, 0]): Shape | null {
-  const basses = bassCells(bassName, layout, ref);
+ *  Rule 1 stands before rule 2 (Max, 2026-11-18): the plain bass is the
+ *  example even where a marked one would hold the shape a little nearer. Over
+ *  the 48 layouts the gate runs that happens in 9 shapes, all in Syntonic, by
+ *  at most 0.54 key widths summed over the shape (test/shapes/oracle.mjs pins
+ *  them). */
+export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 'C', ref: Cell = [0, 0]): Shape | null {
+  const board = keyboard(root, layout, ref);
   interface Placed extends Bass { cells: Cell[]; keysTied: boolean; spread: number; rise: number; arrows: number; offsets: string }
   const arrowsOn = (c: Cell): number => Math.abs(hejiCommasFor(layout.mode, c[0], c[1], layout.mapping, layout.anchor, layout.banded).syn5);
+  /* every bass on the keyboard, with the members on the keyboard's keys */
   const placed: Placed[] = [];
-  for (const bass of basses) {
-    const at = place(bass.cell, members, layout);
+  for (const bass of board.basses) {
+    const at = place(bass.cell, members, layout, board);
     if (!at) continue;
     placed.push({
       ...bass, cells: at.cells, keysTied: at.tied,
@@ -420,30 +441,32 @@ export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, bassNam
     });
   }
   if (!placed.length) return null;
+  placed.sort((a, b) => a.position - b.position || nearer(a, b));
   const spine = Math.floor(4 / layoutOf(layout.mapping).c);
-  /* x against y, by rules 1 to 5 (one shape stands as high from any bass, so 4 never parts it) */
+  /* x against y, by rules 1 to 7 (one shape stands as high from any bass, so 5 never parts it) */
   const better = (x: Placed, y: Placed): number =>
-    y.marks - x.marks || byLength(y.spread, x.spread) || Math.abs(y.position - spine) - Math.abs(x.position - spine) || x.rise - y.rise || y.arrows - x.arrows;
-  /* `placed` runs left to right and, within a position, from nearest `ref`: of equals the first stays */
+    y.marks - x.marks || byLength(y.spread, x.spread) || y.fifths - x.fifths
+    || Math.abs(y.position - spine) - Math.abs(x.position - spine) || x.rise - y.rise || y.arrows - x.arrows || nearer(y, x);
+  /* `placed` runs left to right: of equals the left one stays */
   const drawn = placed.reduce((a, b) => (better(b, a) > 0 ? b : a));
   const { cells, position } = drawn;
   const undecided: Shape['undecided'] = [];
   const level = placed.filter((x) => x !== drawn && better(x, drawn) === 0);
-  if (level.some((x) => x.position === position && x.offsets === drawn.offsets && nearer(x, drawn) === 0)) undecided.push('bass');
+  if (level.some((x) => x.position === position && x.offsets === drawn.offsets)) undecided.push('bass');
   if (drawn.keysTied) undecided.push('keys');
   if (level.some((x) => x.offsets !== drawn.offsets)) undecided.push('position');
   if (level.some((x) => x.position !== position && x.offsets === drawn.offsets)) undecided.push('column');
   /* the positions this shape starts from: where the same keys, moved with a bass of that
-     position, sound the same members */
+     position, lie on its keyboard and sound the same members */
   const holds = (bass: Cell): boolean => {
     const from = exps(bass, layout);
     return members.every((m, i) => {
       const at: Cell = [bass[0] + cells[i][0] - cells[0][0], bass[1] + cells[i][1] - cells[0][1]];
-      return expsKey(exps(at, layout)) === expsKey(addExps(from, m));
+      return board.has.has(String(at)) && expsKey(exps(at, layout)) === expsKey(addExps(from, m));
     });
   };
-  const positions = [...new Set(basses.filter((b) => holds(b.cell)).map((b) => b.position))].sort((a, b) => a - b);
-  const { keys: path, tied: pathTied } = pathKeys(cells, layout);
+  const positions = [...new Set(board.basses.filter((b) => holds(b.cell)).map((b) => b.position))].sort((a, b) => a - b);
+  const { keys: path, tied: pathTied } = pathKeys(cells, layout, board);
   if (pathTied) undecided.push('path');
   /* a shape that fits from any position reads the same wherever the seams fall, so it shows none */
   const anywhere = positions.length === bandWidth(layout.mapping);

@@ -5,8 +5,10 @@
 //   /shapes.html                       Randal in Ptolemaic (the first guide)
 //   /shapes.html?mapping=…&mode=…      another mapping (a layout id) and tuning (5 P D 7 S Y,
 //                                      SHAPE_GUIDE_MODES); the page shows the shapes that layout holds
-//   /shapes.html?root=…                the note every shape starts on: one of the fifteen major-key
-//                                      tonics, by its id (Cb Gb Db Ab Eb Bb F C G D A E B Fs Cs)
+//   /shapes.html?root=…                the starting note, one of the fifteen major-key tonics, by its
+//                                      id (Cb Gb Db Ab Eb Bb F C G D A E B Fs Cs): the reference is
+//                                      its unaltered key, and a shape starts on it wherever it holds
+//                                      the shape as close as any note does
 //   /shapes.html?theme=dark            the dark theme: a dark page with light text, and in the
 //                                      pictures white seams and a white border on the member keys.
 //                                      shapes.html reads the parameter itself, before the first paint,
@@ -14,7 +16,7 @@
 
 import { SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
 import { tonicLabel, tonicOfId } from '@hkl/shared/tonic.js';
-import { bandWidth, isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
+import { isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { setHexSize, setRotation } from '../layout/geometry.js';
 import { buildGuide, rootedLayout, type GuideEntry, type GuideLayout } from './guide.js';
 import { renderDiagram, type DiagramStyle } from './diagram.js';
@@ -116,10 +118,11 @@ async function main(): Promise<void> {
   const title = `Lattice shapes from ${start}: ${mappingLabel(mapping)} mapping, ${TUNING_LABELS[mode]} tuning`;
   document.title = title;
   page.append(el('h1', '', title));
-  const three = bandWidth(mapping) === 3;
   page.append(el('p', 'legend',
-    `Every shape starts on ${start}. Solid keys are the notes of the shape; faint keys only show the way between them. `
-    + (three ? `“From” is where in its band of three columns the ${start} may sit: left, center or right. ` : `“From” is the column of its band the ${start} may sit in. `)
+    `A shape is listed only if it can be reached on the Lumatone in this layout with the reference note set to the unaltered ${start}. `
+    + 'Each is drawn in its closest reachable arrangement. '
+    + 'Solid keys are the notes of the shape; faint keys only show the way between them. '
+    + '“From” is the possible alignments for the lowest note inside its band. '
     + `A heavy ${dark ? 'white' : 'black'} line is a band seam, drawn where the starting position matters and the shape crosses one.`));
 
   const index = el('nav', 'index');

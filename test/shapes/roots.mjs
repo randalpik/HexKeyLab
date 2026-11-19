@@ -3,7 +3,8 @@
 // Pure Node, no dev server. The guide can start on any of the fifteen major-key tonics
 // (MAJOR_TONICS, C♭ … C♯). Its reference is then that tonic's key, placed as Composer places a
 // key's reference (findTonicCoord, @hkl/shared/tonic.js), with the anchor on that key's band.
-// The claim: a root's guide is C's guide with other names on the keys. Checked for all eight
+// The claim: a root's guide is C's guide with other names on the keys (a shape may start on any
+// key of the keyboard; which note it starts on moves with the root). Checked for all eight
 // preset mappings in the six tunings the guide is made for, every root, every structure and
 // interval of the catalog:
 //   K1  the tonic's key: named for the root, on the spine column of its band, 3-limit from A3 in
@@ -12,14 +13,17 @@
 //   K2  a shape is held from every root or from none
 //   K3  from every root a shape is the one it is from C, key for key from its bass: its keys, its
 //       path keys, its seams, the positions it starts from and the one drawn, the comma marks on
-//       every key, and nothing left to scan order
+//       every key, and the same choices left to scan order (test/shapes/oracle.mjs pins those)
 //   K4  HKL names every interval and every chord the same from every root
-//   K5  the keys' names are the root's: each key is as many fifths from its bass as from C
+//   K5  the keys' names are the root's: each key is as many fifths from its bass as from C, and
+//       the bass is the note as many fifths from the root as C's guide starts from C (a shape
+//       starts on the root wherever C's guide starts it on C, and on the root's G where that
+//       starts on G)
 // Printed, not pinned: the most accidentals a root puts on a key name, and the hues of its
 // starting keys (color goes with pitch, so those do change with the root).
 //
 // The solver's lookups are forgotten after each root (forgetShapes); without that this run
-// outgrows a 2 GB heap. About 1½ minutes.
+// outgrows a 2 GB heap. Several minutes.
 //
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/shapes/roots.mjs
 
@@ -83,7 +87,7 @@ for (const mapping of MAPPINGS) {
         most.set(root, m);
         if (mapping === 'randal' && mode === '5') hues.set(root, new Set([...(hues.get(root) ?? []), keyColor(sh.bass[0], sh.bass[1], mode, mapping, l.anchor, true).hue]));
         return { shape: [rel(sh.cells), rel(sh.path), sh.seams.map((pair) => rel(pair)).join(';'), sh.positions.join(), sh.position, keys.map(marks).join(' ')].join(' # '),
-          undecided: sh.undecided.join(), said, bassName: names[0], steps: names.map((n) => fifths(n) - fifths(names[0])).join() };
+          undecided: sh.undecided.join(), said, bassFrom: fifths(names[0]) - fifths(root), steps: names.map((n) => fifths(n) - fifths(names[0])).join() };
       });
       forgetShapes();
       return out;
@@ -97,9 +101,9 @@ for (const mapping of MAPPINGS) {
         check(`${tag} ${root}, ${a.name}: K2 held as from C`, !!g[i], !!fromC[i]);
         if (!g[i] || !fromC[i]) continue;
         check(`${tag} ${root}, ${a.name}: K3 the shape it is from C`, g[i].shape, fromC[i].shape);
-        check(`${tag} ${root}, ${a.name}: K3 nothing left to scan order`, g[i].undecided, '');
+        check(`${tag} ${root}, ${a.name}: K3 what is left to scan order is what is from C`, g[i].undecided, fromC[i].undecided);
         check(`${tag} ${root}, ${a.name}: K4 named as from C`, g[i].said, fromC[i].said);
-        check(`${tag} ${root}, ${a.name}: K5 starts on the root`, g[i].bassName, root);
+        check(`${tag} ${root}, ${a.name}: K5 starts as many fifths from the root as from C`, g[i].bassFrom, fromC[i].bassFrom);
         check(`${tag} ${root}, ${a.name}: K5 each key as many fifths from its bass as from C`, g[i].steps, fromC[i].steps);
       }
     }
@@ -111,7 +115,7 @@ for (const mapping of MAPPINGS) {
   const text = (g) => g.map((x) => [x.name, x.subtitle, x.ratio, x.cents, x.start, x.steps.join(' '), x.others.join(' ')].join('|')).join('\n');
   check('K the guide from E♭ reads as from C', text(e), text(c));
   check('K the guide from F♯ reads as from C', text(f), text(c));
-  check('K every entry from E♭ starts on E♭', e.every((x) => noteName(x.shape.bass[0], x.shape.bass[1], 'randal', rootedLayout(at, 'Eb').layout.anchor, true) === 'Eb'), true);
+  check('K every entry from E♭ starts on E♭ (as every entry of this layout starts on C)', e.every((x) => noteName(x.shape.bass[0], x.shape.bass[1], 'randal', rootedLayout(at, 'Eb').layout.anchor, true) === 'Eb'), true);
   forgetShapes();
 }
 console.log(`  ${solves} shapes solved: ${MAPPINGS.length * SHAPE_GUIDE_MODES.length} layouts, ${MAJOR_TONICS.length} roots`);
