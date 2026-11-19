@@ -31,7 +31,12 @@ h1 { font-size: 17pt; font-weight: 600; margin-bottom: 6pt; }
 h2 { font-size: 13pt; font-weight: 600; margin: 14pt 0 6pt; padding-bottom: 2pt; border-bottom: 1.5pt solid var(--ink); break-after: avoid; }
 .legend { color: var(--text); max-width: 6.2in; margin-bottom: 10pt; }
 .index { columns: 3; column-gap: 0.25in; font-size: 8.5pt; margin-bottom: 4pt; }
+/* a section of the contents stays in one column, unless it is what makes the table tall
+   (src/shapes/rows.ts contentsSplits): then it may break, but not inside a .keep, which holds its
+   heading with its first three lines, or its last three */
 .index-group { break-inside: avoid; margin-bottom: 6pt; }
+.index-group.split { break-inside: auto; }
+.index-group.split .keep, .index li { break-inside: avoid; }
 .index h4 { font-size: 9pt; font-weight: 600; }
 .index ol { padding-left: 2.2em; }
 .index a { color: inherit; text-decoration: none; }

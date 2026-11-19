@@ -3,8 +3,10 @@
 // Needs `pnpm dev` (the page is /shapes.html on the shared origin). One muted headless Chromium
 // (test/composer-test/lib/chromium.mjs passes --mute-audio), stopped at the end. The page has no
 // audio, MIDI or overlay code of its own. Checks, for Randal in Ptolemaic:
-//   P1  the page finishes: 129 entries, numbered 1 to 129 in guide order, an index entry for each,
-//       no page errors
+//   P1  the page finishes: 128 entries in guide order, each with the guide's number (a chord and
+//       its inversions share one: 1, 1.1, 1.2) and an id from it; the contents have one line to a
+//       number (74), named for the chord, scale or interval and leading to its first entry, and
+//       none for an inversion; no page errors
 //   P2  every entry shows its picture, loaded, at 4 device px per CSS px
 //   P3  each picture holds its keys as the lattice colors them (keyColorHex, the page's own
 //       module): every member key's color as a solid area, every path key's color at the path
@@ -22,7 +24,7 @@
 //       adjacent keys, says "from center or right" (the left C has that pitch only on a far key)
 //   P7  a tuning the guide is not made for (?mode=V, Schismatic; ?mode=E, Equal) falls back to
 //       Ptolemaic
-//   P9  Randal in Septimal shows the 144 entries it holds, the septimal chords and scales next to
+//   P9  Randal in Septimal shows the 143 entries it holds, the septimal chords and scales next to
 //       the ones they retune, every picture loaded, and no entry's text or picture reaches out
 //       of its share of the row
 //   P10 a starting note (?root=Eb, ?root=Fs): the title and the legend name it; the page holds
@@ -35,13 +37,16 @@
 //       exactly those are shown scaled down, in proportion, to the room of a row to themselves,
 //       each alone on its row, the widest (755 px as drawn) to 91%; every other picture is shown
 //       as drawn. The legend states the limit: a shape is listed only if it can be reached on the Lumatone
-//   P12 the hanging label, on a guide with fewer than 100 entries (Randal in Pythagorean, 56) and
-//       one with more (Randal in Septimal, 144): the number ends the same distance before the title in
+//   P12 the hanging label, on a guide with fewer than 100 entries (Randal in Pythagorean, 55) and
+//       one with more (Randal in Septimal, 143): the number ends the same distance before the title in
 //       every entry, whatever its digits, and never touches it; the title and the lines under it
 //       start at one indent, and a title that wraps keeps to it; the picture is not indented: it
 //       is centered in its entry's cell (the entry less its gutter)
+//   P13 the contents' columns, on four layouts: all three columns are used; a section sits whole
+//       in one column under its heading unless it may break (one longer than an even third of
+//       the table: the Intervals), and a break leaves at least three of its lines on either side
 //   P8  the dark theme (?theme=dark): <html data-theme="dark">, the ground and the sheet #161616,
-//       the text #f2f2f2, the legend's seam "white", all 129 entries. Each picture is compared
+//       the text #f2f2f2, the legend's seam "white", all 128 entries. Each picture is compared
 //       with the page's own painter run in the light style, pixel for pixel: it is the same size;
 //       every pixel inside a seam's black or a member key's dark border on paper is white; no
 //       other pixel is pure white; and no pure black is left
@@ -76,7 +81,7 @@ try {
   await loaded;
   let ready = null;
   for (let i = 0; i < 100 && !ready && !errors.length; i++) { ready = await cdp.evalJSON('document.body.dataset.ready ?? null'); if (!ready) await sleep(150); }
-  check('P1 the page finishes', ready, '129');
+  check('P1 the page finishes', ready, '128');
   check('P1 no page errors', errors.join(' | '), '');
 
   const report = ready ? await cdp.evalJSON(`(async () => {
@@ -88,10 +93,15 @@ try {
     const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
     const color = ([q, r]) => rgb(K.keyColorHex(q, r, layout.mode, layout.mapping, layout.anchor, layout.banded));
     const articles = [...document.querySelectorAll('article.entry')];
-    const out = { entries: articles.length, index: document.querySelectorAll('.index li').length, rows: [] };
+    /* the contents: each line's number (its list's start and its place in it), its text and where it leads */
+    const lines = [...document.querySelectorAll('.index ol')].flatMap((ol) => [...ol.querySelectorAll('li')].map((li, i) => (ol.start + i) + ' ' + li.textContent + ' ' + li.querySelector('a').getAttribute('href')));
+    const firsts = guide.filter((g, i) => i === 0 || parseInt(g.number, 10) !== parseInt(guide[i - 1].number, 10));
+    const out = { entries: articles.length, index: document.querySelectorAll('.index li').length, rows: [],
+      lines: lines.join('; '), wantLines: firsts.map((g) => parseInt(g.number, 10) + ' ' + g.listed[0].toUpperCase() + g.listed.slice(1) + ' #e' + g.number.replace('.', '-')).join('; '),
+      inversionLines: [...document.querySelectorAll('.index li')].filter((li) => /inversion/.test(li.textContent)).length };
     for (let i = 0; i < articles.length; i++) {
       const a = articles[i], g = guide[i], img = a.querySelector('img.diagram');
-      const row = { n: i + 1, id: a.id, num: a.querySelector('.num')?.textContent, name: a.querySelector('.name')?.textContent,
+      const row = { n: i + 1, id: a.id, num: a.querySelector('.num')?.textContent, wantNumber: g.number, name: a.querySelector('.name')?.textContent,
         want: g.name, wantTitle: g.title, position: a.querySelector('.position')?.textContent ?? '', wantPosition: g.subtitle, ratio: a.querySelector('.ratio')?.textContent, wantRatio: g.ratio,
         start: a.querySelector('.facts b')?.textContent, wantStart: g.start,
         intervals: a.querySelector('.intervals')?.textContent, wantSteps: g.steps.join(' '), wantOthers: g.others.join(' '), kind: g.kind,
@@ -130,7 +140,7 @@ try {
       const s = row.parentElement.getBoundingClientRect();
       return { columns: Number(row.dataset.columns), width: s.width, entries: [...row.children].map((e) => {
         const r = e.getBoundingClientRect(), img = e.querySelector('img.diagram');
-        return { n: Number(e.id.slice(1)), left: r.left - s.left, width: r.width, spare: img ? r.right - img.getBoundingClientRect().right : 999 };
+        return { n: articles.indexOf(e) + 1, left: r.left - s.left, width: r.width, spare: img ? r.right - img.getBoundingClientRect().right : 999 };
       }) };
     });
     return out;
@@ -138,15 +148,19 @@ try {
 
   if (report?.__error) { check('the in-page report runs', report.__error, ''); }
   else if (report) {
-    check('P1 entries', report.entries, 129);
-    check('P1 index entries', report.index, 129);
+    check('P1 entries', report.entries, 128);
+    check('P1 contents lines: one to a number', report.index, 74);
+    check('P1 the contents list each number once, as its chord, scale or interval, and lead to its first entry', report.lines, report.wantLines);
+    check('P1 no contents line is an inversion', report.inversionLines, 0);
+    check('P1 the major triad and its inversions', report.rows.slice(0, 3).map((r) => r.num + ' ' + r.id).join(', '), '1 e1, 1.1 e1-1, 1.2 e1-2');
     const cap = (s) => s[0].toUpperCase() + s.slice(1);
     /* a key's colored hexagon is about 624 CSS px² less its label; at 4 device px per CSS px, 16× that */
     const SOLID = 0.6 * 624 * 16;
     let sideBySide = 0, broken = 0;
     for (const r of report.rows) {
-      check(`P1 entry ${r.n} id`, r.id, 'e' + r.n);
-      check(`P4 entry ${r.n} title`, r.name, r.n + cap(r.wantTitle));
+      check(`P1 entry ${r.n} number`, r.num, r.wantNumber);
+      check(`P1 entry ${r.n} id`, r.id, 'e' + r.wantNumber.replace('.', '-'));
+      check(`P4 entry ${r.n} title`, r.name, r.wantNumber + cap(r.wantTitle));
       check(`P4 entry ${r.n} position under the title`, r.position, r.wantPosition);
       check(`P4 entry ${r.n} ratio`, r.ratio, r.wantRatio);
       check(`P4 entry ${r.n} start`, r.start, r.wantStart);
@@ -186,11 +200,11 @@ try {
         if (report.rows[e.n - 1].kind === 'scale') check(`P5 entry ${e.n}: a scale, at most two to a row`, row.columns <= 2, true);
       });
     }
-    check('P5 every entry is in a row', seen, 129);
+    check('P5 every entry is in a row', seen, 128);
     console.log('rows: ' + report.layout.map((r) => r.entries.length + '/' + r.columns).join(' '));
   }
 
-  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 56 of the 129, by
+  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 55 of the 128, by
      test/shapes/oracle.mjs) shows just those, numbered through, in the sections that have any.
      Saved first: --shot and --pdf are of the page as loaded above. */
   const saves = [];
@@ -220,12 +234,15 @@ try {
     sections: [...document.querySelectorAll('.section')].map((s) => s.querySelector('h2').textContent + ':' + s.querySelectorAll('article.entry').length).join(' '),
     text: document.getElementById('guide').textContent.includes('Not on this lattice'),
     m2: (() => { const a = [...document.querySelectorAll('article.entry')].find((e) => e.querySelector('.ratio')?.textContent === '256:243');
-      return a ? a.querySelector('.name').textContent.replace(/^\\d+/, '') + ' | ' + a.querySelector('.facts b').textContent : null; })(),
+      return a ? a.querySelector('.name').textContent.replace(/^[\\d.]+/, '') + ' | ' + a.querySelector('.facts b').textContent : null; })(),
   })`) : {};
-  check('P6 Randal in Pythagorean finishes with the 56 it holds', part, '56');
+  check('P6 Randal in Pythagorean finishes with the 55 it holds', part, '55');
   check('P6 heading', partial.heading, 'Lattice shapes from C: Randal mapping, Pythagorean tuning');
-  check('P6 entries numbered through', partial.nums, Array.from({ length: 56 }, (_, i) => i + 1).join());
-  check('P6 index and pictures', `${partial.index} ${partial.pictures}`, '56 56');
+  /* numbered through: a number, or the number before it with an inversion after a point */
+  { const nums = (partial.nums ?? '').split(','); let n = 0, ok = nums.length === 55;
+    for (const x of nums) { const m = /^(\d+)(\.[123])?$/.exec(x); if (!m) { ok = false; break; } const k = Number(m[1]); if (k !== n && k !== n + 1) ok = false; if (k === n && !m[2]) ok = false; n = k; }
+    check('P6 entries numbered through, a chord\'s inversions on its number', `${ok} to ${n}`, 'true to 32');
+    check('P6 contents lines and pictures', `${partial.index} ${partial.pictures}`, '32 55'); }
   check('P6 no section is empty, none says a shape is missing', /:0\b/.test(partial.sections ?? ':0') || partial.text, false);
   check('P6 the minor 2nd starts where its two adjacent keys work', partial.m2, 'Pythagorean minor 2nd | center or right');
   check('P6 no page errors', errors.join(' | '), '');
@@ -244,7 +261,7 @@ try {
   /* P7: Schismatic and Equal are not among the guide's tunings */
   for (const m of ['V', 'E']) {
     const n = await load('mapping=randal&mode=' + m);
-    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '129 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
+    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '128 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
   }
 
   /* P9: Randal in Septimal, where the septimal structures are */
@@ -259,9 +276,9 @@ try {
       pictures: [...document.querySelectorAll('img.diagram')].filter((i) => i.complete && i.naturalWidth > 0).length, out,
       sections: [...document.querySelectorAll('.section')].map((x) => x.querySelector('h2').textContent + ':' + x.querySelectorAll('article.entry').length).join(' ') };
   })()`) : {};
-  check('P9 Randal in Septimal finishes with the 144 it holds', septN, '144');
+  check('P9 Randal in Septimal finishes with the 143 it holds', septN, '143');
   check('P9 heading', sept.heading, 'Lattice shapes from C: Randal mapping, Septimal tuning');
-  check('P9 pictures', sept.pictures, 144);
+  check('P9 pictures', sept.pictures, 143);
   check('P9 nothing reaches out of its entry', sept.out, 0);
   console.log(`Randal in Septimal: ${sept.sections}`);
   console.log(`  in order: ${sept.roots}`);
@@ -271,6 +288,30 @@ try {
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 } });
     writeFileSync(arg('--septimal-shot'), Buffer.from(shot.data, 'base64'));
     console.log(`septimal screenshot ${width}×${height} → ${arg('--septimal-shot')}`);
+  }
+
+  /* P13: the contents' columns. A section sits whole in one column under its heading, unless it
+     is longer than an even third of the table: then it may run on into the next column, with at
+     least three lines on either side of every break and its heading with its first lines */
+  const CONTENTS = `(() => {
+  const index = document.querySelector('.index'), box = index.getBoundingClientRect(), gap = parseFloat(getComputedStyle(index).columnGap);
+  const col = (el) => Math.floor((el.getBoundingClientRect().left - box.left + 1) / ((box.width + gap) / 3));
+  const groups = [...document.querySelectorAll('.index-group')].map((g) => {
+    const lis = [...g.querySelectorAll('li')], by = {};
+    for (const li of lis) by[col(li)] = (by[col(li)] ?? 0) + 1;
+    return { heading: g.querySelector('h4').textContent, split: g.classList.contains('split'), lines: lis.length, parts: Object.values(by), headWithFirst: col(g.querySelector('h4')) === col(lis[0]) };
+  });
+  return { columns: new Set([...document.querySelectorAll('.index li')].map(col)).size, groups, height: Math.round(box.height) };
+})()`;
+  for (const [what, query, split] of [['Randal in Ptolemaic', 'mapping=randal&mode=5', 'Intervals'], ['Randal in Pythagorean', 'mapping=randal&mode=P', 'Intervals'], ['Chromatic in Syntonic', 'mapping=chromatic&mode=S', 'Intervals'], ['Euler in Polysyntonic', 'mapping=euler&mode=Y', null]]) {
+    await load(query);
+    const c = await cdp.evalJSON(CONTENTS);
+    if (split !== null) check(`P13 ${what}: the sections that may break`, c.groups.filter((g) => g.split).map((g) => g.heading).join(), split);
+    check(`P13 ${what}: the contents use all three columns`, c.columns, 3);
+    check(`P13 ${what}: a whole section sits in one column`, c.groups.filter((g) => !g.split && g.parts.length !== 1).map((g) => g.heading).join(), '');
+    check(`P13 ${what}: every heading is in the column of its first lines`, c.groups.filter((g) => !g.headWithFirst).map((g) => g.heading).join(), '');
+    check(`P13 ${what}: a break leaves at least three lines on either side`, c.groups.filter((g) => g.split && g.parts.some((n) => n < 3)).map((g) => g.heading + ' ' + g.parts.join('+')).join(), '');
+    console.log(`${what}: contents ${c.height} px tall; ` + c.groups.map((g) => `${g.heading} ${g.parts.join('+')}`).join(', '));
   }
 
   /* P12: the hanging label. Text is measured where it is drawn: the number's own glyphs, the
@@ -297,14 +338,14 @@ try {
     return { flush, indent: [...indents].join(), digits: Object.keys(gaps).join(), spread: Math.max(...all) - Math.min(...all), least: Math.min(...all), wrapped, bad: bad.slice(0, 3).join(' | '), misaligned: bad.length,
       byDigits: Object.entries(gaps).map(([d, g]) => d + ' digit: ' + Math.min(...g).toFixed(1) + '…' + Math.max(...g).toFixed(1)).join(', ') };
   })()`;
-  for (const [what, query, digits] of [['Randal in Pythagorean', 'mapping=randal&mode=P', '1,2'], ['Randal in Septimal', 'mapping=randal&mode=7', '1,2,3']]) {
+  for (const [what, query, digits] of [['Randal in Pythagorean', 'mapping=randal&mode=P', '1,2,3,4'], ['Randal in Septimal', 'mapping=randal&mode=7', '1,2,3,4']]) {
     await load(query);
     const lab = await cdp.evalJSON(LABELS);
-    check(`P12 ${what}: numbers of ${digits} digits`, lab.digits, digits);
+    check(`P12 ${what}: numbers of ${digits} characters (7, 47, 7.1, 47.3)`, lab.digits, digits);
     check(`P12 ${what}: the number ends the same distance before the title in every entry`, lab.spread < 0.6, true);
     check(`P12 ${what}: and never touches it`, lab.least > 2.5, true);
     check(`P12 ${what}: the title and the lines under it start at one indent`, `${lab.misaligned} ${lab.bad}`, '0 ');
-    check(`P12 ${what}: one indent for the whole guide, a digit wider from a hundred entries (px)`, lab.indent, digits === '1,2' ? '20.4' : '28.4');
+    check(`P12 ${what}: one indent for the whole guide, wide enough for its widest number, two digits and an inversion (px)`, lab.indent, '32.4');
     check(`P12 ${what}: every picture is centered in its entry, between its left edge and its gutter`, lab.flush, 0);
     console.log(`${what}: number to title, px: ${lab.byDigits}; ${lab.wrapped} titles wrap`);
   }
@@ -323,7 +364,7 @@ try {
       return { heading: document.querySelector('h1').textContent, title: document.title, legend: document.querySelector('.legend').textContent,
         starts: G.buildGuide(at, ${JSON.stringify(name)}).every((e) => N.noteName(e.shape.bass[0], e.shape.bass[1], 'randal', l.anchor, true) === ${JSON.stringify(name)}) };
     })()`) : {};
-    check(`P10 ${label}: the page finishes`, n, '129');
+    check(`P10 ${label}: the page finishes`, n, '128');
     check(`P10 ${label}: title`, `${got.heading} | ${got.title === got.heading}`, `Lattice shapes from ${label}: Randal mapping, Ptolemaic tuning | true`);
     check(`P10 ${label}: the legend names it`, got.legend, `A shape is listed only if it can be reached on the Lumatone in this layout with the reference note set to the unaltered ${label}. Each is drawn in its closest reachable arrangement. Solid keys are the notes of the shape; faint keys only show the way between them. “From” is the possible alignments for the lowest note inside its band. A heavy black line is a band seam, drawn where the starting position matters and the shape crosses one.`);
     check(`P10 ${label}: every shape starts on a key of that name`, got.starts, true);
@@ -331,7 +372,7 @@ try {
     check(`P10 ${label}: the entries, their text and their pictures' sizes are the C page's`, at < 0 && mine.length === theirs.length ? 'same' : `entry ${at + 1}: ${mine[at]}  ≠  ${theirs[at]}`, 'same');
   }
   const bad = await load('mapping=randal&mode=5&root=H');
-  check('P10 an unknown starting note falls back to C', `${bad} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '129 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
+  check('P10 an unknown starting note falls back to C', `${bad} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '128 Lattice shapes from C: Randal mapping, Ptolemaic tuning');
 
   /* P11: pictures wider than a sheet are scaled down to their row */
   const wideN = await load('mapping=chromatic&mode=5');
@@ -343,7 +384,7 @@ try {
       if (b.right > e.right + 0.5) out++;
       if (b.right > edge + 0.5) past++;
       const k = i.naturalWidth / i.width / 4;
-      if (i.dataset.scaled) scaled.push({ name: a.querySelector('.name').textContent.replace(/^\\d+/, ''), width: i.width, drawn: i.naturalWidth / 4, scale: Number(i.dataset.scaled),
+      if (i.dataset.scaled) scaled.push({ name: a.querySelector('.name').textContent.replace(/^[\\d.]+/, ''), width: i.width, drawn: i.naturalWidth / 4, scale: Number(i.dataset.scaled),
         ok: Math.abs(i.naturalHeight / i.naturalWidth - i.height / i.width) < 0.005 && Math.abs(i.width / (i.naturalWidth / 4) - Number(i.dataset.scaled)) < 0.002 && a.parentElement.children.length === 1 && a.parentElement.dataset.columns === '1' });
       else asDrawn.push(Math.abs(k - 1) < 0.001);
     }
@@ -351,16 +392,16 @@ try {
       scaled: scaled.length + ' scaled, all to ' + [...new Set(scaled.map((x) => x.width))].join('/') + ' px, each in proportion and alone on its row ' + scaled.every((x) => x.ok)
         + ', all of Pythagorean thirds ' + scaled.every((x) => /^(Pythagorean|Semiditonal) /.test(x.name)) + ', the widest drawn ' + Math.max(...scaled.map((x) => x.drawn)) + ' px to ' + Math.round(Math.min(...scaled.map((x) => x.scale)) * 100) + '%' };
   })()`) : {};
-  check('P11 Chromatic in Ptolemaic finishes', wideN, '119');
+  check('P11 Chromatic in Ptolemaic finishes', wideN, '118');
   check('P11 the legend states the limit', /^A shape is listed only if it can be reached on the Lumatone in this layout with the reference note set to the unaltered C\. Each is drawn in its closest reachable arrangement\./.test(await cdp.evalJSON(`document.querySelector('.legend').textContent`)), true);
   check('P11 no picture reaches out of its entry, or past the sheet\'s text edge', `${wide.out} ${wide.past}`, '0 0');
   check('P11 the pictures wider than a sheet are scaled down to a row', wide.scaled,
     '11 scaled, all to 687 px, each in proportion and alone on its row true, all of Pythagorean thirds true, the widest drawn 755 px to 91%');
-  check('P11 every other picture is shown as drawn', `${wide.asDrawn} ${wide.others}`, 'true 108');
+  check('P11 every other picture is shown as drawn', `${wide.asDrawn} ${wide.others}`, 'true 107');
 
   /* P8: the dark theme */
   const darkN = await load('theme=dark');
-  check('P8 the dark page finishes', darkN, '129');
+  check('P8 the dark page finishes', darkN, '128');
   const dark = darkN ? await cdp.evalJSON(`(async () => {
     const urls = performance.getEntriesByType('resource').map((e) => e.name);
     const find = (re) => urls.find((u) => re.test(u));
@@ -411,7 +452,7 @@ try {
     check('P8 <html data-theme>', dark.theme, 'dark');
     check('P8 ground, sheet, ink, rule', `${dark.ground} | ${dark.sheet} | ${dark.ink} | ${dark.rule}`, 'rgb(22, 22, 22) | rgb(22, 22, 22) | rgb(242, 242, 242) | rgb(242, 242, 242)');
     check('P8 the legend names the seam\'s color', /A heavy white line is a band seam/.test(dark.legend), true);
-    check('P8 entries', dark.entries, 129);
+    check('P8 entries', dark.entries, 128);
     let seamPx = 0, borderPx = 0;
     for (const r of dark.rows) {
       check(`P8 entry ${r.n}: the picture is the size of the light one`, r.sameSize, true);
@@ -423,7 +464,7 @@ try {
       check(`P8 entry ${r.n}: no pure black is left`, r.darkBlack, 0);
       seamPx += r.black; borderPx += r.border;
     }
-    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 129 pictures`);
+    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 128 pictures`);
   }
   if (arg('--dark-shot')) {
     const m = await cdp.send('Page.getLayoutMetrics');

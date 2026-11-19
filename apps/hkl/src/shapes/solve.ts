@@ -342,13 +342,21 @@ function keyReach(ux: number, uy: number): number {
   return reach;
 }
 
+/* A seam looks only at the keys beside it: those in this many columns on either side. */
+const BESIDE = 2;
+
 /** The seams between the bands `keys` occupy: none when they sit in one band.
  *  A seam runs along the layout's pure line, which is the R axis on an
- *  unsheared layout. Each seam is given for as far as the keys reach along
- *  that line, and one segment past that at either end. The reach is measured
- *  square to the line, so all the seams of a shape start level and end level. */
+ *  unsheared layout. Each seam is as long as the keys beside it need (Max,
+ *  2026-11-19): it covers the reach along that line of the keys in the two
+ *  columns on either side of it, and one segment past that at either end. The
+ *  keys farther off do not lengthen it, so a long shape is no taller than its
+ *  keys, and the seams of one shape need not start or end level. The reach is
+ *  measured square to the line. */
 function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<readonly [Cell, Cell]> {
   const band = (c: Cell): number => bandOfCell(c[0], c[1], layout.mapping);
+  const column = (c: Cell): number => posInBandOf(c[0], c[1], layout.mapping);
+  const width = bandWidth(layout.mapping);
   const bands = keys.map(band), bLo = Math.min(...bands), bHi = Math.max(...bands);
   if (bLo === bHi) return [];
   /* position along the seams' direction */
@@ -356,8 +364,6 @@ function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<read
   const [dx, dy] = place2d([-s / c, 1]), len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
   const along = (x: number, y: number): number => x * ux + y * uy;
   const reach = keyReach(ux, uy);
-  const centers = keys.map((k) => along(...place2d(k)));
-  const from = Math.min(...centers) - reach, to = Math.max(...centers) + reach;
   /* every segment of the seams between the occupied bands, anywhere near the keys: the pair of
      adjacent keys it runs between, and the stretch of the direction it covers */
   const qs = keys.map((k) => k[0]), rs = keys.map((k) => k[1]);
@@ -381,7 +387,12 @@ function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<read
   }
   const EPS = 1e-9;
   const seams: Array<readonly [Cell, Cell]> = [];
-  for (const segs of bySeam.values()) {
+  for (const [lo, segs] of bySeam) {
+    /* the keys beside this seam: the last two columns of the band before it, the first two of the band after */
+    const near = keys.filter((k) => (band(k) === lo && column(k) >= width - BESIDE) || (band(k) === lo + 1 && column(k) < BESIDE));
+    if (!near.length) continue;
+    const centers = near.map((k) => along(...place2d(k)));
+    const from = Math.min(...centers) - reach, to = Math.max(...centers) + reach;
     const beside = segs.filter((g) => g.to > from + EPS && g.from < to - EPS);
     const before = segs.filter((g) => g.to <= from + EPS).sort((x, y) => y.to - x.to)[0];
     const after = segs.filter((g) => g.from >= to - EPS).sort((x, y) => x.from - y.from)[0];

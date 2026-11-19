@@ -20,7 +20,7 @@ import { isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { setHexSize, setRotation } from '../layout/geometry.js';
 import { buildGuide, rootedLayout, type GuideEntry, type GuideLayout } from './guide.js';
 import { renderDiagram, type DiagramStyle } from './diagram.js';
-import { indentOf, room, rowsOf, shownSize, type Fit } from './rows.js';
+import { CONTENTS_KEEP, contentsSplits, indentOf, room, rowsOf, shownSize, type Fit } from './rows.js';
 import { GUIDE_ALIGNMENT, GUIDE_ROTATION, type ShapeLayout } from './solve.js';
 
 /* How the pictures are drawn. The page is Lumatone rotation at Vertical
@@ -66,13 +66,16 @@ function fitOf(g: GuideEntry, picture: number): Fit {
   return g.kind === 'scale' && fit === 3 ? 2 : fit;
 }
 
+/** An entry's id on the page, from its number: e7, e7-1. */
+const idOf = (g: GuideEntry): string => 'e' + g.number.replace('.', '-');
+
 /** One entry: its number and title, a chord's position under it, then its ratio,
  *  starting position, intervals and picture. With it, how many can share its row. */
-function entry(g: GuideEntry, n: number): { box: HTMLElement; fit: Fit } {
+function entry(g: GuideEntry): { box: HTMLElement; fit: Fit } {
   const box = el('article', 'entry');
-  box.id = 'e' + n;
+  box.id = idOf(g);
   const head = el('h3', 'name');
-  head.append(el('span', 'num', String(n)), capital(g.title));
+  head.append(el('span', 'num', g.number), capital(g.title));
   box.append(head);
   if (g.subtitle) box.append(el('p', 'position', g.subtitle));
   const facts = el('p', 'facts');
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
   const guide = buildGuide(at, root);
   const page = document.getElementById('guide')!;
   /* the hanging indent of titles and text, wide enough for the guide's last number (shapes.html --indent) */
-  page.style.setProperty('--indent', indentOf(guide.length) + 'px');
+  page.style.setProperty('--indent', indentOf(guide.map((g) => g.number)) + 'px');
   const start = tonicLabel(root);
   const title = `Lattice shapes from ${start}: ${mappingLabel(mapping)} mapping, ${TUNING_LABELS[mode]} tuning`;
   document.title = title;
@@ -127,25 +130,28 @@ async function main(): Promise<void> {
 
   const index = el('nav', 'index');
   page.append(index);
-  let n = 0;
+  const contents: Array<{ heading: string; first: number; lines: HTMLElement[] }> = [];
   for (const [heading, belongs] of SECTIONS) {
     const entries = guide.filter(belongs);
     if (!entries.length) continue;
-    const list = el('ol', '');
-    list.start = n + 1;
-    const group = el('div', 'index-group');
-    group.append(el('h4', '', heading), list);
-    index.append(group);
+    /* the contents: one line to a number, so a chord and its inversions are one line, which
+       leads to the first of them the layout holds (Max, 2026-11-19) */
+    const lines: HTMLElement[] = [];
+    contents.push({ heading, first: parseInt(entries[0].number, 10), lines });
     const section = el('section', 'section');
     section.append(el('h2', '', heading));
+    let listed = 0;
     const made = entries.map((g) => {
-      n++;
-      const item = el('li', '');
-      const link = el('a', '', capital(g.name));
-      link.href = '#e' + n;
-      item.append(link);
-      list.append(item);
-      return entry(g, n);
+      const number = parseInt(g.number, 10);
+      if (number !== listed) {
+        listed = number;
+        const item = el('li', '');
+        const link = el('a', '', capital(g.listed));
+        link.href = '#' + idOf(g);
+        item.append(link);
+        lines.push(item);
+      }
+      return entry(g);
     });
     /* rows of three, two or one, each shared equally (./rows.ts) */
     for (const r of rowsOf(made.map((m) => m.fit))) {
@@ -156,6 +162,28 @@ async function main(): Promise<void> {
     }
     page.append(section);
   }
-  document.body.dataset.ready = String(n);
+  /* a section of the contents is one block, kept in one column, unless it is what makes the
+     table tall (./rows.ts contentsSplits): then it may run on into the next column, between its
+     first three lines, which stay with its heading, and its last three */
+  const splits = contentsSplits(contents.map((c) => c.lines.length));
+  contents.forEach(({ heading, first, lines }, i) => {
+    const list = (from: number, to: number, cls: string): HTMLElement => {
+      const ol = el('ol', cls);
+      ol.start = first + from;
+      ol.append(...lines.slice(from, to));
+      return ol;
+    };
+    const group = el('div', 'index-group');
+    if (splits[i]) {
+      group.classList.add('split');
+      const head = el('div', 'keep');
+      head.append(el('h4', '', heading), list(0, CONTENTS_KEEP, ''));
+      group.append(head);
+      if (lines.length > 2 * CONTENTS_KEEP) group.append(list(CONTENTS_KEEP, lines.length - CONTENTS_KEEP, ''));
+      group.append(list(lines.length - CONTENTS_KEEP, lines.length, 'keep'));
+    } else group.append(el('h4', '', heading), list(0, lines.length, ''));
+    index.append(group);
+  });
+  document.body.dataset.ready = String(guide.length);
 }
 void main();

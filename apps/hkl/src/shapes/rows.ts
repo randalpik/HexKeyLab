@@ -15,12 +15,32 @@ export const room = (columns: number): number => SHEET / columns - GUTTER;
 /* An entry's title and text are set in by one indent, in which its number
    hangs; the picture is not (Max, 2026-11-18), so the indent takes no room
    from it and the rows do not depend on it. */
-const INDENT = (1.7 * 9 * 96) / 72, DIGIT = (0.6 * 10 * 96) / 72;
-/** The indent of a guide with `entries` entries, in CSS px: 15.3pt, which
- *  holds a number of two digits and the gap after it, and a digit's width
- *  (0.6em of the number's 10pt) more for every digit past two. One indent for
- *  the whole guide, so its entries line up. */
-export const indentOf = (entries: number): number => INDENT + Math.max(0, String(entries).length - 2) * DIGIT;
+const INDENT = (1.7 * 9 * 96) / 72, DIGIT = (0.6 * 10 * 96) / 72, POINT = (0.3 * 10 * 96) / 72;
+/** The indent of a guide whose entries are numbered `numbers` ("7", "7.1"), in
+ *  CSS px: 15.3pt, which holds a number of two digits and the gap after it,
+ *  and more by as much as the widest number is wider than two digits (a digit
+ *  is 0.6em of the number's 10pt, the point of an inversion 0.3em). One indent
+ *  for the whole guide, so its entries line up. */
+export function indentOf(numbers: ReadonlyArray<string>): number {
+  const width = (n: string): number => [...n].reduce((w, ch) => w + (ch === '.' ? POINT : DIGIT), 0);
+  return INDENT + Math.max(0, ...numbers.map((n) => width(n) - 2 * DIGIT));
+}
+
+/* The contents are set in columns, a section to a block (Max, 2026-11-19). A
+   section stays whole unless it is what makes the table tall: one longer than
+   an even share of the table's lines, which no arrangement of whole sections
+   could bring down to the others' height. Such a section may run on into the
+   next column, as long as a break leaves at least CONTENTS_KEEP of its lines
+   on either side. A section's heading and the space under it count as two
+   lines. */
+export const CONTENTS_KEEP = 3;
+const HEADING = 2;
+/** For each section of the contents, by its number of lines, whether it may
+ *  break across columns. */
+export function contentsSplits(lines: ReadonlyArray<number>, columns = 3): boolean[] {
+  const even = lines.reduce((total, n) => total + n + HEADING, 0) / columns;
+  return lines.map((n) => n >= 2 * CONTENTS_KEEP && n + HEADING > even);
+}
 
 /** The size a picture is shown at. Every picture is drawn at one key size
  *  and shown as drawn, but one wider than a row to itself is scaled down to

@@ -56,17 +56,15 @@ export interface Structure {
   name: string;
   /** The name without the position: "minor triad". A scale's is its name. */
   title: string;
+  /** The chord it is listed under, which its inversions share: its title. A
+   *  scale's is its name. */
+  chord: string;
   /** The members from the bass, ascending; the first is the unison. A scale
    *  ends on the octave. */
   members: ReadonlyArray<Exps>;
   /** How many times the chord it is listed under was turned, 0 for that chord
-   *  itself. */
+   *  itself: the position its name states, as an index into POSITION. */
   inversion: number;
-  /** The position its name states, as an index into POSITION. It is the
-   *  inversion, except for an inversion that is a chord in its own right: the
-   *  suspended fourth chord's first inversion is the suspended second chord,
-   *  in root position. */
-  position: number;
 }
 
 type R = readonly [number, number];
@@ -102,15 +100,15 @@ const TRIADS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   ['augmented triad', [[5, 4], [25, 16]]],
   /* 4096:5184:6561, two Pythagorean major 3rds */
   ['Pythagorean augmented triad', [[81, 64], [6561, 4096]]],
-  /* 6:8:9. Its first inversion, 8:9:12, is the suspended second chord (RENAMED below) */
-  ['suspended fourth chord', [[4, 3], [3, 2]]],
 ];
-/* An inversion that is a chord in its own right, by the chord it is listed under and the
-   inversion: HKL's chord namer (tuning/chords.ts), which the names here follow, gives 8:9:12
-   that name and no inversion. */
-const RENAMED: Readonly<Record<string, Readonly<Record<number, string>>>> = {
-  'suspended fourth chord': { 1: 'suspended second chord' },
-};
+/* The suspended chords, each listed by itself with no inversions (Max, 2026-11-19): the
+   suspended fourth, 6:8:9, and the suspended second, 8:9:12. Each is the other turned, and
+   HKL's chord namer (tuning/chords.ts), which the names here follow, gives each its own name in
+   root position; their remaining inversion, 9:12:16, is left out. */
+const SUSPENDED: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
+  ['suspended fourth chord', [[4, 3], [3, 2]]],
+  ['suspended second chord', [[9, 8], [3, 2]]],
+];
 const SEVENTHS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   /* major triad + Pythagorean minor 3rd */
   ['dominant seventh', [[5, 4], [3, 2], [16, 9]]],
@@ -189,29 +187,27 @@ const SCALES: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
 export const POSITION: ReadonlyArray<string> = ['in root position', 'in first inversion', 'in second inversion', 'in third inversion'];
 
 /** A chord and each of its inversions: the bass moves up an octave and the
- *  next member becomes the bass. An inversion in RENAMED takes that name, in
- *  root position. */
+ *  next member becomes the bass. */
 function withInversions(family: Family, name: string, root: ReadonlyArray<Exps>): Structure[] {
   const out: Structure[] = [];
   let members = root.slice();
   for (let inversion = 0; inversion < root.length; inversion++) {
-    const own = RENAMED[name]?.[inversion];
-    out.push(own
-      ? { kind: 'chord', family, name: own, title: own, members, inversion, position: 0 }
-      : { kind: 'chord', family, name: inversion ? name + ' ' + POSITION[inversion] : name, title: name, members, inversion, position: inversion });
+    out.push({ kind: 'chord', family, name: inversion ? name + ' ' + POSITION[inversion] : name, title: name, chord: name, members, inversion });
     const [, next, ...rest] = members;
     members = [next, ...rest, OCTAVE].map((e) => subExps(e, next));
   }
   return out;
 }
 
-/** Every chord and scale, in guide order: the triads, the sevenths and the
- *  augmented sixths, each followed by its inversions; then the scales. */
+/** Every chord and scale, in guide order: the triads, each followed by its
+ *  inversions, and the two suspended chords; the sevenths and the augmented
+ *  sixths, each followed by its inversions; then the scales. */
 export const STRUCTURES: ReadonlyArray<Structure> = [
   ...TRIADS.flatMap(([name, rs]) => withInversions('triad', name, stack(rs))),
+  ...SUSPENDED.map(([name, rs]): Structure => ({ kind: 'chord', family: 'triad', name, title: name, chord: name, members: stack(rs), inversion: 0 })),
   ...SEVENTHS.flatMap(([name, rs]) => withInversions('seventh', name, stack(rs))),
   ...AUGMENTED_SIXTHS.flatMap(([name, rs]) => withInversions('augmented sixth', name, stack(rs))),
-  ...SCALES.map(([name, rs]): Structure => ({ kind: 'scale', family: 'scale', name, title: name, members: stack(rs), inversion: 0, position: 0 })),
+  ...SCALES.map(([name, rs]): Structure => ({ kind: 'scale', family: 'scale', name, title: name, chord: name, members: stack(rs), inversion: 0 })),
 ];
 
 /** The intervals that occur within a structure: between any two of its members

@@ -34,6 +34,15 @@ import {
 import { positionLabel, solve, type Cell, type Shape, type ShapeLayout } from './solve.js';
 
 export interface GuideEntry {
+  /** Its number in the guide (Max, 2026-11-19). A chord and its inversions
+   *  share one number, with a count after a point from the second on: "7",
+   *  "7.1", "7.2". The count is of what the layout holds, so where it holds
+   *  only a chord's first and third inversions they are "7" and "7.1". A
+   *  scale and an interval have a number each. Numbers run from 1. */
+  number: string;
+  /** What that number is listed as in the contents: the chord, the scale or
+   *  the interval. A chord's inversions share it. */
+  listed: string;
   kind: 'chord' | 'scale' | 'interval';
   /** The section it is listed in. */
   family: Family | 'interval';
@@ -122,16 +131,27 @@ export function buildGuide(at: GuideLayout, root = 'C'): GuideEntry[] {
     const shape = solve(s.members, layout, root, ref);
     if (!shape) return null;
     return {
-      kind: s.kind, family: s.family, name: s.name, title: s.title, subtitle: s.kind === 'chord' ? POSITION[s.position] : '',
+      number: '', listed: s.chord,
+      kind: s.kind, family: s.family, name: s.name, title: s.title, subtitle: s.kind === 'chord' ? POSITION[s.inversion] : '',
       ratio: combinedRatio(s.members), cents: '', members: s.members,
       steps: steps.map(short), others: others.map(short), start: positionLabel(shape.positions, width), shape,
     };
   };
   const interval = (n: Named, shape: Shape): GuideEntry => ({
+    number: '', listed: n.name,
     kind: 'interval', family: 'interval', name: n.name, title: n.name, subtitle: '', ratio: fraction(n.exps),
     cents: centsOf(n.exps).toFixed(1) + '¢', members: [UNISON, n.exps],
     steps: [n.short], others: [], start: positionLabel(shape.positions, width), shape,
   });
   const held = <T>(x: T | null): x is T => x !== null;
-  return [...STRUCTURES.map(structure), ...intervals.map((n) => (n.shape ? interval(n, n.shape) : null))].filter(held);
+  const guide = [...STRUCTURES.map(structure), ...intervals.map((n) => (n.shape ? interval(n, n.shape) : null))].filter(held);
+  /* the numbers: a new one wherever the entry is not another position of the chord before it,
+     and otherwise that chord's number and how many of its positions came before */
+  let count = 0, positions = 0;
+  guide.forEach((g, i) => {
+    const before = guide[i - 1];
+    if (before && g.kind === 'chord' && before.kind === 'chord' && before.listed === g.listed) g.number = count + '.' + ++positions;
+    else { g.number = String(++count); positions = 0; }
+  });
+  return guide;
 }

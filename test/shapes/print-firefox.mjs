@@ -5,7 +5,8 @@
 // test/hkl-inspect/console-scan-firefox.mjs launches it: a throwaway profile with
 // media.volume_scale "0.0" (Firefox has no mute flag), its own port, and only the process this
 // script started is stopped. Loads /shapes.html, waits for the page to finish, and prints it to
-// a Letter PDF. Fails on a console or JavaScript error, or if the page does not finish.
+// a Letter PDF. Fails on a console or JavaScript error, if the page does not finish, or if the
+// contents' columns break a section where they may not.
 //
 //   node test/shapes/print-firefox.mjs <out.pdf>
 
@@ -81,6 +82,27 @@ async function main() {
       target: { context: ctx }, awaitPromise: true,
     });
     console.log(`Firefox: page finished with ${ready ?? 'nothing'} entries; ${info?.result?.value}`);
+    /* the contents as Firefox sets them in columns (page.mjs P13 holds Chromium to the same): all
+       three columns used, a whole section in one column, a break only in a section that may break,
+       with at least three lines on either side and the heading with the first lines */
+    const cont = await send('script.evaluate', { expression: `JSON.stringify((() => {
+  const index = document.querySelector('.index'), box = index.getBoundingClientRect(), gap = parseFloat(getComputedStyle(index).columnGap);
+  const col = (el) => Math.floor((el.getBoundingClientRect().left - box.left + 1) / ((box.width + gap) / 3));
+  const groups = [...document.querySelectorAll('.index-group')].map((g) => {
+    const lis = [...g.querySelectorAll('li')], by = {};
+    for (const li of lis) by[col(li)] = (by[col(li)] ?? 0) + 1;
+    return { heading: g.querySelector('h4').textContent, split: g.classList.contains('split'), lines: lis.length, parts: Object.values(by), headWithFirst: col(g.querySelector('h4')) === col(lis[0]) };
+  });
+  return { columns: new Set([...document.querySelectorAll('.index li')].map(col)).size, groups, height: Math.round(box.height) };
+})())`, target: { context: ctx }, awaitPromise: true });
+    const c = JSON.parse(cont?.result?.value ?? '{"columns":0,"groups":[]}');
+    const contentsFaults = [
+      ...(c.columns === 3 ? [] : [`${c.columns} columns used`]),
+      ...c.groups.filter((g) => !g.split && g.parts.length !== 1).map((g) => `${g.heading} is broken`),
+      ...c.groups.filter((g) => !g.headWithFirst).map((g) => `${g.heading}: heading apart from its lines`),
+      ...c.groups.filter((g) => g.split && g.parts.some((n) => n < 3)).map((g) => `${g.heading}: ${g.parts.join('+')}`),
+    ];
+    console.log(`Firefox: contents ${c.height} px tall; ` + c.groups.map((g) => `${g.heading} ${g.parts.join('+')}`).join(', ') + (contentsFaults.length ? `\nCONTENTS FAULTS: ${contentsFaults.join('; ')}` : ''));
     /* US Letter in cm, the page's own 0.6 in margins */
     const pdf = await send('browsingContext.print', {
       context: ctx, background: true, shrinkToFit: false,
@@ -90,7 +112,7 @@ async function main() {
     console.log(`pdf → ${out}`);
     if (errors.length) console.log('CONSOLE ERRORS:\n  ' + errors.join('\n  '));
     ws.close();
-    return ready === '129' && !errors.length ? 0 : 1;
+    return ready === '128' && !errors.length && !contentsFaults.length ? 0 : 1;
   } finally {
     cleanup();
   }
