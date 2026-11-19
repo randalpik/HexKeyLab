@@ -97,7 +97,8 @@ or HTTPS); `file://` doesn't work. Chromium also works for testing.
   (`apps/analyzer/cli/`, run via `pnpm analyze`). See [`apps/analyzer/README.md`](apps/analyzer/README.md).
 - **HKL Orchestrator** (`/orchestrator/`): samples a physical MIDI instrument into a
   velocity-layered `.hki`.
-- **Guide** (`/guide/`): the user guides in `docs/guide/`, as tabs.
+- **Guide** (`/guide/`): the user guides in `docs/guide/`, as tabs, and a **Layouts** tab showing
+  where chords, scales and intervals sit on the keyboard for a chosen mapping and tuning.
 - **OBS overlay host** (`apps/overlay-host`): a small Node server that serves a lean, read-only
   transparent overlay (lattice + Composer view) and a WebSocket relay, so OBS can composite HKL over
   a performance video. `pnpm overlay:dist && pnpm overlay:host`, then add an OBS Browser Source at

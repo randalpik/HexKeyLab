@@ -46,7 +46,6 @@ guide.forEach((g, i) => {
   const head = g.kind === 'interval' ? 'INTERVALS' : g.kind === 'scale' ? 'SCALES' : g.members.length === 3 ? 'TRIADS' : 'SEVENTHS';
   if (head !== section) { section = head; console.log(`──── ${head} ────\n`); }
   console.log(`${String(i + 1).padStart(2)}. ${g.name} — ${g.ratio}${g.cents ? '  ' + g.cents : ''}`);
-  if (!g.shape) { console.log('      not on this lattice\n'); return; }
   const sh = g.shape, hue = keyColor(sh.bass[0], sh.bass[1], mode, mapping, L.anchor, L.banded).hue;
   if (g.steps.length) console.log(`      steps: ${g.steps.join(', ')}${g.others.length ? '   also: ' + g.others.join(', ') : ''}`);
   console.log(`      start: ${g.start}   (drawn from the ${HUES[hue] ?? hue} C, ${full(sh.bass)} at ${sh.bass})`);

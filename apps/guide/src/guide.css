@@ -26,12 +26,16 @@ body {
 }
 
 /* ── Tab bar ── */
+/* The bar scrolls across when its tabs do not fit, which makes it a scroll box down as well, so
+   nothing in it may stick out below. Its bottom line is drawn inside it, and the active tab,
+   which sits on the bar's bottom edge, covers the line with its own ground. (The line was a
+   border the active tab reached over with a -1px margin: 1px to scroll, and a scrollbar.) */
 .g-tabs {
   display: flex;
   gap: 4px;
   padding: 8px 16px 0;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -1px 0 var(--border);
   flex: 0 0 auto;
   overflow-x: auto;
 }
@@ -55,7 +59,6 @@ body {
   color: var(--fg);
   background: var(--bg);
   border-color: var(--border);
-  margin-bottom: -1px;
 }
 
 /* ── Content ── */
@@ -71,6 +74,49 @@ body {
 }
 
 .g-doc[hidden] { display: none; }
+
+/* ── Layouts: the shape guide in a frame, under its two dropdowns ── */
+.g-layouts {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.g-layouts[hidden] { display: none; }
+
+.g-layouts-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.g-layouts-field select {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.g-layouts-open { color: var(--accent); margin-left: auto; }
+
+.g-layouts-frame {
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  /* the page's own ground (apps/hkl/shapes.html), so the frame does not flash while it loads */
+  background: #ddd;
+}
+.g-layouts-frame[data-theme="dark"] { background: #161616; }
 
 /* ── Markdown typography ── */
 .g-doc h1, .g-doc h2, .g-doc h3, .g-doc h4 {

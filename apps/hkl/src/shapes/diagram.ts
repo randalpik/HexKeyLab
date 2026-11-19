@@ -26,6 +26,12 @@ export interface DiagramStyle {
   heji: boolean;
   /** Seam stroke width, in the lattice's own units (it strokes seams at 2). */
   seamWidth: number;
+  /** The seams' color, and that of the hexagon behind a member key (its
+   *  border): dark on paper, white on a dark page, as the lattice itself
+   *  strokes its seams and rings its selected keys. A path key keeps the
+   *  lattice's dark border on either. */
+  seamColor: string;
+  memberBorderColor: string;
   /** Device pixels per CSS pixel of the canvas: 1 CSS px is 1/96 in on paper. */
   scale: number;
 }
@@ -45,16 +51,17 @@ const turn = (x: number, y: number): [number, number] => [x * cosT + y * sinT, -
 /* The lattice draws a key's color at hexR − 0.5 over a dark hexagon at
    hexR + 0.5 (buildHexLayer in render/draw.ts): a border 1 wide. */
 const LATTICE_BORDER = 1;
+const LATTICE_BORDER_COLOR = '#111';
 
-/** Draw `cells` as lattice keys: the dark hexagon behind each, `border` wider
- *  than its color, then its color and its label. `ox`, `oy` is where lattice
- *  (0, 0) lands on the canvas. */
-function drawKeys(ctx: CanvasRenderingContext2D, cells: ReadonlyArray<Cell>, state: TuningStateLike, style: DiagramStyle, border: number, ox: number, oy: number): void {
+/** Draw `cells` as lattice keys: the hexagon behind each, `border` wider than
+ *  its color and filled `borderColor`, then its color and its label. `ox`,
+ *  `oy` is where lattice (0, 0) lands on the canvas. */
+function drawKeys(ctx: CanvasRenderingContext2D, cells: ReadonlyArray<Cell>, state: TuningStateLike, style: DiagramStyle, border: number, borderColor: string, ox: number, oy: number): void {
   const { mode, mapping, anchor, banded } = state;
   ctx.save();
   ctx.translate(ox, oy);
   ctx.rotate(-tiltAngle);
-  ctx.fillStyle = '#111';
+  ctx.fillStyle = borderColor;
   for (const c of cells) { const [x, y] = flat(c); hexPath(ctx, x, y, hexR - 0.5 + border); ctx.fill(); }
   for (const c of cells) {
     const [x, y] = flat(c);
@@ -99,23 +106,24 @@ export function renderDiagram(shape: Shape, layout: ShapeLayout, style: DiagramS
     return [canvas, ctx];
   };
   const [canvas, ctx] = sheet();
-  /* the path keys go on a sheet of their own, laid over the paper at their
-     opacity, so a key's border, fill and label fade as one */
+  /* the path keys go on a sheet of their own, laid over the page at their
+     opacity, so a key's border, fill and label fade as one: toward white on
+     paper, toward the dark of a dark page */
   if (shape.path.length) {
     const [faint, fctx] = sheet();
-    drawKeys(fctx, shape.path, state, style, LATTICE_BORDER, ox, oy);
+    drawKeys(fctx, shape.path, state, style, LATTICE_BORDER, LATTICE_BORDER_COLOR, ox, oy);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = style.pathAlpha;
     ctx.drawImage(faint, 0, 0);
     ctx.restore();
   }
-  drawKeys(ctx, shape.cells, state, style, style.memberBorder, ox, oy);
+  drawKeys(ctx, shape.cells, state, style, style.memberBorder, style.memberBorderColor, ox, oy);
   if (seams.length) {
     ctx.save();
     ctx.translate(ox, oy);
     ctx.rotate(-tiltAngle);
-    ctx.strokeStyle = '#000';
+    ctx.strokeStyle = style.seamColor;
     ctx.lineWidth = seamW;
     ctx.lineCap = 'round';
     ctx.beginPath();

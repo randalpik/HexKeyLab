@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hkl/shared": "workspace:*",
     "marked": "^15.0.0"
   }
 }

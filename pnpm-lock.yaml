@@ -62,6 +62,9 @@ importers:
 
   apps/guide:
     dependencies:
+      '@hkl/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       marked:
         specifier: ^15.0.0
         version: 15.0.12

@@ -3,24 +3,35 @@
 // audio, no MIDI, none of the lattice's own page.
 //
 //   /shapes.html                       Randal in Ptolemaic (the first guide)
-//   /shapes.html?mapping=…&mode=…      any preset mapping and JI mode
+//   /shapes.html?mapping=…&mode=…      another mapping (a layout id) and tuning (5 P D 7 S Y,
+//                                      SHAPE_GUIDE_MODES); the page shows the shapes that layout holds
+//   /shapes.html?theme=dark            the dark theme: a dark page with light text, and in the
+//                                      pictures white seams and a white border on the member keys.
+//                                      shapes.html reads the parameter itself, before the first paint,
+//                                      and leaves it on <html data-theme>.
 
-import { anchorOf, TUNING_LABELS, TUNING_MODES, type TuningMode } from '@hkl/shared/freq.js';
+import { anchorOf, SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
 import { bandWidth, isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { setHexSize, setRotation } from '../layout/geometry.js';
 import { buildGuide, type GuideEntry } from './guide.js';
 import { renderDiagram, type DiagramStyle } from './diagram.js';
 import { rowsOf, type Fit } from './rows.js';
-import type { ShapeLayout } from './solve.js';
+import { GUIDE_ALIGNMENT, GUIDE_ROTATION, type ShapeLayout } from './solve.js';
 
 /* How the pictures are drawn. The page is Lumatone rotation at Vertical
-   alignment in HKL's medium hex size (Max, 2026-11-17). */
-const STYLE: DiagramStyle = { pathAlpha: 0.45, memberBorder: 1.5, heji: true, seamWidth: 4, scale: 4 };
+   alignment in HKL's medium hex size (Max, 2026-11-17). On the dark theme the
+   seams and the member keys' borders are white (Max, 2026-11-18); the labels
+   stay as the lattice draws them, since they sit on the key's color. */
+const dark = document.documentElement.dataset.theme === 'dark';
+const STYLE: DiagramStyle = {
+  pathAlpha: 0.45, memberBorder: 1.5, heji: true, seamWidth: 4, scale: 4,
+  seamColor: dark ? '#fff' : '#000', memberBorderColor: dark ? '#fff' : '#111',
+};
 
 const query = new URLSearchParams(location.search);
 const wantMapping = query.get('mapping') ?? 'randal', wantMode = query.get('mode') ?? '5';
 const mapping: Mapping = isMapping(wantMapping) ? wantMapping : 'randal';
-const mode: TuningMode = (TUNING_MODES as ReadonlyArray<string>).includes(wantMode) && wantMode !== 'E' ? wantMode as TuningMode : '5';
+const mode: TuningMode = SHAPE_GUIDE_MODES.find((m) => m === wantMode) ?? '5';
 const layout: ShapeLayout = { mode, mapping, anchor: anchorOf(0, 0, mapping), banded: true };
 
 const SECTIONS: ReadonlyArray<readonly [string, (g: GuideEntry) => boolean]> = [
@@ -64,7 +75,7 @@ function entry(g: GuideEntry, n: number): { box: HTMLElement; fit: Fit } {
   const facts = el('p', 'facts');
   facts.append(el('span', 'ratio', g.ratio));
   if (g.cents) facts.append(el('span', 'cents', g.cents));
-  if (g.shape) facts.append(' · from ', el('b', '', g.start));
+  facts.append(' · from ', el('b', '', g.start));
   box.append(facts);
   if (g.kind !== 'interval') {
     /* two parts, each kept whole: side by side when both fit on the line, otherwise "also"
@@ -79,7 +90,6 @@ function entry(g: GuideEntry, n: number): { box: HTMLElement; fit: Fit } {
     if (g.others.length) list.append(part('also', 'also', g.others));
     box.append(list);
   } else box.append(el('p', 'intervals', g.steps[0]));
-  if (!g.shape) { box.append(el('p', 'missing', 'Not on this lattice.')); return { box, fit: fitOf(g, 0) }; }
   const d = renderDiagram(g.shape, layout, STYLE);
   const img = el('img', 'diagram');
   img.src = d.canvas.toDataURL('image/png');
@@ -91,7 +101,8 @@ function entry(g: GuideEntry, n: number): { box: HTMLElement; fit: Fit } {
 
 async function main(): Promise<void> {
   setHexSize('medium');
-  setRotation('lumatone', mapping, 'vertical');
+  /* the pose the solver's "higher on the page" is measured in */
+  setRotation(GUIDE_ROTATION, mapping, GUIDE_ALIGNMENT);
   await document.fonts.load('12px BravuraText');
   const guide = buildGuide(layout);
   const page = document.getElementById('guide')!;
@@ -102,7 +113,7 @@ async function main(): Promise<void> {
   page.append(el('p', 'legend',
     'Every shape starts on C. Solid keys are the notes of the shape; faint keys only show the way between them. '
     + (three ? '“From” is where in its band of three columns the C may sit: left, center or right. ' : '“From” is the column of its band the C may sit in. ')
-    + 'A heavy black line is a band seam, drawn where the starting position matters and the shape crosses one.'));
+    + `A heavy ${dark ? 'white' : 'black'} line is a band seam, drawn where the starting position matters and the shape crosses one.`));
 
   const index = el('nav', 'index');
   page.append(index);

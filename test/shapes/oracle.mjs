@@ -34,22 +34,49 @@
 //      columns; the whole width only for an entry that needs it; a short row of thirds only at
 //      the end; an entry alone on a half only when last or before a whole-width entry; three
 //      thirds are never split; two thirds before two halves share their row as halves
-//   H  any layout: under each of the eight presets in Ptolemaic, and Randal in every JI mode,
-//      every shape the solver returns is exact (the counts are printed, not pinned)
+//   H  any layout: under each of the eight presets in every mode the guide is made for
+//      (SHAPE_GUIDE_MODES: not Equal, not Schismatic; 48 layouts), every shape the solver returns
+//      is exact (the counts are printed, not pinned), and the bass and the arrangement follow the
+//      solver's order, each rule re-derived here from the lattice. A shape may start from any
+//      key named C in reach of the reference. Nearness is real space, not key steps: the
+//      lattice as a regular hexagonal grid, computed here from the keys' places on it (and the
+//      solver's keyDistance is held to that, and to within 1% of HKL's own screen geometry).
+//      Each key is as near the bass as any key of its pitch; of equally near keys, none chosen otherwise lies closer together, and of those
+//      none stands higher on the page. Then, in order: (1) no C that holds the shape is plainer
+//      than the one drawn (a plain C before a C with an arrow or a hook); (2) of the plainest,
+//      none holds it nearer its bass; (3) of those, none starts nearer the spine column; (4) of
+//      those, no other arrangement stands higher above its bass; (5) of level ones, and of one
+//      shape from two columns, none is written with fewer HEJI arrows; (6) the left one. Of the
+//      Cs of one column that hold the shape alike, the nearest the reference. What rule 1 costs
+//      rule 2 is measured and pinned: the shapes some marked C would hold nearer than the plain
+//      C drawn (7 of them, all in Syntonic, by at most 0.54 key widths in all). The
+//      positions listed are exactly the columns where the same keys, moved with a C of that
+//      column, sound the members. No choice is left to scan order (`undecided` is empty on
+//      every shape). Pinned: Wicki-Hayden in Syntonic draws its wolf 5th four steps and three
+//      (√37 key widths), not six and one (√43), which are as many steps. "Higher on the page" is measured on HKL's
+//      real screen geometry (layout/geometry.ts) in the guide's pose, not by the solver's
+//      2q + 7r; marks are counted as the 5- and 7-exponents of a key's pitch, and every drawn
+//      key's exponents are held to the arrows and hooks HKL's label function gives it. Pinned:
+//      Park plays its major 2nd from the plain C of column 4, not the C↓ of column 2, and in
+//      Septimal its Pythagorean minor 3rd from a C with no hook; Randal in Pythagorean plays its
+//      minor 2nd, two adjacent keys, from center or right; a band of another width numbers its
+//      columns ("column 3 or 4 or 5")
 // Run: node --import ./test/orchestrator-smoke/register-ts.mjs test/shapes/oracle.mjs
 
 import {
-  STRUCTURES, POSITION, UNISON, OCTAVE, intervalSet, intervalsWithin, combinedRatio, expsKey, expsOf, addExps, subExps, centsOf,
+  STRUCTURES, POSITION, UNISON, OCTAVE, intervalSet, intervalsWithin, combinedRatio, expsKey, expsOf, addExps, subExps, centsOf, ratioOf,
 } from '../../apps/hkl/src/shapes/catalog.ts';
-import { solve, hexDistance, positionLabel } from '../../apps/hkl/src/shapes/solve.ts';
+import { solve, hexDistance, keyDistance, positionLabel, GUIDE_ROTATION, GUIDE_ALIGNMENT } from '../../apps/hkl/src/shapes/solve.ts';
+import { setHexSize, setRotation, hexToScreen, dxH } from '../../apps/hkl/src/layout/geometry.ts';
 import { buildGuide } from '../../apps/hkl/src/shapes/guide.ts';
 import { rowsOf } from '../../apps/hkl/src/shapes/rows.ts';
 import { analyzeChord } from '../../apps/hkl/src/tuning/chords.ts';
 import { intervalNameFromCoords, shortenInterval } from '../../apps/hkl/src/tuning/intervals.ts';
-import { coordExps, freqAt, anchorOf, TUNING_MODES } from '../../packages/shared/src/freq.ts';
-import { MAPPINGS, bandOfCell, posInBandOf, bandWidth } from '../../packages/shared/src/mapping.ts';
+import { coordExps, coordToMidi, freqAt, anchorOf, SHAPE_GUIDE_MODES } from '../../packages/shared/src/freq.ts';
+import { MAPPINGS, bandOfCell, posInBandOf, bandWidth, layoutOf as matrixOf } from '../../packages/shared/src/mapping.ts';
 import { noteName } from '../../packages/shared/src/notes.ts';
 import { keyColor } from '../../packages/shared/src/keycolor.ts';
+import { hejiCommasFor } from '../../packages/shared/src/heji.ts';
 
 let checks = 0, fails = 0;
 function check(label, got, want) {
@@ -146,8 +173,6 @@ let exhaustive = 0, pathKeyTotal = 0;
 const tied = [], byTouch = [];
 for (const g of guide) {
   const sh = g.shape;
-  check(`C ${g.name}: on the lattice`, !!sh, true);
-  if (!sh) continue;
   /* C: exact members, the bass, the positions */
   g.members.forEach((m, i) => check(`C ${g.name}: member ${i} exact`, expsKey(subExps(exps(sh.cells[i], L), exps(sh.bass, L))), expsKey(m)));
   check(`C ${g.name}: bass first`, String(sh.cells[0]), String(sh.bass));
@@ -338,19 +363,199 @@ check('R twelve thirds', rowsOf(Array(12).fill(3)).map((r) => r.count + '/' + r.
 check('R four halves (the scales)', rowsOf([2, 2, 2, 2]).map((r) => r.count + '/' + r.columns).join(' '), '2/2 2/2');
 
 /* ── H. any layout ── */
-const LAYOUTS = [...MAPPINGS.map((m) => layoutOf(m, '5')), ...TUNING_MODES.filter((m) => m !== 'E' && m !== '5').map((m) => layoutOf('randal', m))];
+check('H the guide\'s modes', SHAPE_GUIDE_MODES.join(' '), '5 P D 7 S Y');
+const LAYOUTS = SHAPE_GUIDE_MODES.flatMap((mode) => MAPPINGS.map((m) => layoutOf(m, mode)));
+/* how high a key stands on the page, in px, on HKL's own screen geometry in the guide's pose
+   (sy grows downward); two heights within a thousandth of a px are level */
+setHexSize('medium');
+const up = (c) => -hexToScreen(c[0], c[1]).sy;
+const ups = (cells) => cells.reduce((n, c) => n + up(c), 0);
+const LEVEL = 1e-3;
+/* how far apart two keys are in real space, in key widths: from their places on a regular
+   hexagonal grid; two lengths within a millionth of a key width are the same */
+const real = (a, b) => Math.hypot((b[0] - a[0]) + (b[1] - a[1]) / 2, ((b[1] - a[1]) * Math.sqrt(3)) / 2);
+const SAME = 1e-6;
+{
+  let worst = 0, off = 0;
+  for (let q = -9; q <= 9; q++) for (let r = -9; r <= 9; r++) {
+    if (!q && !r) continue;
+    off = Math.max(off, Math.abs(keyDistance([0, 0], [q, r]) - real([0, 0], [q, r])));
+    const s0 = hexToScreen(0, 0), s1 = hexToScreen(q, r), onScreen = Math.hypot(s1.sx - s0.sx, s1.sy - s0.sy) / dxH;
+    worst = Math.max(worst, Math.abs(onScreen / real([0, 0], [q, r]) - 1));
+  }
+  check('H keyDistance is the distance on a regular hexagonal grid', off < 1e-12, true);
+  check('H HKL\'s screen geometry is that grid to within 1%', worst < 0.01, true);
+}
+const undecidedAll = {}, undecidedWhere = [];
+/* the shapes a marked C would hold nearer than the plain C drawn, by layout, and the most it costs */
+const plainCosts = {};
+let plainCostMost = 0;
+let decidedByArrows = 0, markedAll = 0, solvedAll = 0;
+/* how far the solver looks from a bass: four bands along q, nine rows along r */
+const REACH_BANDS = 4, REACH_ROWS = 9;
 for (const l of LAYOUTS) {
-  let solved = 0;
+  let solved = 0, repeats = 0, marked = 0;
+  const left = {};
+  setRotation(GUIDE_ROTATION, l.mapping, GUIDE_ALIGNMENT);
+  const tag = `H ${l.mapping} ${l.mode}`;
+  const width = bandWidth(l.mapping), reachQ = REACH_BANDS * width, spine = Math.floor(4 / matrixOf(l.mapping).c);
+  /* the basses a shape may start from: every key named C in reach of (0, 0), each with its
+     column, its marks (its pitch's 5- and 7-exponents) and how near (0, 0) it is: by distance,
+     then in pitch, then lower, then higher on the page */
+  const midi = (c) => coordToMidi(c[0], c[1], l.mapping);
+  const marksOf = (c) => Math.abs(exps(c, l)[2]) + Math.abs(exps(c, l)[3]);
+  const basses = [];
+  for (let q = -reachQ; q <= reachQ; q++) for (let r = -REACH_ROWS; r <= REACH_ROWS; r++) {
+    if (noteName(q, r, l.mapping, l.anchor, l.banded) !== 'C') continue;
+    const cell = [q, r];
+    basses.push({ p: posInBandOf(q, r, l.mapping), marks: marksOf(cell), cell, near: [hexDistance([0, 0], cell), Math.abs(midi(cell) - midi([0, 0])), midi(cell), -up(cell)] });
+  }
+  const nearer = (a, b) => a.near[0] - b.near[0] || a.near[1] - b.near[1] || a.near[2] - b.near[2] || (Math.abs(a.near[3] - b.near[3]) < LEVEL ? 0 : a.near[3] - b.near[3]);
+  /* every key in reach of a bass that sounds `m` above it (the keys around a bass, by pitch, kept) */
+  const around = new Map();
+  const keysOf = (bass, m) => {
+    let index = around.get(String(bass));
+    if (!index) {
+      index = new Map();
+      for (let q = bass[0] - reachQ; q <= bass[0] + reachQ; q++) for (let r = bass[1] - REACH_ROWS; r <= bass[1] + REACH_ROWS; r++) {
+        const k = expsKey(exps([q, r], l)), at = index.get(k);
+        if (at) at.push([q, r]); else index.set(k, [[q, r]]);
+      }
+      around.set(String(bass), index);
+    }
+    return index.get(expsKey(addExps(exps(bass, l), m))) ?? [];
+  };
+  const apart = (cells) => { let n = 0; for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) n += real(cells[i], cells[j]); return n; };
   const all = [...STRUCTURES.map((s) => s.members), ...SET.map((e) => [UNISON, e])];
   for (const members of all) {
     const sh = solve(members, l);
+    /* a position's arrangement: each member on a key of its pitch nearest the bass; of equally
+       near keys the choices closest together; of those the ones that stand highest (one, unless
+       two are level) */
+    const arrange = (bass) => {
+      const options = members.map((m) => {
+        const at = keysOf(bass, m), d = Math.min(...at.map((c) => real(bass, c)));
+        return at.filter((c) => real(bass, c) - d < SAME);
+      });
+      if (options.some((o) => !o.length)) return null;
+      let combos = [[]];
+      for (const o of options) combos = combos.flatMap((c) => o.map((k) => [...c, k]));
+      const least = Math.min(...combos.map(apart)), close = combos.filter((c) => apart(c) - least < SAME);
+      const top = Math.max(...close.map(ups));
+      return { options, best: close.filter((c) => top - ups(c) < LEVEL), spread: close[0].reduce((n, c) => n + real(bass, c), 0) };
+    };
+    const arranged = basses.map((b) => ({ ...b, a: arrange(b.cell) })).filter((x) => x.a);
+    check(`${tag}: solved exactly when some C holds every member`, !!sh, arranged.length > 0);
     if (!sh) continue;
     solved++;
-    members.forEach((m, i) => check(`H ${l.mapping} ${l.mode}: member ${i} exact`, expsKey(subExps(exps(sh.cells[i], l), exps(sh.bass, l))), expsKey(m)));
-    check(`H ${l.mapping} ${l.mode}: label`, typeof positionLabel(sh.positions, bandWidth(l.mapping)), 'string');
+    members.forEach((m, i) => check(`${tag}: member ${i} exact`, expsKey(subExps(exps(sh.cells[i], l), exps(sh.bass, l))), expsKey(m)));
+    /* a key's HEJI arrows are its pitch's 5-exponent, each 5 being a syntonic comma off the
+       Pythagorean spelling, and its hooks the 7-exponent; held to what HKL's labels draw */
+    for (const c of [...sh.cells, ...sh.path]) {
+      const h = hejiCommasFor(l.mode, c[0], c[1], l.mapping, l.anchor, l.banded);
+      check(`${tag}: a key's arrows are its 5-exponent`, Math.abs(h.syn5), Math.abs(exps(c, l)[2]));
+      check(`${tag}: a key's hooks are its 7-exponent`, Math.abs(h.sept7), Math.abs(exps(c, l)[3]));
+    }
+    const here = arranged.find((x) => String(x.cell) === String(sh.bass));
+    check(`${tag}: the bass is a C, in the position drawn`, !!here && here.p === sh.position, true);
+    if (!here) continue;
+    /* 1: no C that holds the members is plainer */
+    check(`${tag}: 1, the plainest C that holds it`, here.marks, Math.min(...arranged.map((x) => x.marks)));
+    if (here.marks > 0) marked++;
+    /* each key as near the bass as any of its pitch; of equally near keys, the choice closest
+       together, and of those the one that stands highest */
+    members.forEach((m, i) => check(`${tag}: member ${i} is a key of its pitch nearest the bass`, here.a.options[i].some((c) => String(c) === String(sh.cells[i])), true));
+    if (here.a.options.some((o) => o.length > 1)) repeats++;
+    check(`${tag}: of equally near keys, the closest together and then the highest`, here.a.best.some((c) => keys(c) === keys(sh.cells)), true);
+    check(`${tag}: "keys" is undecided exactly when two such choices are level`, sh.undecided.includes('keys'), here.a.best.length > 1);
+    /* 2: of the plainest, none holds the members nearer its bass; and nor does any C at all, so
+       rules 1 and 2 never pull apart */
+    const plain = arranged.filter((x) => x.marks === here.marks);
+    check(`${tag}: 2, the closest arrangement`, here.a.spread - Math.min(...plain.map((x) => x.a.spread)) < SAME, true);
+    const looser = here.a.spread - Math.min(...arranged.map((x) => x.a.spread));
+    if (looser > SAME) { plainCosts[`${l.mapping} ${l.mode}`] = (plainCosts[`${l.mapping} ${l.mode}`] ?? 0) + 1; plainCostMost = Math.max(plainCostMost, looser); }
+    /* 3: of those, none starts nearer the spine column */
+    const close = plain.filter((x) => x.a.spread - here.a.spread < SAME);
+    check(`${tag}: 3, from nearest the spine column`, Math.abs(sh.position - spine), Math.min(...close.map((x) => Math.abs(x.p - spine))));
+    /* 4, 5, 6: of those, another arrangement never stands higher above its bass; of level ones,
+       and of one shape from two columns, none is written with fewer arrows; then the left */
+    const rise = (cells, bass) => ups(cells) - cells.length * up(bass);
+    const offsets = (cells, bass) => cells.map((c) => [c[0] - bass[0], c[1] - bass[1]]).join(' ');
+    const arrows = (cells) => cells.reduce((n, c) => n + Math.abs(exps(c, l)[2]), 0);
+    let levelOther = false, levelSame = false, levelBass = false;
+    for (const x of close) {
+      if (x === here || Math.abs(x.p - spine) !== Math.abs(sh.position - spine)) continue;
+      const other = x.a.best[0], fewer = arrows(other) - arrows(sh.cells);
+      if (offsets(other, x.cell) === offsets(sh.cells, sh.bass)) {
+        if (x.p === sh.position) {
+          /* the same shape from another C of the column: the drawn one is the nearer the reference */
+          check(`${tag}: of the Cs of a column that hold the shape alike, the nearest the reference`, nearer(here, x) <= 0, true);
+          if (nearer(here, x) === 0) levelBass = true;
+          continue;
+        }
+        check(`${tag}: 5, one shape from two columns is drawn from the one with no more arrows`, fewer >= 0, true);
+        if (fewer === 0) { levelSame = true; check(`${tag}: 6, with as many arrows, from the left`, sh.position < x.p, true); }
+        else decidedByArrows++;
+        continue;
+      }
+      const d = rise(sh.cells, sh.bass) - rise(other, x.cell);
+      check(`${tag}: 4, no equally close arrangement stands higher above its bass`, d > -LEVEL, true);
+      if (Math.abs(d) < LEVEL) { check(`${tag}: 5, of level arrangements, none with fewer arrows`, fewer >= 0, true); if (fewer === 0) levelOther = true; }
+    }
+    check(`${tag}: "position" is undecided exactly when two such arrangements are level`, sh.undecided.includes('position'), levelOther);
+    check(`${tag}: "column" is undecided exactly when the shape starts from two such columns with as many arrows`, sh.undecided.includes('column'), levelSame);
+    check(`${tag}: "bass" is undecided exactly when two Cs of the column are as near the reference`, sh.undecided.includes('bass'), levelBass);
+    for (const u of sh.undecided) undecidedWhere.push(`${l.mapping} ${l.mode} ${ratioOf(members[members.length - 1]).join(':')} ${u}`);
+    for (const u of sh.undecided) { left[u] = (left[u] ?? 0) + 1; undecidedAll[u] = (undecidedAll[u] ?? 0) + 1; }
+    /* the positions: the columns where the same keys, moved with a C of that column, sound the members */
+    const same = [...new Set(basses.filter((b) => members.every((m, i) =>
+      expsKey(subExps(exps([b.cell[0] + sh.cells[i][0] - sh.bass[0], b.cell[1] + sh.cells[i][1] - sh.bass[1]], l), exps(b.cell, l))) === expsKey(m)))
+      .map((b) => b.p))].sort((a, b) => a - b);
+    check(`${tag}: positions are where the same keys work`, sh.positions.join(), same.join());
+    check(`${tag}: drawn from one of its positions`, same.includes(sh.position), true);
+    check(`${tag}: label`, positionLabel(sh.positions, width),
+      sh.positions.length === width ? 'any' : width === 3 ? sh.positions.map((p) => ['left', 'center', 'right'][p]).join(' or ') : 'column ' + sh.positions.map((p) => p + 1).join(' or '));
   }
-  console.log(`  ${l.mapping.padEnd(12)} ${l.mode}  ${String(solved).padStart(2)} of ${all.length} on the lattice`);
+  console.log(`  ${l.mapping.padEnd(12)} ${l.mode}  ${String(solved).padStart(2)} of ${all.length} on the lattice, ${String(repeats).padStart(2)} with equally near keys, ${String(marked).padStart(2)} from a marked C${Object.keys(left).length ? ', undecided: ' + JSON.stringify(left) : ''}`);
+  /* a layout's guide is exactly the shapes it holds, in catalog order, then the intervals it holds */
+  const g = buildGuide(l);
+  check(`H ${l.mapping} ${l.mode}: the guide holds what the layout holds`, g.length, solved);
+  check(`H ${l.mapping} ${l.mode}: structures in catalog order`, g.filter((e) => e.kind !== 'interval').map((e) => e.name).join(';'),
+    STRUCTURES.filter((s) => solve(s.members, l)).map((s) => s.name).join(';'));
+  check(`H ${l.mapping} ${l.mode}: every entry has its keys`, g.every((e) => e.shape && e.shape.cells.length === e.members.length), true);
+  markedAll += marked; solvedAll += solved;
 }
+/* Max, 2026-11-18: the plain C before a marked one; an exact tie between different keys to the
+   one visually higher; between two equally plain columns for one shape, to the one with the
+   fewest HEJI arrows. Over the 48 layouts nothing else is left to scan order */
+check('H no choice is left to scan order', undecidedWhere.join('; '), '');
+/* rule 1 before rule 2 (Max, 2026-11-18): the plain C is the example even where a marked C would
+   hold the shape a little nearer. Where that happens, and by how much at most, is pinned */
+check('H shapes a marked C would hold nearer than the plain C drawn', Object.entries(plainCosts).map(([k, n]) => `${k} ×${n}`).join('; '), 'accordion S ×6; park S ×1');
+check('H the most the plain C costs, in key widths summed over a shape', plainCostMost.toFixed(2), '0.54');
+/* Max's case: two arrangements of the wolf 5th as many steps apart and as high, one turning after
+   four steps and one after six; the nearer in real space is the shape */
+{
+  const l = layoutOf('wickiHayden', 'S'), e = buildGuide(l).find((x) => x.ratio === '40:27'), [a, b] = e?.shape.cells ?? [[0, 0], [0, 0]];
+  check('H Wicki-Hayden in Syntonic, wolf 5th', `${e?.name} | ${hexDistance(a, b)} steps | ${Math.round(real(a, b) ** 2)} key widths squared`, 'wolf 5th | 7 steps | 37 key widths squared');
+}
+console.log(`  ${solvedAll} shapes over the ${LAYOUTS.length} layouts: ${markedAll} start on a marked C (no plain C holds them); two columns for one shape: ${decidedByArrows} decided by arrows; undecided: ${JSON.stringify(undecidedAll)}`);
+/* Max's case: on Park the C of column 2 is a C↓ in Ptolemaic and a hooked C in Septimal, and the
+   C of column 4 is plain; both hold these shapes, and the plain one is the example */
+const marksAt = (c, l) => { const h = hejiCommasFor(l.mode, c[0], c[1], l.mapping, l.anchor, l.banded); return Math.abs(h.syn5) + Math.abs(h.sept7); };
+for (const [mode, ratio, want] of [['5', '10:9', 'major 2nd | column 2 or 4 | from column 4, 0 marks on its C'], ['5', '40:27', 'wolf 5th | column 2 or 4 | from column 4, 0 marks on its C'],
+  ['7', '32:27', 'Pythagorean minor 3rd | column 2 or 4 or 6 | from column 4, 0 marks on its C']]) {
+  const l = layoutOf('park', mode), e = buildGuide(l).find((x) => x.ratio === ratio);
+  check(`H Park ${mode}, ${ratio}`, e ? `${e.name} | ${e.start} | from column ${e.shape.position + 1}, ${marksAt(e.shape.bass, l)} marks on its C` : null, want);
+}
+/* Max's case: in Pythagorean the left C has its minor 2nd only on a far key, so the two adjacent
+   keys are played from center or right (drawn from center, they sit in one band: no seam) */
+const m2 = buildGuide(layoutOf('randal', 'P')).find((e) => e.ratio === '256:243');
+check('H Randal in Pythagorean, minor 2nd', `${m2?.name} | ${m2?.start} | ${m2 ? hexDistance(...m2.shape.cells) : ''} | ${m2?.shape.seams.length} seam segments`,
+  'Pythagorean minor 2nd | center or right | 1 | 0 seam segments');
+check('H label, three columns', [positionLabel([0, 1, 2], 3), positionLabel([1, 2], 3), positionLabel([0], 3)].join('; '), 'any; center or right; left');
+check('H label, other widths', [positionLabel([2, 3, 4], 6), positionLabel([0], 6), positionLabel([0, 1, 2, 3, 4, 5], 6), positionLabel([0, 1], 2)].join('; '),
+  'column 3 or 4 or 5; column 1; any; any');
 
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

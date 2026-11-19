@@ -5729,3 +5729,12 @@ With Extend pattern off, a click near the rim of the outline could select and so
 - **The guard counted the wrong thing.** "Outline found in at least 90% of the columns" counted columns with any white pixel, so labels satisfied it. A sanity check has to test a property the wrong answer lacks.
 - **The run printed the evidence**: `outline top y 950-1301`, where a zigzag spans about 40 rows. A range that should be narrow is worth a threshold or at least a second look.
 - **Every earlier session was fine by luck of direction**: the lattice had been moved before, but only downward, where the top-down search still met the outline first.
+
+## A box that scrolls one way scrolls both (2026-11-18)
+
+The Guide's tab bar had a scrollbar that moved it by one pixel, on every tab, since the bar was written (2026-06-07).
+
+- **`overflow-x: auto` makes `overflow-y` `auto` too.** CSS does not allow one axis to scroll while the other stays `visible`, so a bar meant to scroll across when its tabs do not fit is a scroll box down as well.
+- **Then a 1px overhang is 1px to scroll.** The active tab reached over the bar's bottom border with `margin-bottom: -1px`. Inside a scroll box that overhang is clipped, so the effect it was for never showed, and it is scrollable content, so a scrollbar did.
+- **Fix at the cause**: nothing sticks out. The bar's bottom line is an inset shadow inside the bar, and the active tab covers it with its own ground (`apps/guide/src/guide.css`). `overflow-y: hidden` would have hidden the scrollbar and kept the overhang.
+- `test/shapes/guide-tab.mjs` holds the bar to nothing to scroll, down or across (`scrollHeight − clientHeight`); it read 1 before the fix.

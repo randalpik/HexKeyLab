@@ -1,6 +1,7 @@
 import './guide.css';
 import { GUIDES, GUIDE_IDS, tabIdForFile } from './guides.js';
 import { renderInto } from './markdown.js';
+import { LAYOUTS_ID, LAYOUTS_LABEL, buildLayouts, choiceSection, parseChoice } from './layouts.js';
 
 const DEFAULT_TAB = GUIDES[0].id; // core
 
@@ -11,22 +12,32 @@ const contentEl = document.createElement('main');
 contentEl.className = 'g-content';
 app.append(tabsEl, contentEl);
 
-// ── Tab bar ──────────────────────────────────────────────────────────────
+// ── Tab bar: the guides, then Layouts (the lattice shape guide, ./layouts.ts) ──
+const TABS: ReadonlyArray<{ id: string; label: string }> = [...GUIDES, { id: LAYOUTS_ID, label: LAYOUTS_LABEL }];
 const tabButtons = new Map<string, HTMLButtonElement>();
-for (const g of GUIDES) {
+for (const t of TABS) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'g-tab';
-  b.textContent = g.label;
-  b.addEventListener('click', () => setHash(g.id));
+  b.textContent = t.label;
+  b.addEventListener('click', () => setHash(t.id));
   tabsEl.appendChild(b);
-  tabButtons.set(g.id, b);
+  tabButtons.set(t.id, b);
 }
 
 // ── Lazily-rendered section per guide ─────────────────────────────────────
 const sections = new Map<string, HTMLElement>();
+/* The Layouts section, built on first use. Choosing a layout there goes through
+   the hash, like every other navigation. */
+let layouts: ReturnType<typeof buildLayouts> | null = null;
 function sectionFor(id: string): HTMLElement {
   let sec = sections.get(id);
+  if (!sec && id === LAYOUTS_ID) {
+    layouts = buildLayouts((c) => setHash(LAYOUTS_ID, choiceSection(c)));
+    sec = layouts.el;
+    contentEl.appendChild(sec);
+    sections.set(id, sec);
+  }
   if (!sec) {
     const g = GUIDES.find((x) => x.id === id)!;
     sec = document.createElement('article');
@@ -42,7 +53,7 @@ function sectionFor(id: string): HTMLElement {
 let activeTab = '';
 
 function activate(tab: string, section: string | null): void {
-  if (!GUIDE_IDS.has(tab)) tab = DEFAULT_TAB;
+  if (!GUIDE_IDS.has(tab) && tab !== LAYOUTS_ID) tab = DEFAULT_TAB;
 
   if (tab !== activeTab) {
     activeTab = tab;
@@ -50,10 +61,15 @@ function activate(tab: string, section: string | null): void {
     for (const [id, sec] of sections) sec.hidden = id !== tab;
     target.hidden = false;
     for (const [id, b] of tabButtons) b.classList.toggle('active', id === tab);
-    document.title = `HexKeyLab Guide — ${GUIDES.find((g) => g.id === tab)!.label}`;
+    document.title = `HexKeyLab Guide — ${TABS.find((t) => t.id === tab)!.label}`;
   }
 
   const sec = sectionFor(tab);
+  /* Layouts: the rest of the hash is its mapping and tuning, not a heading to scroll to */
+  if (tab === LAYOUTS_ID) {
+    layouts!.show(parseChoice(section));
+    return;
+  }
   if (section) {
     const el = sec.querySelector<HTMLElement>(`[id="${section}"]`);
     if (el) {
@@ -64,7 +80,7 @@ function activate(tab: string, section: string | null): void {
   contentEl.scrollTop = 0;
 }
 
-// ── Hash routing: #<tab> or #<tab>/<section> ──────────────────────────────
+// ── Hash routing: #<tab> or #<tab>/<section>; #layouts/<mapping>/<mode> ───
 function parseHash(): { tab: string; section: string | null } {
   const raw = location.hash.replace(/^#/, '');
   if (!raw) return { tab: DEFAULT_TAB, section: null };

@@ -29,6 +29,12 @@ export const TUNING_LABELS: Readonly<Record<TuningMode, string>> = {
   Y: 'Polysyntonic',
 };
 
+/** The modes the lattice shape guide is made for (HKL's /shapes.html and the
+ *  Guide's Layouts tab, which both read this list). The guide matches ratios
+ *  exactly, so it leaves out Equal, which has none, and Schismatic, whose
+ *  band is an octave and a schisma. */
+export const SHAPE_GUIDE_MODES: ReadonlyArray<TuningMode> = TUNING_MODES.filter((m) => m !== 'E' && m !== 'V');
+
 /** The anchor (home band) for a reference cell: its band in its own frame.
  *  Syntonic / Polysyntonic leave this band unaltered (Pythagorean) and shift
  *  every other band by whole syntonic commas (`bandOffset`). */

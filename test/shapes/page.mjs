@@ -17,8 +17,20 @@
 //       starts where its part of the row starts, so the second entry of every two-entry row lines
 //       up; a scale is at most two to a row; no picture reaches into its entry's gutter
 //
-//   node test/shapes/page.mjs [--shot <png>] [--pdf <pdf>]
+//   P6  a layout that holds part of the catalog (Randal in Pythagorean) shows just those entries,
+//       numbered through, with no empty section and nothing marked missing; its minor 2nd, two
+//       adjacent keys, says "from center or right" (the left C has that pitch only on a far key)
+//   P7  a tuning the guide is not made for (?mode=V, Schismatic; ?mode=E, Equal) falls back to
+//       Ptolemaic
+//   P8  the dark theme (?theme=dark): <html data-theme="dark">, the ground and the sheet #161616,
+//       the text #f2f2f2, the legend's seam "white", all 71 entries. Each picture is compared
+//       with the page's own painter run in the light style, pixel for pixel: it is the same size;
+//       every pixel inside a seam's black or a member key's dark border on paper is white; no
+//       other pixel is pure white; and no pure black is left
+//
+//   node test/shapes/page.mjs [--shot <png>] [--pdf <pdf>] [--dark-shot <png>]
 //     --shot  also save a full-page screenshot;  --pdf  also save the page as printed (Letter)
+//     --dark-shot  also save a full-page screenshot of the dark theme
 
 import { writeFileSync } from 'node:fs';
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
@@ -160,18 +172,138 @@ try {
     console.log('rows: ' + report.layout.map((r) => r.entries.length + '/' + r.columns).join(' '));
   }
 
+  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 21 of the 71, by
+     test/shapes/oracle.mjs) shows just those, numbered through, in the sections that have any.
+     Saved first: --shot and --pdf are of the page as loaded above. */
+  const saves = [];
   if (arg('--shot')) {
     const m = await cdp.send('Page.getLayoutMetrics');
     const { width, height } = m.cssContentSize;
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 } });
     writeFileSync(arg('--shot'), Buffer.from(shot.data, 'base64'));
-    console.log(`screenshot ${width}×${height} → ${arg('--shot')}`);
+    saves.push(`screenshot ${width}×${height} → ${arg('--shot')}`);
   }
   if (arg('--pdf')) {
     const pdf = await cdp.send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true });
     writeFileSync(arg('--pdf'), Buffer.from(pdf.data, 'base64'));
-    console.log(`pdf → ${arg('--pdf')}`);
+    saves.push(`pdf → ${arg('--pdf')}`);
   }
+  for (const line of saves) console.log(line);
+  const again = new Promise((res) => { const off = cdp.on('Page.loadEventFired', () => { off(); res(); }); });
+  await cdp.send('Page.navigate', { url: URL + (URL.includes('?') ? '&' : '?') + 'mapping=randal&mode=P' });
+  await again;
+  let part = null;
+  for (let i = 0; i < 100 && !part && !errors.length; i++) { part = await cdp.evalJSON('document.body.dataset.ready ?? null'); if (!part) await sleep(150); }
+  const partial = part ? await cdp.evalJSON(`({
+    heading: document.querySelector('h1')?.textContent,
+    nums: [...document.querySelectorAll('article.entry .num')].map((n) => n.textContent).join(),
+    index: document.querySelectorAll('.index li').length,
+    pictures: [...document.querySelectorAll('img.diagram')].filter((i) => i.complete && i.naturalWidth > 0).length,
+    sections: [...document.querySelectorAll('.section')].map((s) => s.querySelector('h2').textContent + ':' + s.querySelectorAll('article.entry').length).join(' '),
+    text: document.getElementById('guide').textContent.includes('Not on this lattice'),
+    m2: (() => { const a = [...document.querySelectorAll('article.entry')].find((e) => e.querySelector('.ratio')?.textContent === '256:243');
+      return a ? a.querySelector('.name').textContent.replace(/^\\d+/, '') + ' | ' + a.querySelector('.facts b').textContent : null; })(),
+  })`) : {};
+  check('P6 Randal in Pythagorean finishes with the 21 it holds', part, '21');
+  check('P6 heading', partial.heading, 'Lattice shapes: Randal mapping, Pythagorean tuning');
+  check('P6 entries numbered through', partial.nums, Array.from({ length: 21 }, (_, i) => i + 1).join());
+  check('P6 index and pictures', `${partial.index} ${partial.pictures}`, '21 21');
+  check('P6 no section is empty, none says a shape is missing', /:0\b/.test(partial.sections ?? ':0') || partial.text, false);
+  check('P6 the minor 2nd starts where its two adjacent keys work', partial.m2, 'Pythagorean minor 2nd | center or right');
+  check('P6 no page errors', errors.join(' | '), '');
+  console.log(`Randal in Pythagorean: ${partial.sections}`);
+
+  /* load the page with a query and wait for it to finish; its entry count, or null */
+  const load = async (query) => {
+    const done = new Promise((res) => { const off = cdp.on('Page.loadEventFired', () => { off(); res(); }); });
+    await cdp.send('Page.navigate', { url: URL + (URL.includes('?') ? '&' : '?') + query });
+    await done;
+    let n = null;
+    for (let i = 0; i < 100 && !n && !errors.length; i++) { n = await cdp.evalJSON('document.body.dataset.ready ?? null'); if (!n) await sleep(150); }
+    return n;
+  };
+
+  /* P7: Schismatic and Equal are not among the guide's tunings */
+  for (const m of ['V', 'E']) {
+    const n = await load('mapping=randal&mode=' + m);
+    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '71 Lattice shapes: Randal mapping, Ptolemaic tuning');
+  }
+
+  /* P8: the dark theme */
+  const darkN = await load('theme=dark');
+  check('P8 the dark page finishes', darkN, '71');
+  const dark = darkN ? await cdp.evalJSON(`(async () => {
+    const urls = performance.getEntriesByType('resource').map((e) => e.name);
+    const find = (re) => urls.find((u) => re.test(u));
+    const G = await import(find(/\\/shapes\\/guide\\.ts/)), D = await import(find(/\\/shapes\\/diagram\\.ts/)), F = await import(find(/\\/shared\\/src\\/freq\\.ts/));
+    const layout = { mode: '5', mapping: 'randal', anchor: F.anchorOf(0, 0, 'randal'), banded: true };
+    const guide = G.buildGuide(layout);
+    /* the light theme's style (src/shapes/page.ts), for the page's own painter */
+    const LIGHT = { pathAlpha: 0.45, memberBorder: 1.5, heji: true, seamWidth: 4, scale: 4, seamColor: '#000', memberBorderColor: '#111' };
+    const css = (e, prop) => getComputedStyle(e)[prop];
+    const out = { theme: document.documentElement.dataset.theme ?? null, ground: css(document.documentElement, 'backgroundColor'),
+      sheet: css(document.getElementById('guide'), 'backgroundColor'), ink: css(document.body, 'color'),
+      rule: css(document.querySelector('h2'), 'borderBottomColor'), legend: document.querySelector('.legend').textContent,
+      entries: document.querySelectorAll('article.entry').length, rows: [] };
+    const articles = [...document.querySelectorAll('article.entry')];
+    for (let i = 0; i < articles.length; i++) {
+      const img = articles[i].querySelector('img.diagram');
+      const light = D.renderDiagram(guide[i].shape, layout, LIGHT).canvas;
+      const row = { n: i + 1, sameSize: light.width === img.naturalWidth && light.height === img.naturalHeight, seams: guide[i].shape.seams.length };
+      if (row.sameSize) {
+        const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0);
+        const d = x.getImageData(0, 0, c.width, c.height).data;
+        const l = light.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, light.width, light.height).data;
+        /* on paper: a seam is opaque #000, a member key's border opaque #111, and where a seam's
+           soft edge lies on a border, an opaque gray between the two */
+        const W = c.width, ink = (p) => l[p + 3] === 255 && l[p] === l[p + 1] && l[p] === l[p + 2] && l[p] <= 0x11;
+        let black = 0, border = 0, notWhite = 0, white = 0, stray = 0, darkBlack = 0;
+        for (let p = 0; p < d.length; p += 4) {
+          const lightInk = ink(p);
+          const isWhite = d[p + 3] === 255 && d[p] === 255 && d[p + 1] === 255 && d[p + 2] === 255;
+          if (lightInk) {
+            if (l[p] === 0) black++; else if (l[p] === 0x11) border++;
+            /* inside the ink: its four neighbors are ink too (a soft edge over a faint path key
+               is a blend with what is under it, on either theme) */
+            if (!isWhite && ink(p - 4) && ink(p + 4) && ink(p - 4 * W) && ink(p + 4 * W)) notWhite++;
+          }
+          if (isWhite) { white++; if (!lightInk) stray++; }
+          if (d[p + 3] === 255 && d[p] === 0 && d[p + 1] === 0 && d[p + 2] === 0) darkBlack++;
+        }
+        Object.assign(row, { black, border, notWhite, white, stray, darkBlack });
+      }
+      out.rows.push(row);
+    }
+    return out;
+  })()`) : null;
+  if (dark?.__error) check('P8 the in-page report runs', dark.__error, '');
+  else if (dark) {
+    check('P8 <html data-theme>', dark.theme, 'dark');
+    check('P8 ground, sheet, ink, rule', `${dark.ground} | ${dark.sheet} | ${dark.ink} | ${dark.rule}`, 'rgb(22, 22, 22) | rgb(22, 22, 22) | rgb(242, 242, 242) | rgb(242, 242, 242)');
+    check('P8 the legend names the seam\'s color', /A heavy white line is a band seam/.test(dark.legend), true);
+    check('P8 entries', dark.entries, 71);
+    let seamPx = 0, borderPx = 0;
+    for (const r of dark.rows) {
+      check(`P8 entry ${r.n}: the picture is the size of the light one`, r.sameSize, true);
+      if (!r.sameSize) continue;
+      check(`P8 entry ${r.n}: member keys have a border on paper`, r.border > 1000, true);
+      check(`P8 entry ${r.n}: black on paper exactly where it has a seam`, r.black > 0, r.seams > 0);
+      check(`P8 entry ${r.n}: every pixel inside a seam or a member key's border is white`, r.notWhite, 0);
+      check(`P8 entry ${r.n}: nothing else is pure white`, r.stray, 0);
+      check(`P8 entry ${r.n}: no pure black is left`, r.darkBlack, 0);
+      seamPx += r.black; borderPx += r.border;
+    }
+    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 71 pictures`);
+  }
+  if (arg('--dark-shot')) {
+    const m = await cdp.send('Page.getLayoutMetrics');
+    const { width, height } = m.cssContentSize;
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 } });
+    writeFileSync(arg('--dark-shot'), Buffer.from(shot.data, 'base64'));
+    console.log(`dark screenshot ${width}×${height} → ${arg('--dark-shot')}`);
+  }
+  check('P7, P8 no page errors', errors.join(' | '), '');
 } finally {
   await chrome.stop();
 }

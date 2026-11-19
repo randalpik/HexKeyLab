@@ -35,6 +35,8 @@ apps/
   composer/     score editor              (@hkl/composer)     → composer.md
   analyzer/     sample analyzer UI+CLI     (@hkl/analyzer)     → analyzer.md
   orchestrator/ MIDI-device sampler        (@hkl/orchestrator) → orchestrator.md
+  guide/        the user guides as tabs    (@hkl/guide)        plus a Layouts tab that frames HKL's
+                /shapes.html (hkl.md → Lattice shapes); depends on @hkl/shared only
   overlay-host/ OBS overlay distributable  (@hkl/overlay-host) → overlay.md
                 (Node relay + serves the lean read-only overlay build; NOT a dev-proxy app)
 packages/
@@ -270,6 +272,9 @@ ref's band is exactly the banded layout and a ref far from A3 starts with no arr
   (`apps/composer/src/notation/retune.ts`) and `TUNING_LABELS` (`apps/composer/src/setupDialog.ts`,
   and `@hkl/shared/freq.js`, which HKL's bridge and the shape guide read). One it won't: the `Record<string, …>` `TUNING_LABELS` in
   `apps/composer/src/input.ts`.
+- `SHAPE_GUIDE_MODES` (`@hkl/shared/freq.js`) is every mode but Equal and Schismatic, so a new
+  mode joins the lattice shape guide and the Guide's Layouts tab by itself. Leave it out there if
+  its ratios are not exact (hkl.md → Lattice shapes).
 - The selector `<option>` in `apps/hkl/index.html` and the `tuningDescription()` switch in
   `apps/hkl/src/bridge/hkl-side.ts`.
 - Run both `test/picker/` gates (they run the real picker over `TUNING_MODES`). Nothing is
