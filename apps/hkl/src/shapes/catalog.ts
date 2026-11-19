@@ -45,53 +45,111 @@ export function combinedRatio(members: ReadonlyArray<Exps>): string {
 }
 
 export type StructureKind = 'chord' | 'scale';
+/** The guide's sections of structures. */
+export type Family = 'triad' | 'seventh' | 'augmented sixth' | 'scale';
 
 export interface Structure {
   kind: StructureKind;
+  family: Family;
   /** Spelled out in full: "minor triad in first inversion". A chord in root
    *  position is just "minor triad". */
   name: string;
-  /** The name without the inversion: "minor triad". A scale's is its name. */
+  /** The name without the position: "minor triad". A scale's is its name. */
   title: string;
   /** The members from the bass, ascending; the first is the unison. A scale
    *  ends on the octave. */
   members: ReadonlyArray<Exps>;
-  /** A chord's inversion, 0 in root position. */
+  /** How many times the chord it is listed under was turned, 0 for that chord
+   *  itself. */
   inversion: number;
+  /** The position its name states, as an index into POSITION. It is the
+   *  inversion, except for an inversion that is a chord in its own right: the
+   *  suspended fourth chord's first inversion is the suspended second chord,
+   *  in root position. */
+  position: number;
 }
 
 type R = readonly [number, number];
 const stack = (rs: ReadonlyArray<R>): Exps[] => [UNISON, ...rs.map(([n, d]) => expsOf(n, d))];
 
 /* Root positions, as the ratios above the root. The third decides the triad;
-   a minor third is 6/5 unless the name says Pythagorean (32/27). */
+   a minor third is 6/5 unless the name says Pythagorean (32/27) or septimal
+   (7/6). A septimal structure sits next to the one it retunes, and only a
+   layout with 7-limit keys holds it (Max, 2026-11-18). */
 const TRIADS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   ['major triad', [[5, 4], [3, 2]]],
   ['minor triad', [[6, 5], [3, 2]]],
   ['Pythagorean minor triad', [[32, 27], [3, 2]]],
+  /* 6:7:9 */
+  ['septimal minor triad', [[7, 6], [3, 2]]],
   /* minor 3rd + Pythagorean minor 3rd */
   ['diminished triad', [[6, 5], [64, 45]]],
+  /* 5:6:7, minor 3rd + septimal minor 3rd */
+  ['septimal diminished triad', [[6, 5], [7, 5]]],
+  /* 16:20:25, two major 3rds */
+  ['augmented triad', [[5, 4], [25, 16]]],
+  /* 6:8:9. Its first inversion, 8:9:12, is the suspended second chord (RENAMED below) */
+  ['suspended fourth chord', [[4, 3], [3, 2]]],
 ];
+/* An inversion that is a chord in its own right, by the chord it is listed under and the
+   inversion: HKL's chord namer (tuning/chords.ts), which the names here follow, gives 8:9:12
+   that name and no inversion. */
+const RENAMED: Readonly<Record<string, Readonly<Record<number, string>>>> = {
+  'suspended fourth chord': { 1: 'suspended second chord' },
+};
 const SEVENTHS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   /* major triad + Pythagorean minor 3rd */
   ['dominant seventh', [[5, 4], [3, 2], [16, 9]]],
+  /* 4:5:6:7: the septimal dominant seventh chord holds a harmonic 7th interval (HKL's two
+     names, kept apart: Max, 2026-11-18) */
+  ['septimal dominant seventh', [[5, 4], [3, 2], [7, 4]]],
   ['minor seventh', [[6, 5], [3, 2], [9, 5]]],
   ['Pythagorean minor seventh', [[32, 27], [3, 2], [16, 9]]],
+  /* 12:14:18:21, the septimal minor triad with a harmonic 7th */
+  ['septimal minor seventh', [[7, 6], [3, 2], [7, 4]]],
   ['major seventh', [[5, 4], [3, 2], [15, 8]]],
   /* minor 3rd + Pythagorean minor 3rd + minor 3rd */
   ['diminished seventh', [[6, 5], [64, 45], [128, 75]]],
+  /* 135:162:189:224, minor 3rd + septimal minor 3rd + Pythagorean minor 3rd */
+  ['septimal diminished seventh', [[6, 5], [7, 5], [224, 135]]],
   /* Pythagorean minor 3rd + minor 3rd + major 3rd */
   ['half-diminished seventh', [[32, 27], [64, 45], [16, 9]]],
+  /* 5:6:7:9, minor 3rd + septimal minor 3rd + septimal major 3rd */
+  ['septimal half-diminished seventh', [[6, 5], [7, 5], [9, 5]]],
+];
+/* The augmented sixth chords, 5-limit: a major 3rd and an augmented 6th (225/128, which is
+   7.7 cents above the harmonic 7th) over the bass. The Italian is those two; the French adds
+   the augmented 4th between them (45/32, a major 3rd under the 6th) and the German the perfect
+   5th. A sixth is a sixth here: none of them is a chord with a seventh spelled another way
+   (Max, 2026-11-18). */
+const AUGMENTED_SIXTHS: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
+  /* 128:160:225 */
+  ['Italian augmented sixth chord', [[5, 4], [225, 128]]],
+  /* 128:160:180:225 */
+  ['French augmented sixth chord', [[5, 4], [45, 32], [225, 128]]],
+  /* 128:160:192:225 */
+  ['German augmented sixth chord', [[5, 4], [3, 2], [225, 128]]],
 ];
 /* Every scale has the same root, second (9/8), fourth, fifth and octave. A
-   Pythagorean scale takes the Pythagorean third; a lowered seventh is always
-   Pythagorean (16/9) and a leading tone always 5-limit (15/8). The melodic
-   minor is the ascending form, with a 5/3 sixth. */
+   Pythagorean scale takes the Pythagorean third. A lowered seventh is
+   Pythagorean (16/9), except in the Ptolemaic natural minor, which is 5-limit
+   throughout (6/5, 8/5, 9/5); a leading tone is always 5-limit (15/8). The
+   melodic minor is the ascending form, with a 5/3 sixth. A septimal minor
+   scale is the Pythagorean or Ptolemaic minor scale of its kind with its
+   minor third and minor sixth septimal (7/6, 14/9); the melodic minor's sixth
+   is major, so only its third moves. The Ptolemaic melodic minor has the
+   5-limit third (6/5) under the same sixth and seventh. The minors are
+   grouped by kind, so a scale sits next to its retunings. */
 const SCALES: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
   ['Ptolemaic major scale', [[9, 8], [5, 4], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
+  ['Ptolemaic natural minor scale', [[9, 8], [6, 5], [4, 3], [3, 2], [8, 5], [9, 5], [2, 1]]],
   ['Pythagorean natural minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [128, 81], [16, 9], [2, 1]]],
+  ['septimal natural minor scale', [[9, 8], [7, 6], [4, 3], [3, 2], [14, 9], [16, 9], [2, 1]]],
   ['Ptolemaic harmonic minor scale', [[9, 8], [6, 5], [4, 3], [3, 2], [8, 5], [15, 8], [2, 1]]],
+  ['septimal harmonic minor scale', [[9, 8], [7, 6], [4, 3], [3, 2], [14, 9], [15, 8], [2, 1]]],
+  ['Ptolemaic melodic minor scale', [[9, 8], [6, 5], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
   ['Pythagorean melodic minor scale', [[9, 8], [32, 27], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
+  ['septimal melodic minor scale', [[9, 8], [7, 6], [4, 3], [3, 2], [5, 3], [15, 8], [2, 1]]],
 ];
 
 /** A chord's position in words, by inversion. From the first inversion on
@@ -101,24 +159,29 @@ const SCALES: ReadonlyArray<readonly [string, ReadonlyArray<R>]> = [
 export const POSITION: ReadonlyArray<string> = ['in root position', 'in first inversion', 'in second inversion', 'in third inversion'];
 
 /** A chord and each of its inversions: the bass moves up an octave and the
- *  next member becomes the bass. */
-function withInversions(name: string, root: ReadonlyArray<Exps>): Structure[] {
+ *  next member becomes the bass. An inversion in RENAMED takes that name, in
+ *  root position. */
+function withInversions(family: Family, name: string, root: ReadonlyArray<Exps>): Structure[] {
   const out: Structure[] = [];
   let members = root.slice();
   for (let inversion = 0; inversion < root.length; inversion++) {
-    out.push({ kind: 'chord', name: inversion ? name + ' ' + POSITION[inversion] : name, title: name, members, inversion });
+    const own = RENAMED[name]?.[inversion];
+    out.push(own
+      ? { kind: 'chord', family, name: own, title: own, members, inversion, position: 0 }
+      : { kind: 'chord', family, name: inversion ? name + ' ' + POSITION[inversion] : name, title: name, members, inversion, position: inversion });
     const [, next, ...rest] = members;
     members = [next, ...rest, OCTAVE].map((e) => subExps(e, next));
   }
   return out;
 }
 
-/** Every chord and scale, in guide order: the triads, then the sevenths, each
- *  followed by its inversions; then the scales. */
+/** Every chord and scale, in guide order: the triads, the sevenths and the
+ *  augmented sixths, each followed by its inversions; then the scales. */
 export const STRUCTURES: ReadonlyArray<Structure> = [
-  ...TRIADS.flatMap(([name, rs]) => withInversions(name, stack(rs))),
-  ...SEVENTHS.flatMap(([name, rs]) => withInversions(name, stack(rs))),
-  ...SCALES.map(([name, rs]): Structure => ({ kind: 'scale', name, title: name, members: stack(rs), inversion: 0 })),
+  ...TRIADS.flatMap(([name, rs]) => withInversions('triad', name, stack(rs))),
+  ...SEVENTHS.flatMap(([name, rs]) => withInversions('seventh', name, stack(rs))),
+  ...AUGMENTED_SIXTHS.flatMap(([name, rs]) => withInversions('augmented sixth', name, stack(rs))),
+  ...SCALES.map(([name, rs]): Structure => ({ kind: 'scale', family: 'scale', name, title: name, members: stack(rs), inversion: 0, position: 0 })),
 ];
 
 /** The intervals that occur within a structure: between any two of its members

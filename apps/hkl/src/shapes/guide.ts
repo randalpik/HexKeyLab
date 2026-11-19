@@ -16,12 +16,14 @@ import { classifyDiatonic, intervalNameFromCoords, shortenInterval } from '../tu
 import type { TuningStateLike } from '../tuning/regions.js';
 import {
   OCTAVE, POSITION, STRUCTURES, UNISON, centsOf, combinedRatio, expsKey, intervalSet, intervalsWithin, ratioOf, subExps,
-  type Exps, type Structure,
+  type Exps, type Family, type Structure,
 } from './catalog.js';
 import { positionLabel, solve, type Shape, type ShapeLayout } from './solve.js';
 
 export interface GuideEntry {
   kind: 'chord' | 'scale' | 'interval';
+  /** The section it is listed in. */
+  family: Family | 'interval';
   /** Spelled out in full: "minor triad in first inversion". */
   name: string;
   /** The entry's heading, "minor triad", and what goes under it: a chord's
@@ -95,13 +97,13 @@ export function buildGuide(layout: ShapeLayout): GuideEntry[] {
     const shape = solve(s.members, layout);
     if (!shape) return null;
     return {
-      kind: s.kind, name: s.name, title: s.title, subtitle: s.kind === 'chord' ? POSITION[s.inversion] : '',
+      kind: s.kind, family: s.family, name: s.name, title: s.title, subtitle: s.kind === 'chord' ? POSITION[s.position] : '',
       ratio: combinedRatio(s.members), cents: '', members: s.members,
       steps: steps.map(short), others: others.map(short), start: positionLabel(shape.positions, width), shape,
     };
   };
   const interval = (n: Named, shape: Shape): GuideEntry => ({
-    kind: 'interval', name: n.name, title: n.name, subtitle: '', ratio: fraction(n.exps),
+    kind: 'interval', family: 'interval', name: n.name, title: n.name, subtitle: '', ratio: fraction(n.exps),
     cents: centsOf(n.exps).toFixed(1) + '¢', members: [UNISON, n.exps],
     steps: [n.short], others: [], start: positionLabel(shape.positions, width), shape,
   });

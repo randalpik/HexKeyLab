@@ -14,6 +14,10 @@ interface ChordTemplate {
   /** generic letter intervals from root (0=unison, 1=2nd, 2=3rd, …, 6=7th) */
   g: number[];
   name: string;
+  /** The chord has no third: it is a fourth and a fifth, so its just tuning is 3-limit and
+   *  "Pythagorean" would mark the one correct tuning and leave the ones with a wolf unmarked.
+   *  It takes no "Pythagorean" prefix (Max, 2026-11-18). */
+  thirdless?: true;
 }
 
 export const chordTemplates: ChordTemplate[] = [
@@ -22,8 +26,8 @@ export const chordTemplates: ChordTemplate[] = [
   { s: [3, 7], g: [2, 4], name: 'minor triad' },
   { s: [3, 6], g: [2, 4], name: 'diminished triad' },
   { s: [4, 8], g: [2, 4], name: 'augmented triad' },
-  { s: [5, 7], g: [3, 4], name: 'suspended fourth chord' },
-  { s: [2, 7], g: [1, 4], name: 'suspended second chord' },
+  { s: [5, 7], g: [3, 4], name: 'suspended fourth chord', thirdless: true },
+  { s: [2, 7], g: [1, 4], name: 'suspended second chord', thirdless: true },
   /* seventh chords */
   { s: [4, 7, 11], g: [2, 4, 6], name: 'major seventh' },
   { s: [4, 7, 10], g: [2, 4, 6], name: 'dominant seventh' },
@@ -47,6 +51,14 @@ export const chordTemplates: ChordTemplate[] = [
   { s: [3, 11], g: [2, 6], name: 'incomplete minor-major seventh' },
   { s: [3, 9], g: [2, 6], name: 'incomplete diminished seventh' },
 ];
+
+/* Chords called "septimal" although their ratio is past the gate (a factor of 7 and no term over
+   27). The gate keeps the name for a chord type's simple septimal tuning: a Septimal lattice
+   holds some two hundred other chords with a 7 in them, seven of them diminished sevenths. But
+   the diminished seventh has no tuning that simple, and its 5-limit one (75:90:108:128) cannot be
+   played in Septimal at all, so its septimal tuning, 5:6:7 under a Pythagorean minor third, is
+   named by its ratio (Max, 2026-11-18). */
+const SEPTIMAL_BY_RATIO: ReadonlySet<string> = new Set(['135:162:189:224']);
 
 export const invNames: (string | null)[] = [null, 'in first inversion', 'in second inversion', 'in third inversion'];
 
@@ -186,13 +198,14 @@ export function analyzeChord(keys: ChordInputKey[], state: TuningStateLike): Cho
       /* classify chord by prime content:
          - septimal: factor of 7 present AND max term ≤ 27 (gating keeps it rare)
          - Pythagorean: only primes 2 and 3 — 3-limit throughout (no gating needed,
-           it's inherently rare since the lattice naturally surfaces 5-limit thirds) */
+           it's inherently rare since the lattice naturally surfaces 5-limit thirds);
+           never said of a suspended chord (`thirdless`) */
       const terms = ints.map(v => v / g2);
       const maxTerm = Math.max.apply(null, terms);
       const hasSeven = terms.some(v => v % 7 === 0);
       const hasFive = terms.some(v => v % 5 === 0);
-      const hasSeptimal = hasSeven && maxTerm <= 27;
-      const isPythagorean = !hasSeven && !hasFive;
+      const hasSeptimal = hasSeven && (maxTerm <= 27 || SEPTIMAL_BY_RATIO.has(ratioStr));
+      const isPythagorean = !hasSeven && !hasFive && !t.thirdless;
       let qName = hasSeptimal ? 'septimal ' + t.name : (isPythagorean ? 'Pythagorean ' + t.name : t.name);
       if (isSchismatic) qName = 'schismatic ' + qName;
       return {

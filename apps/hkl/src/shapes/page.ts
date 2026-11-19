@@ -35,10 +35,11 @@ const mode: TuningMode = SHAPE_GUIDE_MODES.find((m) => m === wantMode) ?? '5';
 const layout: ShapeLayout = { mode, mapping, anchor: anchorOf(0, 0, mapping), banded: true };
 
 const SECTIONS: ReadonlyArray<readonly [string, (g: GuideEntry) => boolean]> = [
-  ['Triads', (g) => g.kind === 'chord' && g.members.length === 3],
-  ['Seventh chords', (g) => g.kind === 'chord' && g.members.length === 4],
-  ['Scales', (g) => g.kind === 'scale'],
-  ['Intervals', (g) => g.kind === 'interval'],
+  ['Triads', (g) => g.family === 'triad'],
+  ['Seventh chords', (g) => g.family === 'seventh'],
+  ['Augmented sixth chords', (g) => g.family === 'augmented sixth'],
+  ['Scales', (g) => g.family === 'scale'],
+  ['Intervals', (g) => g.family === 'interval'],
 ];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {

@@ -3,7 +3,7 @@
 // Needs `pnpm dev` (the page is /shapes.html on the shared origin). One muted headless Chromium
 // (test/composer-test/lib/chromium.mjs passes --mute-audio), stopped at the end. The page has no
 // audio, MIDI or overlay code of its own. Checks, for Randal in Ptolemaic:
-//   P1  the page finishes: 71 entries, numbered 1 to 71 in guide order, an index entry for each,
+//   P1  the page finishes: 94 entries, numbered 1 to 94 in guide order, an index entry for each,
 //       no page errors
 //   P2  every entry shows its picture, loaded, at 4 device px per CSS px
 //   P3  each picture holds its keys as the lattice colors them (keyColorHex, the page's own
@@ -22,13 +22,16 @@
 //       adjacent keys, says "from center or right" (the left C has that pitch only on a far key)
 //   P7  a tuning the guide is not made for (?mode=V, Schismatic; ?mode=E, Equal) falls back to
 //       Ptolemaic
+//   P9  Randal in Septimal shows the 109 entries it holds, the septimal chords and scales next to
+//       the ones they retune, every picture loaded, and no entry's text or picture reaches out
+//       of its share of the row
 //   P8  the dark theme (?theme=dark): <html data-theme="dark">, the ground and the sheet #161616,
-//       the text #f2f2f2, the legend's seam "white", all 71 entries. Each picture is compared
+//       the text #f2f2f2, the legend's seam "white", all 94 entries. Each picture is compared
 //       with the page's own painter run in the light style, pixel for pixel: it is the same size;
 //       every pixel inside a seam's black or a member key's dark border on paper is white; no
 //       other pixel is pure white; and no pure black is left
 //
-//   node test/shapes/page.mjs [--shot <png>] [--pdf <pdf>] [--dark-shot <png>]
+//   node test/shapes/page.mjs [--shot <png>] [--pdf <pdf>] [--dark-shot <png>] [--septimal-shot <png>]
 //     --shot  also save a full-page screenshot;  --pdf  also save the page as printed (Letter)
 //     --dark-shot  also save a full-page screenshot of the dark theme
 
@@ -58,7 +61,7 @@ try {
   await loaded;
   let ready = null;
   for (let i = 0; i < 100 && !ready && !errors.length; i++) { ready = await cdp.evalJSON('document.body.dataset.ready ?? null'); if (!ready) await sleep(150); }
-  check('P1 the page finishes', ready, '71');
+  check('P1 the page finishes', ready, '94');
   check('P1 no page errors', errors.join(' | '), '');
 
   const report = ready ? await cdp.evalJSON(`(async () => {
@@ -120,8 +123,8 @@ try {
 
   if (report?.__error) { check('the in-page report runs', report.__error, ''); }
   else if (report) {
-    check('P1 entries', report.entries, 71);
-    check('P1 index entries', report.index, 71);
+    check('P1 entries', report.entries, 94);
+    check('P1 index entries', report.index, 94);
     const cap = (s) => s[0].toUpperCase() + s.slice(1);
     /* a key's colored hexagon is about 624 CSS px² less its label; at 4 device px per CSS px, 16× that */
     const SOLID = 0.6 * 624 * 16;
@@ -168,11 +171,11 @@ try {
         if (report.rows[e.n - 1].kind === 'scale') check(`P5 entry ${e.n}: a scale, at most two to a row`, row.columns <= 2, true);
       });
     }
-    check('P5 every entry is in a row', seen, 71);
+    check('P5 every entry is in a row', seen, 94);
     console.log('rows: ' + report.layout.map((r) => r.entries.length + '/' + r.columns).join(' '));
   }
 
-  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 21 of the 71, by
+  /* P6: a layout that holds only part of the catalog (Randal in Pythagorean: 24 of the 94, by
      test/shapes/oracle.mjs) shows just those, numbered through, in the sections that have any.
      Saved first: --shot and --pdf are of the page as loaded above. */
   const saves = [];
@@ -204,10 +207,10 @@ try {
     m2: (() => { const a = [...document.querySelectorAll('article.entry')].find((e) => e.querySelector('.ratio')?.textContent === '256:243');
       return a ? a.querySelector('.name').textContent.replace(/^\\d+/, '') + ' | ' + a.querySelector('.facts b').textContent : null; })(),
   })`) : {};
-  check('P6 Randal in Pythagorean finishes with the 21 it holds', part, '21');
+  check('P6 Randal in Pythagorean finishes with the 24 it holds', part, '24');
   check('P6 heading', partial.heading, 'Lattice shapes: Randal mapping, Pythagorean tuning');
-  check('P6 entries numbered through', partial.nums, Array.from({ length: 21 }, (_, i) => i + 1).join());
-  check('P6 index and pictures', `${partial.index} ${partial.pictures}`, '21 21');
+  check('P6 entries numbered through', partial.nums, Array.from({ length: 24 }, (_, i) => i + 1).join());
+  check('P6 index and pictures', `${partial.index} ${partial.pictures}`, '24 24');
   check('P6 no section is empty, none says a shape is missing', /:0\b/.test(partial.sections ?? ':0') || partial.text, false);
   check('P6 the minor 2nd starts where its two adjacent keys work', partial.m2, 'Pythagorean minor 2nd | center or right');
   check('P6 no page errors', errors.join(' | '), '');
@@ -226,12 +229,38 @@ try {
   /* P7: Schismatic and Equal are not among the guide's tunings */
   for (const m of ['V', 'E']) {
     const n = await load('mapping=randal&mode=' + m);
-    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '71 Lattice shapes: Randal mapping, Ptolemaic tuning');
+    check(`P7 ?mode=${m} falls back to Ptolemaic`, `${n} ${await cdp.evalJSON(`document.querySelector('h1')?.textContent ?? null`)}`, '94 Lattice shapes: Randal mapping, Ptolemaic tuning');
+  }
+
+  /* P9: Randal in Septimal, where the septimal structures are */
+  const septN = await load('mapping=randal&mode=7');
+  const sept = septN ? await cdp.evalJSON(`(() => {
+    const entries = [...document.querySelectorAll('article.entry')];
+    const titles = entries.map((a) => a.querySelector('.name').textContent.replace(/^\\d+/, '') + (a.querySelector('.position') ? ' ' + a.querySelector('.position').textContent : ''));
+    const roots = [...new Set(entries.map((a) => a.querySelector('.name').textContent.replace(/^\\d+/, '')))];
+    let out = 0;
+    for (const a of entries) { const r = a.getBoundingClientRect(); for (const e of a.querySelectorAll('.name, .position, .facts, .intervals, .part, img.diagram')) { const b = e.getBoundingClientRect(); if (b.right > r.right + 0.5 || b.left < r.left - 0.5) out++; } }
+    return { heading: document.querySelector('h1').textContent, n: entries.length, roots: roots.slice(0, 21).join('; '),
+      pictures: [...document.querySelectorAll('img.diagram')].filter((i) => i.complete && i.naturalWidth > 0).length, out,
+      sections: [...document.querySelectorAll('.section')].map((x) => x.querySelector('h2').textContent + ':' + x.querySelectorAll('article.entry').length).join(' ') };
+  })()`) : {};
+  check('P9 Randal in Septimal finishes with the 109 it holds', septN, '109');
+  check('P9 heading', sept.heading, 'Lattice shapes: Randal mapping, Septimal tuning');
+  check('P9 pictures', sept.pictures, 109);
+  check('P9 nothing reaches out of its entry', sept.out, 0);
+  console.log(`Randal in Septimal: ${sept.sections}`);
+  console.log(`  in order: ${sept.roots}`);
+  if (arg('--septimal-shot')) {
+    const m = await cdp.send('Page.getLayoutMetrics');
+    const { width, height } = m.cssContentSize;
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 } });
+    writeFileSync(arg('--septimal-shot'), Buffer.from(shot.data, 'base64'));
+    console.log(`septimal screenshot ${width}×${height} → ${arg('--septimal-shot')}`);
   }
 
   /* P8: the dark theme */
   const darkN = await load('theme=dark');
-  check('P8 the dark page finishes', darkN, '71');
+  check('P8 the dark page finishes', darkN, '94');
   const dark = darkN ? await cdp.evalJSON(`(async () => {
     const urls = performance.getEntriesByType('resource').map((e) => e.name);
     const find = (re) => urls.find((u) => re.test(u));
@@ -282,7 +311,7 @@ try {
     check('P8 <html data-theme>', dark.theme, 'dark');
     check('P8 ground, sheet, ink, rule', `${dark.ground} | ${dark.sheet} | ${dark.ink} | ${dark.rule}`, 'rgb(22, 22, 22) | rgb(22, 22, 22) | rgb(242, 242, 242) | rgb(242, 242, 242)');
     check('P8 the legend names the seam\'s color', /A heavy white line is a band seam/.test(dark.legend), true);
-    check('P8 entries', dark.entries, 71);
+    check('P8 entries', dark.entries, 94);
     let seamPx = 0, borderPx = 0;
     for (const r of dark.rows) {
       check(`P8 entry ${r.n}: the picture is the size of the light one`, r.sameSize, true);
@@ -294,7 +323,7 @@ try {
       check(`P8 entry ${r.n}: no pure black is left`, r.darkBlack, 0);
       seamPx += r.black; borderPx += r.border;
     }
-    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 71 pictures`);
+    console.log(`dark theme: ${seamPx} seam px and ${borderPx} member-border px turned white, over 94 pictures`);
   }
   if (arg('--dark-shot')) {
     const m = await cdp.send('Page.getLayoutMetrics');
@@ -303,7 +332,7 @@ try {
     writeFileSync(arg('--dark-shot'), Buffer.from(shot.data, 'base64'));
     console.log(`dark screenshot ${width}×${height} → ${arg('--dark-shot')}`);
   }
-  check('P7, P8 no page errors', errors.join(' | '), '');
+  check('P7, P8, P9 no page errors', errors.join(' | '), '');
 } finally {
   await chrome.stop();
 }

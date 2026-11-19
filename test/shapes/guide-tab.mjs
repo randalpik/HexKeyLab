@@ -10,7 +10,7 @@
 //       Equal, not Schismatic), by their toolbar names, Randal and Ptolemaic chosen; the Theme
 //       dropdown (Light, Dark), labeled like the other two, Light chosen; the "Open in new tab"
 //       link; the frame holds /shapes.html
-//       for that choice, finished, all 71 entries, on the light ground; the frame fills the tab
+//       for that choice, finished, all 94 entries, on the light ground; the frame fills the tab
 //       under the bar
 //   T3  choosing a mapping, then a tuning, moves the hash to #layouts/<mapping>/<mode>, the frame
 //       and the "open by itself" link to that layout, and the frame's page finishes with the
@@ -109,7 +109,7 @@ try {
   check('T2 light: the frame\'s ground and its page\'s', `${s.frameGround} | ${s.pageTheme} ${s.pageGround}`, 'rgb(221, 221, 221) | null rgb(221, 221, 221)');
   check('T2 chosen', `${s.mapping} ${s.tuning}`, 'randal 5');
   check('T2 frame source', s.src, '/shapes.html?mapping=randal&mode=5');
-  check('T2 the frame\'s page finished', `${s.ready} entries, ${s.entries} shown, ${s.pictures} pictures`, '71 entries, 71 shown, 71 pictures');
+  check('T2 the frame\'s page finished', `${s.ready} entries, ${s.entries} shown, ${s.pictures} pictures`, '94 entries, 94 shown, 94 pictures');
   check('T2 the frame\'s page', s.heading, 'Lattice shapes: Randal mapping, Ptolemaic tuning');
   check('T2 open link', `${s.openText} | ${s.open} ${s.openTarget}`, 'Open in new tab | /shapes.html?mapping=randal&mode=5 _blank');
   check('T2 the frame is as wide as the tab', Math.abs(s.frame.width - s.content.width) < 1, true);
@@ -124,12 +124,12 @@ try {
   await choose(0, 'park');
   s = await settle('?mapping=park&mode=5');
   check('T3 mapping → hash', s.hash, '#layouts/park/5');
-  check('T3 mapping → frame', `${s.src} | ${s.heading} | ${s.ready}/${s.entries}/${s.pictures}`, '/shapes.html?mapping=park&mode=5 | Lattice shapes: Park mapping, Ptolemaic tuning | 71/71/71');
+  check('T3 mapping → frame', `${s.src} | ${s.heading} | ${s.ready}/${s.entries}/${s.pictures}`, '/shapes.html?mapping=park&mode=5 | Lattice shapes: Park mapping, Ptolemaic tuning | 94/94/94');
   await choose(1, 'P');
   s = await settle('?mapping=park&mode=P');
   check('T3 tuning → hash', s.hash, '#layouts/park/P');
   check('T3 tuning → frame', `${s.src} | ${s.heading}`, '/shapes.html?mapping=park&mode=P | Lattice shapes: Park mapping, Pythagorean tuning');
-  check('T3 tuning → the frame shows what that layout holds', Number(s.ready) >= 1 && Number(s.ready) < 71 && s.entries === Number(s.ready) && s.pictures === s.entries, true);
+  check('T3 tuning → the frame shows what that layout holds', Number(s.ready) >= 1 && Number(s.ready) < 94 && s.entries === Number(s.ready) && s.pictures === s.entries, true);
   check('T3 open link follows', s.open, '/shapes.html?mapping=park&mode=P');
   check('T3 title still names the tab only', s.title, 'HexKeyLab Guide — Layouts');
   console.log(`Park in Pythagorean: ${s.ready} entries`);
@@ -157,14 +157,14 @@ try {
   await cdp.evalJSON(`(location.hash = '#layouts/4:2:i/E', true)`);
   await sleep(600);
   s = await cdp.evalJSON(SNAP);
-  check('T5 back on the same layout, the frame\'s page was kept', `${s.shown} ${s.kept} ${s.ready}`, 'true 1 71');
+  check('T5 back on the same layout, the frame\'s page was kept', `${s.shown} ${s.kept} ${s.ready}`, 'true 1 94');
 
   /* T6: the theme */
   const hashBefore = s.hash;
   await choose(2, 'dark');
   s = await settle('?mapping=randal&mode=5&theme=dark');
   check('T6 dark → the frame; the link stays light', `${s.src} | ${s.open}`, '/shapes.html?mapping=randal&mode=5&theme=dark | /shapes.html?mapping=randal&mode=5');
-  check('T6 dark → the frame\'s page', `${s.pageTheme} ${s.pageGround} | ${s.ready}/${s.entries}/${s.pictures}`, 'dark rgb(22, 22, 22) | 71/71/71');
+  check('T6 dark → the frame\'s page', `${s.pageTheme} ${s.pageGround} | ${s.ready}/${s.entries}/${s.pictures}`, 'dark rgb(22, 22, 22) | 94/94/94');
   check('T6 dark → the frame\'s own ground', s.frameGround, 'rgb(22, 22, 22)');
   check('T6 dark → the hash and title do not carry it', `${s.hash} | ${s.title}`, `${hashBefore} | HexKeyLab Guide — Layouts`);
   check('T6 dark is remembered', s.stored, 'dark');

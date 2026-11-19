@@ -2,17 +2,23 @@
 //
 // Pure Node gate — no dev server, no browser, no audio. Imports the REAL catalog, solver and guide
 // (apps/hkl/src/shapes/) and HKL's namers through the repo's TS loader, and checks:
-//   A  the catalog: 36 chord entries and 4 scales in guide order; every inversion is its root
-//      position turned (the bass up an octave); members ascend; a scale runs unison to octave
-//      over 9/8, 4/3 and 3/2
-//   B  the interval set: the 31, each one between two members of a structure or, for a scale
-//      (which repeats at the octave), the octave complement of one; closed under octave complement
+//   A  the catalog: 75 chord entries (triads, sevenths, augmented sixths) and 9 scales in guide
+//      order, an inversion that is a chord in its own right under its own name (the suspended
+//      second chord, the suspended fourth chord's first inversion), a septimal structure next to
+//      the one it retunes; every inversion is its root position turned (the bass up an octave);
+//      members ascend; a scale runs unison to octave over 9/8, 4/3 and 3/2; a septimal minor
+//      scale is the minor scale of its kind with 7/6 for its minor third and 14/9 for its minor
+//      sixth, and nothing else moved
+//   B  the interval set: 53 (35 without a 7, 18 with), each one between two members of a
+//      structure or, for a scale (which repeats at the octave), the octave complement of one;
+//      closed under octave complement
 //   C  Randal in Ptolemaic, banded — every entry is on the lattice; each key sounds its member's
 //      ratio from the bass exactly; the bass is the C of its position (purple left, spring green
 //      center, pink right), the three pinned; the valid positions equal the closed form
 //      −lo … 2 − hi over the members' 5-exponents; center is drawn whenever it is valid
-//   D  HKL's chord namer (analyzeChord) gives every chord entry the catalog's name, inversion
-//      and root-position ratio
+//   D  HKL's chord namer (analyzeChord) gives every chord entry the catalog's name, position
+//      and the ratio of the chord it is named as, in Randal in Ptolemaic and again in Randal in
+//      Septimal (section H): the guide follows the namer, with no exceptions
 //   E  path keys: every one-turn path between any two members is built here from the six
 //      directions. The solver's path keys link every member; no smaller subset of the candidate
 //      keys does (every subset is tried); and of the equally small subsets (all tried, where
@@ -23,10 +29,11 @@
 //      seam runs along R for as far as the keys reach along R, edge to edge, and one segment past
 //      that at either end: checked in whole numbers (a key at q + 2r, half key widths), so every
 //      seam of a shape starts level and ends level and is one unbroken run
-//   G  the guide: 71 entries, structures then intervals by number and size; full and short interval
+//   G  the guide: 94 entries (Randal in Ptolemaic holds exactly what has no 7 in it: 59
+//      structures and 31 intervals), structures then intervals by number and size; full and short interval
 //      names all distinct; every pair of keys in every structure is named by HKL exactly as the
 //      guide's interval of that ratio; an entry lists its steps, then every other interval between
-//      two of its own keys, lower to upper, a scale's less the octave (11, 8, 12 and 13 for the
+//      two of its own keys, lower to upper, a scale's less the octave (11, 11, 8, 12, 12 and 13 for the
 //      four scales); an interval's one step is itself; the short forms the guide quotes (an octave
 //      shortens as a 4th or 5th does: P8, <d8, WP8)
 //   R  rows (rows.ts), over every sequence of up to seven entries: each entry once and in order;
@@ -49,7 +56,7 @@
 //      shape from two columns, none is written with fewer HEJI arrows; (6) the left one. Of the
 //      Cs of one column that hold the shape alike, the nearest the reference. What rule 1 costs
 //      rule 2 is measured and pinned: the shapes some marked C would hold nearer than the plain
-//      C drawn (7 of them, all in Syntonic, by at most 0.54 key widths in all). The
+//      C drawn (9 of them, all in Syntonic, by at most 0.54 key widths in all). The
 //      positions listed are exactly the columns where the same keys, moved with a C of that
 //      column, sound the members. No choice is left to scan order (`undecided` is empty on
 //      every shape). Pinned: Wicki-Hayden in Syntonic draws its wolf 5th four steps and three
@@ -91,15 +98,52 @@ const keys = (cells) => cells.map(String).sort().join(' ');
 
 /* ── A. the catalog ── */
 const chords = STRUCTURES.filter((s) => s.kind === 'chord'), scales = STRUCTURES.filter((s) => s.kind === 'scale');
-check('A chord entries', chords.length, 36);
-check('A scales', scales.length, 4);
-check('A order: chords first', STRUCTURES.findIndex((s) => s.kind === 'scale'), 36);
+check('A chord entries', chords.length, 75);
+check('A chord entries by family', ['triad', 'seventh', 'augmented sixth'].map((f) => chords.filter((x) => x.family === f).length).join(' '), '24 40 11');
+check('A families in order', [...new Set(STRUCTURES.map((x) => x.family))].join(' > '), 'triad > seventh > augmented sixth > scale');
+check('A scales', scales.length, 9);
+check('A order: chords first', STRUCTURES.findIndex((s) => s.kind === 'scale'), 75);
 check('A names', STRUCTURES.filter((s) => s.inversion === 0).map((s) => s.name).join('; '),
-  'major triad; minor triad; Pythagorean minor triad; diminished triad; dominant seventh; minor seventh; '
-  + 'Pythagorean minor seventh; major seventh; diminished seventh; half-diminished seventh; Ptolemaic major scale; '
-  + 'Pythagorean natural minor scale; Ptolemaic harmonic minor scale; Pythagorean melodic minor scale');
+  'major triad; minor triad; Pythagorean minor triad; septimal minor triad; diminished triad; septimal diminished triad; '
+  + 'augmented triad; suspended fourth chord; '
+  + 'dominant seventh; septimal dominant seventh; minor seventh; Pythagorean minor seventh; septimal minor seventh; major seventh; '
+  + 'diminished seventh; septimal diminished seventh; half-diminished seventh; septimal half-diminished seventh; '
+  + 'Italian augmented sixth chord; French augmented sixth chord; German augmented sixth chord; '
+  + 'Ptolemaic major scale; Ptolemaic natural minor scale; Pythagorean natural minor scale; septimal natural minor scale; '
+  + 'Ptolemaic harmonic minor scale; septimal harmonic minor scale; '
+  + 'Ptolemaic melodic minor scale; Pythagorean melodic minor scale; septimal melodic minor scale');
+check('A the chords added 2026-11-18', ['septimal dominant seventh', 'septimal minor seventh', 'augmented triad', 'suspended fourth chord',
+  'Italian augmented sixth chord', 'French augmented sixth chord', 'German augmented sixth chord']
+  .map((n) => combinedRatio(STRUCTURES.find((x) => x.name === n).members)).join(' '), '4:5:6:7 12:14:18:21 16:20:25 6:8:9 128:160:225 128:160:180:225 128:160:192:225');
+/* the augmented sixths: a major 3rd and the augmented 6th 225/128 over the bass; the French adds
+   the augmented 4th a major 3rd under the 6th, the German the perfect 5th (Max, 2026-11-18) */
+{
+  const of = (n) => STRUCTURES.find((x) => x.name === n).members.map(expsKey).join(' '), k = (...rs) => [[1, 1], ...rs].map(([n, d]) => expsKey(expsOf(n, d))).join(' ');
+  check('A Italian sixth', of('Italian augmented sixth chord'), k([5, 4], [225, 128]));
+  check('A French sixth', of('French augmented sixth chord'), k([5, 4], [45, 32], [225, 128]));
+  check('A German sixth', of('German augmented sixth chord'), k([5, 4], [3, 2], [225, 128]));
+  check('A the French sixth\'s 4th is a major 3rd under its 6th', expsKey(subExps(expsOf(225, 128), expsOf(45, 32))), expsKey(expsOf(5, 4)));
+}
+/* the melodic minors differ in their third alone: 6/5, 32/27, 7/6 */
+check('A the melodic minors', ['Ptolemaic', 'Pythagorean', 'septimal'].map((n) => { const m = STRUCTURES.find((x) => x.name === n + ' melodic minor scale').members;
+  return [ratioOf(m[2]).join('/'), m.filter((_, i) => i !== 2).map(expsKey).join(' ') === STRUCTURES.find((x) => x.name === 'Pythagorean melodic minor scale').members.filter((_, i) => i !== 2).map(expsKey).join(' ')].join(' '); }).join('; '),
+  '6/5 true; 32/27 true; 7/6 true');
+check('A the Ptolemaic natural minor', combinedRatio(STRUCTURES.find((x) => x.name === 'Ptolemaic natural minor scale').members.slice(0, 7)),
+  combinedRatio([[1, 1], [9, 8], [6, 5], [4, 3], [3, 2], [8, 5], [9, 5]].map(([n, d]) => expsOf(n, d))));
+/* the septimal chords, by their proportions (Max, 2026-11-18) */
+check('A septimal chords', ['septimal minor triad', 'septimal diminished triad', 'septimal half-diminished seventh', 'septimal diminished seventh']
+  .map((n) => combinedRatio(STRUCTURES.find((x) => x.name === n).members)).join(' '), '6:7:9 5:6:7 5:6:7:9 135:162:189:224');
+/* a septimal minor scale: the minor scale of its kind, its minor third and minor sixth septimal */
+for (const [septimal, plain] of [['septimal natural minor scale', 'Pythagorean natural minor scale'], ['septimal harmonic minor scale', 'Ptolemaic harmonic minor scale'],
+  ['septimal melodic minor scale', 'Pythagorean melodic minor scale']]) {
+  const a = STRUCTURES.find((x) => x.name === septimal).members, b = STRUCTURES.find((x) => x.name === plain).members;
+  const minor3 = new Set([expsOf(6, 5), expsOf(32, 27)].map(expsKey)), minor6 = new Set([expsOf(8, 5), expsOf(128, 81)].map(expsKey));
+  const want = b.map((e) => (minor3.has(expsKey(e)) ? expsOf(7, 6) : minor6.has(expsKey(e)) ? expsOf(14, 9) : e));
+  check(`A ${septimal}: ${plain} with septimal minor third and sixth`, a.map(expsKey).join(' '), want.map(expsKey).join(' '));
+}
 check('A names are distinct', new Set(STRUCTURES.map((s) => s.name)).size, STRUCTURES.length);
 let root = null;
+const renamedAll = [];
 for (const s of STRUCTURES) {
   check(`A ${s.name}: starts on the unison`, expsKey(s.members[0]), expsKey(UNISON));
   for (let i = 1; i < s.members.length; i++) check(`A ${s.name}: member ${i} ascends`, centsOf(s.members[i]) > centsOf(s.members[i - 1]), true);
@@ -111,17 +155,27 @@ for (const s of STRUCTURES) {
     continue;
   }
   if (s.inversion === 0) root = s;
-  check(`A ${s.name}: title`, s.title, root.name);
-  check(`A ${s.name}: name is the title and, when inverted, its position`, s.name, s.inversion ? `${s.title} ${POSITION[s.inversion]}` : s.title);
+  /* an inversion that is a chord in its own right has its own title and is in root position */
+  const renamed = s.title !== root.name;
+  if (renamed) renamedAll.push(`${s.name} = ${root.name}, inversion ${s.inversion}`);
+  check(`A ${s.name}: position`, s.position, renamed ? 0 : s.inversion);
+  check(`A ${s.name}: family`, s.family, root.family);
+  check(`A ${s.name}: name is the title and, when not in root position, its position`, s.name, s.position ? `${s.title} ${POSITION[s.position]}` : s.title);
   check(`A ${s.name}: within an octave`, centsOf(s.members[s.members.length - 1]) < 1200, true);
   /* the root position's members from the `inversion`-th up, then the rest an octave higher */
   const k = s.inversion, turned = [...root.members.slice(k), ...root.members.slice(0, k).map((e) => addExps(e, OCTAVE))].map((e) => subExps(e, root.members[k]));
   check(`A ${s.name}: is ${root.name} turned ${k}`, s.members.map(expsKey).join(' '), turned.map(expsKey).join(' '));
 }
 
+check('A inversions that are chords in their own right', renamedAll.join('; '), 'suspended second chord = suspended fourth chord, inversion 1');
+/* the chord an entry is named as: itself when it is in root position, otherwise the chord it is
+   an inversion of. HKL's chord namer prints that chord's ratio */
+const namedAs = (name) => { const i = STRUCTURES.findIndex((x) => x.name === name); return STRUCTURES[i].position === 0 ? STRUCTURES[i] : STRUCTURES.slice(0, i + 1).reverse().find((x) => x.inversion === 0); };
+
 /* ── B. the interval set ── */
 const SET = intervalSet(), setKeys = new Set(SET.map(expsKey));
-check('B size', SET.length, 31);
+check('B size', SET.length, 53);
+check('B without a 7, with one', `${SET.filter((e) => e[3] === 0).length} ${SET.filter((e) => e[3] !== 0).length}`, '35 18');
 for (const e of SET) {
   if (expsKey(e) === expsKey(OCTAVE)) continue;
   check(`B complement of ${expsKey(e)}`, setKeys.has(expsKey(subExps(OCTAVE, e))), true);
@@ -157,17 +211,21 @@ function oneTurnPaths(a, b) {
   }
   return out;
 }
-check('G entries', guide.length, 71);
+check('G entries', guide.length, 94);
+/* Randal in Ptolemaic has no 7-limit keys: it holds the structures without a 7, all of them */
+const FIVE = STRUCTURES.filter((x) => x.members.every((e) => e[3] === 0));
+check('G the structures without a 7', FIVE.length, 59);
 check('G positions', POSITION.join('; '), 'in root position; in first inversion; in second inversion; in third inversion');
 for (const [i, g] of guide.entries()) {
-  const s = STRUCTURES[i];
+  const s = FIVE[i];
   check(`G ${g.name}: title`, g.title, s ? s.title : g.name);
-  check(`G ${g.name}: subtitle`, g.subtitle, s && s.kind === 'chord' ? POSITION[s.inversion] : '');
+  check(`G ${g.name}: subtitle`, g.subtitle, s && s.kind === 'chord' ? POSITION[s.position] : '');
+  check(`G ${g.name}: family`, g.family, s ? s.family : 'interval');
   /* an interval's cents, from its printed ratio: one decimal and the cent sign, as the info panel has it */
   const [num, den] = g.ratio.split(':').map(Number);
   check(`G ${g.name}: cents`, g.cents, s ? '' : (1200 * Math.log2(num / den)).toFixed(1) + '¢');
 }
-check('G structures first, in catalog order', guide.slice(0, 40).map((g) => g.name).join(';'), STRUCTURES.map((s) => s.name).join(';'));
+check('G structures first, in catalog order', guide.slice(0, 59).map((g) => g.name).join(';'), FIVE.map((s) => s.name).join(';'));
 let sameDirection = 0, seamed = 0;
 let exhaustive = 0, pathKeyTotal = 0;
 const tied = [], byTouch = [];
@@ -190,10 +248,8 @@ for (const g of guide) {
   /* D: HKL's chord namer */
   if (g.kind === 'chord') {
     const res = analyzeChord(sh.cells.map(([q, r]) => ({ q, r, name: '', col: '' })), ST);
-    const s = STRUCTURES.find((x) => x.name === g.name);
-    const rootOf = STRUCTURES.slice(0, STRUCTURES.indexOf(s) + 1).reverse().find((x) => x.inversion === 0);
     check(`D ${g.name}: HKL name`, res ? res.quality + (res.invName ? ' ' + res.invName : '') : 'none', g.name);
-    check(`D ${g.name}: HKL ratio`, res ? res.ratio : 'none', combinedRatio(rootOf.members));
+    check(`D ${g.name}: HKL ratio`, res ? res.ratio : 'none', combinedRatio(namedAs(g.name).members));
   }
 
   /* E: the path keys */
@@ -298,9 +354,9 @@ for (const g of guide) {
   }
 }
 const ivs = guide.filter((g) => g.kind === 'interval');
-check('G intervals', ivs.length, 31);
-check('G interval names are distinct', new Set(ivs.map((g) => g.name)).size, 31);
-check('G short interval names are distinct', new Set(ivs.map((g) => g.steps[0])).size, 31);
+check('G intervals', ivs.length, 35);
+check('G interval names are distinct', new Set(ivs.map((g) => g.name)).size, 35);
+check('G short interval names are distinct', new Set(ivs.map((g) => g.steps[0])).size, 35);
 check('G an interval has one step, itself', ivs.every((g) => g.steps.length === 1 && g.others.length === 0), true);
 const shortOf = new Map(ivs.map((g) => [expsKey(g.members[1]), g.steps[0]]));
 for (const g of guide.filter((x) => x.kind !== 'interval')) {
@@ -311,7 +367,7 @@ for (const g of guide.filter((x) => x.kind !== 'interval')) {
   check(`G ${g.name}: other intervals`, [...g.others].sort().join(), [...pairs].filter((x) => !g.steps.includes(x) && x !== 'P8').sort().join());
 }
 const listed = guide.filter((g) => g.kind === 'scale').map((g) => g.others.length).join();
-check('G scales list 11, 8, 12 and 13 other intervals', listed, '11,8,12,13');
+check('G scales list 11, 11, 8, 12, 12 and 13 other intervals', listed, '11,11,8,12,12,13');
 for (let i = 1; i < ivs.length; i++) {
   const num = (g) => { const [[q1, r1], [q2, r2]] = g.shape.cells; return noteLetters(q1, r1, q2, r2); };
   const a = ivs[i - 1], b = ivs[i];
@@ -523,6 +579,16 @@ for (const l of LAYOUTS) {
   check(`H ${l.mapping} ${l.mode}: structures in catalog order`, g.filter((e) => e.kind !== 'interval').map((e) => e.name).join(';'),
     STRUCTURES.filter((s) => solve(s.members, l)).map((s) => s.name).join(';'));
   check(`H ${l.mapping} ${l.mode}: every entry has its keys`, g.every((e) => e.shape && e.shape.cells.length === e.members.length), true);
+  /* a ratio has one name in a guide, and a name one ratio, in full and in short */
+  const ivs = g.filter((e) => e.kind === 'interval');
+  check(`H ${l.mapping} ${l.mode}: interval names are distinct`, new Set(ivs.map((e) => e.name)).size, ivs.length);
+  check(`H ${l.mapping} ${l.mode}: short interval names are distinct`, new Set(ivs.map((e) => e.steps[0])).size, ivs.length);
+  /* Septimal holds the whole catalog but for what its retuned column takes away, and every
+     septimal structure and interval, on every mapping */
+  if (l.mode === '7') {
+    check(`H ${l.mapping} 7: entries`, g.length, 109);
+    check(`H ${l.mapping} 7: every structure and interval with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).every((m) => solve(m, l)), true);
+  } else check(`H ${l.mapping} ${l.mode}: nothing with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).some((m) => solve(m, l)), false);
   markedAll += marked; solvedAll += solved;
 }
 /* Max, 2026-11-18: the plain C before a marked one; an exact tie between different keys to the
@@ -531,7 +597,7 @@ for (const l of LAYOUTS) {
 check('H no choice is left to scan order', undecidedWhere.join('; '), '');
 /* rule 1 before rule 2 (Max, 2026-11-18): the plain C is the example even where a marked C would
    hold the shape a little nearer. Where that happens, and by how much at most, is pinned */
-check('H shapes a marked C would hold nearer than the plain C drawn', Object.entries(plainCosts).map(([k, n]) => `${k} ×${n}`).join('; '), 'accordion S ×6; park S ×1');
+check('H shapes a marked C would hold nearer than the plain C drawn', Object.entries(plainCosts).map(([k, n]) => `${k} ×${n}`).join('; '), 'accordion S ×7; park S ×2');
 check('H the most the plain C costs, in key widths summed over a shape', plainCostMost.toFixed(2), '0.54');
 /* Max's case: two arrangements of the wolf 5th as many steps apart and as high, one turning after
    four steps and one after six; the nearer in real space is the shape */
@@ -540,6 +606,23 @@ check('H the most the plain C costs, in key widths summed over a shape', plainCo
   check('H Wicki-Hayden in Syntonic, wolf 5th', `${e?.name} | ${hexDistance(a, b)} steps | ${Math.round(real(a, b) ** 2)} key widths squared`, 'wolf 5th | 7 steps | 37 key widths squared');
 }
 console.log(`  ${solvedAll} shapes over the ${LAYOUTS.length} layouts: ${markedAll} start on a marked C (no plain C holds them); two columns for one shape: ${decidedByArrows} decided by arrows; undecided: ${JSON.stringify(undecidedAll)}`);
+/* D again, in Randal in Septimal, where the septimal chords are: HKL's chord namer gives every
+   chord entry the catalog's name and ratio (the septimal diminished seventh by its ratio, since
+   its terms are past the namer's gate) */
+{
+  const l = layoutOf('randal', '7'), st = stateOf(l);
+  let seen = 0;
+  for (const e of buildGuide(l)) {
+    if (e.kind !== 'chord') continue;
+    seen++;
+    const res = analyzeChord(e.shape.cells.map(([q, r]) => ({ q, r, name: '', col: '' })), st);
+    check(`H Randal 7, ${e.name}: HKL name`, res ? res.quality + (res.invName ? ' ' + res.invName : '') : 'none', e.name);
+    check(`H Randal 7, ${e.name}: HKL ratio`, res?.ratio, combinedRatio(namedAs(e.name).members));
+  }
+  /* the 75, less the diminished seventh's four, the augmented triad's three and the augmented
+     sixths' eleven, none of which Septimal can hold */
+  check('H Randal 7: chord entries', seen, 57);
+}
 /* Max's case: on Park the C of column 2 is a C↓ in Ptolemaic and a hooked C in Septimal, and the
    C of column 4 is plain; both hold these shapes, and the plain one is the example */
 const marksAt = (c, l) => { const h = hejiCommasFor(l.mode, c[0], c[1], l.mapping, l.anchor, l.banded); return Math.abs(h.syn5) + Math.abs(h.sept7); };

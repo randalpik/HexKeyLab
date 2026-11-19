@@ -245,6 +245,10 @@ const PAIRS: PairDecl[] = [
     { s: -1,        name: 'greater augmented 4th' },  /* auto → 'lesser diminished 5th' */
     { s: -2,        name: 'lesser augmented 4th'  },  /* auto → 'greater diminished 5th' */
     { s: -1, z: +1, name: 'septimal augmented 4th' }, /* 10:7 ≈ 617¢; auto → 'septimal diminished 5th' (7:5 ≈ 583¢) */
+    /* 81:56 ≈ 639¢, a syntonic comma above 10:7; auto → 'lesser septimal diminished 5th' (112:81 ≈ 561¢).
+       The simple ratios keep plain "septimal"; lesser / greater is the smaller / larger of a class's
+       variants, as for the 5-limit pair above (Max, 2026-11-18: no "+ syntonic comma" for these) */
+    { s:  0, z: +1, name: 'greater septimal augmented 4th' },
   ]},
   { c1: '1,A', c2: '8,d',
     pythag1: 'apotome',
@@ -486,6 +490,9 @@ export function shortenInterval(name: string, short: boolean): string {
      Pm3/PM3/Pm6/PM6/Pm2/PM7 vs P1/P4/P5/P8) */
   name = name.replace(/\bPythagorean\b/g, 'P');
   /* word-by-word */
+  /* subminor → sm, supermajor → SM (Max, 2026-11-18): 7sm2, 7SM7. No other short form holds
+     either pair of letters (test/interval-names/short-forms.mjs) */
+  name = name.replace(/\bsubminor\b/g, 'sm'); name = name.replace(/\bsupermajor\b/g, 'SM');
   name = name.replace(/\bperfect\b/g, 'P'); name = name.replace(/\bminor\b/g, 'm');
   name = name.replace(/\bmajor\b/g, 'M'); name = name.replace(/\bdiminished\b/g, 'd');
   name = name.replace(/\baugmented\b/g, 'A'); name = name.replace(/\bharmonic\b/g, '7m');

@@ -43,7 +43,7 @@ const guide = buildGuide(L);
 console.log(`Shape guide — ${MAPPING_LABELS[mapping] ?? mapping}, mode ${mode}, banded — ${guide.length} entries\n`);
 let section = '';
 guide.forEach((g, i) => {
-  const head = g.kind === 'interval' ? 'INTERVALS' : g.kind === 'scale' ? 'SCALES' : g.members.length === 3 ? 'TRIADS' : 'SEVENTHS';
+  const head = { triad: 'TRIADS', seventh: 'SEVENTHS', 'augmented sixth': 'AUGMENTED SIXTHS', scale: 'SCALES', interval: 'INTERVALS' }[g.family];
   if (head !== section) { section = head; console.log(`──── ${head} ────\n`); }
   console.log(`${String(i + 1).padStart(2)}. ${g.name} — ${g.ratio}${g.cents ? '  ' + g.cents : ''}`);
   const sh = g.shape, hue = keyColor(sh.bass[0], sh.bass[1], mode, mapping, L.anchor, L.banded).hue;

@@ -90,7 +90,7 @@ async function main() {
     console.log(`pdf → ${out}`);
     if (errors.length) console.log('CONSOLE ERRORS:\n  ' + errors.join('\n  '));
     ws.close();
-    return ready === '71' && !errors.length ? 0 : 1;
+    return ready === '94' && !errors.length ? 0 : 1;
   } finally {
     cleanup();
   }

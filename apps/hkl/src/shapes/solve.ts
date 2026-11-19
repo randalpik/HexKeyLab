@@ -392,7 +392,7 @@ function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<read
  *
  *  Rule 1 stands before rule 2 (Max, 2026-11-18): the plain C is the example
  *  even where a marked one would hold the shape a little nearer. Over the 48
- *  layouts the gate runs that happens in 7 shapes, all in Syntonic, by at most
+ *  layouts the gate runs that happens in 9 shapes, all in Syntonic, by at most
  *  0.54 key widths summed over the shape (test/shapes/oracle.mjs pins them). */
 export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, bassName = 'C', ref: Cell = [0, 0]): Shape | null {
   const basses = bassCells(bassName, layout, ref);
