@@ -11490,3 +11490,136 @@ A reference guide to the lattice shapes of chords, intervals and scales, first f
     - **Mine**: "constrains the table's height" is read as "longer than an even third", which no arrangement of whole sections could bring level with the rest. A table that is uneven only because whole sections pack badly (none of them longer than a third) is left as it is.
     - **Why counted and not measured**: so Chromium and Firefox break the same sections. Why blocks and not CSS `orphans` / `widows`: those count the lines of one paragraph, and each line of the contents is its own list item.
     - On Randal in Ptolemaic the Intervals run 15 and 26 lines over the second and third columns, in both browsers, and the contents are 416 px tall.
+
+## Evaluating layouts: key profiles, footprints, and the reach model (2026-11-19, Max)
+
+**Why**: Max's hypotheses, for his own use and not for public claims: Randal in Ptolemaic is the most ergonomic layout for 5-limit playing (which includes Pythagorean minor triads, as the Semiditonal scales use them), and Randal in Septimal for 7-limit playing with the widest variety of reachable shapes. He wants to know whether that holds, by how much, and what to learn instead if not.
+
+**What the guide's data already said**: "the keyboard holds it somewhere" does not tell the mappings apart (every mapping but Chromatic holds the same entries in Ptolemaic and in Septimal), so any difference is in reach, in which roots a key needs, and in range.
+
+**Ruled so far (Max)**:
+- **A key is a profile, not a scale.** The chord on each degree is declared, and the notes the key needs follow from building the chords: "We're now defining the real footprint of what notes are required to play in a given key, not just one scale." Septimal major is not a scale distinct from Ptolemaic, since its septimal keys are never triad roots; it is a profile with the septimal dominant on V.
+- **Tiers before weights.** "I like starting with just chord-type tiers. We can weight later if we want."
+- **Separate profiles** for major and minor, and for Pythagorean-third and 5-limit minor, each reported by itself, "to avoid making a judgment on the difference between them".
+- **Semiditonal major**: the Pythagorean minor chord on ii; iii and vi 5-limit; the diminished triad "is not a primary chord in any major, it would fall under borrowed"; iv with the Pythagorean third; ♭VI and the augmented sixths on a 5-limit root. "In 5-limit major, the most inherently divergent scale degree is 6. In C Major, the A of ii and the A of IV must differ."
+- **Voicings**: each inversion, closed and open, where open is every other note from the bottom raised an octave.
+- **Reach** (not built): a hand's keys by the diameter of the smallest circle around their centers, in real space, as a number and not a pass or fail; two hands split so the larger diameter is least; over 7 key widths is unreachable. Where a pitch has several keys, the set that reaches best; reported with the number of octaves a chord can be played in and each hand's width across its longest axis. A hand is not isotropic once a shape is two-dimensional (the thumb reaches some spread shapes and not others); diameter alone for now. A best split never interleaves the hands: giving each key to the nearer circle's center enlarges neither circle.
+
+**Built**: `shapes/profile.ts`, the Semiditonal major profile, `test/shapes/footprint.mjs`, and `/shapes.html?footprint=`.
+
+**Mine, for Max to rule on** (he said he would go through the chord choices): the secondaries (V and V7 of V, vi, ii, IV, iii); viiø7 beside vii° among the borrowed; ♭VII on 16/9.
+
+**Found**, Semiditonal major, tonic on the reference:
+- The footprint is 18 pitches. The triads need 8 (the scale and the A of ii), the sevenths no more, the secondaries 7 more, the borrowed chords 3.
+- V7/vi and viiø7 need a D a comma below the scale's (10/9); V/ii a Pythagorean E (81/64). V/vi and V/iii need pitches two commas down (25/16, 75/64).
+- **Held at all** does not tell the mappings apart here either. In Ptolemaic and in Syntonic every mapping holds 16 of 18, missing those two double-comma pitches. Semiditonal and Septimal tunings hold 14, missing also the 6/5 and 8/5 that ♭VI and the augmented sixths stand on. Pythagorean tuning holds 5 of the 8 the triads need. Polysyntonic holds all 18 on Euler, Wicki-Hayden, Chromatic and Janko.
+- What does differ by mapping is range: a held pitch lies in 5 to 10 octaves on the 3-wide bands (Euler, Gerhard, Randal) in Ptolemaic, and in 2 to 5 on the others.
+
+## Scales tab: eight key profiles, and what a layout must play to offer one (2026-11-19, Max)
+
+**Asked for (Max)**: a Scales tab in the Guide mirroring Layouts, a distinct HTML document with the same four dropdowns (carrying their values over) and a Scale dropdown "offering every scale whose diatonic triads are all fully playable on the given layout", with major and minor options for Ptolemaic, Pythagorean, Semiditonal and Septimal. He left the definitions to me: "Go ahead and make rulings here to define each of the 8 scale types".
+
+**His rulings**:
+- "Every scale note gets a native triad and seventh." The half-diminished seventh on vii is not borrowed (this takes back the diminished triad's place among the borrowed chords, earlier the same day).
+- V/vi and V/iii, as he plays them, stand on Pythagorean roots, but those are "not valid secondary dominants to the targets, lacking pure fifths", so they stay out of the footprint; which layouts can play the real ones is "an interesting result to track".
+- Semiditonal and Ptolemaic are "separate major scales with identical scale pitches".
+- Septimal major: "all the Ptolemaic roots and triads with harmonic sevenths for every dominant, as well as septimal diminished triad, diminished seventh and half-diminished seventh". Septimal minor: "the same rules, but always use Pythagorean major triads on 7m3 and 7m6 rather than septimal major triads".
+- Minor: "merge natural, harmonic and melodic scales in each flavor and use all their root notes together, since the goal here is to see what it takes to play in a minor key."
+
+**Mine, for him to go through**:
+- **Where I departed from his words**: the Septimal keys stand on the Semiditonal triads, not the Ptolemaic. A 5-limit minor triad on ii needs an F a comma above the scale's, which no Septimal layout has, so with Ptolemaic triads Septimal major was offered on none of the 48 layouts. With the Pythagorean minor chord on ii it is offered on all eight Septimal layouts. For the same reason ii° of Septimal minor keeps the Pythagorean diminished chords of Semiditonal minor; the septimal ones are on vi° and vii°, where they fit.
+- **Ptolemaic major's ii** is the 5-limit minor triad on the scale's D (9/8): D F↑ A, and its seventh needs a C a comma high. That is what "5-limit on every note" gives and what sets it apart from Semiditonal.
+- **The nine minor degrees**: i minor; ii° diminished, half-diminished seventh; ♭III major, major seventh; iv minor; V major, dominant seventh; ♭VI major, major seventh; vi° on the raised sixth, diminished, half-diminished seventh; ♭VII major, dominant seventh; vii° on the raised seventh, diminished, diminished seventh. Left out: the minor v, the augmented III, the tonic's minor-major seventh; the major IV is among the borrowed.
+- **Semiditonal minor**: its natural form is the Pythagorean natural minor (the catalog has no other). Pythagorean chords on i, ii°, ♭III, iv, ♭VI and ♭VII, where they are made of scale notes; 5-limit on V, vi° and vii°.
+- **Septimal minor**: septimal minor chords on i and iv; ♭VII a 5-limit major triad on 16/9 with a septimal dominant seventh (his rule read literally: Pythagorean major only on the septimal third and sixth); Pythagorean major sevenths on ♭III and ♭VI.
+- **Secondary dominants**: one for every diatonic major or minor triad but the tonic's, as a triad and as a seventh.
+- **Borrowed**, major: iv, ♭VI, ♭VII, the diminished seventh on vii, and the augmented sixths on 8/5 (none in Pythagorean, whose chords are 3-limit). ♭VII is on 9/5 in Ptolemaic and a Pythagorean major triad on 16/9 in Semiditonal, where it is made of scale notes (my first draft had a 5-limit triad there). Septimal: the septimal minor iv, a Pythagorean major ♭VI on 14/9, the septimal diminished seventh. Minor: the major tonic, the major IV, the Neapolitan a pure fifth below ♭VI, the augmented sixths.
+- **One form per chord**: where the catalog's one form of a chord does not fit a degree, the footprint grows. The diminished triad (a minor third under a Pythagorean one) fits vii of the major, and on ii of Ptolemaic minor needs the raised F; the half-diminished seventh is the other way about. `footprint.mjs` lists each profile's diatonic chords that leave the scale.
+- **"Fully playable"** is: a closed, root-position arrangement exists on the keyboard with the bass on a key of the chord's root, in some octave.
+- **The page**: the footprint by tier, then every chord from its own root, root position only; a chord the layout cannot play is listed with the notes it has no key for. The keys on offer come from the page, since the Guide may not import HKL. A key not on offer falls back to the layout's first; a layout that plays none says so.
+- **The tabs**: a tab's bare name keeps the last layout of either tab (a bare `#layouts` used to mean Randal in Ptolemaic); the Scales hash names the key shown.
+- **Removed**: `/shapes.html?footprint=`, which the Scales page replaces. The two pages now share `page.css` and `pageParts.ts`.
+
+**Found**:
+- Offered, of 48 layouts: Pythagorean major and minor 44; Semiditonal major 34, minor 32; Ptolemaic major and minor 18; Septimal major 8, minor 7.
+- Randal in Syntonic and in Polysyntonic can play no key at all: no closed triad on a given root has an arrangement there.
+- Within Ptolemaic tuning the mappings do not differ: all eight play the same chords of every key (Chromatic aside, which loses the Pythagorean keys). V/iii and V/vi, with their double-comma thirds, are played only in Polysyntonic, on Wicki-Hayden, Chromatic and Janko.
+- In Septimal tuning Ptolemaic major has six of its seven triads everywhere (ii is the one missing), and Semiditonal major all seven.
+
+## Scales tab, second round: the minor keys' full chords, an offer by scale, no notes in text (2026-11-19, Max)
+
+Max went through the first build. This entry supersedes the one above where they differ.
+
+**His rulings**:
+- **Septimal keys use septimal minor triads where Semiditonal uses Pythagorean.** So ii of Septimal major is the septimal minor triad and seventh (its third is the F of V7). My first build had the Pythagorean minor chord there, and my report called that "the Semiditonal triads"; both were wrong.
+- **A minor key's diatonic chords are "a union of every diatonic triad and seventh on the three minor scales, where they exist in our system (so not minor-major)".** He named the minor ii and its seventh and the major IV (melodic), the augmented III (harmonic) and the minor v (natural), and asked whether that was all. Stacking thirds on every degree of the three scales adds v7, IV7 as a dominant seventh, and the half-diminished seventh on vii (melodic) next to the diminished one (harmonic); the catalog lacks only the minor-major and augmented-major sevenths. The major IV is no longer borrowed.
+- **The offer is by scale, not by chords**: "Relax the filter to just the scale. Even if diatonic chords don't exist, that's helpful to see, not just have filtered out. For minor, at least one of the three minor scales must exist completely."
+- **No note names in text**, for chords or footprints: "We can't represent note names in plain text. The approximation of arrows, hooks and multiple accidentals is not good enough. Leave it to the keys."
+- **Unplayable chords are one line** at the bottom of a section ("Unplayable on this layout: V/iii, V7/vi"), not entries; a footprint lists the numerals of its category that are unplayable; "not in this octave" is a bad descriptor.
+- **The scale is the top footprint**, labeled as such; footprints flow in a grid; two steps with no difference between them merge ("Diatonic triads and diatonic sevenths").
+- `M7`, not `maj7`. The dropdown is **Key**, not Scale.
+- The diminished triad's other form (a Pythagorean third under a 5-limit one) is not cataloged: he does not play it.
+- A key with its neighbor keys is held until scoring is attempted; he may rather take unions of single keys than show a combined footprint.
+
+**Mine, for him to go through**:
+- **"The scale exists" is: every note of it has a key, in any octave.** A solver shape from the tonic was the other reading. Over 48 layouts × 8 keys the note rule contains both that and the old all-triads rule; the shape rule would have dropped 8 keys whose triads all play (the Pythagorean keys on Euler and Gerhard in Syntonic and Polysyntonic) and left Euler, Gerhard and Randal in Syntonic and Polysyntonic with no key at all. Whether a scale is a shape from the tonic is reported under the scale's footprint instead, like a chord.
+- **With the offer no longer by chords, my two departures are undone**: ii° of Septimal minor is the septimal diminished triad and half-diminished seventh, as his first rule had it.
+- **The augmented triad on ♭III takes the form of the major triad there**: 5-limit in Ptolemaic (made of scale notes), Pythagorean in the other three. Only in Pythagorean is it then made of scale notes; in Semiditonal its fifth is a Pythagorean B, and in Septimal it is far from everything. The other reading is to leave it out where no catalog form is made of scale notes.
+- **v and ii of the minor follow the flavor**: 5-limit, Pythagorean, Pythagorean, septimal. The septimal natural minor scale's own v is the Pythagorean minor triad (its seventh degree is 16/9); his rule puts the septimal one there, with a B♭ that is not the scale's.
+- **Where a root holds two triads**, the harmonic minor's comes first and names the secondary dominant ("V/iv", "V/V"); a secondary dominant is one per root.
+- **A footprint note with no key in the octave above the tonic is drawn on its nearest key in another octave**, so a picture shows every note the keyboard has. This replaces "not in this octave". It happens in 149 of the 296 offered keys.
+- **Steps merge when they draw the same keys**, even if the later one needs notes the keyboard lacks (the count then reads "15 of 17 notes").
+- A minor key's scale footprint is headed "Semiditonal minor scales", with the three scales' names under it.
+- The query parameter and the message field are still `scale`; only the label changed.
+
+**Found**:
+- Offered, of 48 layouts: Pythagorean major and minor and Semiditonal minor 48; Ptolemaic, Semiditonal and Septimal major 40; Ptolemaic minor 24; Septimal minor 8.
+- In Ptolemaic tuning the mappings still play the same chords of the 5-limit keys: every diatonic chord of both Ptolemaic and both Semiditonal keys, 6 of 10 secondary dominants in major and all 12 in minor. The one exception is Chromatic, which cannot play ii°, ♭III+, iiø7 and ♭VII7 of Semiditonal minor.
+- In Septimal tuning: Septimal major plays all its diatonic chords on all eight mappings; Septimal minor cannot play ii° and iiø7 on any of them (the septimal diminished chords there need an F a comma high), nor ♭III+ on Chromatic, Janko and Randal.
+- Randal in Syntonic and in Polysyntonic has the notes of seven keys and plays one chord of them: ♭III+, the Pythagorean augmented triad, in Semiditonal and Pythagorean minor.
+
+## Scales tab, third round: a key is held to its scale's octave; the diminished ii comes from vii°7 (2026-11-19, Max)
+
+**His rulings**:
+- **Notes in other octaves do not count.** "I'm not sure if I do want to honor notes with keys in different octaves at all. 3-wide bands are unplayable in the syntonic layouts, so that's the right thing for it to show. Being able to construct chords in specific voicings within a band does not mean the chords are practically playable." This takes back my "every note has a key, in any octave" reading of the round before.
+- **A key is offered only when its scale plays as a run from the tonic**, and a footprint note is drawn only where the scale's octave has a key for it (both proposed by me on that, accepted).
+- **A chord counts when it "must be playable in root position, in closed position, starting from the scale's octave". "Inversion availability is covered on the Layouts tab."**
+- **"Diminished ii is always the subset of diminished vii, and half-diminished ii7's triad is always the same as diminished ii."** Shown without adding them to the catalog. In Septimal that is 162:189:224, "not a chord we recognize and it has no distinct name (it's septimal but far from the ideal septimal)".
+
+**Mine, for him to go through**:
+- **The key's octave is the one nearest the reference's in which one of its scales runs from the tonic**, the reference's own first, the lower of two equally near. The solver's own choice for a free scale could not serve: it is another octave in 72 of 252 keys though 40 of those also run from the reference key, and a minor key's three scales pick different octaves in 32 of 108.
+- **A minor key's other scales count only from that octave**, so a scale that runs an octave lower is named as unplayable (33 offered minor keys have one).
+- **"Starting from the scale's octave" is: the bass, the chord's root, is on a key from the tonic up to its octave**; the rest of the chord lies above it and may pass the octave's top. So a chord can play while the footprint, which is one octave, lacks one of its notes: V/ii of Pythagorean major on Randal in Ptolemaic, whose C♯ exists only an octave up.
+- **Footprint notes of the scale are on the keys of the scale's run**; the others on their key nearest the tonic's.
+- **"Always" changes Semiditonal minor**: its ii° was the Pythagorean diminished triad, made of scale notes; it is now the top of its 5-limit vii°7, with an A♭ at 8/5 that is not the scale's, and its iiø7 the catalog's 5-limit half-diminished seventh. In Septimal tuning that makes both unplayable there. Ptolemaic's ii° becomes 135:160:192, all scale notes; Pythagorean's two are unchanged.
+- **The uncataloged ones are named for their derivation**, "diminished triad of vii°7" and "half-diminished seventh on ii°", so they cannot be taken for the catalog chords "diminished triad" and "half-diminished seventh". Where the derived notes are a catalog chord it keeps the catalog's name.
+- The solver gained an optional `octave` argument next to `from`.
+
+**Found**:
+- Offered, of 48 layouts: Pythagorean major and Semiditonal minor 42; Pythagorean minor 40; Ptolemaic, Semiditonal and Septimal major 34; Ptolemaic minor 18; Septimal minor 8. Euler, Gerhard and Randal in Syntonic and in Polysyntonic offer none.
+- 228 of the 252 offered keys lie in the reference's octave, 24 in the one below. 3,814 of 4,752 footprint notes have a key in their key's octave.
+- The mappings of one tuning now differ, which they did not while a chord could start in any octave. In Ptolemaic tuning, Ptolemaic and Semiditonal major: Randal, Euler, Janko, Accordion and Park play 7, 7, 6 of 10 and 7 (Wicki-Hayden loses one borrowed chord of Semiditonal major); Gerhard 4 of the secondary dominants; Chromatic 6, 5, 5 and 6 or 4. In Septimal tuning, Septimal major: Randal, Euler, Wicki-Hayden and Accordion 7, 7, 6, 4; Janko and Park 5 secondary dominants; Gerhard 4; Chromatic 2 borrowed. Septimal minor: Accordion plays all 13 triads and sevenths; Randal, Euler and Wicki-Hayden 12 and 13 (on Randal the triad out is ♭III+).
+
+## Scales tab, fourth round: every scale runs from the reference key; an uncataloged chord takes HKL's name (2026-11-19, Max)
+
+**His rulings**:
+- **No key has an octave of its own to be found.** "By 'starting from the scale's octave' I just mean starting from the literal note in the scale in its run from the reference key. All scales must run from the reference key. Octave counts are a separate calculation that isn't currently reflected on the Scales page. I feel like you've overcomplicated this." This takes back the third round's search for "the key's octave", which was my reading, and with it the solver's `from` and `octave` arguments: `solve` takes one optional `start` key.
+- **"Uncataloged chords do not get their own names either. Display them as they display in HKL."** The derived ii° chords are named by HKL's chord namer on the keys they are drawn on: "diminished triad" (135:160:192, 162:189:224) and "half-diminished seventh" (162:189:224:288). The third round's "diminished triad of vii°7" and "half-diminished seventh on ii°" are gone.
+
+**Mine, for him to go through**:
+- **"All scales must run from the reference key" is read as where a run starts, not as a stricter offer.** A minor key is still offered when one of its three scales runs (his second-round ruling), and the others are named as unplayable (31 offered minor keys have one).
+- **A root that is no scale note has no literal key in a run** (♭VI, ♭II, the root of V/ii): it is on its key nearest the reference key, among the keys that sound it in the octave above that key. One key to a pitch, for the footprint and for the chord that starts there. It costs no chord: over the 48 layouts none of the 1,844 unplayable chords of the offered keys is held from another key of the same pitch, on a scale note or off one.
+- **Where two runs of a minor key play a note on different keys, the first run's key is the note's.**
+- HKL's names for the uncataloged chords are the words of two catalog chords with other ratios; the ratio under the name is what tells them apart.
+
+**Found**:
+- Offered, of 48 layouts: Pythagorean minor 40; Semiditonal minor 39; Pythagorean major 36; Ptolemaic, Semiditonal and Septimal major 29; Ptolemaic minor 18; Septimal minor 8. 228 keys: the 24 that ran only from the octave below are no longer offered. What the others play is as the third round found it.
+- 3,472 of 4,290 footprint notes have a key in the octave above the reference key.
+
+## Scales tab: a minor key's scales are listed only where their flavors differ (2026-11-19, Max)
+
+The line naming a minor key's three scales under its first footprint picture stays only where one of them is of another flavor than the key: Semiditonal minor, whose natural form is the Pythagorean natural minor. For Ptolemaic, Pythagorean and Septimal minor the picture's name ("Septimal minor scales") already says it. The flavor is the first word of the key's name against the first word of each scale's (`scalePage.ts`).
+
+## Scales tab: which keys a tuning lists (2026-11-19, Max)
+
+Some keys are left off the Key dropdown by kind, whatever the layout could play of them: "In Pythagorean tuning, only Pythagorean major and minor should be listed. And Septimal keys should only appear in Septimal tuning." It is part of the offer (`listsKey`, checked by `keyPlace`), so the page, the dropdown and the report agree. It takes Semiditonal minor off the 8 Pythagorean layouts, where its natural form (the Pythagorean natural minor) ran, and Septimal major off the 21 layouts of other tunings that play its scale, the Ptolemaic major. Septimal minor was already offered in Septimal tuning only. Nothing else is excluded: Septimal tuning still lists the Ptolemaic, Semiditonal and Pythagorean keys it plays. Offered, of 48 layouts: Pythagorean minor 40, Pythagorean major 36, Semiditonal minor 31, Ptolemaic and Semiditonal major 29, Ptolemaic minor 18, Septimal major and minor 8; 199 keys.

@@ -14,33 +14,15 @@
 //                                      shapes.html reads the parameter itself, before the first paint,
 //                                      and leaves it on <html data-theme>.
 
-import { SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
-import { tonicLabel, tonicOfId } from '@hkl/shared/tonic.js';
-import { isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
+import { TUNING_LABELS } from '@hkl/shared/freq.js';
+import { tonicLabel } from '@hkl/shared/tonic.js';
+import { mappingLabel } from '@hkl/shared/mapping.js';
 import { setHexSize, setRotation } from '../layout/geometry.js';
-import { buildGuide, rootedLayout, type GuideEntry, type GuideLayout } from './guide.js';
-import { renderDiagram, type DiagramStyle } from './diagram.js';
+import { buildGuide, type GuideEntry } from './guide.js';
+import { renderDiagram } from './diagram.js';
 import { CONTENTS_KEEP, contentsSplits, indentOf, room, rowsOf, shownSize, type Fit } from './rows.js';
-import { GUIDE_ALIGNMENT, GUIDE_ROTATION, type ShapeLayout } from './solve.js';
-
-/* How the pictures are drawn. The page is Lumatone rotation at Vertical
-   alignment in HKL's medium hex size (Max, 2026-11-17). On the dark theme the
-   seams and the member keys' borders are white (Max, 2026-11-18); the labels
-   stay as the lattice draws them, since they sit on the key's color. */
-const dark = document.documentElement.dataset.theme === 'dark';
-const STYLE: DiagramStyle = {
-  pathAlpha: 0.45, memberBorder: 1.5, heji: true, seamWidth: 4, scale: 4,
-  seamColor: dark ? '#fff' : '#000', memberBorderColor: dark ? '#fff' : '#111',
-};
-
-const query = new URLSearchParams(location.search);
-const wantMapping = query.get('mapping') ?? 'randal', wantMode = query.get('mode') ?? '5';
-const mapping: Mapping = isMapping(wantMapping) ? wantMapping : 'randal';
-const mode: TuningMode = SHAPE_GUIDE_MODES.find((m) => m === wantMode) ?? '5';
-const root = tonicOfId(query.get('root')) ?? 'C';
-const at: GuideLayout = { mode, mapping, banded: true };
-/* the layout the pictures are drawn in: the reference on the root, the anchor following it */
-const layout: ShapeLayout = rootedLayout(at, root).layout;
+import { GUIDE_ALIGNMENT, GUIDE_ROTATION } from './solve.js';
+import { STYLE, at, capital, dark, el, layout, mapping, mode, root } from './pageParts.js';
 
 const SECTIONS: ReadonlyArray<readonly [string, (g: GuideEntry) => boolean]> = [
   ['Triads', (g) => g.family === 'triad'],
@@ -49,14 +31,6 @@ const SECTIONS: ReadonlyArray<readonly [string, (g: GuideEntry) => boolean]> = [
   ['Scales', (g) => g.family === 'scale'],
   ['Intervals', (g) => g.family === 'interval'],
 ];
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-const capital = (s: string): string => s[0].toUpperCase() + s.slice(1);
 
 /** How many entries can share a row with `g`: as many as leave room for its
  *  picture. A scale lists many intervals, so never more than two (Max,

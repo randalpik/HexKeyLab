@@ -21,12 +21,14 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
-    /* two pages: the app, and the shape guide (src/shapes/page.ts), which
-       shares the lattice's painters but none of its audio, MIDI or toolbar */
+    /* three pages: the app, and the shape guide's two (src/shapes/page.ts and
+       scalePage.ts), which share the lattice's painters but none of its audio,
+       MIDI or toolbar */
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
         shapes: path.resolve(__dirname, 'shapes.html'),
+        scales: path.resolve(__dirname, 'scales.html'),
       },
     },
   },

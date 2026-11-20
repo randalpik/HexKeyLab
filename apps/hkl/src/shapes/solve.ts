@@ -353,7 +353,7 @@ const BESIDE = 2;
  *  keys farther off do not lengthen it, so a long shape is no taller than its
  *  keys, and the seams of one shape need not start or end level. The reach is
  *  measured square to the line. */
-function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<readonly [Cell, Cell]> {
+export function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<readonly [Cell, Cell]> {
   const band = (c: Cell): number => bandOfCell(c[0], c[1], layout.mapping);
   const column = (c: Cell): number => posInBandOf(c[0], c[1], layout.mapping);
   const width = bandWidth(layout.mapping);
@@ -429,18 +429,24 @@ function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Array<read
  *      then the higher on the page. It settles the octaves of one column;
  *   8. the left one, which no ruling stands behind (`undecided`).
  *
+ *  With `start`, the bass is not free: it is that key (a scale of a key runs
+ *  from the reference key, and a chord of the key starts on its root's key:
+ *  ./profile.ts). Nothing is then left to choose but the members' keys, and
+ *  the one position is that key's.
+ *
  *  Rule 1 stands before rule 2 (Max, 2026-11-18): the plain bass is the
  *  example even where a marked one would hold the shape a little nearer. Over
  *  the 48 layouts the gate runs that happens in 9 shapes, all in Syntonic, by
  *  at most 0.54 key widths summed over the shape (test/shapes/oracle.mjs pins
  *  them). */
-export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 'C', ref: Cell = [0, 0]): Shape | null {
+export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 'C', ref: Cell = [0, 0], start?: Cell): Shape | null {
   const board = keyboard(root, layout, ref);
+  const basses = start ? board.basses.filter((b) => b.cell[0] === start[0] && b.cell[1] === start[1]) : board.basses;
   interface Placed extends Bass { cells: Cell[]; keysTied: boolean; spread: number; rise: number; arrows: number; offsets: string }
   const arrowsOn = (c: Cell): number => Math.abs(hejiCommasFor(layout.mode, c[0], c[1], layout.mapping, layout.anchor, layout.banded).syn5);
   /* every bass on the keyboard, with the members on the keyboard's keys */
   const placed: Placed[] = [];
-  for (const bass of board.basses) {
+  for (const bass of basses) {
     const at = place(bass.cell, members, layout, board);
     if (!at) continue;
     placed.push({
@@ -476,7 +482,7 @@ export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 
       return board.has.has(String(at)) && expsKey(exps(at, layout)) === expsKey(addExps(from, m));
     });
   };
-  const positions = [...new Set(board.basses.filter((b) => holds(b.cell)).map((b) => b.position))].sort((a, b) => a - b);
+  const positions = [...new Set(basses.filter((b) => holds(b.cell)).map((b) => b.position))].sort((a, b) => a - b);
   const { keys: path, tied: pathTied } = pathKeys(cells, layout, board);
   if (pathTied) undecided.push('path');
   /* a shape that fits from any position reads the same wherever the seams fall, so it shows none */

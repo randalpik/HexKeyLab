@@ -33,6 +33,12 @@ export function centsOf(e: Exps): number {
   return 1200 * (e[0] + e[1] * Math.log2(3) + e[2] * Math.log2(5) + e[3] * Math.log2(7));
 }
 /** `e` as [numerator, denominator]. */
+/** A pitch as a pitch class: octaves taken off until it lies in the octave
+ *  above the unison. */
+export function pitchClass(e: Exps): Exps {
+  const octaves = Math.floor(centsOf(e) / 1200 + 1e-9);
+  return [e[0] - octaves, e[1], e[2], e[3]];
+}
 export function ratioOf(e: Exps): readonly [number, number] {
   let num = 1, den = 1;
   PRIMES.forEach((p, i) => { if (e[i] > 0) num *= p ** e[i]; else den *= p ** -e[i]; });

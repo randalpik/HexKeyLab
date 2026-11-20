@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Scales</title>
+<link rel="stylesheet" href="/src/shapes/page.css">
+<script>
+/* the theme, before the first paint (src/shapes/page.ts reads it from here) */
+if (new URLSearchParams(location.search).get('theme') === 'dark') document.documentElement.dataset.theme = 'dark';
+</script>
+</head>
+<body>
+<main id="guide"></main>
+<script type="module" src="/src/shapes/scalePage.ts"></script>
+</body>
+</html>

@@ -23,6 +23,10 @@
 //       ground is the page's dark, and the hash is unchanged (the theme is not part of the URL
 //       the Guide reports); the "Open in new tab" link stays on the light page, whatever the
 //       theme; a reload of the Guide keeps Dark; Light puts everything back
+//   T9  the Scales tab: opened by its name it takes up the Layouts tab's choice; its Key dropdown
+//       holds the keys the frame's page says the layout offers; the hash names the key shown;
+//       a layout that does not offer the key shows its first; one that offers none says so;
+//       going back, Layouts takes up what Scales changed
 //   T8  Starting note: the fifteen major-key tonics in fifths, C chosen; choosing one adds it to
 //       the hash (#layouts/<mapping>/<mode>/<id>), to the frame and to the link, and the frame's
 //       page is that note's; a hash naming one opens on it; C again drops it from all three
@@ -102,7 +106,7 @@ try {
 
   /* T1, T2 */
   let s = await settle('?mapping=randal&mode=5');
-  check('T1 tabs', s.tabs, 'Core Composer Analyzer Orchestrator Overlay Layouts*');
+  check('T1 tabs', s.tabs, 'Core Composer Analyzer Orchestrator Overlay Layouts* Scales');
   check('T1 Layouts is shown, and no guide', `${s.shown} ${s.docs}`, 'true 0');
   check('T1 title names the tab only', s.title, 'HexKeyLab Guide — Layouts');
   check('T1 the tab bar has nothing to scroll (px)', s.tabsScroll, 'down 0, across 0');
@@ -149,7 +153,12 @@ try {
   await cdp.evalJSON(`(location.hash = '#layouts/park/V', true)`);
   s = await settle('?mapping=park&mode=5');
   check('T4 Schismatic is not on offer', `${s.mapping} ${s.tuning} ${s.heading}`, 'park 5 Lattice shapes from C: Park mapping, Ptolemaic tuning');
+  /* the tab's bare name keeps the layout it was on (it is what a click on the tab gives, and how
+     the Scales tab's choice comes over), and the hash is rewritten to name it */
   await cdp.evalJSON(`(location.hash = '#layouts', true)`);
+  s = await settle('?mapping=park&mode=5');
+  check('T4 a bare #layouts keeps the layout', `${s.mapping} ${s.tuning} ${s.hash}`, 'park 5 #layouts/park/5');
+  await cdp.evalJSON(`(location.hash = '#layouts/randal/5', true)`);
   s = await settle('?mapping=randal&mode=5');
 
   /* T5 */
@@ -158,7 +167,7 @@ try {
   await sleep(300);
   s = await cdp.evalJSON(SNAP);
   check('T5 the tab bar has nothing to scroll on a guide\'s tab (px)', s.tabsScroll, 'down 0, across 0');
-  check('T5 Core hides Layouts and shows its guide', `${s.tabs} | ${s.shown} ${s.docs} | ${s.title}`, 'Core* Composer Analyzer Orchestrator Overlay Layouts | false 1 | HexKeyLab Guide — Core');
+  check('T5 Core hides Layouts and shows its guide', `${s.tabs} | ${s.shown} ${s.docs} | ${s.title}`, 'Core* Composer Analyzer Orchestrator Overlay Layouts Scales | false 1 | HexKeyLab Guide — Core');
   await cdp.evalJSON(`(location.hash = '#layouts/4:2:i/E', true)`);
   await sleep(600);
   s = await cdp.evalJSON(SNAP);
@@ -208,6 +217,52 @@ try {
   s = await settle('?mapping=randal&mode=7');
   check('T8 C again → hash, frame, link', `${s.hash} | ${s.src} | ${s.open} | ${s.heading}`, '#layouts/randal/7 | /shapes.html?mapping=randal&mode=7 | /shapes.html?mapping=randal&mode=7 | Lattice shapes from C: Randal mapping, Septimal tuning');
 
+  /* T9: the Scales tab (HKL's /scales.html in a frame). Opened by its name it takes up the Layouts
+     tab's mapping, tuning and starting note; its Key dropdown holds the keys the frame's page
+     says the layout offers; the hash names the key shown; a layout change keeps the key where
+     the new layout offers it and otherwise shows that layout's first; going back, Layouts takes
+     up what Scales changed */
+  {
+    const SC = `(() => { const sec = document.querySelector('.g-scales'); if (!sec) return null; const sels = [...sec.querySelectorAll('select')], f = sec.querySelector('iframe'), d = f.contentDocument;
+      return { hash: location.hash, title: document.title, shown: !sec.hidden, tabs: [...document.querySelectorAll('.g-tab')].map((b) => b.textContent + (b.classList.contains('active') ? '*' : '')).join(' '),
+        labels: [...sec.querySelectorAll('.g-layouts-field')].map((l) => l.firstChild.textContent.trim()).join(','), values: sels.map((x) => x.value).join(' '),
+        options: [...sels[3].options].map((o) => o.value).join(','), optionLabels: [...sels[3].options].map((o) => o.textContent).join(','), disabled: sels[3].disabled,
+        src: f.getAttribute('src'), open: sec.querySelector('.g-layouts-open').getAttribute('href'), linkText: sec.querySelector('.g-layouts-open').textContent,
+        ready: d?.body?.dataset.ready ?? null, heading: d?.querySelector('h1')?.textContent ?? null, pageScale: d?.body?.dataset.scale ?? null, offered: sec.dataset.offered ?? null,
+        at: d?.location ? d.location.pathname + d.location.search : null }; })()`;
+    const settled = async (src, scale) => { let x = null; for (let i = 0; i < 150; i++) { x = await cdp.evalJSON(SC); if (x && x.src === src && x.at === src && x.ready && x.offered !== null && x.pageScale === scale && x.values.split(' ')[3] === scale) return x; await sleep(100); } return x ?? {}; };
+    const pick = (i, v) => cdp.evalJSON(`(() => { const x = document.querySelectorAll('.g-scales select')[${i}]; x.value = ${JSON.stringify(v)}; x.dispatchEvent(new Event('change')); return true; })()`);
+    const tab = (name) => cdp.evalJSON(`([...document.querySelectorAll('.g-tab')].find((b) => b.textContent === ${JSON.stringify(name)}).click(), true)`);
+    const SEVEN = 'ptolemaic-major,semiditonal-major,pythagorean-major,septimal-major,semiditonal-minor,pythagorean-minor,septimal-minor';
+    await cdp.evalJSON(`(location.hash = '#layouts/randal/7/Eb', true)`);
+    await settle('?mapping=randal&mode=7&root=Eb');
+    await tab('Scales');
+    let c = await settled('/scales.html?mapping=randal&mode=7&root=Eb', 'ptolemaic-major');
+    check('T9 tabs, title', `${c.tabs} | ${c.title} | ${c.shown}`, 'Core Composer Analyzer Orchestrator Overlay Layouts Scales* | HexKeyLab Guide — Scales | true');
+    check('T9 the dropdowns, carrying the Layouts tab\'s choice', `${c.labels} | ${c.values}`, 'Mapping,Tuning,Starting note,Key,Theme | randal 7 Eb ptolemaic-major light');
+    check('T9 the keys on offer are the page\'s', `${c.options} | ${c.optionLabels.split(',')[3]}`, `${SEVEN} | Septimal major`);
+    check('T9 the hash names the key shown', c.hash, '#scales/randal/7/ptolemaic-major/Eb');
+    check('T9 the frame\'s page', `${c.heading} | ${c.linkText}`, 'E♭ Ptolemaic major: Randal mapping, Septimal tuning | Open in new tab');
+    await pick(3, 'septimal-minor');
+    c = await settled('/scales.html?mapping=randal&mode=7&root=Eb&scale=septimal-minor', 'septimal-minor');
+    check('T9 a key chosen → hash, frame, link, page', `${c.hash} | ${c.src} | ${c.open} | ${c.heading}`,
+      '#scales/randal/7/septimal-minor/Eb | /scales.html?mapping=randal&mode=7&root=Eb&scale=septimal-minor | /scales.html?mapping=randal&mode=7&root=Eb&scale=septimal-minor | E♭ Septimal minor: Randal mapping, Septimal tuning');
+    await pick(1, '5');
+    c = await settled('/scales.html?mapping=randal&mode=5&root=Eb&scale=septimal-minor', 'ptolemaic-major');
+    check('T9 a tuning that does not offer the key shows its first, and the hash says so', `${c.heading} | ${c.hash} | ${c.options.split(',').length} on offer`, 'E♭ Ptolemaic major: Randal mapping, Ptolemaic tuning | #scales/randal/5/ptolemaic-major/Eb | 6 on offer');
+    await pick(1, 'S');
+    c = await settled('/scales.html?mapping=randal&mode=S&root=Eb&scale=ptolemaic-major', '');
+    check('T9 a layout that offers no key', `${c.optionLabels} | ${c.disabled} | ${c.heading} | ${c.hash}`, 'None on this layout | true | No key on E♭: Randal mapping, Syntonic tuning | #scales/randal/S/Eb');
+    await tab('Layouts');
+    s = await settle('?mapping=randal&mode=S&root=Eb');
+    check('T9 back on Layouts, with what Scales changed', `${s.hash} | ${s.mapping} ${s.tuning} ${s.root}`, '#layouts/randal/S/Eb | randal S Eb');
+    await cdp.evalJSON(`(location.hash = '#scales/park/5/pythagorean-minor', true)`);
+    c = await settled('/scales.html?mapping=park&mode=5&scale=pythagorean-minor', 'pythagorean-minor');
+    check('T9 a hash names a layout and a key', `${c.values} | ${c.heading}`, 'park 5 C pythagorean-minor light | C Pythagorean minor: Park mapping, Ptolemaic tuning');
+    await cdp.evalJSON(`(location.hash = '#scales/park/5/typed-in', true)`);
+    c = await settled('/scales.html?mapping=park&mode=5', 'ptolemaic-major');
+    check('T9 a hash that names no key shows the first', `${c.src} | ${c.pageScale}`, '/scales.html?mapping=park&mode=5 | ptolemaic-major');
+  }
   check('T7 no page errors', errors.join(' | '), '');
 } finally {
   await chrome.stop();

@@ -1,0 +1,77 @@
+/* The print-layout pages of the shape guide: shapes.html (the Layouts guide) and scales.html (a key's
+   chords and footprint). */
+/* BravuraText: the lattice's label font (see index.html). */
+@font-face {
+  font-family: 'BravuraText';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('/BravuraText.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/steinbergmedia/bravura@master/redist/woff/BravuraText.woff2') format('woff2');
+}
+@page { size: letter portrait; margin: 0.6in; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+/* The light theme is paper on a gray ground. The dark theme (?theme=dark, set on <html> by the
+   script below) is Composer's dark page: #161616 for the ground and the sheet alike, the sheet
+   edged #444, with #f2f2f2 ink; the pictures follow it in src/shapes/page.ts. The Guide's Layouts
+   tab paints its frame with the same two grounds (apps/guide/src/guide.css). */
+:root { --ground: #ddd; --paper: #fff; --edge: transparent; --ink: #111; --text: #333; --soft: #444; --faint: #777; --label: #888; }
+:root[data-theme="dark"] { color-scheme: dark; --ground: #161616; --paper: #161616; --edge: #444; --ink: #f2f2f2; --text: #dcdcdc; --soft: #c4c4c4; --faint: #9a9a9a; --label: #8c8c8c; }
+html { background: var(--ground); }
+body { font-family: system-ui, -apple-system, sans-serif; font-size: 10pt; line-height: 1.3; color: var(--ink); }
+/* on screen: one sheet's printable width, as paper */
+#guide { width: 7.3in; margin: 0.4in auto; padding: 0.6in; box-sizing: content-box; background: var(--paper); outline: 1px solid var(--edge); }
+h1 { font-size: 17pt; font-weight: 600; margin-bottom: 6pt; }
+h2 { font-size: 13pt; font-weight: 600; margin: 14pt 0 6pt; padding-bottom: 2pt; border-bottom: 1.5pt solid var(--ink); break-after: avoid; }
+.legend { color: var(--text); max-width: 6.2in; margin-bottom: 10pt; }
+.index { columns: 3; column-gap: 0.25in; font-size: 8.5pt; margin-bottom: 4pt; }
+/* a section of the contents stays in one column, unless it is what makes the table tall
+   (src/shapes/rows.ts contentsSplits): then it may break, but not inside a .keep, which holds its
+   heading with its first three lines, or its last three */
+.index-group { break-inside: avoid; margin-bottom: 6pt; }
+.index-group.split { break-inside: auto; }
+.index-group.split .keep, .index li { break-inside: avoid; }
+.index h4 { font-size: 9pt; font-weight: 600; }
+.index ol { padding-left: 2.2em; }
+.index a { color: inherit; text-decoration: none; }
+/* every section starts a sheet, the first too: left to flow under the index, Firefox and
+   Chromium break the first section's rows differently */
+.section { break-before: page; }
+/* a row is three entries, two or one, sharing it equally (src/shapes/rows.ts), and never
+   splits across sheets */
+.row { font-size: 0; break-inside: avoid; }
+.entry { display: inline-block; vertical-align: top; font-size: 9pt; padding: 0 10pt 12pt 0; }
+.row[data-columns="3"] > .entry { width: 33.3333%; }
+.row[data-columns="2"] > .entry { width: 50%; }
+.row[data-columns="1"] > .entry { width: 100%; }
+/* The hanging label. An entry's title and the lines under it start at one indent, --indent, and
+   its number hangs in that indent, right-aligned, so it ends the same distance before the title
+   whatever its digits. src/shapes/page.ts sets --indent on #guide from the number of entries
+   (src/shapes/rows.ts indentOf: 15.3pt, and a digit's width more for a guide of a hundred entries
+   or more). A title that wraps keeps to the indent. The picture is not indented: it has the
+   entry's whole width, less its gutter, and sits in the middle of it (Max, 2026-11-18). */
+#guide { --indent: 15.3pt; }
+.name { font-size: 10pt; font-weight: 600; padding-left: var(--indent); text-indent: calc(-1 * var(--indent)); }
+.num { display: inline-block; width: var(--indent); padding-right: 0.38em; text-align: right; text-indent: 0; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+/* under the title, at the title's indent (1.7em of 9pt) */
+.position { padding-left: var(--indent); font-size: 8pt; color: var(--soft); }
+.facts, .intervals { padding-left: var(--indent); }
+.facts { color: var(--text); }
+.ratio, .cents { font-variant-numeric: tabular-nums; }
+.cents { margin-left: 0.7em; }
+.intervals { font-size: 8.5pt; color: var(--text); }
+/* "steps" and "also" each hold together: on one line when both fit, otherwise "also" starts the
+   next line (and wraps within itself if it is longer than a line) */
+.part { display: inline-block; vertical-align: top; }
+.part.steps { margin-right: 0.9em; }
+.label { color: var(--label); }
+.diagram { display: block; margin: 5pt auto 0; }
+/* a sheet is the page's own ground, whichever theme: the pictures are drawn for it */
+@media print {
+  html { background: var(--paper); }
+  #guide { width: auto; margin: 0; padding: 0; outline: 0; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+/* scales.html: a chord's numeral before its name, and what the layout cannot play (under a footprint, and under a section's chords) */
+.numeral { color: var(--faint); font-weight: 600; margin-right: 0.35em; }
+.unplayed { font-size: 8.5pt; color: var(--faint); font-style: italic; margin-top: 3pt; }

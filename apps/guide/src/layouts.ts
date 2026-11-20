@@ -1,4 +1,6 @@
-// The Layouts tab: the lattice shape guide for a chosen mapping and tuning.
+// The Layouts tab: the lattice shape guide for a chosen mapping and tuning; and
+// the Scales tab after it: a key's chords and footprint on that layout
+// (HKL's /scales.html), with one more dropdown for the key.
 //
 // The guide itself is HKL's page /shapes.html (apps/hkl/src/shapes/page.ts),
 // which shows the shapes a layout holds. It is embedded by URL in a frame — it
@@ -21,6 +23,7 @@
 import { MAPPINGS, MAPPING_LABELS, isPresetMapping, type PresetMapping } from '@hkl/shared/mapping.js';
 import { SHAPE_GUIDE_MODES, TUNING_LABELS, type TuningMode } from '@hkl/shared/freq.js';
 import { MAJOR_TONICS, tonicId, tonicLabel, tonicOfId } from '@hkl/shared/tonic.js';
+import { KEY_PROFILE_LABELS, isKeyProfileId, type KeyProfileId } from '@hkl/shared/keyProfiles.js';
 
 export const LAYOUTS_ID = 'layouts';
 export const LAYOUTS_LABEL = 'Layouts';
@@ -108,6 +111,9 @@ export function buildLayouts(onChoose: (c: LayoutChoice) => void): { el: HTMLEle
   themeSel.value = theme;
   const chosen = (): LayoutChoice => parseChoice(mapSel.value + '/' + modeSel.value + '/' + rootSel.value);
   const show = (c: LayoutChoice): void => {
+    /* the other tab may have changed it */
+    theme = savedTheme();
+    themeSel.value = theme;
     mapSel.value = c.mapping;
     modeSel.value = c.mode;
     rootSel.value = tonicId(c.root);
@@ -125,6 +131,98 @@ export function buildLayouts(onChoose: (c: LayoutChoice) => void): { el: HTMLEle
     theme = themeSel.value === 'dark' ? 'dark' : 'light';
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode / quota: the choice lasts the visit */ }
     show(chosen());
+  });
+
+  return { el, show };
+}
+
+/* ── the Scales tab ── */
+
+export const SCALES_ID = 'scales';
+export const SCALES_LABEL = 'Scales';
+
+/** A layout and a key on it. `scale` null is whichever key the page shows
+ *  first: which keys a layout can play is HKL's to say, not the Guide's. */
+export interface ScaleChoice extends LayoutChoice {
+  scale: KeyProfileId | null;
+}
+
+/** The choice a hash section names: "<mapping>/<mode>", then the key's id and
+ *  the starting note's, each left out when it is the default. */
+export function parseScaleChoice(section: string | null): ScaleChoice {
+  const parts = (section ?? '').split('/'), scale = isKeyProfileId(parts[2]) ? parts[2] : null;
+  return { ...parseChoice([parts[0], parts[1], scale ? parts[3] : parts[2]].join('/')), scale };
+}
+export const scaleSection = (c: ScaleChoice): string => c.mapping + '/' + c.mode + (c.scale ? '/' + c.scale : '') + (c.root === DEFAULT.root ? '' : '/' + tonicId(c.root));
+export const scalesUrl = (c: ScaleChoice, theme: LayoutsTheme = 'light'): string =>
+  shapesUrl(c, 'light').replace('/shapes.html', '/scales.html') + (c.scale ? '&scale=' + c.scale : '') + (theme === 'dark' ? '&theme=dark' : '');
+
+/** The Scales tab's section: the Layouts tab's four dropdowns, a fifth for the
+ *  key, the link, and the frame. The key's options are the ones the frame's
+ *  page says its layout can play (a message { type: 'hkl-scales', scales,
+ *  scale } from /scales.html); until it has said so the dropdown keeps what it
+ *  had. `onChoose` is told of a new choice, `onShown` of the key the page
+ *  shows, which is not the one asked for when the layout cannot play that;
+ *  `show` puts a choice on screen. */
+export function buildScales(onChoose: (c: ScaleChoice) => void, onShown: (scale: KeyProfileId | null) => void): { el: HTMLElement; show(c: ScaleChoice): void } {
+  const el = document.createElement('section');
+  el.className = 'g-layouts g-scales';
+  el.hidden = true;
+  const bar = document.createElement('div');
+  bar.className = 'g-layouts-bar';
+  const [mapField, mapSel] = select('Mapping', MAPPINGS, MAPPING_LABELS);
+  const [modeField, modeSel] = select('Tuning', MODES, TUNING_LABELS);
+  const [rootField, rootSel] = select('Starting note', ROOT_IDS, ROOT_LABELS);
+  const [scaleField, scaleSel] = select('Key', [] as string[], {});
+  const [themeField, themeSel] = select('Theme', THEMES, THEME_LABELS);
+  const open = document.createElement('a');
+  open.className = 'g-layouts-open';
+  open.target = '_blank';
+  open.rel = 'noopener';
+  open.textContent = 'Open in new tab';
+  bar.append(mapField, modeField, rootField, scaleField, themeField, open);
+  const frame = document.createElement('iframe');
+  frame.className = 'g-layouts-frame';
+  frame.title = 'Scales';
+  el.append(bar, frame);
+
+  let theme = savedTheme();
+  let scale: KeyProfileId | null = null;
+  const chosen = (): ScaleChoice => ({ ...parseChoice(mapSel.value + '/' + modeSel.value + '/' + rootSel.value), scale: isKeyProfileId(scaleSel.value) ? scaleSel.value : null });
+  const show = (c: ScaleChoice): void => {
+    theme = savedTheme();
+    themeSel.value = theme;
+    mapSel.value = c.mapping;
+    modeSel.value = c.mode;
+    rootSel.value = tonicId(c.root);
+    scale = c.scale;
+    if (c.scale && [...scaleSel.options].some((o) => o.value === c.scale)) scaleSel.value = c.scale;
+    const url = scalesUrl(c, theme);
+    open.href = scalesUrl(c);
+    frame.dataset.theme = theme;
+    if (frame.getAttribute('src') !== url) frame.src = url;
+  };
+  /* the frame's page says which keys its layout can play, and which it shows */
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || e.source !== frame.contentWindow || e.data?.type !== 'hkl-scales') return;
+    const ids = (Array.isArray(e.data.scales) ? e.data.scales : []).filter(isKeyProfileId);
+    scaleSel.replaceChildren(...(ids.length ? ids.map((id: KeyProfileId) => new Option(KEY_PROFILE_LABELS[id], id)) : [new Option('None on this layout', '')]));
+    scaleSel.disabled = !ids.length;
+    if (isKeyProfileId(e.data.scale)) scaleSel.value = e.data.scale;
+    el.dataset.offered = ids.join(',');
+    scale = isKeyProfileId(e.data.scale) ? e.data.scale : null;
+    onShown(scale);
+  });
+  /* a new layout keeps the key if it can: the page falls back to its first when it cannot */
+  const relayout = (): void => onChoose({ ...chosen(), scale: isKeyProfileId(scaleSel.value) ? scaleSel.value : scale });
+  mapSel.addEventListener('change', relayout);
+  modeSel.addEventListener('change', relayout);
+  rootSel.addEventListener('change', relayout);
+  scaleSel.addEventListener('change', () => onChoose(chosen()));
+  themeSel.addEventListener('change', () => {
+    theme = themeSel.value === 'dark' ? 'dark' : 'light';
+    try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode / quota: the choice lasts the visit */ }
+    show({ ...chosen(), scale: isKeyProfileId(scaleSel.value) ? scaleSel.value : scale });
   });
 
   return { el, show };
