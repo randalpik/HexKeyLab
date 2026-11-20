@@ -33,6 +33,7 @@ import * as CdnConfigRegistry from '../state/cdnConfigRegistry.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
 import { tuning } from '../state/tuning.js';
+import { view } from '../state/view.js';
 import { darkColorHex } from '../transcription/pitch.js';
 import { lightSourceHex } from '../render/colors.js';
 import { resolveNoteSpec } from '../tuning/spell.js';
@@ -44,11 +45,12 @@ import { draw, requestDraw, activeFootprintSet, validateRefNoteCandidate } from 
 import { setComposerScore, setComposerCursor, setComposerPlaybackBars, clearComposerFrame } from '../render/composer-frame.js';
 import { publishComposerScore, publishComposerPlayback, publishComposerZoom } from './overlay-publish.js';
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote, isSelectionManual } from '../state/reference.js';
+import { setSelectionFromComposer, setScoreRef, clearSelection, selectionDiffersFromScoreRef, onComposerBye, referenceNote, isSelectionManual, lumatoneOutlineTest } from '../state/reference.js';
 import { setTuning, applyMapping } from '../ui/controls.js';
 import { convertCell, isMapping, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
 import { loadPrefs, savePrefs, type TuningMode } from '../state/persistence.js';
-import { TUNING_MODES, TUNING_LABELS } from '@hkl/shared/freq.js';
+import { TUNING_MODES, TUNING_LABELS, anchorOf } from '@hkl/shared/freq.js';
+import { convertNote, type NoteFrame } from '@hkl/shared/convert.js';
 import type { FootprintCell } from '@hkl/bridge/protocol.js';
 import { voiceId, coordOf } from '../types.js';
 import type { KeyId, VoiceId } from '../types.js';
@@ -1156,9 +1158,25 @@ interface ComposerLayoutReq {
 }
 
 /** Coordinates from Composer arrive in the score's mapping (the message says
- *  which); re-express them in HKL's live frame. */
+ *  which); re-express them in HKL's live frame. This is the frame formula, for
+ *  a reference: a spine key, which sounds the same in every tuning. */
 function fromComposer(q: number, r: number, mapping: string): [number, number] {
   return convertCell(q, r, isMapping(mapping) ? mapping : 'euler', tuning.mapping);
+}
+
+/** A note of the score in HKL's live frame: the key of its MIDI note with the
+ *  closest pitch (`convertNote`, @hkl/shared/convert.js; Max, 2026-11-19). A
+ *  live Lumatone outline is searched first, and the whole lattice where the
+ *  outline does not hold the note: a note of Composer's is never dropped. The
+ *  score's frame is read in its pinned tuning, with the home band the live
+ *  reference has there. */
+function noteFromComposer(q: number, r: number, mapping: string): [number, number] {
+  const scoreMapping: Mapping = isMapping(mapping) ? mapping : 'euler';
+  if (scoreMapping === tuning.mapping && (composerRequiredLayout?.tuningMode ?? tuning.mode) === tuning.mode) return [q, r];
+  const home = convertCell(view.kbAnchorQ, view.kbAnchorR, tuning.mapping, scoreMapping);
+  const from: NoteFrame = { mode: composerRequiredLayout?.tuningMode ?? tuning.mode, mapping: scoreMapping, anchor: anchorOf(home[0], home[1], scoreMapping), banded: tuning.banded };
+  const to: NoteFrame = { mode: tuning.mode, mapping: tuning.mapping, anchor: tuning.anchor, banded: tuning.banded };
+  return convertNote(q, r, from, to, lumatoneOutlineTest()) ?? convertNote(q, r, from, to)!;
 }
 
 function layoutMatches(req: ComposerLayoutReq): boolean {
@@ -1377,7 +1395,7 @@ bridge.on((msg: ComposerEvent) => {
       /* Notes are in the score's mapping; play them in HKL's frame. */
       playScore(msg.events.map((e) => ({
         ...e,
-        notes: e.notes.map((c) => { const [q, r] = fromComposer(c.q, c.r, msg.mapping); return { q, r }; }),
+        notes: e.notes.map((c) => { const [q, r] = noteFromComposer(c.q, c.r, msg.mapping); return { q, r }; }),
       })), msg.pedalEvents);
       break;
     }

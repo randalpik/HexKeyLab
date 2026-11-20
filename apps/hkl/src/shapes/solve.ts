@@ -411,12 +411,12 @@ export function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Arr
  *  2026-11-19: in the key of C a diminished seventh is wanted on B or F♯, not
  *  on C, and an isomorphic shape starts from any column it fits). The one
  *  drawn is chosen in this order (Max, 2026-11-17 to -19):
- *   1. the plainest: the fewest comma marks on the bass itself, so a plain key
- *      before one with an arrow or a hook, wherever a plain one holds the
- *      structure;
- *   2. the closest arrangement: where pitches repeat, basses hold the members
- *      on different keys, and the one whose keys lie nearest its bass, by
- *      their distances in real space summed (`keyDistance`), is the shape;
+ *   1. the closest arrangement, whatever its bass: where pitches repeat,
+ *      basses hold the members on different keys, and the one whose keys lie
+ *      nearest its bass, by their distances in real space summed
+ *      (`keyDistance`), is the shape;
+ *   2. of equally close ones, the plainest: the fewest comma marks on the
+ *      bass itself, so a plain key before one with an arrow or a hook;
  *   3. the bass whose note is nearest `root` by fifths, by name: C, then G or
  *      F, then D or B♭. Closeness comes first; among equally close shapes
  *      the starting note itself is drawn wherever it holds one;
@@ -432,14 +432,17 @@ export function seamsAcross(keys: ReadonlyArray<Cell>, layout: ShapeLayout): Arr
  *  With `start`, the bass is not free: it is that key (a scale of a key runs
  *  from the reference key, and a chord of the key starts on its root's key:
  *  ./profile.ts). Nothing is then left to choose but the members' keys, and
- *  the one position is that key's.
+ *  the one position is that key's. With `keys` as well those are given too,
+ *  the bass first (the Scales page draws a chord on the keys with the
+ *  smallest diameter: ./reach.ts), and only the path and the seams are found.
  *
- *  Rule 1 stands before rule 2 (Max, 2026-11-18): the plain bass is the
- *  example even where a marked one would hold the shape a little nearer. Over
- *  the 48 layouts the gate runs that happens in 9 shapes, all in Syntonic, by
- *  at most 0.54 key widths summed over the shape (test/shapes/oracle.mjs pins
- *  them). */
-export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 'C', ref: Cell = [0, 0], start?: Cell): Shape | null {
+ *  Closeness comes before plainness (Max, 2026-11-19). It was the other way
+ *  round from 2026-11-18, when a plain bass cost at most 0.54 key widths
+ *  summed over a shape, in 9 shapes, all Syntonic. Septimal's copy rule
+ *  (packages/shared/src/freq.ts) put marked keys beside plain ones on the wider
+ *  bands, and there a plain bass cost up to 11.53 in 54 shapes
+ *  (test/shapes/oracle.mjs pins what a plain bass would now cost). */
+export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 'C', ref: Cell = [0, 0], start?: Cell, keys?: ReadonlyArray<Cell>): Shape | null {
   const board = keyboard(root, layout, ref);
   const basses = start ? board.basses.filter((b) => b.cell[0] === start[0] && b.cell[1] === start[1]) : board.basses;
   interface Placed extends Bass { cells: Cell[]; keysTied: boolean; spread: number; rise: number; arrows: number; offsets: string }
@@ -447,7 +450,7 @@ export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 
   /* every bass on the keyboard, with the members on the keyboard's keys */
   const placed: Placed[] = [];
   for (const bass of basses) {
-    const at = place(bass.cell, members, layout, board);
+    const at = start && keys ? { cells: [...keys], tied: false } : place(bass.cell, members, layout, board);
     if (!at) continue;
     placed.push({
       ...bass, cells: at.cells, keysTied: at.tied,
@@ -462,7 +465,7 @@ export function solve(members: ReadonlyArray<Exps>, layout: ShapeLayout, root = 
   const spine = Math.floor(4 / layoutOf(layout.mapping).c);
   /* x against y, by rules 1 to 7 (one shape stands as high from any bass, so 5 never parts it) */
   const better = (x: Placed, y: Placed): number =>
-    y.marks - x.marks || byLength(y.spread, x.spread) || y.fifths - x.fifths
+    byLength(y.spread, x.spread) || y.marks - x.marks || y.fifths - x.fifths
     || Math.abs(y.position - spine) - Math.abs(x.position - spine) || x.rise - y.rise || y.arrows - x.arrows || nearer(y, x);
   /* `placed` runs left to right: of equals the left one stays */
   const drawn = placed.reduce((a, b) => (better(b, a) > 0 ? b : a));

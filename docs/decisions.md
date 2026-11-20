@@ -11623,3 +11623,88 @@ The line naming a minor key's three scales under its first footprint picture sta
 ## Scales tab: which keys a tuning lists (2026-11-19, Max)
 
 Some keys are left off the Key dropdown by kind, whatever the layout could play of them: "In Pythagorean tuning, only Pythagorean major and minor should be listed. And Septimal keys should only appear in Septimal tuning." It is part of the offer (`listsKey`, checked by `keyPlace`), so the page, the dropdown and the report agree. It takes Semiditonal minor off the 8 Pythagorean layouts, where its natural form (the Pythagorean natural minor) ran, and Septimal major off the 21 layouts of other tunings that play its scale, the Ptolemaic major. Septimal minor was already offered in Septimal tuning only. Nothing else is excluded: Septimal tuning still lists the Ptolemaic, Semiditonal and Pythagorean keys it plays. Offered, of 48 layouts: Pythagorean minor 40, Pythagorean major 36, Semiditonal minor 31, Ptolemaic and Semiditonal major 29, Ptolemaic minor 18, Septimal major and minor 8; 199 keys.
+
+## The reach model: every voicing, free on the keyboard, one hand and two (2026-11-19, Max)
+
+**His rulings**, on my first pass, which had measured only the Scales page's chords:
+- **"Scales tab is not the same thing as this model."** The page's rule (root position, closed, from the root's key in the reference's octave) is the page's. The model keeps what was agreed under "Evaluating layouts".
+- **"I want inversions and voicings as we ruled them."** Each inversion, closed and open; open raises every other note from the bottom an octave.
+- **"All chords in all inversions and voicings should get one- and two-hand evaluations."**
+- **"The smallest possible diameter is the correct arrangement. The page should also draw that, where applicable."**
+
+**Mine, for him to go through**:
+- **Free means any octave**, as the earlier agreement counts "the number of octaves a chord can be played in": a voicing's bass is its own note in whichever octave reaches best.
+- **Two hands choose their keys independently**: the best split is found over the notes, and each hand's notes go on that hand's tightest keys.
+- **"Where applicable" on the Scales page**: a chord's bass stays on its root's key and its other notes go on the keys with the smallest diameter. On a tie in diameter it keeps the keys the guide would choose (the nearest the bass), so nothing moves without getting smaller: 425 of 5,817 chords move; without that 913 would. The Layouts tab is untouched: its order of choice is ruled separately.
+- **Which keys are evaluated**: every key a tuning lists (`listsKey`), whether or not the Scales tab offers it on the layout, since that offer is the page's octave rule.
+- **"Each hand's width across its longest axis"** is kept as the distance between its two farthest keys.
+- Of equally small arrangements, the one whose keys are closest together by summed distances, then the octave nearest the reference's.
+
+**Found**, mean diameters in key widths over the voicings a keyboard holds (`test/shapes/reach.mjs`):
+- Semiditonal major in Ptolemaic tuning, closed, one hand, triads then sevenths: Gerhard 2.50 and 2.80; Randal 2.75 and 3.34; Park 2.76 and 3.33; Accordion 3.10 and 3.64; Wicki-Hayden 3.11 and 3.63; Euler 3.28 and 3.83; Chromatic 3.88 and 4.27; Janko 4.08 and 4.55. Open, one hand: Gerhard 4.23 and 5.45; Randal 4.38 and 5.49; Euler 4.59 and 5.71; Wicki-Hayden 4.67 and 6.44; Chromatic 5.11 and 6.61; Park 5.14 and 7.22; Accordion 6.49 and 8.86; Janko 8.04 and 10.52.
+- There, only Gerhard has as many voicings within 7 for one hand as for two, in every tier, closed and open. For one hand Randal has 20 of 21 open triads and 22 of 28 open sevenths; Janko has no open voicing of a diatonic chord.
+- For two hands every mapping but Chromatic has the same counts within 7, closed and open: 21 triads, 28 sevenths, 21 of the 35 secondary-dominant voicings, 24 borrowed.
+
+## Septimal's copy rule: on a wider band the hook travels to the copy only (2026-11-19, Max)
+
+**Why**: the survey of copy-column tunings (docs/local/shape-guide.md → Layout evaluation). A six-wide band holds every Euler column twice, and Septimal tuned both copies of the left column alike, which made the second one an in-band octave duplicate. Max: those in-band octaves "only serve to muddy the isomorphism of the layout", and the six-wide octave is still within reach.
+
+**His ruling**: "Redefine how a septimal column is copied from 3 to 6 wide, in general. The septimal hook travels to the copied column only, while the original gets its arrow. So: +1 0⁷ 0 0 −1 −1. From 6 to 12 would then copy the septimal column as is." No recordings or scores exist in Septimal on a wide mapping, so nothing is migrated. He turned down the further arrows the survey found (one more on the right copy, or on both outer copies): "nice but sacrifices isomorphism significantly".
+
+**What it does** (measured before building, six keys with 102 distinct chords between them, closed voicings within one hand of 774): Park 67 chords → 92 and 515 → 675; Wicki-Hayden 67 → 92 and 485 → 596; Janko 66 → 91 and 526 → 715; Accordion 67 → 92 and 519 → 689; Chromatic 64 → 88 and 485 → 596. Septimal major's closed chords widen by at most 0.2 key widths. Septimal minor widens (Park 3.95 → 5.29), its septimal thirds having lost a column, and a third of the in-band octaves go where a layout has them.
+
+**Mine, for him to go through**:
+- **Banded only.** Unbanded Septimal retunes its seams from the three-column form (steps 9:7, 5:4, 5:4), and is left as it was.
+- **Four-wide bands are unchanged**, as a consequence and not a choice: a four-wide band samples the left column once, so there is no pair to split.
+- **The one exception to "a key sounds its Euler-equivalent's pitch"**: the arrowed left columns of six- and twelve-wide bands, 36/35 above the hooked key of the same equivalent. Frame conversion is being rebuilt as a pitch search for that reason (next entry, when it lands).
+- The color gate's snapshot was re-seeded: 5,589 cells in the five wide presets' Septimal grids, each an arrowed left column losing only its septimal flag.
+
+## Converting a note between layouts is a pitch search (2026-11-19, Max)
+
+**Why**: Septimal's copy rule (above) made the structural conversion (`convertCell`) land a septimal note 36/35 off between a three-wide band and a wider one. Max: "It should just find the spatially closest instance of the closest possible pitch, in cents, to the original. Nothing should ever be jumping 49 cents."
+
+**His rulings**:
+- **Same MIDI note only; enharmonics allowed.** "I'd rather a harmonic 7th convert to an augmented 6th."
+- **The closest pitch wins at any distance**: "as long as a key is within the Lumatone outline, I don't care how far away it goes if it's the closest pitch." Among equally close pitches, the spatially closest.
+- **The outline governs only "when there is a live outline and HKL is in the Lumatone outline mode. Otherwise the whole lattice is fair game."**
+- **A note whose MIDI note is not on the destination outline is dropped**, on HKL's side only: "Composer can also never drop notes."
+
+**Mine**: "where the note was", for nearness in the new frame, is its structural counterpart (`convertCell`), which keeps the MIDI note; of two equally close pitches equally near it, the one down the line is taken. The search walks 64 steps either way along the line of that MIDI note.
+
+**Found while tracing it**: Composer's retune was already a pitch search (closest cents within 15 rows, then nearest), bounded by the piano's range and not by the keyboard, and not limited to the note's MIDI number; the bare structural conversion was only ever used where the tuning stays the same. A septimal B♭ retuned to Ptolemaic on Euler goes to a B♭ 5.8 cents away 22 steps off, past one 27.3 cents away at 11 steps and the one in place at 48.8 cents.
+
+**State (2026-11-19)**: the function and its oracle section are built; the recording export uses it. Not yet switched: HKL's mapping switch (its held notes convert before its reference does, so it needs reordering), the bridge both ways, Composer's paste and retune.
+
+## Shape guide: the closest arrangement comes before the plainest bass (2026-11-19, Max)
+
+**His ruling**: "Bass rule can switch: show the closest arrangement regardless of bass." It reverses the order of 2026-11-18, which he had approved when a plain bass cost at most 0.54 key widths summed over a shape, in 9 shapes, all Syntonic.
+
+**Why now**: Septimal's copy rule put arrowed and hooked keys beside plain ones on the six- and twelve-wide bands. There the plain-first order drew 54 shapes from a plain bass where a marked bass held them nearer, by up to 11.53 key widths (one Wicki-Hayden shape 7.00 wide against 1.00).
+
+**Mine**: the plainest bass stays as the next rule, parting equally close arrangements, so his Park case (the major 2nd from the plain C of column 4, not the C↓ of column 2) is unchanged. Four more shapes start on another note than C (213). The Scales page is not affected: its chords start on a given key.
+
+## Note conversion: every caller switched (2026-11-19)
+
+Follow-up to "Converting a note between layouts is a pitch search". All note conversions now go through `convertNote`: HKL's mapping switch, score notes played through HKL, the recording export, Composer's retune and paste, and HKL's held keys and footprint as Composer shows them.
+
+**Mine, for Max to go through**:
+- **HKL's mapping switch converts the reference first** (it was last), because the notes need the new home band and the outline's new center. The reference conversion is silent, as before.
+- **Two held notes that convert to one key become one**: the first keeps it, the other is released.
+- **Score notes played through HKL are never dropped**: the live Lumatone outline is searched first and the whole lattice where it does not hold the note, on the reading that a note of Composer's must sound.
+- **Composer always searches the whole lattice.** Preferring HKL's live Lumatone outline there is not built: the footprint message does not say which outline it describes (Lumatone, QWERTY or piano), so it would take a protocol field.
+- **A paste carries its mapping and nothing else**, so the source is read in the destination's tuning, with the destination's home band as it falls in the source mapping.
+- **References and anchors keep the structural conversion**: a reference is a spine key, and the spine sounds the same in every tuning.
+
+## Note conversion: Schismatic tolerates a schisma (2026-11-19, Max)
+
+**What the rule did**: retuning a Schismatic score from Wicki-Hayden to Euler, a copy-column B3 with no exact Euler key nearby went to its exact pitch 35 columns and 22 rows away, spelled G triple-sharp 3, where it had stayed on the neighboring B3 a schisma (1.95 cents) low. Composer's fixture for that case caught it.
+
+**His ruling**: "Schismatic can be an exception. Its whole idea is being inexact, so a tolerance of a schisma makes sense there."
+
+**Mine**: the tolerance applies where either layout is Schismatic, source or destination. The search finds the closest pitch and takes the nearest key within a schisma of it. Every other tuning keeps no tolerance: the closest pitch wins at any distance.
+
+**Found while building it**: far along a note's line Schismatic's stacked schismas overflow the frequency math (a non-number), so such candidates are skipped.
+
+## HKL's tuning selector and Banded toggle keep retuning in place (2026-11-20, Max)
+
+A note on a key that changes pitch with the tuning stays on that key in HKL: a Pythagorean minor seventh held on what becomes a hooked key in Septimal retunes to the harmonic seventh, where the conversion (`convertNote`) would move it to the plain key at the same pitch. Max noticed it, and asked whether he had misread the conversion rules; he had not, the tuning selector simply never converted notes. Offered the change, he ruled: "No, keep everything the way it is. As long as the behavior is expected and matches docs, I'm fine with it." The same holds for the Banded layout toggle. Note conversion applies where it is listed (docs/architecture.md → Note conversion): HKL's mapping switch, score notes played through HKL, the recording export, and Composer's retune, paste and view of HKL's keys.

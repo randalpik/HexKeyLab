@@ -618,8 +618,8 @@ for (const { layout: l, ref } of LAYOUTS) {
     const here = arranged.find((x) => String(x.cell) === String(sh.bass) && x.a.best.some((c) => keys(c) === keys(sh.cells)));
     check(`${tag}: the bass is a key of the keyboard, in the position drawn`, !!here && here.p === sh.position, true);
     if (!here) continue;
-    /* 1: no key that holds the members is plainer */
-    check(`${tag}: 1, the plainest bass that holds it`, here.marks, Math.min(...arranged.map((x) => x.marks)));
+    /* 1: no key of the keyboard holds the members nearer its bass */
+    check(`${tag}: 1, the closest arrangement, whatever its bass`, here.a.spread - Math.min(...arranged.map((x) => x.a.spread)) < SAME, true);
     if (here.marks > 0) marked++;
     if (here.fifths > 0) { offC++; awayMost = Math.max(awayMost, here.fifths); }
     /* each key as near the bass as any of its pitch; of equally near keys, the choice closest
@@ -628,12 +628,15 @@ for (const { layout: l, ref } of LAYOUTS) {
     if (here.a.options.some((o) => o.length > 1)) repeats++;
     check(`${tag}: of equally near keys, the closest together and then the highest`, here.a.best.some((c) => keys(c) === keys(sh.cells)), true);
     check(`${tag}: "keys" is undecided exactly when two such choices are level`, sh.undecided.includes('keys'), here.a.best.length > 1);
-    /* 2: of the plainest, none holds the members nearer its bass. What a marked bass would hold
-       nearer is counted (rule 1 before rule 2) */
-    const plain = arranged.filter((x) => x.marks === here.marks);
-    check(`${tag}: 2, the closest arrangement`, here.a.spread - Math.min(...plain.map((x) => x.a.spread)) < SAME, true);
-    const looser = here.a.spread - Math.min(...arranged.map((x) => x.a.spread));
+    /* 2: of the equally close, none starts on a plainer key. What the plainest bass that holds the
+       shape would cost is counted (closeness before plainness, Max 2026-11-19) */
+    const plain = arranged.filter((x) => x.a.spread - here.a.spread < SAME && x.marks === here.marks);
+    check(`${tag}: 2, of the closest, the plainest bass`, here.marks, Math.min(...arranged.filter((x) => x.a.spread - here.a.spread < SAME).map((x) => x.marks)));
+    const fewest = Math.min(...arranged.map((x) => x.marks));
+    const looser = Math.min(...arranged.filter((x) => x.marks === fewest).map((x) => x.a.spread)) - here.a.spread;
     if (looser > SAME) { plainCosts[`${l.mapping} ${l.mode}`] = (plainCosts[`${l.mapping} ${l.mode}`] ?? 0) + 1; plainCostMost = Math.max(plainCostMost, looser); }
+    /* SHOW_PLAIN=1 lists them: the shape and what its plainest bass would cost */
+    if (process.env.SHOW_PLAIN && looser > SAME) console.log(`PLAIN ${tag}: drawn ${here.a.spread.toFixed(2)} from a bass with ${here.marks} mark(s); the plainest would be +${looser.toFixed(2)}`);
     /* 3: of those, none starts on a note nearer C by fifths: C itself wherever it holds the shape as close */
     const asClose = plain.filter((x) => x.a.spread - here.a.spread < SAME);
     check(`${tag}: 3, on the note nearest C by fifths`, here.fifths, Math.min(...asClose.map((x) => x.fifths)));
@@ -729,9 +732,11 @@ for (const { layout: l, ref } of LAYOUTS) {
   /* Septimal holds the whole catalog but for what its retuned column takes away, and every
      septimal structure and interval, on every mapping */
   if (l.mode === '7') {
-    /* every mapping holds what Randal does, but for the shapes too wide for a Lumatone there:
-       ten on Chromatic, whose 12-wide bands a chain of fifths crosses slowly, and one on Janko */
-    check(`H ${l.mapping} 7: entries`, g.length, { chromatic: 133 }[l.mapping] ?? 143);
+    /* a three-wide mapping holds what Randal does. A wider one holds 28 entries more: by
+       Septimal's copy rule (docs/architecture.md) its left column's original is 5-limit and only
+       the copy septimal, so it has the shapes with a 6/5-type note as well. Chromatic holds ten
+       fewer, too wide for a Lumatone on its 12-wide bands */
+    check(`H ${l.mapping} 7: entries`, g.length, bandWidth(l.mapping) === 3 ? 143 : l.mapping === 'chromatic' ? 161 : 171);
     check(`H ${l.mapping} 7: every structure and interval with a 7 is held`, all.filter((m) => m.some((e) => e[3] !== 0)).every((m) => solve(m, l, 'C', ref)), true);
   } else {
     if (l.mode === '5') check(`H ${l.mapping} 5: entries`, g.length, { chromatic: 118 }[l.mapping] ?? 128);
@@ -775,8 +780,8 @@ check('H the room of a third, a half and a row, in px (a picture has the entry\'
 console.log(`  pictures: ${scaledAll.length} scaled down to a row (${Math.floor(room(1))} px); the widest shown as drawn is ${widestAsDrawn} px`);
 /* rule 1 before rule 2 (Max, 2026-11-18): the plain C is the example even where a marked C would
    hold the shape a little nearer. Where that happens, and by how much at most, is pinned */
-check('H shapes a marked bass would hold nearer than the plain one drawn', Object.entries(plainCosts).map(([k, n]) => `${k} ×${n}`).join('; '), 'accordion S ×7; park S ×2');
-check('H the most the plain bass costs, in key widths summed over a shape', plainCostMost.toFixed(2), '0.54');
+check('H shapes drawn from a marked bass that holds them nearer than the plainest one', Object.entries(plainCosts).map(([k, n]) => `${k} ×${n}`).join('; '), 'wickiHayden 7 ×7; chromatic 7 ×7; janko 7 ×6; accordion 7 ×17; park 7 ×17; accordion S ×7; park S ×2');
+check('H the most the plainest bass would cost, in key widths summed over a shape', plainCostMost.toFixed(2), '11.53');
 /* Max's case: two arrangements of the wolf 5th as many steps apart and as high, one turning after
    four steps and one after six; the nearer in real space is the shape */
 {
@@ -802,11 +807,13 @@ console.log(`  ${solvedAll} shapes over the ${LAYOUTS.length} layouts: ${markedA
      sixths' eleven, none of which Septimal can hold */
   check('H Randal 7: chord entries', seen, 81);
 }
-/* Max's case: on Park the C of column 2 is a C↓ in Ptolemaic and a hooked C in Septimal, and the
-   C of column 4 is plain; both hold these shapes, and the plain one is the example */
+/* Max's case: on Park the C of column 2 is a C↓ in Ptolemaic and the C of column 4 is plain; both
+   hold these shapes, and the plain one is the example. In Septimal column 2 held the Pythagorean
+   minor third too while its C was hooked; under Septimal's copy rule (2026-11-19) it no longer
+   starts that shape, which is what the last row pins */
 const marksAt = (c, l) => { const h = hejiCommasFor(l.mode, c[0], c[1], l.mapping, l.anchor, l.banded); return Math.abs(h.syn5) + Math.abs(h.sept7); };
 for (const [mode, ratio, want] of [['5', '10:9', 'major 2nd | column 2 or 4 | from column 4, 0 marks on its C'], ['5', '40:27', 'wolf 5th | column 2 or 4 | from column 4, 0 marks on its C'],
-  ['7', '32:27', 'Pythagorean minor 3rd | column 2 or 4 or 6 | from column 4, 0 marks on its C']]) {
+  ['7', '32:27', 'Pythagorean minor 3rd | column 4 or 6 | from column 4, 0 marks on its C']]) {
   const l = layoutOf('park', mode), e = buildGuide(l).find((x) => x.ratio === ratio);
   check(`H Park ${mode}, ${ratio}`, e ? `${e.name} | ${e.start} | from column ${e.shape.position + 1}, ${marksAt(e.shape.bass, l)} marks on its C` : null, want);
 }
@@ -822,7 +829,7 @@ for (const [mode, ratio, want] of [['5', '10:9', 'major 2nd | column 2 or 4 | fr
   const lc = layoutOf('chromatic', 'S'), d7 = buildGuide(lc).find((e) => e.name === 'Pythagorean diminished seventh in third inversion');
   check('H Chromatic in Syntonic, Pythagorean diminished seventh in third inversion', `${d7 ? spelled(d7, lc) : ''} | ${d7?.shape.path.length} path keys`, 'Bb C# E G | 2 path keys');
 }
-check('H shapes that start on another note than C, over the 48 layouts, and the most fifths from it', `${offC}, ${awayMost}`, '209, 6');
+check('H shapes that start on another note than C, over the 48 layouts, and the most fifths from it', `${offC}, ${awayMost}`, '213, 6');
 /* Max's case: in Pythagorean the left C has its minor 2nd only on a far key, so the two adjacent
    keys are played from center or right (drawn from center, they sit in one band: no seam) */
 const m2 = buildGuide(layoutOf('randal', 'P')).find((e) => e.ratio === '256:243');

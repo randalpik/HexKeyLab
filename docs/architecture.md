@@ -118,6 +118,20 @@ ratios, HEJI arrows and color all derive from it. Selector order:
 | `'S'` Syntonic | A-d0 | +SC | −SC | Every band Pythagorean; whole bands shifted by `k` SC around the home band: `k = 0, +1, 0, −1` by band distance (period 4). Designed for Wicki-Hayden. |
 | `'Y'` Polysyntonic | A-d0 | +SC | −SC | As Syntonic, but `k` = band distance, unbounded (stacks on the whole lattice). |
 
+**Septimal's copy rule** (Max, 2026-11-19; `coordExps`). The table above is Septimal on a band
+that samples the qm2 column once: three wide, and four wide. A six-wide band samples every Euler
+column twice, as an original and as a copy (the Wicki-Hayden copy, chromatic column type j = 2),
+and there the septimal hook travels to the copied qm2 column only: the original takes its arrow,
+the plain 5-limit value. Across the band, in syntonic commas from Pythagorean: +1, 0 with a hook,
+0, 0, −1, −1. A twelve-wide band copies each of those six columns as it is (an odd chromatic
+column is a copy of column Q − 5: j = 1 copies the original, j = 3 the hooked copy). So on six-
+and twelve-wide layouts banded Septimal holds 5-limit minor and the septimal notes at once, and
+it is the one case where a key does not sound its Euler-equivalent's pitch: an arrowed qm2 key
+is 36/35 above the hooked key of the same equivalent. Arrows, hooks, the "7" mark and color follow
+the pitch, so an arrowed key draws as the 5-limit note it is. Unbanded Septimal is unchanged: its
+seams are retuned from the three-column form. `test/layout-presets/oracle.mjs` (sections F to H)
+pins the rule by chromatic column (8 and 1 mod 12 arrowed, 10 and 3 hooked).
+
 **Uniform septimal (`'7'`)** — qm2 is region B `(aDepth=1, aUpper=true)`, qm∈{0,1} is region A.
 Octave-invariant (shares `qmod3`). Every qm0 spine cell has its harmonic 7th (7/4) two rows up in
 qm2 at the same `r`, so dominant 7 (4:5:6:7) is reachable from any qm0 root and half-diminished 7
@@ -462,7 +476,29 @@ occupies the middle four columns.
   keeps its column's band). The shared primitives (`coordExps`, `freqAt`, `coordToMidi`, `noteName`,
   `keyOctave`, `hejiCommasFor`) take a required `mapping` and resolve through it; HKL's state-based
   helpers read `tuning.mapping` (carried on `TuningStateLike`).
-- **Frame conversion** (`convertCell`): Euler → Wicki-Hayden exact (original column `(2q, r)`).
+- **Note conversion** (`convertNote`, `@hkl/shared/convert.js`; Max, 2026-11-19): a note that
+  is converted from one layout to another (the callers are listed below; HKL's tuning selector
+  and its Banded layout toggle are not among them: there every note keeps its key and retunes
+  in place, as before) lands on the cell that sounds the same MIDI note at
+  the closest pitch in cents, however far, and among equally close ones the nearest its structural
+  counterpart. Enharmonics are allowed; only the nominal MIDI note is kept. Schismatic is the
+  exception: where either layout is Schismatic, pitches within a schisma of the closest count as
+  equally close, so a note a schisma off stays beside where it was (its exact pitch can lie
+  dozens of keys away under a triple sharp). The cells of one MIDI
+  note lie on one line (`sameNoteStep`: (7, −4) Euler, (7, −2) Wicki-Hayden, (5, −4) Randal),
+  along which the pitch drifts by commas, so the search walks that line both ways from the
+  structural counterpart. An optional test limits the candidates to a live Lumatone outline, and
+  the result is then null when the outline holds no key of the note: HKL drops such a note,
+  Composer never drops one and searches the whole lattice. It is what converts a septimal note
+  between a three-wide band and a wider one, where `convertCell` alone lands 36/35 off (Septimal's
+  copy rule). Every note conversion uses it: HKL's mapping switch (held mouse, piano and pedal
+  notes; under the live Lumatone outline, and dropping what the outline no longer holds:
+  `lumatoneOutlineTest`, `state/reference.ts`), score notes played through HKL (the outline first,
+  then the whole lattice), the recording export, and in Composer the retune, the paste across
+  mappings and HKL's held keys and footprint (always the whole lattice). References and anchors
+  stay on `convertCell`: a reference is a spine key, which sounds the same in every tuning.
+  `test/layout-presets/oracle.mjs` (section N) pins it against a brute-force search.
+- **Frame conversion** (`convertCell`), the structural counterpart: Euler → Wicki-Hayden exact (original column `(2q, r)`).
   Wicki-Hayden → Euler is pitch-exact in the band-uniform modes (brute force: 625/625 copies equal
   an Euler cell in 5/P/D/7). In the band-indexed modes every copy is off, because its
   Euler-equivalent sits one band lower: in Schismatic by one schisma (1.95¢), in Syntonic /
@@ -479,10 +515,11 @@ occupies the middle four columns.
   ±80-row span in every mapping); projection `ρΔq − c·Δr`; copies are candidates like any cell.
 - **Switching mapping** (`applyMapping(id)`, `apps/hkl/src/ui/controls.ts`, the one path for every
   writer: the toolbar select, the layout builder, a recording's snapshot, Composer's layout request,
-  Reset): the reference, anchor, held mouse /
-  piano-input / pedal-sustained notes convert by the frame formula (same pitch); held Lumatone / QWERTY
-  voices keep their `(q,r)` and retune in place (they release through the key they struck,
-  `input/held.ts`); nothing is dropped. The `verticalFreq` tilt uses a `log(2)/6` column gradient — under
+  Reset): the reference and anchor convert by the frame formula, first; then held mouse /
+  piano-input / pedal-sustained notes convert by pitch (Note conversion, above), limited to the
+  live Lumatone outline when HKL shows one, where a note the outline no longer holds is dropped;
+  held Lumatone / QWERTY voices keep their `(q,r)` and retune in place (they release through the
+  key they struck, `input/held.ts`). The `verticalFreq` tilt uses a `log(2)/6` column gradient — under
   Wicki-Hayden it coincides with the Lumatone case-row tilt, because the Lumatone's long axis `(7, −2)`
   carries no net pitch (the accepted range cost: the 280 keys span MIDI 30–85, 55 semitones, instead
   of 4–113, 109; not mitigated).

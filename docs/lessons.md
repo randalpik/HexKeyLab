@@ -225,7 +225,7 @@ The 7-limit (`tuning='7'`) mode makes every `qmod3=2` cell B-region with `(aDept
 Common confusion when reasoning about chord shapes in this mode:
 - Half-diminished 7th = dom7-with-9th-replacing-root. Rooted at qm=1, NOT qm=0. From qm=1 r=R the four tones live at `qm=1 r=R (5)`, `qm=0 r=R+1 (6)`, `qm=2 r=R+2 (7)`, `qm=0 r=R+2 (9)` — gives 5:6:7:9 exact.
 - Major triad still 5-limit-pure (4:5:6) via qm=0 + qm=1 of the same r. Septimal adjustment only touches qm=2 cells.
-- 5-limit minor triad (10:12:15) is unreachable. Minor in this mode is Pythagorean (32:27, via qm=0) or septimal subminor (7:6, via qm=2). Use `'5'` mode when you want 5-limit minor.
+- 5-limit minor triad (10:12:15) is unreachable on a three-wide band. Minor in this mode is Pythagorean (32:27, via qm=0) or septimal subminor (7:6, via qm=2). Use `'5'` mode when you want 5-limit minor. On six- and twelve-wide bands the original qm=2 column is 5-limit and only its copy is septimal (2026-11-19, docs/architecture.md → Septimal's copy rule), so both kinds of minor are there.
 
 ### Octave-consistency in the 88-cell picker requires octave-normalized tiebreak
 

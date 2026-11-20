@@ -11,42 +11,45 @@ import { groupChords } from './chords.js';
 import { quantizeDurations } from './quantize.js';
 import { splitVoices } from './voicing.js';
 import { emitMei } from './meiEmit.js';
-import { isPresetMapping, specOf, convertCell, bandOfCell, bandWidth, type Mapping, type PresetMapping } from '@hkl/shared/mapping.js';
+import { isPresetMapping, specOf, type Mapping, type PresetMapping } from '@hkl/shared/mapping.js';
+import { anchorIn, convertNote, type NoteFrame } from '@hkl/shared/convert.js';
 
 /** The recording in a frame a score can hold. A score's mapping is one of the
  *  presets (Composer cannot build or store a custom layout), so a recording
  *  made on a custom layout is re-expressed in the finest preset of its
- *  orientation: Chromatic for a plain layout, Park for an inverted one. Best
- *  effort (docs/decisions.md, "Composer converts from custom layouts"): a
- *  plain layout converts exactly in every tuning; an inverted one exactly from
- *  division 3 or 6, and from division 4 or 12 only in the banded tunings with
- *  pure octave bands. A preset recording is returned as it is. */
+ *  orientation: Chromatic for a plain layout, Park for an inverted one. Each
+ *  note goes to the key of that preset with its MIDI note and the closest
+ *  pitch (`convertNote`, the whole lattice: a recording has no outline), so
+ *  it is exact wherever the preset holds the pitch: from every plain layout in
+ *  every tuning; from an inverted one of division 3 or 6; from division 4 or 12
+ *  in the banded tunings with pure octave bands (docs/decisions.md, "Composer
+ *  converts from custom layouts"). A note-off and an aftertouch follow their
+ *  note-on to its key. A preset recording is returned as it is. */
 function inScoreFrame(session: HkrSession): HkrSession {
   const from = session.snapshot.mapping;
   if (isPresetMapping(from)) return session;
   const to: PresetMapping = specOf(from).invert ? 'park' : 'chromatic';
-  const cell = <E extends { q: number; r: number }>(e: E): E => {
-    const [q, r] = convertCell(e.q, e.r, from, to);
+  const { tuning: mode, banded } = session.snapshot;
+  const frame = (mapping: Mapping, anchor: number): NoteFrame => ({ mode, mapping, anchor, banded });
+  /* where each sounding key went, so its note-off and aftertouch go there too */
+  const sounding = new Map<string, [number, number]>();
+  const struck = <E extends { q: number; r: number }>(e: E, anchor: number): E => {
+    const [q, r] = convertNote(e.q, e.r, frame(from, anchor), frame(to, anchorIn(anchor, from, to)))!;
+    sounding.set(e.q + ',' + e.r, [q, r]);
+    return { ...e, q, r };
+  };
+  const follow = <E extends { q: number; r: number }>(e: E): E => {
+    const [q, r] = sounding.get(e.q + ',' + e.r) ?? convertNote(e.q, e.r, frame(from, session.snapshot.anchor), frame(to, anchorIn(session.snapshot.anchor, from, to)))!;
     return { ...e, q, r };
   };
   return {
     ...session,
     snapshot: { ...session.snapshot, mapping: to, anchor: anchorIn(session.snapshot.anchor, from, to) },
     events: session.events.map((e) => {
-      if (e.k === 'on') return e.a === undefined ? cell(e) : { ...cell(e), a: anchorIn(e.a, from, to) };
-      return e.k === 'off' || e.k === 'pa' ? cell(e) : e;
+      if (e.k === 'on') return e.a === undefined ? struck(e, session.snapshot.anchor) : { ...struck(e, e.a), a: anchorIn(e.a, from, to) };
+      return e.k === 'off' || e.k === 'pa' ? follow(e) : e;
     }),
   };
-}
-
-/** Home band `anchor` of layout `from`, as a band of layout `to`: the band its
- *  first row-0 cell converts into. */
-function anchorIn(anchor: number, from: Mapping, to: Mapping): number {
-  const W = bandWidth(from);
-  let q = (anchor - 1) * W;
-  while (bandOfCell(q, 0, from) < anchor) q++;
-  const [q2, r2] = convertCell(q, 0, from, to);
-  return bandOfCell(q2, r2, to);
 }
 
 export function sessionToHkc(

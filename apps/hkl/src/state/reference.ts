@@ -46,6 +46,7 @@
 import { tuning } from './tuning.js';
 import { view } from './view.js';
 import { anchorOf, coordToMidi } from '@hkl/shared/freq.js';
+import { lumatoneCells } from '../layout/physical.js';
 
 interface RefCoord {
   q: number;
@@ -140,6 +141,18 @@ export function setAnchorListener(fn: () => void): void {
 export function setAnchorOverride(a: number | null): void {
   anchorOverride = a;
   recomputeAnchor();
+}
+
+/** The live Lumatone outline as a test of a cell, or undefined when HKL is in
+ *  another outline mode: the 280 keys around the keyboard anchor, in the
+ *  current alignment. It limits where a converted note may land
+ *  (`convertNote`, @hkl/shared/convert.js; Max, 2026-11-19: the outline governs
+ *  only "when there is a live outline and HKL is in the Lumatone outline
+ *  mode"). Built for the anchor as it stands when called. */
+export function lumatoneOutlineTest(): ((q: number, r: number) => boolean) | undefined {
+  if (readOutlineMode() !== 'lumatone') return undefined;
+  const keys = new Set(lumatoneCells.map(([u, v]) => (view.kbAnchorQ + u) + ',' + (view.kbAnchorR + v)));
+  return (q, r) => keys.has(q + ',' + r);
 }
 
 /** Recompute after a change to an input other than the tiers: the outline

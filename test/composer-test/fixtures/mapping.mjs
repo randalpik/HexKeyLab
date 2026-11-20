@@ -126,6 +126,23 @@ export const FIXTURES = {
       r();
     `,
   },
+  /* A paste across scores of different mappings converts each note by pitch
+     (@hkl/shared/convert.js). In Septimal a hooked note of Euler's left column,
+     G4 at (−1,2), goes to Wicki-Hayden's hooked copy column at (5,0): its
+     structural counterpart (−2,2) is the 5-limit original there (Septimal's
+     copy rule), 36/35 higher. The plain A3 stays on (0,0). */
+  map_paste_septimal_copy: {
+    setup: `
+      ${HELPERS}
+      m.setLayoutReq({ tuningMode: '7', mapping: 'euler' });
+      m.setCursor(0, 1);
+      for (let i = 0; i < 4; i++) m.insertChordAtCursor({ notes: [RN(0, 0, 'a', '', 3, 57), RN(-1, 2, 'g', '', 4, 67)], duration: '4', dots: 0 });
+      m.appendMeasure();
+      m.setCursor(1, 1);
+      r();
+    `,
+    setupKeys: [{ key: 'ArrowDown', shift: true }, { key: 'c', ctrl: true }],
+  },
   /* Entry gate: HKL announces Ptolemaic + Wicki-Hayden while the score is
      Ptolemaic + Euler → committing held keys is blocked with a prompt naming
      the mapping; declining inserts nothing. */
@@ -362,6 +379,25 @@ export const ASSERTIONS = {
       expr: `(() => {
         const lr = [...window.__hkl_composer.model.getDoc().getElementsByTagName('*')].find((e) => e.localName === 'layoutReq');
         return lr && !lr.hasAttribute('mapping') ? { ok: true } : { ok: false, detail: lr ? lr.outerHTML : 'no layoutReq' };
+      })()` },
+  ],
+  map_paste_septimal_copy: [
+    { name: 'pasted into Wicki-Hayden: A3 on (0,0), the hooked G4 on the copy column (5,0)',
+      expr: `(async () => {
+        const m = window.__hkl_composer.model;
+        const dt = new DataTransfer();
+        document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }));
+        const text = dt.getData('text/plain');
+        if (!text.includes('kind="measure"')) return { ok: false, detail: 'copy produced: ' + text.slice(0, 160) };
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        m.setLayoutReq({ tuningMode: '7', mapping: 'wickiHayden' });
+        m.setCursor(m.getMeasureStartCursor(1, 1), 1);
+        const dt2 = new DataTransfer();
+        dt2.setData('text/plain', text);
+        document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt2, bubbles: true, cancelable: true }));
+        await new Promise((res) => setTimeout(res, 50));
+        const got = [...new Set([...m.allMeasures()[1].querySelectorAll('note')].map((n) => n.getAttribute('data-q') + ',' + n.getAttribute('data-r')))].sort();
+        return (${expect.toString()})(got, ['0,0', '5,0']);
       })()` },
   ],
   map_setup_retune_schismatic_copy: [

@@ -43,6 +43,7 @@ import { fifthIndex, fifthName } from '@hkl/shared/notes.js';
 import { baseKeys } from '../layout/baseKeys.js';
 import { analyzeChord } from '../tuning/chords.js';
 import { OCTAVE, STRUCTURES, UNISON, addExps, centsOf, expsKey, expsOf, pitchClass, subExps, type Exps } from './catalog.js';
+import { reach, span, tightestFrom, voicings, type Reach, type Voicing } from './reach.js';
 import { keyDistance, seamsAcross, solve, type Cell, type Shape, type ShapeLayout } from './solve.js';
 
 export { pitchClass };
@@ -296,11 +297,24 @@ export function keyPlace(p: KeyProfile, layout: ShapeLayout, ref: Cell, tonic = 
 /** A chord of a profile on a keyboard (Max, 2026-11-19): in root position
  *  and closed, starting on its root's key (`KeyPlace.keyOf`: for a chord on a
  *  scale note, the literal key the scale's run plays that note on); null when
- *  the keyboard does not hold the chord from there. Inversions are the Layouts
- *  tab's to show. */
+ *  the keyboard does not hold the chord from there. Where a pitch has several
+ *  keys, the chord is on those with the smallest diameter (./reach.ts), which
+ *  is the correct arrangement; where the keys the guide would choose (the
+ *  nearest the bass: ./solve.ts) are as small, it stays on those. Inversions
+ *  are the Layouts tab's to show. */
 export function chordShape(c: ProfileChord, layout: ShapeLayout, ref: Cell, place: KeyPlace, tonic = 'C'): Shape | null {
-  const start = place.keyOf(c.root);
-  return start ? solve(c.members, layout, tonic, ref, start) : null;
+  const start = place.keyOf(c.root), nearest = start && solve(c.members, layout, tonic, ref, start);
+  if (!start || !nearest) return null;
+  const keys = tightestFrom(start, c.members, layout, ref)!;
+  return span(keys) < span(nearest.cells) - 1e-9 ? solve(c.members, layout, tonic, ref, start, keys) : nearest;
+}
+
+/** A chord of a profile in every voicing, each as far as the hands must reach
+ *  for it (./reach.ts): free on the keyboard, on its own bass note in any
+ *  octave. Not the Scales page's chord, which `chordShape` is. `reach` is
+ *  null for a voicing the keyboard holds nowhere. */
+export function chordReach(c: ProfileChord, layout: ShapeLayout, ref: Cell): Array<Voicing & { reach: Reach | null }> {
+  return voicings(c.members).map((v) => ({ ...v, reach: reach(v.members, addExps(c.root, c.members[v.inversion]!), layout, ref) }));
 }
 
 /** A chord's name on a page: the catalog's, or for a chord the catalog lacks

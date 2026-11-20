@@ -11,7 +11,8 @@ import { type ComposerModel, type Voice, MEI_NS } from '../model/index.js';
 import type { SelectionState, Staff } from './selection.js';
 import { beatBoundariesInVoice } from './selection.js';
 import { realTicks, isGrace } from '../model/ticks.js';
-import { convertCell, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
+import { anchorIn, convertNote, type NoteFrame } from '@hkl/shared/convert.js';
 
 const HKL_NS = 'https://hexkeylab.com/ns/mei';
 const CLIPBOARD_LOCAL = 'clipboard';
@@ -246,10 +247,14 @@ export function serializeClipboard(model: ComposerModel, sel: SelectionState): s
 
 /** Parse an <hkl:clipboard> fragment back into ClipboardContents. Returns
  *  null on parse failure or non-HKL root. */
-/** Parse clipboard text into contents whose note coordinates are in
- *  `destMapping`'s frame (converted from the source score's mapping when the
- *  two differ — a paste across scores). */
-export function parseClipboard(text: string, destMapping: Mapping): ClipboardContents | null {
+/** Parse clipboard text into contents whose note coordinates are in `dest`'s
+ *  frame. A paste across scores of different mappings converts each note by
+ *  pitch (`convertNote`, @hkl/shared/convert.js: the key of its MIDI note with
+ *  the closest pitch, the whole lattice, never dropped). The clipboard carries
+ *  its mapping and nothing else of its layout, so the source is read in the
+ *  destination's tuning, with the home band `dest`'s has in that mapping. */
+export function parseClipboard(text: string, dest: NoteFrame): ClipboardContents | null {
+  const destMapping = dest.mapping;
   if (!text || !text.trim()) return null;
   let doc: Document;
   try {
@@ -263,10 +268,11 @@ export function parseClipboard(text: string, destMapping: Mapping): ClipboardCon
   const srcRaw = root.getAttribute('mapping');
   const srcMapping: Mapping = isPresetMapping(srcRaw) ? srcRaw : 'euler';
   if (srcMapping !== destMapping) {
+    const src: NoteFrame = { ...dest, mapping: srcMapping, anchor: anchorIn(dest.anchor, destMapping, srcMapping) };
     for (const n of Array.from(root.getElementsByTagNameNS(MEI_NS, 'note'))) {
       const qs = n.getAttribute('data-q'), rs = n.getAttribute('data-r');
       if (qs === null || rs === null) continue;
-      const [q, r] = convertCell(parseInt(qs, 10), parseInt(rs, 10), srcMapping, destMapping);
+      const [q, r] = convertNote(parseInt(qs, 10), parseInt(rs, 10), src, dest)!;
       n.setAttribute('data-q', String(q));
       n.setAttribute('data-r', String(r));
     }

@@ -16,11 +16,17 @@
 //      banded and unbanded, anchors 0 and 1
 //   D  the band step (W, 0): exact 2/1 in 5/P/D/7
 //   E  seams: the pure line never crosses one; position in band stays in 0…W−1
-//   F  Euler-equivalents: same nominal MIDI and spelled octave, same pitch in 5/P/D/7;
-//      fromEuler round-trips every Euler cell
+//   F  Euler-equivalents: same nominal MIDI and spelled octave, same pitch in 5/P/D/7, but for
+//      Septimal's copy rule (packages/shared/src/freq.ts, `coordExps`): on a six- or twelve-wide
+//      band the left column's original and that original's copy (chromatic column 8 or 1 mod
+//      12) sound the equivalent's Ptolemaic pitch, the hook staying on the six-wide copy and its
+//      copy (columns 10 and 3); three- and four-wide bands sample one left column and keep
+//      the hook. fromEuler round-trips every Euler cell
 //   G  invert vs mirror: an inverted (W, k) layout has the pitches of plain (W, W−1−k) mirrored,
 //      cell for cell, in 5/P/D/7; its fifth (W−k, −1) is exact there
-//   H  frame conversion between every pair keeps the pitch in 5/P/D/7
+//   H  frame conversion between every pair keeps the pitch in 5/P/D, and in 7 wherever both
+//      cells are on the same side of Septimal's copy rule; where one is an arrowed left column
+//      and the other a hooked one, they are exactly 36/35 apart
 //   I  octave vectors: the band step and the unbanded spelled octave keep the name and raise the
 //      spelled octave by one; which layouts have an unbanded one
 //   J  Euler vectors: vecFromEuler moves every cell's Euler-equivalent by exactly that vector, or
@@ -38,6 +44,14 @@
 //      with their half steps; the fourths cycle's own two hues cut pink → blue in thirds of the
 //      seven's steps; ink on paper belongs to the hue, half steps included, and the two new
 //      inks are the same thirds of the seven's inks
+//   N  note conversion (packages/shared/src/convert.ts): a note lands on the cell of its MIDI
+//      note with the closest pitch, the nearest its structural counterpart among equally close
+//      ones, against a brute-force search of a wide window, across mappings and tunings; exact
+//      between every pair of layouts in 5/P/D, and in 7 unless an arrowed left key goes to a
+//      band narrower than six, which has no such pitch; an outline test limits the candidates
+//      and gives null when it admits none; a note in its own frame stays where it is; where
+//      either layout is Schismatic, pitches within a schisma of the closest are equally close,
+//      and a Wicki-Hayden copy going to Euler stays beside where it was, a schisma off
 //   S  the score frame: every layout converts into the finest preset of its orientation
 //      (Chromatic plain, Park inverted) with the nominal MIDI kept, and with the exact pitch kept
 //      in every JI mode, banded and unbanded, from every plain layout and every inverted layout
@@ -48,9 +62,10 @@ import {
   layoutOf, MAPPINGS, MAPPING_LABELS, toChromatic, eulerOf, fromEuler, bandOfCell, posInBandOf,
   pitchBandOf, bandWidth, octaveVector, vecFromEuler, convertCell,
   allMappings, specOf, mappingOf, isMapping, isPresetMapping, isValidSpec, shearRange, clampShear,
-  mappingLabel, DIVISIONS,
+  mappingLabel, DIVISIONS, chromaticEuler,
 } from '../../packages/shared/src/mapping.ts';
-import { coordExps, coordToMidi, anchorOf, TUNING_MODES } from '../../packages/shared/src/freq.ts';
+import { convertNote, sameNoteStep } from '../../packages/shared/src/convert.ts';
+import { coordExps, coordToMidi, anchorOf, TUNING_MODES, freqAt } from '../../packages/shared/src/freq.ts';
 import { noteName, keyOctave } from '../../packages/shared/src/notes.ts';
 import { keyColor, inkColorHex } from '../../packages/shared/src/keycolor.ts';
 import { hueCycleOf, FIFTHS_CYCLE, FOURTHS_CYCLE, hexToRgb, rgbToHsl, sanctionedLightForInk } from '../../packages/shared/src/colors.ts';
@@ -63,6 +78,11 @@ function check(label, got, want) {
 const JI = TUNING_MODES.filter((m) => m !== 'E');
 const UNIFORM = ['5', 'P', 'D', '7'];
 const k = (e) => e.join(',');
+const gcdOf = (a, b) => (b === 0 ? a : gcdOf(b, a % b));
+/* Septimal's copy rule, stated here by the chromatic column alone: on a band six or twelve wide
+   the left column's original (column 8 mod 12) and its copy (1) take the arrow, the Ptolemaic
+   pitch; every other key sounds its Euler-equivalent's Septimal pitch */
+const septimalArrow = (q, r, L) => { const { c, s } = layoutOf(L), Q = (((c * q + s * r) % 12) + 12) % 12; return 12 / c >= 6 && (Q === 8 || Q === 1); };
 const sub = (a, b) => a.map((x, i) => x - b[i]);
 const P5 = '-1,1,0,0', P4 = '2,-1,0,0', OCT = '1,0,0,0';
 const CELLS = []; for (let q = -18; q <= 18; q++) for (let r = -9; r <= 9; r++) CELLS.push([q, r]);
@@ -217,7 +237,9 @@ for (const L of ALL) {
     check(`F ${L} (${q},${r}) MIDI = Euler-equivalent's`, coordToMidi(q, r, L), coordToMidi(e.q, e.r, 'euler'));
     check(`F ${L} (${q},${r}) spelled octave = Euler-equivalent's`, keyOctave(q, r, L, 0, true), keyOctave(e.q, e.r, 'euler', 0, true));
     check(`F ${L} (${q},${r}) name = Euler-equivalent's`, noteName(q, r, L, 0, true), noteName(e.q, e.r, 'euler', 0, true));
-    for (const m of UNIFORM) check(`F ${L} ${m} (${q},${r}) pitch = Euler-equivalent's`, k(coordExps(q, r, m, L, 0, true)), k(coordExps(e.q, e.r, m, 'euler', 0, true)));
+    for (const m of UNIFORM) check(`F ${L} ${m} (${q},${r}) pitch = Euler-equivalent's`, k(coordExps(q, r, m, L, 0, true)), k(coordExps(e.q, e.r, m === '7' && septimalArrow(q, r, L) ? '5' : m, 'euler', 0, true)));
+    /* a three- or four-wide band samples the left column once, and that key is hooked */
+    if (bandWidth(L) < 6 && coordExps(e.q, e.r, '7', 'euler', 0, true)[3] !== 0) check(`F ${L} 7 (${q},${r}) the one left column keeps its hook`, coordExps(q, r, '7', L, 0, true)[3], 1);
   }
   for (let a = -8; a <= 8; a++) for (let b = -8; b <= 8; b++) {
     const [q, r] = fromEuler(a, b, L), e = eulerOf(q, r, L);
@@ -229,7 +251,10 @@ for (const L of ALL) {
 for (const L of ALL.filter((x) => layoutOf(x).invert)) {
   const { c, s } = layoutOf(L), W = bandWidth(L), kk = -s / c, s2 = -(W - 1 - kk) * c;
   for (const m of UNIFORM) for (const [q, r] of CELLS) {
-    const partner = coordExps(c * (q + r) + s2 * -r, -r, m, 'chromatic', 0, true);
+    /* the partner's chromatic cell, read at this layout's own width: Septimal's copy rule depends
+       on the width, so the twelve-wide chromatic layout's own Septimal is not the partner's */
+    const Qp = c * (q + r) + s2 * -r, ep = chromaticEuler(Qp, -r), arrowed = m === '7' && W >= 6 && [8, 1].includes(((Qp % 12) + 12) % 12);
+    const partner = coordExps(ep.q, ep.r, arrowed ? '5' : m, 'euler', 0, true);
     check(`G ${L} ${m} (${q},${r}) = mirrored plain (${W},${W - 1 - kk})`, k(coordExps(q, r, m, L, 0, true)), k(partner));
     check(`G ${L} ${m} (${q},${r}) fifth (${W - kk},−1)`, k(sub(coordExps(q + W - kk, r - 1, m, L, 0, true), coordExps(q, r, m, L, 0, true))), P5);
   }
@@ -238,7 +263,10 @@ for (const L of ALL.filter((x) => layoutOf(x).invert)) {
 /* H — frame conversion keeps the pitch */
 for (const from of ALL) for (const to of ALL) for (let q = -9; q <= 9; q++) for (let r = -5; r <= 5; r++) {
   const [q2, r2] = convertCell(q, r, from, to);
-  for (const m of UNIFORM) check(`H ${from}→${to} ${m} (${q},${r})`, k(coordExps(q2, r2, m, to, 0, true)), k(coordExps(q, r, m, from, 0, true)));
+  for (const m of ['5', 'P', 'D']) check(`H ${from}→${to} ${m} (${q},${r})`, k(coordExps(q2, r2, m, to, 0, true)), k(coordExps(q, r, m, from, 0, true)));
+  /* Septimal: an arrowed left column is 36/35 above the hooked key of the same Euler-equivalent */
+  const a1 = septimalArrow(q, r, from), a2 = septimalArrow(q2, r2, to);
+  check(`H ${from}→${to} 7 (${q},${r})`, k(sub(coordExps(q2, r2, '7', to, 0, true), coordExps(q, r, '7', from, 0, true))), a1 === a2 ? '0,0,0,0' : a2 ? '2,2,-1,-1' : '-2,-2,1,1');
 }
 
 /* I — octave vectors */
@@ -370,6 +398,62 @@ for (const L of ALL) for (let r = -9; r <= 9; r++) {
   }
 }
 
+/* N — note conversion: the pitch search of packages/shared/src/convert.ts */
+{
+  const frame = (mode, mapping, anchor = 0, banded = true) => ({ mode, mapping, anchor, banded });
+  const cents = (a, b) => Math.abs(1200 * Math.log2(a / b));
+  const real = (dq, dr) => Math.sqrt(dq * dq + dq * dr + dr * dr);
+  for (const L of ALL) {
+    const [dq, dr] = sameNoteStep(L);
+    check(`N ${L} a step along the line keeps the MIDI note`, coordToMidi(3 + dq, -2 + dr, L), coordToMidi(3, -2, L));
+    check(`N ${L} the step is the shortest such`, Math.abs(gcdOf(dq, dr)), 1);
+    check(`N ${L} a note in its own frame stays`, String(convertNote(5, -3, frame('7', L), frame('7', L))), '5,-3');
+  }
+  /* exact wherever the destination holds the pitch */
+  for (const from of ALL) for (const to of ALL) for (let q = -9; q <= 9; q += 2) for (let r = -5; r <= 5; r++) {
+    for (const m of UNIFORM) {
+      const [q2, r2] = convertNote(q, r, frame(m, from), frame(m, to));
+      const exact = k(coordExps(q2, r2, m, to, 0, true)) === k(coordExps(q, r, m, from, 0, true));
+      check(`N ${from}→${to} ${m} (${q},${r}) keeps the pitch`, exact, !(m === '7' && septimalArrow(q, r, from) && bandWidth(to) < 6));
+      if (coordToMidi(q2, r2, to) !== coordToMidi(q, r, from)) check(`N ${from}→${to} ${m} (${q},${r}) keeps the MIDI note`, false, true);
+    }
+  }
+  /* against a brute-force search: every cell of the MIDI note in a wide window */
+  const PAIRS = [['euler', 'euler'], ['euler', 'park'], ['park', 'randal'], ['chromatic', 'wickiHayden'], ['janko', 'gerhard'], ['randal', 'accordion'], ['4:1', '12:2']];
+  const MODES = [['7', '5'], ['7', 'P'], ['7', 'D'], ['5', 'P'], ['5', 'D'], ['P', '5'], ['D', '7'], ['5', '7'], ['Y', '5'], ['5', 'S'], ['V', '5'], ['E', '5'], ['5', 'E'], ['7', '7']];
+  for (const [from, to] of [...PAIRS, ['wickiHayden', 'euler'], ['chromatic', 'euler']]) for (const [m1, m2] of [...MODES, ['V', 'V'], ['5', 'V']]) for (let q = -8; q <= 8; q += 2) for (let r = -4; r <= 4; r += 2) {
+    const a = frame(m1, from, 0), b = frame(m2, to, 1), was = freqAt(q, r, m1, from, 0, true), midi = coordToMidi(q, r, from);
+    const [sq, sr] = convertCell(q, r, from, to), got = convertNote(q, r, a, b);
+    let least = Infinity; const all = [];
+    for (let cq = sq - 150; cq <= sq + 150; cq++) for (let cr = sr - 70; cr <= sr + 70; cr++) {
+      if (coordToMidi(cq, cr, to) !== midi) continue;
+      const off = cents(freqAt(cq, cr, m2, to, 1, true), was);
+      all.push([cq, cr, off]); if (off < least) least = off;
+    }
+    const off = cents(freqAt(got[0], got[1], m2, to, 1, true), was);
+    /* equally close: the same pitch, or in Schismatic within a schisma (32805/32768) */
+    const same = 0.001 + (m1 === 'V' || m2 === 'V' ? 1200 * Math.log2(32805 / 32768) : 0);
+    check(`N ${from} ${m1} → ${to} ${m2} (${q},${r}) is the closest pitch of its MIDI note`, off <= least + same, true);
+    const nearer = all.filter((c) => c[2] <= least + same && real(c[0] - sq, c[1] - sr) < real(got[0] - sq, got[1] - sr) - 1e-9);
+    check(`N ${from} ${m1} → ${to} ${m2} (${q},${r}) no equally close key is nearer`, nearer.length, 0);
+    /* an outline: only its keys are candidates, and none of the note means null */
+    const within = (cq, cr) => Math.abs(cq - sq - 3) <= 6 && Math.abs(cr - sr) <= 3;
+    const inside = all.filter((c) => within(c[0], c[1])), lim = convertNote(q, r, a, b, within);
+    check(`N ${from} ${m1} → ${to} ${m2} (${q},${r}) outline: null exactly when it holds no key of the note`, lim === null, inside.length === 0);
+    if (lim) check(`N ${from} ${m1} → ${to} ${m2} (${q},${r}) outline: the closest of its keys`, within(lim[0], lim[1]) && cents(freqAt(lim[0], lim[1], m2, to, 1, true), was) <= Math.min(...inside.map((c) => c[2])) + same, true);
+  }
+  /* Schismatic's tolerance: Wicki-Hayden's copy B3 at (1,0) has its exact pitch on Euler only far
+     off, and stays on its structural counterpart (−3,2), a schisma low; outside Schismatic the
+     closest pitch wins at any distance */
+  {
+    const v = (m) => frame('V', m), got = convertNote(1, 0, v('wickiHayden'), v('euler'));
+    check('N Schismatic, Wicki-Hayden (1,0) → Euler: beside where it was', String(got), '-3,2');
+    check('N Schismatic: a schisma off', (1200 * Math.log2(freqAt(1, 0, 'V', 'wickiHayden', 0, true) / freqAt(-3, 2, 'V', 'euler', 0, true))).toFixed(3), (1200 * Math.log2(32805 / 32768)).toFixed(3));
+    const far = [...MODES].filter(([a, b]) => a !== 'V' && b !== 'V').length;
+    check('N every other pair of tunings above takes the closest pitch with no tolerance', far, MODES.length - 1);
+  }
+}
+
 /* S — the score frame (docs/architecture/hkl.md → `.hkr` → `.hkc` transcription): a score's mapping
    is a preset, so HKL's Export to Composer re-expresses a recording in the finest preset of its
    layout's orientation, Chromatic (plain) or Park (inverted), with the home band carried over as
@@ -383,7 +467,7 @@ for (const L of ALL) {
   const everywhere = !invert || division === 3 || division === 6;
   let midiKept = true;
   for (const [q, r] of CELLS) {
-    const [q2, r2] = convertCell(q, r, L, to);
+    const [q2, r2] = convertNote(q, r, { mode: '5', mapping: L, anchor: 0, banded: true }, { mode: '5', mapping: to, anchor: 0, banded: true });
     if (coordToMidi(q, r, L) !== coordToMidi(q2, r2, to)) midiKept = false;
   }
   check(`S ${L} → ${to} keeps the nominal MIDI`, midiKept, true);
@@ -394,7 +478,7 @@ for (const L of ALL) {
         while (bandOfCell(q0, 0, L) < anchor) q0++;
         const anchor2 = bandOfCell(...convertCell(q0, 0, L, to), to);
         for (const [q, r] of CELLS) {
-          const [q2, r2] = convertCell(q, r, L, to);
+          const [q2, r2] = convertNote(q, r, { mode, mapping: L, anchor, banded }, { mode, mapping: to, anchor: anchor2, banded });
           check(`S ${L} → ${to} ${mode} ${banded ? 'banded' : 'unbanded'} anchor ${anchor} (${q},${r})`,
             k(coordExps(q2, r2, mode, to, anchor2, banded)), k(coordExps(q, r, mode, L, anchor, banded)));
         }

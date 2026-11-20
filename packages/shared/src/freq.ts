@@ -131,7 +131,18 @@ export function coordToMidi(q: number, r: number, mapping: Mapping): number {
  *    from the band to its left keeps that band's offset). `anchor` is ignored
  *    by every other mode.
  *
- *  Every other cell takes its Euler-equivalent's vector.
+ *  Every other cell takes its Euler-equivalent's vector, with one exception
+ *  (Max, 2026-11-19): banded Septimal on a layout that samples the left column
+ *  more than once (a band six or twelve wide). Going from three keys to six, the septimal
+ *  hook travels to the copied left column only and the original takes its
+ *  arrow, its plain 5-limit value, so the band holds both: +1, 0 with a hook,
+ *  0, 0, −1, −1 syntonic commas from Pythagorean. Going from six to twelve a
+ *  column is copied as it is: an odd chromatic column is a copy of column
+ *  Q − 5 (`chromaticEuler`), so j = 1 copies the original and j = 3 the hooked
+ *  copy. A three-wide layout has no copies and keeps the hook on its one left
+ *  column, and so does a four-wide one, which samples the left column once (as
+ *  a j = 3 column). Unbanded Septimal is untouched: its seams are retuned from the
+ *  three-column form.
  *
  *  Unbanded (`banded` false) replaces both band terms with `UNBANDED`'s per-band
  *  comma, counted from `anchor` in every mode.
@@ -140,14 +151,15 @@ export function coordToMidi(q: number, r: number, mapping: Mapping): number {
  *  and adds its exact octaves; Euler and Wicki-Hayden cells are chromatic ones. */
 export function coordExps(q: number, r: number, mode: TuningMode, mapping: Mapping, anchor: number, banded: boolean): Exps {
   const L = layoutOf(mapping);
-  if (!L.invert) return chromaticExps(L.c * q + L.s * r, r, mode, anchor, banded);
-  const e = chromaticExps(L.c * q + L.s * r, 0 - r, mode, anchor, banded);
+  if (!L.invert) return chromaticExps(L.c * q + L.s * r, r, mode, anchor, banded, L.c);
+  const e = chromaticExps(L.c * q + L.s * r, 0 - r, mode, anchor, banded, L.c);
   e[0] += r;                                                        /* one exact octave per row */
   return e;
 }
 
-/** `coordExps` of chromatic cell (Q, R). */
-function chromaticExps(Q: number, R: number, mode: TuningMode, anchor: number, banded: boolean): Exps {
+/** `coordExps` of chromatic cell (Q, R), sampled by a layout whose column step
+ *  is `step` semitones (4: a three-wide band, which samples no copy column). */
+function chromaticExps(Q: number, R: number, mode: TuningMode, anchor: number, banded: boolean, step: number): Exps {
   const c = chromaticEuler(Q, R);
   if (!banded) {
     const u = UNBANDED[mode];
@@ -156,7 +168,11 @@ function chromaticExps(Q: number, R: number, mode: TuningMode, anchor: number, b
     for (let i = 0; i < 4; i++) e[i] += d * u.comma[i];
     return e;
   }
-  const e = eulerExps(c.q, c.r, mode === 'V' ? 'D' : mode === 'S' || mode === 'Y' ? 'P' : mode);
+  /* Septimal with copy columns: the hook is the six-wide copy's (j = 2) and its own copy's (j = 3);
+     the original (j = 0) and its copy (j = 1) take the Ptolemaic value, which differs in the left
+     column only */
+  const arrow = mode === '7' && step !== 4 && (((Q % 4) + 4) % 4) < 2;
+  const e = eulerExps(c.q, c.r, arrow ? '5' : mode === 'V' ? 'D' : mode === 'S' || mode === 'Y' ? 'P' : mode);
   if (mode === 'V') {                                               /* ×schisma^band = (3⁸·5/2¹⁵)^band */
     const b = chromaticBand(Q);
     e[0] += -15 * b; e[1] += 8 * b; e[2] += b;

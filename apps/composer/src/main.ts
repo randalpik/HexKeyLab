@@ -15,6 +15,7 @@ import type { HklEvent, ResolvedNote, FootprintCell } from '@hkl/bridge/protocol
 import { resetAnalytics } from '@hkl/bridge/analytics.js';
 import { convertCell, isMapping, isPresetMapping, type Mapping } from '@hkl/shared/mapping.js';
 import { TUNING_MODES, readsAnchor, type TuningMode } from '@hkl/shared/freq.js';
+import { anchorIn, convertNote, type NoteFrame } from '@hkl/shared/convert.js';
 import { ComposerModel, type Voice } from './model/index.js';
 import { renderer, styleVoltaNumbers, ZOOM_PRESETS, type ZoomLevel, type ViewMode, type ScoreTheme } from './render/render.js';
 import { SECTION_HEADER_RESERVE, SECTION_HEADER_BASELINE, translateOf } from './render/pagefit.js';
@@ -443,9 +444,29 @@ function mappingOf(raw: string | undefined): Mapping {
   return isMapping(raw) ? raw : 'euler';
 }
 
+/** The score's frame at the reference position, and HKL's frame in mapping
+ *  `from`: HKL's own tuning and home band where it has announced them, the
+ *  score's otherwise. */
+function framesFrom(from: Mapping): { hkl: NoteFrame; score: NoteFrame } {
+  const req = model.getLayoutReq(), anchor = model.anchorAt(refSourceMeasure());
+  const isMode = (s: string | null): s is TuningMode => s !== null && (TUNING_MODES as ReadonlyArray<string>).includes(s);
+  const score: NoteFrame = { mode: req.tuningMode, mapping: req.mapping, anchor, banded: req.banded };
+  const hkl: NoteFrame = { mode: isMode(hklTuningMode) ? hklTuningMode : req.tuningMode, mapping: from, anchor: hklAnchor !== null && hklMapping === from ? hklAnchor : anchorIn(anchor, req.mapping, from), banded: req.banded };
+  return { hkl, score };
+}
+
+/** A cell of HKL's (in mapping `from`) in the score's frame: the cell of its
+ *  MIDI note with the closest pitch (`convertNote`, @hkl/shared/convert.js; the
+ *  whole lattice, so nothing of HKL's is ever dropped here). */
+function cellToScoreFrame(q: number, r: number, from: Mapping): [number, number] {
+  const { hkl, score } = framesFrom(from);
+  if (hkl.mapping === score.mapping && hkl.mode === score.mode && hkl.anchor === score.anchor) return [q, r];
+  return convertNote(q, r, hkl, score)!;
+}
+
 /** Re-express a note HKL resolved (in mapping `from`) in the score's frame. */
 function toScoreFrame(note: ResolvedNote, from: Mapping): ResolvedNote {
-  const [q, r] = convertCell(note.q, note.r, from, model.getLayoutReq().mapping);
+  const [q, r] = cellToScoreFrame(note.q, note.r, from);
   return q === note.q && r === note.r ? note : { ...note, q, r };
 }
 
@@ -458,12 +479,13 @@ function heldKeysInScoreFrame(): ReadonlyArray<ResolvedNote> {
  *  score's mapping has changed since it was last built. */
 function footprintInScoreFrame(): FootprintColorMap {
   if (footprintRaw === null) return null;
-  const to = model.getLayoutReq().mapping;
-  const key = footprintRawMapping + '>' + to;
+  /* the conversion reads both layouts whole: the mappings, the tunings and the home bands */
+  const { hkl, score } = framesFrom(footprintRawMapping);
+  const key = [hkl.mapping, hkl.mode, hkl.anchor, score.mapping, score.mode, score.anchor, score.banded].join('>');
   if (footprintColors === null || footprintBuiltFor !== key) {
     const map: NonNullable<FootprintColorMap> = new Map();
     for (const cell of footprintRaw) {
-      const [q, r] = convertCell(cell[0], cell[1], footprintRawMapping, to);
+      const [q, r] = cellToScoreFrame(cell[0], cell[1], footprintRawMapping);
       map.set(q + ',' + r, { ink: cell[2], light: cell[3] });
     }
     footprintColors = map;

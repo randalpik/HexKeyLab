@@ -9,7 +9,7 @@
 import { tuning } from '../state/tuning.js';
 import { selection } from '../state/selection.js';
 import { audio } from '../state/audio.js';
-import { recomputeReference, convertReferenceFrame, manualSelection } from '../state/reference.js';
+import { recomputeReference, convertReferenceFrame, manualSelection, lumatoneOutlineTest } from '../state/reference.js';
 import { savePrefs } from '../state/persistence.js';
 import type { Alignment, HexSize, Mapping, OutlineMode, RotationMode, TuningMode } from '../state/persistence.js';
 import { eulerOf, fromEuler, vecFromEuler, octaveVector, isMapping, isPresetMapping, MAPPINGS, MAPPING_LABELS } from '@hkl/shared/mapping.js';
@@ -25,6 +25,7 @@ import {
 import { draw, validateRefNoteCandidate, invalidatePianoOutline } from '../render/draw.js';
 import { syncViewToOutline, applyRotation, applyHexSize, applyOutlineRender, applyAlignment } from '../render/controls-core.js';
 import { alignment } from '../layout/physical.js';
+import { convertNote, type NoteFrame } from '@hkl/shared/convert.js';
 import { remapPhysicalInputs } from '../effects/onRefChanged.js';
 import { onTuningChanged } from '../effects/onTuningChanged.js';
 import { onSelectionChanged } from '../effects/onSelectionChanged.js';
@@ -107,11 +108,18 @@ export function setMapping(): void {
  *  select, the layout builder, a recording's snapshot, Composer's layout
  *  request, Reset). Every coordinate is in the active mapping's frame, so the
  *  switch re-expresses the reference, the keyboard anchor, and held mouse /
- *  piano-input / pedal-sustained notes in the new frame — same pitch (a
- *  Schismatic copy moves by one schisma). Held Lumatone / QWERTY voices keep
- *  their (q, r) and retune in place, as on a tuning-mode change; they release
- *  through the key they struck (input/held.ts), so the converted anchor cannot
- *  orphan them. */
+ *  piano-input / pedal-sustained notes in the new frame.
+ *  - The reference tiers and anchors convert by the frame formula: a reference
+ *    is a spine key, which sounds the same in every tuning.
+ *  - A note converts by pitch (`convertNote`, @hkl/shared/convert.js; Max,
+ *    2026-11-19): to the key of its MIDI note with the closest pitch. Under a
+ *    live Lumatone outline only the outline's keys are candidates, and a note
+ *    whose MIDI note the outline no longer holds is dropped; in any other
+ *    outline mode the whole lattice is searched. Two notes that land on one
+ *    key become one.
+ *  Held Lumatone / QWERTY voices keep their (q, r) and retune in place, as on a
+ *  tuning-mode change; they release through the key they struck
+ *  (input/held.ts), so the converted anchor cannot orphan them. */
 export function applyMapping(val: Mapping): void {
   const prev = tuning.mapping;
   if (val === prev) {
@@ -123,11 +131,7 @@ export function applyMapping(val: Mapping): void {
     const e = eulerOf(q, r, prev);
     return fromEuler(e.q, e.r, val);
   };
-  const convertKey = (k: KeyId): KeyId => {
-    const p = k.split(',');
-    const [q, r] = convert(+p[0], +p[1]);
-    return q + ',' + r;
-  };
+  const from: NoteFrame = { mode: tuning.mode, mapping: prev, anchor: tuning.anchor, banded: tuning.banded };
   /* Notes that convert: everything live except keys a Lumatone / QWERTY key
      is physically holding (playback voices are composite VoiceIds, owned by
      the scheduler). Collected in the OLD frame. */
@@ -137,26 +141,39 @@ export function applyMapping(val: Mapping): void {
   audio.sustainedKeys.forEach((k) => { if (coordOf(k) === k && !stays(k)) converting.add(k); });
 
   tuning.mapping = val;
-  rekeyHeld('piano', convertKey);
-  const pairs: { oldKey: KeyId; newKey: KeyId }[] = [];
-  converting.forEach((oldKey) => {
-    const newKey = convertKey(oldKey);
-    if (newKey === oldKey) return;
-    if (stays(newKey)) {
-      /* a physically held key already sounds that cell — it carries the note */
-      noteOff(oldKey);
-      selection.selectedKeys.delete(oldKey);
-      audio.sustainedKeys.delete(oldKey);
-      return;
-    }
-    pairs.push({ oldKey, newKey });
-  });
-  moveVoices(pairs);
-
   /* Reference tiers + both anchors in the new frame, a tier that fails
      validation there dropped. Silent — deliberately NOT onRefChanged: that
-     would migrate held physical voices, which stay on their (q, r). */
+     would migrate held physical voices, which stay on their (q, r). First,
+     because the notes below need the new home band and the outline's new
+     place. */
   convertReferenceFrame(convert, (q, r) => validateRefNoteCandidate(q, r) === null);
+  const to: NoteFrame = { mode: tuning.mode, mapping: val, anchor: tuning.anchor, banded: tuning.banded };
+  const onOutline = lumatoneOutlineTest();
+  const convertKey = (k: KeyId): KeyId | null => {
+    const p = k.split(',');
+    const c = convertNote(+p[0], +p[1], from, to, onOutline);
+    return c ? c[0] + ',' + c[1] : null;
+  };
+  rekeyHeld('piano', convertKey);
+  const drop = (key: KeyId): void => {
+    noteOff(key);
+    selection.selectedKeys.delete(key);
+    audio.sustainedKeys.delete(key);
+  };
+  /* where each note goes; a note that stays where it is claims its key first */
+  const going = [...converting].map((oldKey) => ({ oldKey, newKey: convertKey(oldKey) }));
+  const taken = new Set<KeyId>(going.filter((g) => g.newKey === g.oldKey).map((g) => g.oldKey));
+  const pairs: { oldKey: KeyId; newKey: KeyId }[] = [];
+  for (const { oldKey, newKey } of going) {
+    if (newKey === oldKey) continue;
+    /* dropped: the outline holds no key of its MIDI note; or a physically held key already
+       sounds that cell and carries the note; or another converting note has taken the key */
+    if (newKey === null || stays(newKey) || taken.has(newKey)) { drop(oldKey); continue; }
+    taken.add(newKey);
+    pairs.push({ oldKey, newKey });
+  }
+  moveVoices(pairs);
+
   const manualRef = manualSelection();
   savePrefs({ manualRef: manualRef ? { q: manualRef.q, r: manualRef.r } : undefined });
   invalidatePianoOutline();

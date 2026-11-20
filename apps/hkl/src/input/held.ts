@@ -163,9 +163,16 @@ export function migrateHeld(source: HeldSource, resolve: (id: string) => KeyId |
 }
 
 /** Re-express every record of `source` through `convert` without touching
- *  voices or selection (a mapping switch moves those itself). */
-export function rekeyHeld(source: HeldSource, convert: (key: KeyId) => KeyId): void {
-  held[source].forEach((key, id) => { held[source].set(id, convert(key)); });
+ *  voices or selection (a mapping switch moves those itself). A record whose
+ *  key converts to null is forgotten: its note has no key in the new frame
+ *  and the caller drops it. */
+export function rekeyHeld(source: HeldSource, convert: (key: KeyId) => KeyId | null): void {
+  const gone: string[] = [];
+  held[source].forEach((key, id) => {
+    const to = convert(key);
+    if (to === null) gone.push(id); else held[source].set(id, to);
+  });
+  for (const id of gone) held[source].delete(id);
 }
 
 /** True iff `key` is the struck key of a held input of `source`. */

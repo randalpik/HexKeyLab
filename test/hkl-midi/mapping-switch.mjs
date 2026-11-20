@@ -20,6 +20,12 @@
 //   M5  the reference note keeps its pitch across the switch
 //   M8  into each sheared / inverted preset: ref and mouse note keep their pitch,
 //       the anchor lands on the converted ref, held keys keep their (q,r)
+//   M9  a note converts by pitch (@hkl/shared/convert.js): in Septimal a hooked note of
+//       a three-wide band goes to the hooked copy of a six-wide one, not to its
+//       structural counterpart, which Septimal's copy rule tunes 36/35 higher
+//   M10 under the Lumatone outline a note whose MIDI note the outline no longer holds
+//       is dropped
+//   M11 without that outline the whole lattice is searched, and the same note stays
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -195,6 +201,45 @@ const SCRIPT = `(async () => {
     deliver(0x80, 21, 0);
     check('M8f ' + m + ': no Lumatone record left', held.heldCount('lumatone'), 0);
   }
+  switchTo('euler');
+
+  /* M9 to M11: a held mouse note converts by pitch */
+  const selTuning = document.getElementById('selTuning'), selOutline = document.getElementById('selOutline');
+  const savedTuning = tuning.mode, savedOutline = selOutline.value;
+  const tuneTo = (m) => { selTuning.value = m; controls.setTuning(); };
+  const outlineTo = (o) => { selOutline.value = o; controls.setOutline(); };
+  const others = () => [...selection.selectedKeys].map((k) => k.split(',').map(Number));
+  reset();
+  setRef(0, 0);
+  outlineTo('lumatone');
+  tuneTo('7');
+  selection.selectedKeys.add('-1,2');           /* Euler's left column: a hooked note in Septimal */
+  const hookHz = keyFreq(-1, 2);
+  switchTo('wickiHayden');
+  check('M9a: the hooked note keeps its pitch', others().some(([q, r]) => near(keyFreq(q, r), hookHz)), true);
+  check('M9b: on the copy column, not its structural counterpart (−2,2)', selection.selectedKeys.has('-2,2'), false);
+  check('M9c: one note still held', selection.selectedKeys.size, 1);
+  switchTo('euler');
+  check('M9d: and back to a key of that pitch', others().some(([q, r]) => near(keyFreq(q, r), hookHz)), true);
+  tuneTo('5');
+
+  reset();
+  switchTo('euler');
+  setRef(0, 0);
+  selection.selectedKeys.add('2,5');            /* Euler MIDI 100: far above anything Park's outline holds around A3 */
+  const highHz = keyFreq(2, 5);
+  switchTo('park');
+  check('M10: a note the outline does not hold is dropped', selection.selectedKeys.size, 0);
+
+  reset();
+  switchTo('euler');
+  outlineTo('none');
+  selection.selectedKeys.add('2,5');
+  switchTo('park');
+  check('M11a: without the Lumatone outline the note stays', selection.selectedKeys.size, 1);
+  check('M11b: at its pitch', others().some(([q, r]) => near(keyFreq(q, r), highHz)), true);
+  outlineTo(savedOutline);
+  if (tuning.mode !== savedTuning) tuneTo(savedTuning);
   switchTo('euler');
 
   /* leave the page as found */

@@ -3434,7 +3434,8 @@ export function initInput(model: ComposerModel, hooks: InputHooks): () => void {
     if (state.cursorMode === 'expr' || state.cursorMode === 'pedal' || state.cursorMode === 'tempo') return;
     if (hooks.isPlaybackActive()) return;
     const text = e.clipboardData?.getData('text/plain') ?? '';
-    const contents = parseClipboard(text, model.getLayoutReq().mapping);
+    const req = model.getLayoutReq();
+    const contents = parseClipboard(text, { mode: req.tuningMode, mapping: req.mapping, anchor: model.anchorAt(model.getCursorMeasureIdx()), banded: req.banded });
     if (!contents) {
       hooks.setStatus?.('Clipboard is empty or not HKL content.', 'error');
       return;

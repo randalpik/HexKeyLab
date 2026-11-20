@@ -4,18 +4,12 @@
 // closely as possible by relocating the note to a different (q, r) under
 // the new mode.
 //
-// Search procedure per note:
-//   - Search space: lattice cells (q, r) such that coordToMidi(q, r) is in
-//     the playable MIDI range [21, 108]. Practically bounded by a radius
-//     around the original (q, r); cells outside the radius are guaranteed
-//     to be octaves away — never optimal.
-//   - Score: |1200 · log2(newFreq / oldFreq)| cents.
-//   - Tiebreak: taxicab distance |Δq| + |Δr| from the original (q, r), so
-//     octave / SC-equivalent matches stay in the original neighborhood.
-//   - Mapping change: the search is seeded at the closed-form frame conversion
-//     (convertCell) instead of the original (q, r) — coordinates of different
-//     mappings aren't comparable — so an exact counterpart (every cell but a
-//     Schismatic Wicki-Hayden copy going to Euler) is found at taxicab 0.
+// Each note goes to the cell of the new layout that sounds its MIDI note at the
+// closest pitch, however far, and among equally close ones the nearest its
+// structural counterpart (`convertNote`, @hkl/shared/convert.js; Max,
+// 2026-11-19). Enharmonics are allowed: a harmonic seventh may become an
+// augmented sixth. The whole lattice is searched, and no note is ever dropped
+// for want of a key.
 //
 // Edge cases:
 //   - Chord collapse: two notes in the same <chord> retune to the same
@@ -25,8 +19,9 @@
 //     @tie="i" loses its endpoint and is removed; @tie="m" downgrades to "t".
 
 import type { ComposerModel } from '../model/index.js';
-import { freqAt, coordToMidi, MIDI_LOW, MIDI_HIGH, type TuningMode } from '@hkl/shared/freq.js';
-import { convertCell, layoutOf, mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
+import { freqAt, coordToMidi, type TuningMode } from '@hkl/shared/freq.js';
+import { mappingLabel, type Mapping } from '@hkl/shared/mapping.js';
+import { convertNote } from '@hkl/shared/convert.js';
 import { noteName, parseNote, accToVal, keyOctave } from '@hkl/shared/notes.js';
 import { tokenFromAlter } from '@hkl/notation/accidentals.js';
 import { pruneDanglingSlurs } from '../slurs.js';
@@ -60,10 +55,6 @@ export interface RetunePlan {
 }
 
 const CENTS_EPS = 0.001;
-/** Search window around each note's original (q, r). 15 covers ≥7 octaves
- *  worth of relocation plus a generous spelling neighborhood — enough to find
- *  any exact match that exists, and any reasonable approximation otherwise. */
-const SEARCH_RADIUS = 15;
 
 /** Compute the retune plan for changing this document's layout. Pure
  *  inspection — does not mutate the doc. `anchorOf` gives a note's anchor
@@ -85,15 +76,15 @@ export function planRetune(
     const oldQ = parseInt(qStr, 10);
     const oldR = parseInt(rStr, 10);
     if (!Number.isFinite(oldQ) || !Number.isFinite(oldR)) continue;
-    const oldFreq = freqAt(oldQ, oldR, from.tuningMode, from.mapping, anchorOf(noteEl, from.mapping), from.banded);
-    const [seedQ, seedR] = convertCell(oldQ, oldR, from.mapping, to.mapping);
-    const best = findBestCell(seedQ, seedR, oldFreq, to, anchorOf(noteEl, to.mapping));
-    if (best.cents <= CENTS_EPS) exactCount++;
-    if (best.cents > maxCents) maxCents = best.cents;
-    entries.push({
-      noteEl, oldQ, oldR, newQ: best.q, newR: best.r,
-      cents: best.cents, drop: false,
-    });
+    const fromAnchor = anchorOf(noteEl, from.mapping), toAnchor = anchorOf(noteEl, to.mapping);
+    const [newQ, newR] = convertNote(oldQ, oldR,
+      { mode: from.tuningMode, mapping: from.mapping, anchor: fromAnchor, banded: from.banded },
+      { mode: to.tuningMode, mapping: to.mapping, anchor: toAnchor, banded: to.banded })!;
+    const cents = Math.abs(1200 * Math.log2(freqAt(newQ, newR, to.tuningMode, to.mapping, toAnchor, to.banded)
+      / freqAt(oldQ, oldR, from.tuningMode, from.mapping, fromAnchor, from.banded)));
+    if (cents <= CENTS_EPS) exactCount++;
+    if (cents > maxCents) maxCents = cents;
+    entries.push({ noteEl, oldQ, oldR, newQ, newR, cents, drop: false });
   }
 
   /* Chord collapse detection — group entries by their containing <chord> and
@@ -125,32 +116,6 @@ export function planRetune(
   }
 
   return { from, to, notes: entries, exactCount, maxCents, dropCount };
-}
-
-interface Candidate { q: number; r: number; cents: number; taxi: number }
-
-function findBestCell(origQ: number, origR: number, origFreq: number, to: RetuneLayout, anchor: number): Candidate {
-  let best: Candidate = { q: origQ, r: origR, cents: Infinity, taxi: Infinity };
-  /* a column is c semitones (layoutOf; 4 Euler, 2 Wicki-Hayden, 1 chromatic,
-     3 a 4-wide band): the q radius scales by 4/c to cover the same span, an
-     integer for every c since SEARCH_RADIUS is a multiple of 3 */
-  const qRadius = (4 / layoutOf(to.mapping).c) * SEARCH_RADIUS;
-  for (let dq = -qRadius; dq <= qRadius; dq++) {
-    for (let dr = -SEARCH_RADIUS; dr <= SEARCH_RADIUS; dr++) {
-      const q = origQ + dq;
-      const r = origR + dr;
-      const midi = coordToMidi(q, r, to.mapping);
-      if (midi < MIDI_LOW || midi > MIDI_HIGH) continue;
-      const f = freqAt(q, r, to.tuningMode, to.mapping, anchor, to.banded);
-      const cents = Math.abs(1200 * Math.log2(f / origFreq));
-      const taxi = Math.abs(dq) + Math.abs(dr);
-      const delta = best.cents - cents;
-      if (delta > CENTS_EPS || (Math.abs(delta) <= CENTS_EPS && taxi < best.taxi)) {
-        best = { q, r, cents, taxi };
-      }
-    }
-  }
-  return best;
 }
 
 /** Build a human-readable summary of the plan for the confirmation prompt. */

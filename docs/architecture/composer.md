@@ -1021,12 +1021,20 @@ measure's own meter. Slurs, fermatas, trills and octaves are note-attached
   harmonic (diamond head; sounds at the harmonic's pitch). *Ignore color*
   drops notehead color on the render clone.
 - **Retune**: changing the score's tuning mode or note-name mapping in Setup
-  rewrites each note's `(q, r)` to keep its frequency (`notation/retune.ts`).
-  A mapping change seeds each note's search at its closed-form frame
-  conversion (`convertCell`), so every note relocates exactly in the
-  band-uniform modes; in Schismatic / Syntonic / Polysyntonic a Wicki-Hayden or
-  chromatic copy going toward Euler can land a schisma (≈1.95¢) or a comma
-  away, and the search reports it. Afterwards
+  rewrites each note's `(q, r)` to keep its frequency (`notation/retune.ts`),
+  by the shared pitch search (`convertNote`, docs/architecture.md → Note
+  conversion; Max, 2026-11-19): the cell of the note's MIDI note with the
+  closest pitch, however far, the whole lattice, enharmonics allowed, and no
+  note ever dropped for want of a key (a chord's notes that land on one cell
+  still collapse). Exact wherever the new layout holds the pitch. In
+  Schismatic a pitch within a schisma of the closest is as good, so a
+  Wicki-Hayden or chromatic copy going toward Euler stays beside where it was,
+  a schisma (≈1.95¢) low, and the prompt reports it; in Syntonic /
+  Polysyntonic the closest pitch is taken wherever it lies. A paste across scores of different mappings (`parseClipboard`)
+  and HKL's held keys and footprint shown in the score's frame (`main.ts`,
+  `cellToScoreFrame`) convert the same way. Not built: preferring HKL's live
+  Lumatone outline here, which needs the footprint message to say which
+  outline it is. Afterwards
   `model.recolorNotes()` rewrites every baked color from the note's pitch
   under the new layout (color is one function of the pitch,
   `@hkl/shared/keycolor.js`), so an inexact relocation no longer keeps a stale
