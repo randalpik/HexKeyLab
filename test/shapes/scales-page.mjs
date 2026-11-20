@@ -20,8 +20,9 @@
 //       flavor than the key (Semiditonal minor), and not otherwise; a root with two triads
 //   S8  footprint steps that draw the same keys share a picture and a name; a note the octave
 //       above the reference key has no key for is counted, not drawn
-//   S9  the diminished ii of a minor key, taken from its vii°7: where it is no catalog chord it
-//       is named as HKL names its keys (apps/hkl/src/tuning/chords.ts), with its own ratio
+//   S9  a chord the catalog lacks (Septimal minor's ii° and iiø7, built by the rules of
+//       profile.ts) is named as HKL names its keys (apps/hkl/src/tuning/chords.ts), with its
+//       own ratio; Semiditonal minor's are the scale's own notes and catalog chords
 //
 //   node test/shapes/scales-page.mjs [--shot <png>] [--key <id>] [--query <mapping=…&mode=…>]
 //     --shot: a screenshot of a page, by default S2's; --key and --query choose another
@@ -97,8 +98,8 @@ try {
   check('S1 the keys on offer, and the one shown', `${p.scales} | ${p.scale}`, `${SIX} | ptolemaic-major`);
   check('S1 title', `${p.title} | ${p.heading}`, 'C Ptolemaic major: Randal mapping, Ptolemaic tuning | C Ptolemaic major: Randal mapping, Ptolemaic tuning');
   check('S1 the legend', /^What it takes to play in C Ptolemaic major on the Lumatone in this layout, with the reference note set to the unaltered C\. .* named under their section\. .* A heavy black line is a band seam\.$/.test(p.legend), true);
-  check('S1 the footprint, from the scale', p.feet, 'Ptolemaic major scale [7 notes] | Diatonic triads [9 notes] | With the diatonic sevenths [11 notes] | With the secondary dominants [15 of 17 notes] | With the borrowed chords [18 of 20 notes]');
-  check('S1 its pictures, in rows', `${p.feetLoaded} | ${p.feetRows}`, '5/5 | 2 of 2, 2 of 2, 1 of 2');
+  check('S1 the footprint, from the scale', p.feet, 'Ptolemaic major scale [7 notes] | Diatonic triads [9 notes] | With the diatonic sevenths [10 notes] | With the secondary dominants [15 of 17 notes] | With the borrowed chords [18 of 20 notes]');
+  check('S1 its pictures, in rows', `${p.feetLoaded} | ${p.feetRows}`, '5/5 | 3 of 3, 2 of 2');
   check('S1 what a footprint step cannot play', p.feetNo, 'Unplayable: V/iii, V7/iii, V/vi, V7/vi');
   check('S1 the sections count what the layout plays', p.sections, 'Diatonic triads (7 of 7 on this layout) | Diatonic sevenths (7 of 7 on this layout) | Secondary dominants (6 of 10 on this layout) | Borrowed chords (7 of 7 on this layout)');
   check('S1 a picture for every chord the layout plays, and for no other', `${p.played} | ${p.bySection}`, '7/7 7/7 6/10 7/7 | 7/7 7/7 6/6 7/7');
@@ -119,12 +120,12 @@ try {
   /* S3 */
   p = await load('mapping=randal&mode=7&scale=septimal-minor');
   check('S3 Randal in Septimal: the keys on offer', p.scales, 'ptolemaic-major,semiditonal-major,pythagorean-major,septimal-major,semiditonal-minor,pythagorean-minor,septimal-minor');
-  check('S3 Septimal minor', `${p.heading} | ${p.played} | ${p.out} | ${p.named}`, 'C Septimal minor: Randal mapping, Septimal tuning | 12/13 13/13 8/12 2/5 | 0 | 0');
-  check('S3 what it cannot play', p.no, 'Unplayable on this layout: ♭III+ |  | Unplayable on this layout: V/♭III, V7/♭III, V/♭VI, V7/♭VI | Unplayable on this layout: It+6, Fr+6, Ger+6');
+  check('S3 Septimal minor', `${p.heading} | ${p.played} | ${p.out} | ${p.named}`, 'C Septimal minor: Randal mapping, Septimal tuning | 13/13 13/13 10/12 1/5 | 0 | 0');
+  check('S3 what it cannot play', p.no, ' |  | Unplayable on this layout: V7/♭III, V7/♭VI | Unplayable on this layout: ♭II, It+6, Fr+6, Ger+6');
   check('S7 a minor key whose scales are all of its flavor does not list them', `${p.feet.split(' | ')[0]} | ${p.feetScales}`, 'Septimal minor scales [9 notes] | ');
   /* S9 */
-  check('S9 Septimal minor: ii° and iiø7 are the upper notes of vii°7', `${p.entry['ii°']} / ${p.entry['iiø7']} / ${p.entry['vii°7']}`,
-    'ii° Diminished triad | 162:189:224 / iiø7 Half-diminished seventh | 162:189:224:288 / vii°7 Septimal diminished seventh | 135:162:189:224');
+  check('S9 Septimal minor: ii° and iiø7, which the catalog lacks, under HKL\'s names', `${p.entry['ii°']} / ${p.entry['iiø7']} / ${p.entry['vii°7']}`,
+    'ii° Diminished triad | 81:96:112 / iiø7 Half-diminished seventh | 81:96:112:144 / vii°7 Septimal diminished seventh | 135:162:189:224');
   p = await load('mapping=randal&mode=7&scale=septimal-major');
   check('S3 Septimal major plays its septimal ii', `${p.played} | ${p.labels.split(' ').slice(0, 7).join(' ')}`, '7/7 7/7 6/10 4/7 | I ii iii IV V vi vii°');
   /* a tuning lists some keys and not others, whatever it could play of them */
@@ -148,7 +149,7 @@ try {
   /* S7 */
   p = await load('mapping=randal&mode=5&scale=semiditonal-minor');
   check('S7 a minor key plays', `${p.heading} | ${p.played}`, 'C Semiditonal minor: Randal mapping, Ptolemaic tuning | 13/13 13/13 11/12 5/5');
-  check('S9 Semiditonal minor: ii° from the 5-limit vii°7, its seventh a catalog chord', `${p.entry['ii°']} / ${p.entry['iiø7']}`, 'ii° Diminished triad | 135:160:192 / iiø7 Half-diminished seventh | 135:160:192:240');
+  check('S9 Semiditonal minor: ii° and iiø7 are the scale\'s own notes, catalog chords', `${p.entry['ii°']} / ${p.entry['iiø7']}`, 'ii° Pythagorean diminished triad | 729:864:1024 / iiø7 Pythagorean half-diminished seventh | 729:864:1024:1296');
   check('S7 its three scales', `${p.feet.split(' | ')[0]} | ${p.feetScales}`, 'Semiditonal minor scales [9 notes] | Pythagorean natural minor, Semiditonal harmonic minor, Semiditonal melodic minor');
   check('S7 its triads: two on a root', p.labels.split(' ').slice(0, 13).join(' '), 'i ii° ii ♭III ♭III+ iv IV V v ♭VI vi° ♭VII vii°');
 
