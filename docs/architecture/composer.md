@@ -403,7 +403,13 @@ every render, because `setOptions` persists what it is not told.
 
 `renderComposer(model, viewStaves)` is the entry point for both views; a full
 engrave happens only on a forced cause (`forceFullRerender`: new document,
-view staves, zoom, page scale). A render predicted heavier than 250 ms
+view staves, zoom, page scale, display flags). The display flags are the
+document's two render-only ones, `heji` and `ignore-color`: they live on
+`<hkl:config>` and reach the engraving through the render clone alone, so no
+measure signature changes when one flips. `reRender` (`main.ts`) hands both to
+`renderer.setDisplayFlags` ahead of every render, and a change there forces
+the engrave — whatever flipped the flag (Setup apply, an undo or redo of one,
+a document load). A render predicted heavier than 250 ms
 (`predictNextRenderHeavy` — in page view, whether a local refill is possible)
 defers one frame so the `#renderBusy` badge paints first, and requests
 arriving meanwhile coalesce into one render of the latest state. Post-render

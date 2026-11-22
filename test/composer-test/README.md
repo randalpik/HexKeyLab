@@ -163,7 +163,8 @@ Applied to every fixture by the runner:
   fixture provokes on purpose
 - **splice** — no full render among the fixture's own edits unless by design:
   `single-line partition`, `all lines …`, or `forced full render (<cause>)`
-  (new document, view staves, zoom, page scale, string render). The failure
+  (new document, view staves, zoom, page scale, display flags, string
+  render). The failure
   detail prints the render sequence; a fixture whose point is a derive
   declares `fullRender: '<why>'`
 - **visual** — when the fixture declares `visualBaseline: '<name>'`

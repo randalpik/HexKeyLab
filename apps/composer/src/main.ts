@@ -1001,6 +1001,13 @@ function hideBusy(): void {
 }
 
 function reRender(): void {
+  /* The document's render-only flags (HEJI accidentals, Ignore color) change
+     no measure, so nothing downstream can tell they moved: sync them here,
+     on the one path every render request takes, whatever flipped them (Setup
+     apply, undo/redo of one, a document load). Before the queued-render return
+     and the prediction, so a queued render engraves with them and a forced
+     engrave of a large score gets its badge. */
+  renderer.setDisplayFlags(model.getHejiEnabled(), model.getIgnoreColor());
   if (renderQueued) return;   // a queued render will pick up the latest model state
   if (renderer.predictNextRenderHeavy(viewStavesFilter())) {
     renderQueued = true;

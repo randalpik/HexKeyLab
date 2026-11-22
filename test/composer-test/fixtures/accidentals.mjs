@@ -74,7 +74,56 @@ function accidGlyphsExpr(want) {
   })()`;
 }
 
+/* Setup's two render-only flags (HEJI accidentals, Ignore color) live on
+   <hkl:config>: flipping one changes no measure, so neither splicer's
+   signature diff sees it and only the renderer can notice it moved. A C#↓
+   (Semiditonal) in red opens twelve measures rendered with both flags off —
+   several lines, so page view owns its partition (a one-line score always
+   derives, which hid the defect) — `__flagShown` reads what is on screen for
+   that note (accidental codepoints / notehead color), and then the real Setup
+   dialog ticks checkbox `id`. */
+const flagToggle = (id, view = 'page') => `
+  ${view === 'scroll' ? "window.__hkl_composer.renderer.setViewMode('scroll');" : ''}
+  m.setLayoutReq({ tuningMode: 'D' });
+  m.setHejiEnabled(false);
+  m.setCursor(0, 1);
+  m.insertChordAtCursor({ notes: [{ q: 1, r: 0, pname: 'c', accid: 's', oct: 4, midi: 61, colorHex: '#cc0000', velocity: 80 }], duration: '4', dots: 0 });
+  for (let i = 0; i < 47; i++) m.insertChordAtCursor({ notes: [{ q: 0, r: 0, pname: 'a', accid: '', oct: 3, midi: 57, colorHex: '#888', velocity: 80 }], duration: '4', dots: 0 });
+  r();
+  const pb = window.__hkl_composer.renderer['pageBreaks'];
+  for (let i = 0; i < 2 && !pb.ownershipActive(); i++) r();
+  window.__flagOwned = ${view === 'scroll' ? 'true' : 'pb.ownershipActive()'};
+  window.__flagShown = () => {
+    const n = document.querySelector('#score svg g.note');
+    if (!n) return 'no note';
+    const cps = [...n.querySelectorAll('g.accid text')].map((t) => t.textContent.codePointAt(0).toString(16));
+    return cps.join('+') + '/' + (n.getAttribute('color') ?? 'plain');
+  };
+  window.__flagBefore = window.__flagShown();
+  document.getElementById('btnSetup').click();
+  document.getElementById('${id}').checked = true;
+  document.getElementById('setupForm').requestSubmit(document.getElementById('setupOk'));
+  window.__flagApplied = window.__flagShown();
+`;
+const flagShownExpr = (before, after) => `(() => {
+  if (!window.__flagOwned) return { ok: false, detail: 'page view never owned its partition before the toggle' };
+  const got = [window.__flagBefore, window.__flagShown()];
+  const want = ${JSON.stringify([before, after])};
+  return got[0] === want[0] && got[1] === want[1]
+    ? { ok: true } : { ok: false, detail: 'before → after: got ' + got.join(' → ') + '; want ' + want.join(' → ') };
+})()`;
+
 export const FIXTURES = {
+  /* ── Setup's HEJI checkbox re-engraves the score (2026-11-21, Max) ──
+     Opening a score saved with HEJI off and ticking the checkbox drew nothing
+     new until a save and reload: since Setup apply stopped forcing a full
+     render (2026-10-09) the flag reached no render path — page view took the
+     refill's no-op, scroll view the splicer's "nothing changed". The same held
+     for Ignore color, and for an undo of either. */
+  heji_setup_toggle_page: { setup: flagToggle('setupHeji') },
+  heji_setup_toggle_scroll: { setup: flagToggle('setupHeji', 'scroll') },
+  heji_setup_toggle_undo: { setup: flagToggle('setupHeji'), setupKeys: [{ key: 'z', ctrl: true }] },
+  ignore_color_setup_toggle: { setup: flagToggle('setupIgnoreColor') },
   /* ── A hidden double sharp's gestural token is `ss` (2026-10-20, Max) ──
      The display pass hides a carried accidental by moving its token into
      @accid.ges, and wrote the WRITTEN token there: `x` for a double sharp,
@@ -306,6 +355,27 @@ export const FIXTURES = {
 };
 
 export const ASSERTIONS = {
+  heji_setup_toggle_page: [
+    { name: 'page view: the plain sharp (E262) becomes the arrowed sharp (E2C3) on apply',
+      expr: flagShownExpr('e262/#cc0000', 'e2c3/#cc0000') },
+  ],
+  heji_setup_toggle_scroll: [
+    { name: 'scroll view: the plain sharp (E262) becomes the arrowed sharp (E2C3) on apply',
+      expr: flagShownExpr('e262/#cc0000', 'e2c3/#cc0000') },
+  ],
+  heji_setup_toggle_undo: [
+    { name: 'the apply draws the arrowed sharp; undoing it turns the flag off and redraws the plain one',
+      expr: `(() => {
+        if (!window.__flagOwned) return { ok: false, detail: 'page view never owned its partition before the toggle' };
+        const on = window.__hkl_composer.model.getHejiEnabled(), shown = window.__flagShown();
+        return window.__flagApplied === 'e2c3/#cc0000' && on === false && shown === 'e262/#cc0000'
+          ? { ok: true } : { ok: false, detail: 'applied ' + window.__flagApplied + ', then after undo: heji=' + on + ', shown ' + shown + '; want e2c3/#cc0000, then false, e262/#cc0000' };
+      })()` },
+  ],
+  ignore_color_setup_toggle: [
+    { name: 'the red notehead is redrawn plain on apply',
+      expr: flagShownExpr('e262/#cc0000', 'e262/plain') },
+  ],
   accidental_double_sharp_gestural_ss: [
     { name: 'the visible F𝄪 keeps @accid="x"; the carried one is @accid.ges="ss" in the serialized MEI',
       expr: `(() => { const d = new DOMParser().parseFromString(window.__hkl_composer.model.serialize(), 'application/xml');

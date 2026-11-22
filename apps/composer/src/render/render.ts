@@ -1067,6 +1067,22 @@ class Renderer {
     return this.pageScale;
   }
 
+  /** The document's render-only flags (Setup's HEJI accidentals and Ignore
+   *  color) as of the last sync; null before the first. */
+  private displayFlags: string | null = null;
+
+  /** Sync the document's render-only flags. Both live on `<hkl:config>` and
+   *  are applied to the render clone (model.serialize), so flipping one
+   *  changes no measure: the splicers' signature diffs cannot see it, and a
+   *  change forces a full re-engrave here instead. Idempotent, like
+   *  setPageScale. Call it before predictNextRenderHeavy so the forced render
+   *  is predicted (and badged) as one. */
+  setDisplayFlags(heji: boolean, ignoreColor: boolean): void {
+    const next = (heji ? 'heji' : 'plain') + '|' + (ignoreColor ? 'black' : 'color');
+    if (this.displayFlags !== null && next !== this.displayFlags) this.forceFullRerender('display flags');
+    this.displayFlags = next;
+  }
+
   /* DEAD END (2026-08-29, do not retry): a `redoLayout()` shortcut for
      byte-identical data with changed options. On the CDN build, setOptions +
      redoLayout does NOT re-apply page geometry — a scroll→page relayout kept
@@ -1643,8 +1659,8 @@ class Renderer {
         console.info('[page-breaks] refill unavailable for this edit — derive render');
       }
     } else {
-      /* Nothing owned. A forced invalidation (new document, Setup apply, view
-         change, zoom, page scale — forceFullRerender's callers) is by design
+      /* Nothing owned. A forced invalidation (new document, view change, zoom,
+         page scale, display flags — forceFullRerender's callers) is by design
          and says why; anything else is an invalidation nobody asked for, and
          the suite's splice invariant treats it as a defect. */
       this.pageBreaks.lastDeriveReason = this.forcedCause !== null

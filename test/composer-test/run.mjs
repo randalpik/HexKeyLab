@@ -311,8 +311,8 @@ async function runOne(cdp, name, fixture, console_cap, currentTier, opts = {}) {
      gets caught — Ctrl+M's 2.8 s derive lived for weeks because nothing here
      looked. */
   const BY_DESIGN = new Set(['single-line partition']);
-  /* A forced full render — forceFullRerender's callers: new document, Setup
-     apply, view-staff change, zoom, page scale — is an explicit decision, never
+  /* A forced full render — forceFullRerender's callers: new document,
+     view-staff change, zoom, page scale, display flags — is an explicit decision, never
      a command quietly deriving; the reason carries its cause (2026-10-08). */
   const byDesign = (why) => BY_DESIGN.has(why) || why.startsWith('forced full render') || why.startsWith('all lines');
   if (Array.isArray(ledger)) {
