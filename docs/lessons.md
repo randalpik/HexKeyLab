@@ -167,6 +167,8 @@ Don't chase the noise hypothesis. Diagnose with p5/p95, not CV.
 
 ### Velocity = inverse press-time; MIN and MAX are independent monotonic knobs
 
+> **2026-11-22**: the mechanics below are right, the advice built on them was not. Shortening a key's window to raise its velocities throws away press-time resolution, and doing it board-wide through the `min lo` slider cost this unit 11 counts of every window for six months (the `ThresholdData_N` entry above). Keys are evened out by HKL's per-key press-time scale, and the response by the Lumatone curve (architecture/engine.md → Velocity architecture). There is no per-key gain any more.
+
 `press_time = time(ADC reaches rest+MAX) − time(ADC reaches rest+MIN)` (the reading rises with the press). Press-time → bin → velocity LUT lookup. With identity LUT: shorter press-time = higher velocity.
 
 - **Raise MIN** → timer starts later (smaller ADC traversal) → press-time *shorter* → velocity *higher*
@@ -175,6 +177,8 @@ Don't chase the noise hypothesis. Diagnose with p5/p95, not CV.
 Opposite directions. Both apply per-key (0..254 each in KeyData_N). Use MAX to drop the floor (p5), use MIN to raise the ceiling (p95). They cannot independently expand both ends — you're scaling and shifting a monotonic transform of press-time. The intrinsic dynamic range of any key is bounded by its physical ADC swing × the user's hand-speed range; threshold tuning only positions the velocity distribution within that envelope. Residuals beyond that are HKL's job (per-key gain + global curve in `velocityCal.ts`).
 
 ### Use p5/p95 to diagnose per-key calibration, not mean/CV
+
+> **2026-11-22**: p5/p95 remain the right statistics, but the target zone and the three failure modes below were defined on the tables and thresholds of May 2026 (and on a unit that from the next power cycle ran its preset's tables). On the one-tick table a raw velocity is 128 − ticks; a key that sits apart from the rest in the scatter has a different timing window, and its fix is the per-key scale, not MAX or MIN.
 
 The natural metrics for "what's this key's realistic velocity range during normal play" are the outlier-rejecting percentiles, not the moments. lumadiag's per-key velocity statistics scatter plots (p5, p95) per key. The target zone is upper-left (p5 ≤ 30, p95 ≥ 100). Three failure modes diagnose directly from position:
 
@@ -187,6 +191,8 @@ The natural metrics for "what's this key's realistic velocity range during norma
 | Mid-diagonal (Cluster B) | Stuck middle | Raise MAX or MIN depending on which end matters more |
 
 ### Per-key calibration converges in 3-4 passes of bulk-raise + per-key rescue
+
+> **2026-11-22**: kept for the mechanics of editing many keys at once. The goal it served, raising MAX across the board to widen the velocity range, was pursued with `max` 15 and `min lo` 14 on every board, 18 counts short of the stock window.
 
 When raising MAX globally to widen the velocity range, *some* keys (with small physical sensor swing) go dead at the new threshold. The cheap convergence pattern is asymmetric: raise globally, find casualties, rescue individually. `tools/lumatone-cal/keydata-live.py --bulk-raise <section> <value>` only writes keys whose current value is below the target, preserving prior per-key rescues across iterations.
 
@@ -860,7 +866,7 @@ Both "starts on beat 1" and "starts on beat 2" produce idiomatic notation. With 
 
 The firmware splits velocity processing into two independent SysEx-controllable tables:
 
-- **CMD `0x08 SET_VELOCITY_CONFIG`** — 128 × 7-bit. **Output relabeling**: bin index N → MIDI velocity. HKL has always pushed identity here. The factory default (Terpstra's "EmptyVelocityCurveTable") is identity 0,1,2,…,127.
+- **CMD `0x08 SET_VELOCITY_CONFIG`** — 128 × 7-bit. **Output relabeling**: bin index N → MIDI velocity. HKL's table is the identity (slowest bin sent as 1); from May to November 2026 it reached the device only when a button was clicked, and since 2026-11-22 it is sent with every setup (next entry). The factory default (Terpstra's "EmptyVelocityCurveTable") is identity 0,1,2,…,127.
 - **CMD `0x20 SET_VELOCITY_INTERVALS`** — 127 × 12-bit. **Press-time bin boundaries**: tick-count thresholds that determine which press-time ranges merge into which bin. Factory default has fine granularity at fast presses (1, 2, 3, …, 58) and accelerates at slow presses (170, 175, …, 310).
 
 The two are entirely independent. External software (HKL, a DAW) can replicate CMD 0x08 by leaving the firmware LUT at identity and shaping its own MIDI velocity — *but it cannot replicate CMD 0x20*. By the time MIDI velocity reaches the host, the firmware has already binned press_time and the high-precision information is gone. CMD 0x20 is therefore the only lever that can increase the number of distinct velocities a given keyboard can physically emit.
@@ -895,7 +901,18 @@ Measured by Max on 2026-11-22, on the identity LUT and one-tick interval table, 
 - **Until the built-in calibration of 2026-11-11 the device's windows were equal.** The pre-recalibration files (`tools/lumatone-cal/backups/lumatone-backup-20261108/`) hold MAX 70 and MIN 0 on 275 keys, with the same 15 + 14 overhead: a 41-count window on every one of them (the five keys lowered by ear: 31, 31, 31, 31 and 21). By the proportionality above that is the same press time for the same touch on all 275, and the built-in routine, which stores each key's own peak, replaced it with windows of 7…71 (13…78 after the firm median). What a uniform MAX costs is the note-on depth: it sits at reading 55 on every key, half-way down a key that peaks at 110 and out of a soft press's reach on a key that peaks near 55. The tick figures in decisions.md's 2026-05-18 entries (fastest reliable press 3 ticks, natural range 3…50) are not measurements to build on: Max, 2026-11-22: "the ticks shown at the time were computed, not real data, and that computation was apparently wrong".
 - **The proportionality holds to the top of the range** (Max, 2026-11-22, raw tick labels, with the scales imported). On (9, 0), the narrowest key (13 counts, scale 3.77), the force that reads 1 tick reads 5–6 on its neighbors, and the force that reads 2 reads 8–9; its force-to-velocity matches theirs everywhere except at dynamics a typical key reads under 5 ticks, which it cannot resolve. So its ceiling below 127 is correct, not a defect: "If we allowed 1t to translate to a velocity any faster on that key, it would stick out more." His verdict on the per-key scale as built: "the best we can get in terms of per-key consistency". An observation the same day that every key *can* show ≤1, 2 and 3 ticks does not contradict this (the efforts differ), and a correction that scaled only the press time above 2 ticks, proposed from it, was wrong and was not built.
 
+- **The proportionality is across keys at one setting of the thresholds, not across settings.** With `min lo` at 14 Max's ppp, p and f sat at about 21, 6 and 2 scaled ticks; with `min lo` at 3 (the median window 49 → 60 counts, +22%) he read them at more than 48, 23 and 5. The first counts of a key's travel take far longer than the rest, so starting the timer 11 counts earlier lengthens every press time by much more than the window grows, and by more for a soft press. (Approximate figures from two sittings the same day.)
+
 HKL's per-key press-time scale (`velocityCal.applyKeyScale`; architecture/engine.md → Velocity architecture) is built on this: scale = median window ÷ the key's window, written by `tools/lumatone-cal/keydata-compare.py --scales`. The per-key *gain* it replaced multiplied velocity, which under a one-tick table is 128 − ticks: a gain fitted at one dynamic is wrong at the others.
+
+### The Lumatone curve does not stack with the house curve, but a layered instrument's layer gains stack with it
+
+Checked 2026-11-22, after the curve became the piano law. The engine's note-on gain is three factors: the house curve at the musical velocity, the instrument's range fade, and the picked layer's own gain (`samples-engine.ts`: `velocityToGain(v) * rangeAttenuation * blendedGain(layer)`).
+
+- **House curve**: no stacking. The Lumatone curve's gain becomes a musical velocity through the house curve's inverse, so played back it sounds at that gain, within the rounding of a whole velocity (at most 0.006 of gain; `test/hkl-midi/lumatone-curve.mjs` checks every tick). Under the house curve's floor it sounds as velocity 1, −25.9 dB.
+- **Layer gains**: read from the manifest of the re-gained Korg SP-250 bundle (`korg-sp-250-5layer-regain.hki`, 2026-09-13; layers at reference velocities 24, 48, 72, 96, 120, picked by nearest, so the boundaries are 36, 60, 84 and 108). `gainLevel` makes a note's layers equal in level, so at that end of the Layer loudness match slider amplitude follows the curve exactly. `gain` makes them equal in sones, which takes more level for the duller soft layers: against the level match, +5.7, +1.6, −1.0, −3.0 and −3.1 dB from the softest layer to the loudest (medians over the notes). At the sones end, the default, the level span from the softest press to the loudest is therefore about 17 dB where the curve says 26.
+- **Where the dynamics fall**: on the default curve Max's ppp and p (musical velocities 1 and 19) play the softest layer, his f (75) the middle one, and the two brightest layers come in only above f, at press times under about 4 ticks.
+- Max plays at full sones, "which is definitely the smoothest", and accepted the result as it stands (decisions.md 2026-11-22). The piano measurement behind the curve is of amplitude, so the level end is where "amplitude proportional to speed" literally holds; that is a fact about the two settings, not a recommendation.
 
 ### Lumatone velocity pipeline: PIC measures, BBB binarizes + relabels
 
@@ -928,6 +945,8 @@ This means **widening the integer range** is the only way to increase reachable 
 
 ### Binary_search on duplicate thresholds produces an irregular reachable-bin pattern
 
+> **2026-11-22**: the fix below is off by one. The table has 127 entries, so `low` … `low` + 126 (1…127) is the span with one threshold per tick; `low` + 127 skips one (with 1…128, 64 and 65 ticks share a bin). The "natural range 3..50" and the steep audio gamma it mentions belong to the superseded recipe. `velocityCal.pressTicks` decodes any bin of a run of equal thresholds to the same tick, whichever one the bisection lands on.
+
 When the CMD 0x20 integer threshold range is narrower than 127 entries (e.g. low=3, high=50 spans 48 integers across 127 entries), each integer value occupies a run of 2–3 adjacent table indices. The BBB's `binary_search` returns the index where an exact match is found via bisection — which lands at a specific mid in each run, not the first or last. Result: adjacent integer keys produce bin-index jumps that alternate between Δ=2 and Δ=4 (one extra step every ~3 ticks). After the CMD 0x08 identity LUT, this becomes alternating dB-step sizes (e.g., 0.31 / 0.31 / 0.31 / 0.65 / 0.31 / 0.31 / 0.31 / 0.65 / ... at γ_audio=2.3).
 
 **Fix**: widen `high` so the integer threshold count equals 127 (e.g., for low=3, set high=130 → 128 distinct integers fill the table with no duplicates). Every integer key then exact-matches at a unique index, and the reachable bins become contiguous 1:1 with tick count. Costs nothing on the user's natural play range (they still emit ~48 distinct velocities for 48 distinct press-times), but eliminates the structural step-doubling.
@@ -943,6 +962,8 @@ What's actually correct: γ_int = 1 (linear), regardless of γ_audio. With γ_in
 For "uniform dB per tick" the press-time → gain composition would need to be exponential. Power laws can't produce that, so accept a residual taper: bigger dB steps at the loud end, smaller at the soft end. This is a property of `gain = floor + (1−floor)·(v/127)^γ`, not a defect.
 
 ### Hardware MAX is not a reliable dynamic-range lever for narrow-ADC-swing keyboards
+
+> **2026-11-22**: "narrow-ADC-swing" described this unit with `max` 15 and `min lo` 14 on every board, which took 18 counts more than stock out of every key's window. The swings themselves are what the calibration files say (42…110 counts at a firm press); what was narrow was the part of them being timed.
 
 The MAX-raising workflow under "Per-key calibration converges in 3-4 passes" assumes the dead-key rate climbs gracefully as MAX rises. On Max's unit it doesn't — `MAX=70` produces ~3 dead keys, `MAX=80` produces 20+. The casualty distribution is unit-specific; some keyboards have so tight a physical ADC swing distribution that any meaningful MAX bump kills 5–10% of the keyboard. And even on surviving keys, p5 doesn't drop when MAX climbs, because the firmware's press-time → velocity mapping is insensitive to where the measurement window sits within Max's compressed swing range.
 

@@ -11824,3 +11824,13 @@ A note on a key that changes pitch with the tuning stays on that key in HKL: a P
 **Known inexact**: the constant is fitted on one unit and one player; another unit sets `full` by its own softest press (docs/lumatone-calibration.md, step 4). Hammer speed proportional to key speed is my assumption. Above `full` everything is one loudness, by construction.
 
 **Where**: `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts`; `test/hkl-midi/{lumatone-curve,key-scale,velocity-owners}.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md.
+
+## Lumatone velocity as it stands, accepted; the layer blend stays at full sones (2026-11-22, Max)
+
+**State accepted**: "I accept the current state and I'll refine further as I play with it more." That state is: the identity LUT and a one-tick interval table on the device, sent by HKL with every setup; per-board thresholds `max` 15, `min lo` 3 (returned to stock that day), `min hi` 15; the firm-press median calibration of 2026-11-16 in the per-key files; a per-key press-time scale imported from `keydata-compare.py --scales` on the save of that state; the piano-law curve at its defaults (`full` 125.6, gamma 1); the Diagnostics overlay showing input velocity and raw ticks.
+
+**Layer loudness match**: checked whether the curve stacks with anything (lessons.md → "The Lumatone curve does not stack with the house curve"). It does not stack with the house curve. It does stack with a layered instrument's layer gains: at the sones end of the slider the soft layers are raised against the loud ones, which on the Korg bundle leaves about 17 dB of level between the softest and the loudest press where the curve says 26. Max: "I always have it at full sones, which is definitely the smoothest." So the slider stays where it is, and the narrower level range at that setting is part of the accepted state, not a defect to correct in the curve.
+
+**Superseded by today's entries**, for a reader arriving from the older ones: the velocity recipe of 2026-05-18 (`low` 3, `high` 130, an audio gamma of 13.9, the tick range 3..50); raising MIN or MAX per key or per board to move a key's velocities (2026-05-17); the per-key gain and its capture (2026-05-17, replaced by the press-time scale); the conclusion that this unit has a narrow sensor swing (it had narrow timing windows, from non-stock per-board thresholds).
+
+**Left open**: the outlier lists in Calibrate Keys' per-key statistics still name thresholds and fixes from May 2026 ("raise MAX", "raise MIN"); `max` at 15 against a stock 8, which cannot be lowered safely on top of a firmly pressed calibration; whether the constant `full` wants a different value once Max has played more.

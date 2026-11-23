@@ -38,9 +38,9 @@
 //
 // Per-key velocity statistics: separate from auto-capture. When statsEnabled,
 // every real MIDI note-on velocity feeds a ring buffer (KEY_HISTORY_CAP per
-// key). We compute mean / stddev / CV on demand. Surfaces "which keys are
-// noisy in velocity output" (high CV → consider raising hardware MIN) and
-// "which keys are loudness outliers" (mean drift → per-key scale candidate).
+// key). We compute mean / stddev / CV and p5 / p95 on demand. A key whose
+// range sits apart from its neighbors' has a different timing window and is a
+// per-key scale candidate; its thresholds are not the fix (docs/lessons.md).
 // Snapshot stats persist to localStorage; raw samples are session-only.
 
 import { savePrefs, loadPrefs, type VelocityCalPrefs, type KeyStatsSnapshot } from '../state/persistence.js';
@@ -97,9 +97,11 @@ export interface InputCurveState {
 /** Lumatone firmware velocity-interval curve (CMD 0x20). Generates a 127-entry
  *  table of press-time tick thresholds via the parametric map
  *    thresh[i] = low + (high - low) · (i/126)^gamma
- *  HKL pushes the resolved table to the firmware; firmware then bins press_time
- *  into 128 velocity bins by comparison. Defaults curve-fit to the Terpstra
- *  factory table (`KeyboardDataStructure.cpp:49`). */
+ *  HKL sends the resolved table to the firmware with every setup
+ *  (lumatone/sync.ts); the firmware then bins press time into 128 velocity bins
+ *  by comparison. The per-key scale and the Lumatone curve read a velocity back
+ *  as press time through this same table (`pressTicks`), so they follow
+ *  whatever it is set to. */
 export interface IntervalCurveState {
   low: number;
   high: number;
@@ -125,12 +127,13 @@ export const DEFAULT_INPUT_CURVE: InputCurveState = {
   gamma: 1.0,
 };
 
-/** Identity-style table tuned for Max's Lumatone: low=1, high=127, gamma=1.0
- *  gives press-time thresholds 1..127 linearly across velocity bins, which the
- *  HKL audio curve (DEFAULT_CAL) is calibrated against. The Terpstra factory
- *  table (low=1, high=310, gamma≈2.1) is a separate baseline — restoring it
- *  without also reverting DEFAULT_CAL produces overly-loud playback because
- *  velocities normalize to a curve that no longer matches the hardware. */
+/** The one-tick table: low=1, high=127, gamma=1.0 gives thresholds 1..127, one
+ *  tick of press time per velocity (velocity = 128 − ticks under the identity
+ *  LUT), which is every bit of timing the device measures. 127 entries hold
+ *  low..low+126; a wider span skips ticks, a narrower one repeats thresholds.
+ *  The Terpstra factory table (1..58 in single ticks, then widening to 310) is
+ *  what a preset file holds and what the device runs when HKL has not sent
+ *  this one. */
 export const DEFAULT_INTERVAL_CURVE: IntervalCurveState = {
   low: 1,
   high: 127,
