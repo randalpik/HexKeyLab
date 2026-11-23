@@ -230,15 +230,19 @@ function routeChannelMessage(data: Uint8Array): void {
        in via lumadiag to compensate for compressed firmware velocity range.
        Everything downstream (audio engine, recording, MIDI export) sees the
        shaped value. */
-    /* Lumatone → canonical musical velocity: per-key gain (hardware variance
-       correction) then the decompression input curve, both at input time.
+    /* Lumatone → canonical musical velocity: the key's press time, scaled by its
+       own number (hardware variance correction), through the Lumatone curve, at input time.
        keyVelocity now holds musical velocity (the house curve maps it to gain at
        audio time). */
     const velocity = fromGame !== null
       ? fromGame
-      : velocityCal.applyInputCurve(velocityCal.applyPerKeyGain(physId, d2));
-    /* Per-key gain auto-capture samples RAW d2 — per-key gain corrects the raw
-       firmware velocity before the curve. Keyed by the physical key, like the
+      : velocityCal.lumatoneVelocity(physId, d2);
+    /* The Diagnostics overlay shows the strike's input velocity (the raw one after
+       the key's scale, which is what the curve takes) and its press time; a voice
+       carries only the musical velocity. A game's note has neither. */
+    if (fromGame === null) velocityCal.noteStrike(key, d2, velocityCal.applyKeyScale(physId, d2), velocity);
+    /* Per-key scale auto-capture samples RAW d2 — the scale corrects the raw
+       firmware press time before the curve. Keyed by the physical key, like the
        gain and the stats. Out of capture mode, a boolean check. */
     velocityCal.recordSample(physId, d2);
     /* Forward the strike to Composer for Performance mode. No-op unless that

@@ -11734,3 +11734,93 @@ A note on a key that changes pitch with the tuning stays on that key in HKL: a P
 - **Which chords a key has is still declared** (a numeral, a scale degree, a kind), once per mode and not per flavor; the build checks each against the scales.
 
 **Found**: 37 chords changed of 290 (28 diatonic, 4 secondary dominants, 5 borrowed). The six non-Pythagorean keys share 98 distinct chords, down from 102. Sixteen chords are in no catalog and take HKL's own names. The whole footprint shrank in two keys (Ptolemaic minor 22 → 19 notes, Septimal minor 28 → 25) and grew in one (Semiditonal major 18 → 20, its borrowed ♭VI and ♭VII now pure); on Randal in Ptolemaic the footprint of Ptolemaic minor is complete in 4 octaves where it was in 2, of Semiditonal minor in 4 where it was in 2.
+
+## The Lumatone's velocity baseline is the identity LUT and the linear interval table, and HKL sends both with every setup (2026-11-22, Max)
+
+**Found**: the device had run preset slot 5's tables (the factory intervals and a non-identity LUT) under HKL's curve since May 2026, because HKL sent CMD `0x08` and `0x20` only from two buttons and a power cycle reloads the preset file (lessons.md → "The device ran its preset's velocity tables"). Pushing the two tables onto the curve tuned in that state (floor 0.10, γ 13.9) was, in Max's words, "nowhere close to playable": much louder and much less consistent across keys.
+
+**Offered**: pin slot 5's tables as the baseline, since he had played them for months, and reach consistency from there.
+
+**Max's ruling**: no. "We established that the identity LUT and firmware curve is the most effective for getting us distinct and consistent velocities to work with. That must be the baseline. I don't care about keeping the overall feel as close to the current behavior as possible. My one and only goal is to achieve consistency across the keyboard. The gamma is the single knob that lets me tune sensitivity from there." He also does not want a baseline that lives in a device preset and takes labor to restore.
+
+**Built**: the two tables join the connect-time setup batch, which a preset switch repeats (`lumatone/sync.ts`); live state only, no preset slot written, nothing sent with Auto-sync off. The Diagnostics overlay's tick label is decoded from the strike's raw velocity (`velocityCal.pressTicks`), where it had been reverse-mapping the musical velocity. `velocityCal.isIntervalCurveFactory` is removed: it had no caller, and its comment described a connect-time push that did not exist.
+
+**Not decided here**: how keys are made consistent with each other (per-key press-time scaling in HKL, per-key thresholds computed from the calibration runs, or both), and what the curve's floor and gamma become once they are.
+
+**Where**: `apps/hkl/src/lumatone/{sync,lumadiag}.ts`, `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/audio/diagnostics/loopOverlay.ts`, `apps/hkl/src/midi/handler.ts`; `test/hkl-midi/{velocity-tables,preset-resync}.mjs`; docs/architecture/hkl.md, docs/lumatone-calibration.md, docs/lessons.md.
+
+## A key is corrected by a scale on its press time, from the calibration files (2026-11-22, Max)
+
+**Picked**: one number per physical Lumatone key multiplies the key's press time, in ticks, before the velocity curve (`velocityCal.applyKeyScale`, `keyScale` in `velocityCal` v5). It replaces the per-key gain on velocity. The numbers are the median timing window over each key's own, written by `tools/lumatone-cal/keydata-compare.py --scales` from the saved `KeyData` the device runs and imported in Calibrate Keys; the capture pass sets single keys by touch in the same unit. Max approved it as proposed: "replace the per-key gain, apply before the curve, and take its 280 values from a table that `keydata-compare.py` writes and HKL imports".
+
+**Why**: his measurement that day (lessons.md → "Press time follows the timing window"): for one touch, ticks follow the window in sensor counts. Keys therefore differ by a factor on time. A gain on velocity matches one dynamic and is wrong at the others, and the windows are already known for every key from the calibration files, to about 2 counts between runs, so no pressing is needed.
+
+**Rejected**:
+- **Equal windows in the device's `KeyData`** (the same finding says equal windows give equal ticks): the common window can be no wider than the narrow keys allow (6 keys under 30 counts, 41 under 40), which takes resolution from every other key, and each attempt is a power cycle. Kept as the fix for single keys whose tick steps are audibly coarse after scaling.
+- **Converting the saved gains**: a gain corrects one dynamic, and every saved one was captured while the device ran its preset's velocity tables. They are dropped on load (v5).
+- **A reference other than the median window**: the median leaves a typical key's feel where the curve put it, so the curve's gamma stays the one sensitivity knob, which is how Max wants to tune.
+
+**Mine, for him to go through**:
+- The capture pass was kept and moved to the same unit (scale = the target velocity's press time ÷ the key's median press time), since without the gain it had nothing to set. Its 0.3–3.0 clamp became the import's 0.1–10.
+- The scaled press time goes back to a velocity by the firmware's own map, made linear between thresholds, so the curve gets a fractional velocity.
+- An import replaces the whole table and refuses a file with any key id or scale it does not recognize; a capture merges into what is there.
+- The overlay's tick label stays the raw press time; the velocity beside it is the corrected one.
+
+**Known inexact**: the rule rests on three keys. The narrowest key (13 counts) reads 6 ticks where proportionality says 4.3, so its scale of 3.77 over-corrects it by about 40%. A narrow key's fastest press is one tick, so it tops out below 127 after scaling (124.2 for that key).
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/midi/handler.ts`, `apps/hkl/src/lumatone/lumadiag.ts`; `tools/lumatone-cal/keydata-compare.py`; `test/hkl-midi/{key-scale,velocity-owners}.mjs`; docs/architecture/{engine,hkl}.md, docs/lumatone-calibration.md, docs/lessons.md.
+
+## The Lumatone curve works on press time: gamma is an exponent on finger speed (2026-11-22, Max)
+
+**Picked**: the Lumatone target-gain curve is `floor + (ceiling − floor) · (top / ticks)^gamma`, with `top` the fastest bin's press time (one tick on the one-tick table) and `ticks` the key's scaled press time (`velocityCal.targetGainForTicks`; note-on path `lumatoneVelocity`). It replaces `floor + (ceiling − floor) · (v/127)^gamma` on the device's velocity number. Floor and ceiling keep their meaning; gamma is the one knob. Max: "Build the curve."
+
+**Why**: with the per-key scales in, Max found no gamma that worked: "I set gamma to the max of 20 and it still feels too punchy as soon as I start playing remotely loud. Lower gamma just makes everything too loud. So essentially the soft end is much more reliable at a high gamma but the loud end is giving me trouble." On the one-tick table the velocity is 128 − ticks, so a power of v/127 is close to an exponential in press time: the same dB for every tick. Counted per doubling of finger speed at gamma 20 and floor 0.1, that is +4.5 dB from 32 to 16 ticks, +7.1 from 16 to 8, +4.6 from 8 to 4, +2.4 from 4 to 2 and +1.2 from 2 to 1: steepest just above a soft touch, with ticks 2 to 4 all within 4 dB of full. Gamma only rescales that shape. On press time, gamma sets the cost of each doubling, the fastest ticks come down first, and the tail is long.
+
+**Rulings on the way** (Max):
+- **The top is one tick.** "Every key (of several I tried) can show <=1t, 2t, and 3t, with roughly similar efforts … The real tick numbers show consistency at the low end. That means the top SHOULD be 1 tick for sure." A "full loudness at N ticks" setting, offered against the coarse step from one tick to two and against a recorded "fastest reliable press = 3 ticks", was refused: "N is not the knob I need." He also pointed out that the 2026-05-18 tick figures "were computed, not real data, and that computation was apparently wrong".
+- **The per-key scale stays as built.** A correction that scaled only the press time above 2 ticks, proposed from the observation above, was refuted by his check of the narrowest key: the force that reads 1 tick on (9, 0) reads 5–6 on its neighbors. "I think what we have is the best we can get in terms of per-key consistency."
+
+**Rejected**:
+- **Reshaping through the firmware's interval gamma**: it gives up the one-tick table, which is the baseline, and repeats or merges thresholds.
+- **A second shape knob, or separate loud and soft exponents**: special cases; one exponent on speed has none.
+
+**Mine, for him to go through**:
+- The default gamma, and the one-time reset of a saved one, is 0.9: it puts a 16-tick press 15 dB under a one-tick press, where his gamma-20 curve had it. The slider runs 0.10–3.00.
+- `top` is the interval table's first threshold, never under one tick, so a table with `low` 3 has its top at 3 ticks.
+- The graph's axis is relabeled "device velocity": the overlay's `vN` is the musical velocity, the curve's output, and the two were being read as one.
+
+**Known inexact**: one tick to two is the curve's largest step (4.7 dB at gamma 0.9), because whole ticks are all the device reports. A narrow key's ceiling falls with its scale (3.8 ticks on the narrowest: about 8.5 dB under the top at gamma 0.9), which matches its neighbors at the same force.
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/midi/handler.ts`, `apps/hkl/src/lumatone/lumadiag.ts`, `apps/hkl/src/state/persistence.ts`; `test/hkl-midi/{lumatone-curve,key-scale,velocity-owners}.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md. `velocityCal.isInputCurveIdentity` is removed (no caller; it described a curve two designs back).
+
+## The Diagnostics overlay shows the velocity that goes into the Lumatone curve (2026-11-22, Max)
+
+**Picked**: for a Lumatone strike, the overlay's velocity trace and its `vN (Mt)` labels show the input velocity, the hardware velocity after the key's press-time scale, which is the Lumatone curve's input and the x-axis of its graph in Calibrate Keys (relabeled back to "input velocity"). M stays the raw press time the device reported.
+
+**Why**: earlier that day I had made N the musical velocity, the curve's *output*. Max read it as the curve's input, described his dynamics in it (ppp v30, p v50, f v85), and then: "pin the damn velocity numbers. What I thought I was already seeing, and expect to see, on the graph, is the hardware velocity numbers that get input to the Lumatone velocity curve. Until I'm seeing that, I can't rule on what the correct curve should look like, obviously." A number that moves when the curve moves cannot be the scale the curve is judged on. Those three figures were therefore read on the curve of that hour (floor 0.10, gamma 0.9) and correspond to press times of about 21, 6 and 2 ticks; as input velocities they are about 107, 122 and 126.
+
+**Not built**: a curve through points (offered), and showing the output velocity beside the input. The shape of the curve is Max's to rule on once he has looked at input velocities.
+
+**Where**: `apps/hkl/src/audio/diagnostics/loopOverlay.ts`, `apps/hkl/src/audio/velocityCal.ts` (`noteStrike`, `strikeOf`, `inputVelocityLabel`), `apps/hkl/src/midi/handler.ts`, `apps/hkl/src/lumatone/lumadiag.ts`; `test/hkl-midi/velocity-tables.mjs`; docs/architecture/hkl.md, docs/lumatone-calibration.md.
+
+## The Lumatone curve is the piano's law: amplitude proportional to the speed of the press (2026-11-22, Max)
+
+**Picked**: `gain = min(1, fullTicks / ticks)^gamma` on the key's scaled press time, with gamma 1 by default and no floor (`velocityCal.targetGainForTicks`). `full`, the input velocity of full loudness (`fullTicks` is its press time), is the one constant that places the scale; gamma is kept as a second scalar for a wider or narrower range. Two sliders, "full at" and gamma, replace floor, ceiling and gamma. It supersedes the floor-and-ceiling press-time curve built earlier the same day.
+
+**What Max asked for**, in order:
+- The unit: "Input velocity is the only correct unit to tune with. Any abstraction of that just makes it more difficult for me to tell what the curve is doing." (Input velocity: the hardware velocity after the key's scale, which the overlay shows.)
+- The form: "My goal is to replicate what a piano feels like. My impression is that the relationship of force to volume on a piano is well-studied, and that the result is more complex than a curve with a single gamma. I would rather have something that is tunable with 1 or 2 scalars than something that must be hand-built. The former has some hope of being utilized by other Lumatone users if I tell them where to look in HKL. The latter is arcane and might not even work for me." A curve through hand-placed points, which I had offered, was set aside on those grounds.
+- The bottom: "I'm fine with not messing with the house curve. Velocity 1 sounds like ppp, and in practice I don't need anything between that and silence."
+- The data: "I'm still interested in a curve that's based entirely on piano data", with his anchors read off the overlay after `min lo` went back to 3: f at input velocity 123, p at 105, ppp under 80.
+
+**Why this law**: Palmer & Brown (JASA 1991) measured peak amplitude as linearly proportional to hammer velocity on an acoustic piano, across pitches and velocities. The measured complexity of piano dynamics is in timbre (the hammer felt is nonlinear), which the instrument's velocity layers carry, not in level. A press's speed is 1 / its press time, and for a press from rest at a constant acceleration the final speed is twice the average, so either way amplitude is proportional to 1 / ticks. I read abstracts and summaries, not the papers.
+
+**Why these defaults**: gamma 1 is the measurement. `full` 125.6 (2.4 ticks) is the value that puts his ppp, input velocity 80 (48 ticks), on the quietest note the house curve plays (−25.9 dB). His other two anchors then fall, untuned, at −19.6 dB (p) and −6.4 dB (f): about 3 to 4.5 dB per dynamic step from ppp to fff. That the two anchors not used in the fit land evenly is the evidence that the law suits the device.
+
+**Rejected**:
+- **A soft top** (`((1 + c) / (ticks + c))^gamma`, offered while f and fff were adjacent bins): a correction for the device, not piano data, and no longer needed once `min lo` at its stock value put f at five ticks.
+- **"Full at N ticks" as a concept**, earlier the same day, when every key reached one tick easily. `full` is that setting again, in input velocity; it returned because a piano law needs one reference and because the fastest bin is now hard to reach.
+
+**Known inexact**: the constant is fitted on one unit and one player; another unit sets `full` by its own softest press (docs/lumatone-calibration.md, step 4). Hammer speed proportional to key speed is my assumption. Above `full` everything is one loudness, by construction.
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts`; `test/hkl-midi/{lumatone-curve,key-scale,velocity-owners}.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md.

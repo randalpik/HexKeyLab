@@ -127,7 +127,7 @@ python3 tools/lumatone-cal/keydata-locate.py [--swap-boards-34] <q> <r> <dir>
 Compares saved folders, one per confirmed run of the built-in calibration, without touching the device.
 
 ```bash
-python3 tools/lumatone-cal/keydata-compare.py [--swap-boards-34] [--top N] [--level L] [--write DIR] [--maps DIR] <run-dir> [<run-dir> ...]
+python3 tools/lumatone-cal/keydata-compare.py [--swap-boards-34] [--top N] [--level L] [--write DIR] [--maps DIR] [--scales FILE] <run-dir> [<run-dir> ...]
 ```
 
 A run stores one number per key (the deepest reading it saw), so the only way to tell a key's real swing from one unusual press is to repeat the run. Give the folders in the order they were saved. The report has:
@@ -137,7 +137,7 @@ A run stores one number per key (the deepest reading it saw), so the only way to
 - **Timing window**: MAX − MIN − (`max` + `min lo`) from the per-key medians, smallest first. A shorter window reads louder at the same touch.
 - **Siblings**: each key's window against the median of the same slot on the other four boards, in both directions. Slot position explains about half of the variation in MAX, so a key far from its siblings is a better suspect than a key that is merely low.
 
-`--write DIR` writes a folder whose MAX and MIN rows are the per-key medians (validity, AT MAX and `ThresholdData` come from the last run), ready for `keydata-backup.sh check` and `restore`. `--level L` separates the two things a run measures: it takes the key-to-key pattern from every run, with each run's level removed, and places the median at a level you choose, given as run labels (`R3,R4`: the mean of those runs' levels) or as a number (a mean MAX). Pressing more firmly raises a run's level and, with it, every key's note-on depth and timing window by the same count, so the level is a choice and the pattern is the measurement. With `--level`, the windows, the sibling comparison and the maps describe what `--write` would store. `--maps DIR` draws `window.png`, `siblings.png` and, with two or more runs, `spread.png`: the keyboard as HKL's Lumatone rotation shows it, each key labeled with its value and (q, r). Maps need matplotlib; keep them in a folder under `tools/lumatone-cal/backups/`.
+`--write DIR` writes a folder whose MAX and MIN rows are the per-key medians (validity, AT MAX and `ThresholdData` come from the last run), ready for `keydata-backup.sh check` and `restore`. `--level L` separates the two things a run measures: it takes the key-to-key pattern from every run, with each run's level removed, and places the median at a level you choose, given as run labels (`R3,R4`: the mean of those runs' levels) or as a number (a mean MAX). Pressing more firmly raises a run's level and, with it, every key's note-on depth and timing window by the same count, so the level is a choice and the pattern is the measurement. With `--level`, the windows, the sibling comparison and the maps describe what `--write` would store. `--maps DIR` draws `window.png`, `siblings.png` and, with two or more runs, `spread.png`: the keyboard as HKL's Lumatone rotation shows it, each key labeled with its value and (q, r). Maps need matplotlib; keep them in a folder under `tools/lumatone-cal/backups/`. `--scales FILE` writes HKL's per-key press-time scales (workflow step 6): for each key the median window over its own, from the same values `--write` would store, as JSON; it never overwrites a file, leaves out a key with no timing window, and holds a scale to 0.1–10.
 
 ### `KeyData_default`
 
@@ -155,7 +155,7 @@ Sends the SysEx factory resets for the velocity, aftertouch and Lumatouch tables
 
 ## Workflow: full-keyboard calibration
 
-Calibrate with the built-in routine, look at what the keys report, shape the velocity response in the firmware's interval table and HKL's curve, and adjust single keys by number where the learned value isn't right.
+Calibrate with the built-in routine, look at what the keys report, set the velocity response (one-tick tables on the device, the curve in HKL), adjust single keys by number where the learned value isn't right, and even the keys out with HKL's per-key press-time scales.
 
 ### 1 — Save what the device holds
 
@@ -180,48 +180,53 @@ On the one unit measured (2026-11-11) the routine landed on MAX 36–101 (median
 
 ### 3 — Collect velocity statistics
 
-1. **Push identity LUT** from Calibrate Keys (Hardware foundation → "Push identity LUT to Lumatone"). Makes the firmware emit its full 0-127 range.
+1. Connect with Auto-sync on: HKL then sends the identity LUT and the interval table itself (step 4), so the raw velocities are press times (velocity = 128 − ticks on the one-tick table).
 2. Enable "Collect" in the **Per-key velocity statistics** section.
 3. Play every key 30-50 times across the full range of forces you'd use in normal play. The scatter populates with each key's (p5, p95) point. Two clusters typically emerge:
    - **Top-right cluster**: p5 >> 30, p95 close to 127. Keys saturate high — soft presses still register as forte.
    - **Diagonal-middle cluster**: p5 around 50-80, p95 around 80-100. Keys stuck in the middle of the velocity range.
 
-### 4 — Velocity shaping: the firmware interval table (CMD 0x20)
+### 4 — Velocity shaping: one-tick tables on the device, the curve in HKL
 
-**The empirical recipe** (validated 2026-05-18 on one unit; see `docs/decisions.md` → "Velocity calibration final form"):
+The device reports a press as a velocity through two tables, and HKL sets both so that the velocity is the press time and nothing else (rewritten 2026-11-22; the earlier recipe, with `low` = 3 and an audio gamma of 13.9, rested on tick figures that were computed rather than measured and on tables the device was not running; decisions.md, lessons.md):
 
-| Parameter | Value | What it does |
+| Setting | Value | What it does |
 |---|---|---|
-| `intervalCurve.low` | your fastest reliable press time (ticks), e.g. 3 | lower boundary of bin 0 |
-| `intervalCurve.high` | **`low + 127`** (e.g. 130) | upper boundary; this width ensures the 127-entry table spans 128 distinct integer thresholds → no duplicates → no irregular reachable-bin pattern |
-| `intervalCurve.gamma` | **1.0** | linear distribution; the only sensible value given the high choice |
-| audio-stage `gamma` | **13.9** | empirical optimum to map your natural press range to the full ~30 dB audio range with smoothest dB-per-tick taper |
-| audio-stage `floor` | **0.03** | 30 dB curve range (digital-piano convention) |
-| audio-stage `ceiling` | 1.00 | unchanged |
-| CMD 0x08 LUT | **identity-from-1** (push via "Push identity LUT to Lumatone" button) | maps bin → MIDI velocity 1..127 (clamped from 0 so the slowest press doesn't emit note-off-semantic vel=0) |
+| CMD 0x08 LUT | identity (slowest bin sent as 1) | velocity = 127 − bin. Sent by HKL with every connect. |
+| CMD 0x20 intervals: `low` | **1** | the fastest bin is a press of one tick or less, which every key can produce (Max, 2026-11-22) |
+| CMD 0x20 intervals: `high` | **127** (`low` + 126) | thresholds 1…127, one tick per velocity: velocity = 128 − ticks. `low` + 127 skips one threshold (64 and 65 ticks share a bin); a narrower span repeats thresholds and merges nothing useful. |
+| CMD 0x20 intervals: `gamma` | **1.0** | linear; anything else gives up the one-tick-per-velocity reading |
+| Lumatone velocity curve: `full at` | **125.6** to taste | the input velocity at which a press reaches full loudness; the one constant that places the scale |
+| Lumatone velocity curve: `gamma` | **1.00** | the piano; raise or lower it only to widen or narrow the dynamic range |
 
-**Step-by-step:**
+**The curve** (Calibrate Keys → Lumatone velocity curve) is the piano's own law in the device's units. On a piano the peak amplitude of a tone is linearly proportional to the hammer's velocity (Palmer & Brown, "Investigations in the amplitude of sounded piano tones", JASA 1991); on the Lumatone the speed of a press is 1 ÷ its press time. So, with the press time taken after the key's own scale (step 6):
 
-1. Open Calibrate Keys. Find the **Hardware velocity intervals (CMD 0x20)** subsection.
-2. Enable the Diagnostics overlay (the **Diagnostics** checkbox on HKL's Playback tab, with Audio on) and turn on **Key data**. Play your fastest possible press several times across the keyboard. The orange velocity-event labels show `vN (Mt)` — note the *smallest* tick value (M) you can reliably produce. That's your `low`.
-3. Set `high = low + 127`. This makes the 127-entry table hold 128 distinct integer thresholds (low, low+1, ..., low+127), so binary_search exact-matches at a unique table index for every tick the keyboard can produce. Your natural press-time range (low..~50 for a typical keyboard) maps to bin indices ≈ 0..47, which under identity 0x08 LUT becomes MIDI vel 127..80 — i.e., your full play range lives in the upper half of MIDI velocity space.
-4. Set `gamma = 1.0`. (γ_int just changes the distribution of bin indices across the table; it doesn't change the reachable count. Linear is the simplest mental model under high = low + 127.)
-5. Click **Push to Lumatone (CMD 0x20)**.
-6. Above, click **Push identity LUT to Lumatone (CMD 0x08)** — this loads the "identity-from-1" mapping (bin 127 → vel 1 instead of vel 0).
-7. In the **Lumatone velocity curve** subsection: set `floor=0.03`, `ceiling=1.00`, `gamma=13.9`. (The curve's gamma slider goes up to 20; high γ values like this only make sense once CMD 0x20 high is widened to cover the full 127-bin table as in step 3.)
-8. Play across the dynamic range. The "Distinct velocities observed" counter in the Calibrate Keys velocity panel should converge to ~48–49 (one per integer tick in your physical range plus the two open-ended boundary bins).
+`gain = (full's press time ÷ ticks)^gamma`, never above 1
+
+There is no floor: a slower press is quieter without limit, and what plays is bounded below by the house curve's quietest note (musical velocity 1, −25.9 dB). At gamma 1 every doubling of press time costs 6 dB.
+
+**Input velocity** is the unit the curve is tuned in and the number the Diagnostics overlay shows: the hardware velocity after the key's scale, 128 − ticks on the one-tick table. The graph plots the curve against it. With the defaults:
+
+| Input velocity | 126–127 | 125 | 123 | 120 | 115 | 105 | 95 | 80 |
+|---|---|---|---|---|---|---|---|---|
+| Press time (ticks) | 1–2 | 3 | 5 | 8 | 13 | 23 | 33 | 48 |
+| Level | full | −1.9 dB | −6.4 dB | −10.5 dB | −14.7 dB | −19.6 dB | −22.8 dB | −26.0 dB |
+
+`full at` 125.6 was chosen on one unit (Max's, 2026-11-22, `min lo` 3) so that the softest press he can play consistently, just under input velocity 80, lands on the quietest note; his comfortable soft sits at 105 and his comfortable loud at 123. To set it on another unit: play your softest consistent press, read its input velocity off the overlay, and move `full at` until that velocity is where the graph meets the bottom. A lower `full at` makes everything louder and full loudness easier to reach.
+
+What comes *out* of the curve is the **musical velocity** the note sounds at: the curve's gain re-expressed on the gentle house curve (floor 0.05, gamma 1.5) that every instrument and Piano output share. The overlay does not show it.
+
+**Reading a key's input velocity and ticks**: enable the Diagnostics overlay (the **Diagnostics** checkbox on HKL's Playback tab, with Audio on) and play. Each velocity peak is labeled `vN (Mt)` as above.
 
 **Tuning by ear from this baseline:**
-- *Loud end feels twitchy:* lower audio `gamma` (13.9 → 12 → 11 → 10). Gives up 1–2 dB of total range but the loud-end per-tick step shrinks from ~0.94 dB to ~0.70 dB. γ=10 is the sweet spot for "uniform stepping across the whole range" if you don't mind giving up 2 dB.
-- *Bottom feels too quiet for the room:* raise audio `floor` (0.03 → 0.05 → 0.07). Trades curve range for soft-end audibility.
-- *Per-note loudness inconsistency:* use **Per-key auto-capture** in Calibrate Keys (per-key gain) — this is a per-key variance issue, not a global-curve issue.
-- *Two samples sound different at the same velocity:* sample-side concern; not addressable from the gain curve.
-
-**Per-tick dB steps under the recipe** (high=130, γ_audio=13.9): ~0.94 dB/tick at the loud end (T=3..15), tapering smoothly to ~0.1 dB/tick near the floor (T=45..50). This is intrinsic to power-law audio curves over a wide dynamic range — pianos have a similar shape (wide differentiation at loud dynamics, compression near floor).
+- *Everything too quiet or too loud for the same touch, or full loudness too hard or too easy to reach:* `full at`.
+- *The range from soft to loud too narrow or too wide:* gamma, away from 1. This leaves the piano's law.
+- *One key louder or softer than its neighbors at the same touch:* not the curve; step 6.
+- *Two samples sound different at the same velocity:* sample-side; not addressable from the curve.
 
 **Future piano-realism factors** (filed; not gain-curve work): velocity → low-pass cutoff (for hammer-brightness simulation), velocity → attack-time modulation, soft-clipping at extreme-high velocities. See `docs/decisions.md` → "Future piano-realism factors."
 
-**Persistence**: CMD 0x20 and CMD 0x08 change the controller's RAM only. CMD `0x09` (SaveVelocityConfig), or `0x02` (StoreProgram, which saves a whole preset), writes **both** tables, with fsync, to a preset slot's `files/VelocityLookUp_N` (one file per slot 0–9; line 1 = the 128-entry 0x08 LUT, line 2 = the 127-entry 0x20 intervals). Read from the firmware, same in 1.4.0 and 1.5.0. HKL never sends 0x09, so a power cycle or preset change reloads whatever was last saved: click both **Push to Lumatone** buttons again (`localStorage` keeps your curve parameters, so that's two clicks).
+**Persistence**: CMD 0x20 and CMD 0x08 change the controller's RAM only. CMD `0x09` (SaveVelocityConfig), or `0x02` (StoreProgram, which saves a whole preset), writes **both** tables, with fsync, to a preset slot's `files/VelocityLookUp_N` (one file per slot 0–9; line 1 = the 128-entry 0x08 LUT, line 2 = the 127-entry 0x20 intervals). Read from the firmware, same in 1.4.0 and 1.5.0. HKL never sends 0x09, so a power cycle or preset change reloads whatever the preset file holds. Since 2026-11-22 HKL therefore sends both tables itself, with the rest of its connect-time setup and again after a preset switch (architecture/hkl.md → Velocity tables), so the device runs the identity LUT and your interval curve whenever HKL is connected with Auto-sync on; the two buttons send them again on demand, which is what a slider change needs. Before that date they were sent only by the buttons, and a unit that was power-cycled ran its preset's tables under HKL's curve (lessons.md → "The device ran its preset's velocity tables"). A preset button held for 3 s (StoreProgram) saves the live tables into that slot.
 
 ### 5 — Adjust keys by number
 
@@ -254,7 +259,23 @@ Each round costs a power cycle, so collect the keys to change (step 3's outlier 
 
 **Raising MAX across the board** to widen the velocity range is a hardware lever that works on some units and not on others: keys with a small sensor swing go dead as MAX passes it, and have to be rescued one by one. It was an iterative, live procedure with the retired `keydata-live.py` (lessons.md → "Per-key calibration converges in 3-4 passes of bulk-raise + per-key rescue"); with files it is one power cycle per pass. On a unit whose swing distribution is tight it doesn't pay off at all, and step 4's interval table is the lever that works on every unit (lessons.md → "Hardware MAX is not a reliable dynamic-range lever for narrow-ADC-swing keyboards"; decisions.md → "Velocity shaping: software input curve over hardware MAX raising").
 
-**Remaining range gaps** (a few outlier keys whose loudness still drifts after global shaping): use HKL's per-key gain + audio-stage curve in Calibrate Keys' "Lumatone velocity curve" section. The per-key gain adjusts per-key loudness offset; the curve's `gamma` parameter compresses the low end further in audio gain space.
+**Remaining range gaps** (keys whose loudness still differs from their neighbors' at the same touch) are step 6's job.
+
+### 6 — Even the keys out: per-key press-time scales
+
+For the same touch a key's press time follows its timing window, MAX − MIN − (`max` + `min lo`) sensor counts (lessons.md → "Press time follows the timing window"), and the windows of one calibration differ by a factor of several. HKL corrects that with one number per key that multiplies the key's press time before the velocity curve (architecture/engine.md → Velocity architecture). The numbers come from the calibration files, with no pressing:
+
+```bash
+# The folder must hold what the device runs: verify it first.
+tools/lumatone-cal/keydata-backup.sh verify <dir>
+python3 tools/lumatone-cal/keydata-compare.py [--swap-boards-34] --scales tools/lumatone-cal/backups/key-scales-<name>.json <dir>
+```
+
+Then, in HKL's Calibrate Keys, **Per-key press-time scale → Import key scales…** and choose the file. Each key's scale is the median window over its own window, so a median key keeps its feel and the curve's gamma stays the one sensitivity knob. Do it again after every confirmed calibration or `restore`: the scales describe one set of `KeyData` files. `--swap-boards-34` matters here, since the file names keys the way HKL does (board group 1–5, key 0–55).
+
+To correct single keys by touch instead, use the capture in the same section: **Start capture**, press the keys at the touch you intend for the target velocity, **Stop & compute**. Each pressed key's scale becomes the target's press time over the key's median press time; keys not pressed keep theirs.
+
+Two limits. A narrow key has few ticks, so after scaling its velocities come in steps of its scale, and its fastest press (one tick) tops out below 127. And the rule was fitted on three keys (2026-11-22): the two ordinary ones landed together, the narrowest was over-corrected by about 40%.
 
 ### Seeding a baseline
 
@@ -296,7 +317,7 @@ Beyond what's in this guide, the Lumatone supports a full factory reset via SysE
 
 - **Live per-key edits.** A file edit takes a power cycle to load. Writing the running controller's memory (what the retired `keydata-live.py` did on 1.4.0) avoids that, but ties a tool to one firmware build's addresses. If live tuning is needed again, start from that script in git history and re-derive every address from the installed binary; never just rename the process it looks for.
 - **A way to set per-key thresholds over MIDI.** That would require running a daemon on the BBB that translates SysEx → file or memory writes. Numeric edits need SSH; the built-in routine and everyday play don't.
-- **A GUI in HKL for per-key threshold editing.** HKL handles software-side per-key gain and velocity curves (see `apps/hkl/src/audio/velocityCal.ts`), which is enough for normal use. Direct hardware-side edits are rare enough to live in CLI tools.
+- **A GUI in HKL for per-key threshold editing.** HKL handles the software side, the per-key press-time scale and the velocity curves (see `apps/hkl/src/audio/velocityCal.ts`), which is enough for normal use. Direct hardware-side edits are rare enough to live in CLI tools.
 - **A per-key sensor readout.** Firmware SysEx `0x35` streams one key's raw sensor reading, but no tool is built on it (lessons.md → "The PIC's calibration mode").
 
 ---
@@ -304,6 +325,6 @@ Beyond what's in this guide, the Lumatone supports a full factory reset via SysE
 ## Caveats and known limits
 
 - The 4-bit clamp on per-board SysEx commands (`0x29`/`0x2A` for max/min thresholds) does NOT apply to the per-key values in `KeyData_N` — those are 8-bit (0–254). Don't confuse the two; Calibrate Keys' sliders work with the 4-bit per-board values, the files with the 8-bit per-key ones.
-- The PIC firmware has no per-key velocity LUT or per-key gain knob. Beyond MIN/MAX threshold tuning, residual per-key loudness differences must be corrected in HKL via per-key gain in `velocityCal.ts`.
-- Sensor swing is a physical floor. A key whose ADC barely moves on full press will never have the dynamic range of a healthy key, no matter how the thresholds are tuned. The combination of (a) compressed-but-functional hardware thresholds, plus (b) HKL per-key gain to normalize loudness, is the realistic ceiling.
+- The PIC firmware has no per-key velocity LUT or per-key gain knob. Beyond MIN/MAX threshold tuning, per-key loudness differences are corrected in HKL by the per-key press-time scale in `velocityCal.ts` (workflow step 6).
+- Sensor swing is a physical floor. A key whose ADC barely moves on full press will never have the dynamic range of a healthy key, no matter how the thresholds are tuned. The combination of (a) compressed-but-functional hardware thresholds, plus (b) HKL's per-key press-time scale to even the keys out, is the realistic ceiling.
 - `lmtn_launcher.sh`'s firmware-update hook runs only when a `Lumatone-v*.tgz` file is found at `/home/debian/` at boot, and the installer leaves `files/` alone (the 1.5.0 install kept every file byte-identical). Every boot also deletes any other `.tgz` in `/home/debian`, so don't keep backups there as tarballs. A package that fails to unpack is deleted and the application still starts under the 1.5.0 launcher; the 1.4.0 launcher aborted instead, leaving the boards frozen in their boot animation on every boot until the package was removed (lessons.md, 2026-11-08).

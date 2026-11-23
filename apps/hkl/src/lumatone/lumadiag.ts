@@ -472,14 +472,12 @@ function makeGlobalFooter(): HTMLDivElement {
   return foot;
 }
 
-/* Velocity calibration UI: hardware LUT push, HKL curve sliders, per-key gain
+/* Velocity calibration UI: hardware LUT push, HKL curve sliders, per-key scale
    auto-capture. Built once; element refs cached so external state changes can
    refresh the displayed values. */
 const velCalUi: {
-  floorSlider?: HTMLInputElement;
-  floorVal?: HTMLSpanElement;
-  ceilingSlider?: HTMLInputElement;
-  ceilingVal?: HTMLSpanElement;
+  fullSlider?: HTMLInputElement;
+  fullVal?: HTMLSpanElement;
   gammaSlider?: HTMLInputElement;
   gammaVal?: HTMLSpanElement;
   preview?: HTMLCanvasElement;
@@ -501,14 +499,10 @@ const velCalUi: {
 let captureTicker: number | null = null;
 
 function pushIdentityVelocityLut(): void {
-  /* "Identity-from-1" LUT: lut[i] = max(1, i), slowest bin → vel 1, fastest →
-     vel 127. We clamp at 1 instead of letting bin 127 emit vel 0, because a
-     played note that emits MIDI velocity 0 is interpreted by every receiver
-     as a note-off — not what the user wants from their softest press.
+  /* The identity-from-1 LUT (velocityCal.buildIdentityLut), which the connect-time
+     setup also sends (lumatone/sync.ts); this button sends it again on demand.
      buildSetVelocityLut reverses internally to match the firmware wire order. */
-  const lut: number[] = new Array(128);
-  for (let i = 0; i < 128; i++) lut[i] = i === 0 ? 1 : i;
-  const msg = buildSetVelocityLut(lut);
+  const msg = buildSetVelocityLut(velocityCal.buildIdentityLut());
   const ok = sysex.enqueueControl(msg);
   if (ok) console.log('[lumadiag] pushed identity velocity LUT to Lumatone (CMD 0x08, range 1..127)');
   else console.warn('[lumadiag] no Lumatone connected — identity LUT not sent');
@@ -598,7 +592,7 @@ function drawCurvePreview(): void {
   ctx.beginPath();
   for (let x = 0; x <= pw; x++) {
     const v = (x / pw) * 127;
-    /* Composite: raw Lumatone velocity → input/decompression curve → musical →
+    /* Composite: device velocity → its press time → the Lumatone curve → musical →
        house curve → audio gain. This is the effective loudness response. */
     const g = velocityCal.curveGain(velocityCal.applyInputCurve(v));
     const y = py + ph - g * ph;
@@ -608,13 +602,9 @@ function drawCurvePreview(): void {
 }
 
 function refreshCurveUi(): void {
-  if (velCalUi.floorSlider) {
-    velCalUi.floorSlider.value = String(Math.round(velocityCal.inputCurveFloor * 100));
-    velCalUi.floorVal!.textContent = velocityCal.inputCurveFloor.toFixed(2);
-  }
-  if (velCalUi.ceilingSlider) {
-    velCalUi.ceilingSlider.value = String(Math.round(velocityCal.inputCurveCeiling * 100));
-    velCalUi.ceilingVal!.textContent = velocityCal.inputCurveCeiling.toFixed(2);
+  if (velCalUi.fullSlider) {
+    velCalUi.fullSlider.value = String(Math.round(velocityCal.inputCurveFull * 10));
+    velCalUi.fullVal!.textContent = velocityCal.inputCurveFull.toFixed(1);
   }
   if (velCalUi.gammaSlider) {
     velCalUi.gammaSlider.value = String(Math.round(velocityCal.inputCurveGamma * 100));
@@ -993,11 +983,15 @@ function makeVelocityCalSection(): HTMLDivElement {
   sec.appendChild(blendRow);
 
   /* ── Lumatone velocity curve ──
-     The Lumatone's velocity→loudness shape (gain space). Internally the raw
-     velocity is converted to a canonical musical velocity that reproduces this
-     gain through the house curve, so keyVelocity stays device-neutral; the
-     preview below is this exact curve (raw velocity → audio gain). Tune by ear
-     as before. */
+     The piano's law in the device's units: gain = (fullTicks ÷ ticks)^gamma,
+     never above 1, no floor (velocityCal.targetGainForTicks). `full` is the
+     input velocity of full loudness, gamma 1 the measured piano. Internally
+     the gain is converted to the canonical musical velocity that reproduces it
+     through the house curve, so keyVelocity stays device-neutral; a gain under
+     the house curve's floor plays as its quietest note. The preview below is
+     this exact curve against the input velocity (the hardware velocity after
+     the key's scale: 128 − ticks on the one-tick table), which is the number
+     the Diagnostics overlay plots and labels for a Lumatone strike. */
   const curveLabel = document.createElement('div');
   curveLabel.textContent = 'Lumatone velocity curve';
   Object.assign(curveLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
@@ -1049,37 +1043,29 @@ function makeVelocityCalSection(): HTMLDivElement {
   /* Target-gain curve, in audio-gain space (the familiar floor/ceiling/gamma).
      Sliders work in integer hundredths so HTML range resolution is fine; setters
      convert back to fractional gain. The composite preview = this exact curve. */
-  const floorUi = mkCurveSlider(
-    'floor', 'Target audio gain at velocity 1 (× 100)',
-    0, 30, 1,
-    () => velocityCal.inputCurveFloor * 100,
-    (v: number) => velocityCal.setInputCurveFloor(v / 100),
-    (v: number) => (v / 100).toFixed(2),
-  );
-  const ceilingUi = mkCurveSlider(
-    'ceiling', 'Target audio gain at velocity 127 (× 100)',
-    60, 127, 1,
-    () => velocityCal.inputCurveCeiling * 100,
-    (v: number) => velocityCal.setInputCurveCeiling(v / 100),
-    (v: number) => (v / 100).toFixed(2),
+  /* `full` in tenths of an input velocity: on the one-tick table 125.6 is 2.4 ticks. */
+  const fullUi = mkCurveSlider(
+    'full at', 'The input velocity at which a press reaches full loudness; anything faster is full too. Input velocity is the number the Diagnostics overlay shows (128 − ticks, after the key\'s scale). Lower = full loudness comes sooner and everything is louder.',
+    1000, 1270, 1,
+    () => Math.round(velocityCal.inputCurveFull * 10),
+    (v: number) => velocityCal.setInputCurveFull(v / 10),
+    (v: number) => (v / 10).toFixed(1),
   );
   const gammaUi = mkCurveSlider(
-    'gamma', 'Target curve exponent (× 100). >1 = soft notes get quieter (piano-like). This is the Lumatone\'s velocity→loudness shape, reproduced exactly through the house curve.',
-    50, 2000, 5,
+    'gamma', 'Exponent on the piano law. 1.00 is a piano: amplitude proportional to the speed of the press, 6 dB per doubling of press time. Higher = wider dynamic range (soft presses quieter); lower = narrower.',
+    50, 200, 1,
     () => velocityCal.inputCurveGamma * 100,
     (v: number) => velocityCal.setInputCurveGamma(v / 100),
     (v: number) => (v / 100).toFixed(2),
   );
-  velCalUi.floorSlider = floorUi.slider; velCalUi.floorVal = floorUi.val;
-  velCalUi.ceilingSlider = ceilingUi.slider; velCalUi.ceilingVal = ceilingUi.val;
+  velCalUi.fullSlider = fullUi.slider; velCalUi.fullVal = fullUi.val;
   velCalUi.gammaSlider = gammaUi.slider; velCalUi.gammaVal = gammaUi.val;
-  sec.appendChild(floorUi.row);
-  sec.appendChild(ceilingUi.row);
+  sec.appendChild(fullUi.row);
   sec.appendChild(gammaUi.row);
 
   const curveResetBtn = document.createElement('button');
-  curveResetBtn.textContent = 'Reset curve (' + DEFAULT_INPUT_CURVE.floor.toFixed(2) + ' / '
-    + DEFAULT_INPUT_CURVE.gamma.toFixed(2) + ' / ' + DEFAULT_INPUT_CURVE.ceiling.toFixed(2) + ')';
+  curveResetBtn.textContent = 'Reset curve (full at ' + DEFAULT_INPUT_CURVE.full.toFixed(1)
+    + ', gamma ' + DEFAULT_INPUT_CURVE.gamma.toFixed(2) + ')';
   Object.assign(curveResetBtn.style, {
     fontSize: '11px', padding: '1px 6px', marginTop: '4px',
     background: 'rgba(255,255,255,0.08)', color: '#eee',
@@ -1094,12 +1080,12 @@ function makeVelocityCalSection(): HTMLDivElement {
 
   /* ── Per-key auto-capture ── */
   const capLabel = document.createElement('div');
-  capLabel.textContent = 'Per-key auto-capture';
+  capLabel.textContent = 'Per-key press-time scale';
   Object.assign(capLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '10px', marginBottom: '4px' });
   sec.appendChild(capLabel);
 
   const capHint = document.createElement('div');
-  capHint.textContent = 'Start, press every problem key at the loudness you intend "pp" to be, stop. HKL computes per-key gain so they all land at the target velocity. Push identity LUT first for best results.';
+  capHint.textContent = 'One number per key multiplies its press time before the curve, so the same touch sounds the same on every key. Import the table that tools/lumatone-cal/keydata-compare.py --scales writes from the calibration the device runs; or capture: Start, press keys at the loudness you intend "pp" to be, Stop, and each pressed key is scaled so that touch reads as the target velocity.';
   Object.assign(capHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '6px', lineHeight: '1.3' });
   sec.appendChild(capHint);
 
@@ -1142,7 +1128,7 @@ function makeVelocityCalSection(): HTMLDivElement {
       stopCaptureTicker();
       captureBtn.textContent = 'Start capture';
       captureBtn.style.background = 'rgba(255,255,255,0.08)';
-      status.textContent = n + ' key' + (n === 1 ? '' : 's') + ' calibrated (target ' + target + ')';
+      status.textContent = n + ' key' + (n === 1 ? '' : 's') + ' scaled (target ' + target + ')';
       refreshCurveUi();
     }
   });
@@ -1158,25 +1144,55 @@ function makeVelocityCalSection(): HTMLDivElement {
     marginTop: '6px', fontSize: '11px', color: 'rgba(255,255,255,0.7)',
   });
   const totalLabel = document.createElement('span');
-  totalLabel.textContent = 'Currently calibrated keys: ';
+  totalLabel.textContent = 'Keys with a scale: ';
   const totalVal = document.createElement('span');
   totalVal.textContent = String(velocityCal.calibratedKeyCount);
   Object.assign(totalVal.style, { fontFamily: 'monospace', color: '#9cf' });
   velCalUi.calKeyCount = totalVal;
-  const clearBtn = document.createElement('button');
-  clearBtn.textContent = 'Clear all per-key';
-  Object.assign(clearBtn.style, {
+  /* Import a key-scale table (a JSON file). The file input is created per click
+     so choosing the same file twice in a row still fires. */
+  const importBtn = document.createElement('button');
+  importBtn.textContent = 'Import key scales…';
+  Object.assign(importBtn.style, {
     fontSize: '11px', padding: '1px 6px', marginLeft: 'auto',
     background: 'rgba(255,255,255,0.08)', color: '#eee',
     border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
     cursor: 'pointer',
   });
+  importBtn.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      f.text().then((text) => {
+        let data: unknown;
+        try { data = JSON.parse(text); } catch { data = null; }
+        const r = velocityCal.importKeyScales(data);
+        status.textContent = r.ok
+          ? r.count + ' key scale' + (r.count === 1 ? '' : 's') + ' imported from ' + f.name
+          : 'Not imported: ' + r.error;
+        refreshCurveUi();
+      });
+    });
+    input.click();
+  });
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear all per-key';
+  Object.assign(clearBtn.style, {
+    fontSize: '11px', padding: '1px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
+  });
   clearBtn.addEventListener('click', () => {
-    velocityCal.clearPerKey();
+    velocityCal.clearKeyScale();
     refreshCurveUi();
   });
   totalRow.appendChild(totalLabel);
   totalRow.appendChild(totalVal);
+  totalRow.appendChild(importBtn);
   totalRow.appendChild(clearBtn);
   sec.appendChild(totalRow);
 
@@ -1188,7 +1204,7 @@ function makeVelocityCalSection(): HTMLDivElement {
 /* ── Per-key velocity statistics section ──────────────────────────────────
    Always-on rolling sample collection (when enabled), scatter visualization
    of (mean, CV) per key, top-N outlier lists (high-CV → noisy; mean-drift →
-   per-key gain candidates), and a sticky per-key inspector with histogram
+   per-key scale candidates), and a sticky per-key inspector with histogram
    sparkline. Refreshed 1Hz while panel exists. */
 
 interface StatsUi {

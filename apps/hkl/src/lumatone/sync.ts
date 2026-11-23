@@ -6,8 +6,9 @@
 // resulting message batch to the encapsulated SysEx queue.
 //
 // First-time-this-connection setup: a one-shot batch of 280 CHANGE_KEY_NOTE
-// messages (fixed MIDI layout: channels 1-5 × notes 0-55) plus the global
-// aftertouch + keystroke-light flags. Gated by lumatone.fixedLayoutSent so
+// messages (fixed MIDI layout: channels 1-5 × notes 0-55), the global
+// aftertouch + keystroke-light flags, and the two velocity tables (the identity
+// LUT and the press-time interval table). Gated by lumatone.fixedLayoutSent so
 // re-syncs don't repeat the setup.
 //
 // A preset switch on the device (one of its preset buttons) replaces all of
@@ -33,8 +34,10 @@ import {
   SYSEX_CMD_SET_AFTERTOUCH_FLAG, SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES,
   FRAME_FIRMWARE, firmwareAtLeast,
   buildNoteSysEx, buildColorSysEx, buildToggleSysEx, buildFrameSysEx,
+  buildSetVelocityLut, buildSetVelocityIntervalConfig,
 } from './protocol.js';
 import { sysex } from './sysex.js';
+import { velocityCal } from '../audio/velocityCal.js';
 import { hexToOklab, oklabToHex, type Oklab } from './oklab.js';
 import { orderColorSync } from './sync-order.js';
 import type { SysexMessage } from '../types.js';
@@ -245,7 +248,12 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
 
   const newQ: SysexMessage[] = [];
 
-  /* One-time setup: fixed MIDI layout + aftertouch flag + keystroke-light flag */
+  /* One-time setup: fixed MIDI layout + aftertouch flag + keystroke-light flag
+     + the two velocity tables. The device keeps the tables in RAM and reloads
+     them from the preset file on a power cycle or a preset button, so they are
+     sent with every setup: HKL's velocity curve means something only over the
+     tables HKL defines (docs/lessons.md → "The device ran its preset's velocity
+     tables"). Live state only; no preset slot is written. */
   if (!lumatone.fixedLayoutSent) {
     const typeByte =
       (1 << 4) | 1; /* faderUpIsNull=1, keyType=noteOnNoteOff=1 → 0x11 */
@@ -258,6 +266,8 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
     }
     newQ.push(buildToggleSysEx(SYSEX_CMD_SET_AFTERTOUCH_FLAG, 1));
     newQ.push(buildToggleSysEx(SYSEX_CMD_SET_LIGHT_ON_KEYSTROKES, 1));
+    newQ.push(buildSetVelocityLut(velocityCal.buildIdentityLut()));
+    newQ.push(buildSetVelocityIntervalConfig(velocityCal.buildIntervalTable()));
     lumatone.fixedLayoutSent = true;
   }
 
@@ -303,8 +313,8 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
 }
 
 /* What the device holds can no longer be assumed (a preset was loaded on it; the
-   board map changed): forget it and push the fixed layout, the flags and every
-   color again. A color message still awaiting its ACK is voided as well, since it
+   board map changed): forget it and push the fixed layout, the flags, the
+   velocity tables and every color again. A color message still awaiting its ACK is voided as well, since it
    may have reached the device before the state changed under it. With Auto-sync
    off or a calibration running nothing is sent, and the next sync is a full one. */
 export function resyncLumatoneDevice(): void {

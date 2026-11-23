@@ -7,7 +7,7 @@
 // Controllers on channel 1 (B0 7B 00, B0 79 00; docs/lessons.md → "Macro buttons in
 // normal mode"). Drives the real lumatone/sync.ts + lumatone/sysex.ts against a scripted
 // device that ACKs on command, and checks that the pair, and only the pair, pushes the
-// fixed layout, the flags and the colors again.
+// fixed layout, the flags, the velocity tables and the colors again.
 import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
@@ -70,7 +70,7 @@ const ok = (label) => { checks++; console.log('  ✓ ' + label); };
 
 // ── A: the pair re-pushes everything a connect pushes (frame path) ──
 let connect = synced([1, 5, 0]);
-assert.equal(connect.length, 283, 'connect: 280 key writes, 2 flags, 1 frame');
+assert.equal(connect.length, 285, 'connect: 280 key writes, 2 flags, 2 velocity tables, 1 frame');
 marker();
 drain();
 assert.deepEqual(bytes(sent), bytes(connect), 'the same messages, in the same order, as a connect');
@@ -80,7 +80,7 @@ ok('1.5.0: the pair re-pushes the fixed layout, the flags and one frame');
 
 // ── B: the per-key path (firmware < 1.5.0) ──
 connect = synced([1, 4, 0]);
-assert.equal(connect.length, 562, 'connect: 280 key writes, 2 flags, 280 colors');
+assert.equal(connect.length, 564, 'connect: 280 key writes, 2 flags, 2 velocity tables, 280 colors');
 marker();
 drain();
 assert.deepEqual(bytes(sent), bytes(connect));

@@ -42,7 +42,7 @@ Drives the real `lumatone/sync.ts` and `lumatone/sysex.ts` against the same
 kind of scripted device. A preset button on the Lumatone reloads its key map
 and colors, and the firmware ends the switch with All Notes Off then Reset All
 Controllers on channel 1. Checks that the pair re-pushes exactly what a connect
-pushes, on the frame path and the per-key path; that nothing but `B0 7B 00`
+pushes (the velocity tables included), on the frame path and the per-key path; that nothing but `B0 7B 00`
 directly followed by `B0 79 00` triggers; that a frame awaiting its ACK at the
 pair is not recorded and is followed by a fresh one; that a second pair
 mid-push writes every key again; and that with Auto-sync off, or a calibration
@@ -50,6 +50,75 @@ running, nothing is sent and the next sync is a full one. No dev server or MIDI
 device is needed. The wiring through the input handler is case F2 of
 `departure.mjs`. **Run it before declaring any change to `watchPresetSwitch`,
 `resyncLumatoneDevice` or `sysex.voidInFlight` done.**
+
+## Velocity tables (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/velocity-tables.mjs
+```
+
+The device reloads its velocity LUT (`08h`) and press-time interval table
+(`20h`) from the preset file on a power cycle or a preset button, so HKL sends
+both with its setup. Drives the real `lumatone/sync.ts` and `lumatone/sysex.ts`
+against the scripted device and checks that a connect carries each table once,
+after the layout and the flags and before the colors, on both firmware paths;
+that the LUT on the wire is the identity (bins 126 and 127 at 1) and the
+intervals are the table `velocityCal` builds from the current low / high /
+gamma; that a color-only sync sends neither; that the preset-switch pair sends
+both again; and that Auto-sync off sends nothing. Then the decode the
+Diagnostics overlay prints (`velocityCal.pressTicks`), against a model of the
+firmware's binning: every press time from 0 to 400 ticks lands in the range its
+velocity decodes to, exactly one tick wide on the default table, `64–65` where
+low 1 / high 128 skips a threshold, and, on a table with repeated thresholds,
+the bin the firmware's bisection lands on inside a run decodes to its own tick. No dev server or MIDI device is needed. **Run it before declaring
+any change to the setup batch, the two table builders or the tick label done.**
+
+## Per-key press-time scale (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/key-scale.mjs
+```
+
+`velocityCal.applyKeyScale` multiplies a key's press time by one number per
+physical key before the velocity curve. Checks, against a model of the
+firmware's binning: that a key with no scale passes every velocity through
+exactly; that ticks ↔ velocity round-trips on whole ticks and is continuous
+between them; that one touch on keys with timing windows of 78, 49 and 13
+counts lands within each key's own tick rounding once scaled (92 velocity steps
+apart unscaled); that a slower press is never louder and both ends clamp; that
+the fraction reaches the curve; the import (a well-formed file replaces the
+table, eleven malformed ones change nothing); persistence under `keyScale`
+with no `perKey`; the capture pass (scale = target press time ÷ the key's
+median); and, end to end, that `tools/lumatone-cal/keydata-compare.py --scales`
+on a synthetic calibration folder writes the median window over each key's
+window, keyed by board group under either board map, in a file the import
+takes. Needs `python3`; no dev server or MIDI device. **Run it before declaring
+any change to the scale, the import format or `keydata-compare.py --scales`
+done.**
+
+## Lumatone velocity curve (hardware-free)
+
+```sh
+node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/lumatone-curve.mjs
+```
+
+The curve is the piano's law in the device's units:
+`gain = (fullTicks ÷ ticks)^gamma`, never above 1, with `full` the input
+velocity of full loudness and gamma 1 the measured piano. Starts from saved v6
+prefs holding the previous curve (a floor, a ceiling and its gamma) and checks
+the one-time reset (`full` and gamma to their defaults, key scales kept, stored
+as v7 with no floor or ceiling); then the law at every tick from 1 to 126 and
+the musical velocity it becomes, with every doubling of press time costing
+6.02 dB, and that velocity sounding at the curve's own gain when played back
+through the house curve (no stacking); the ends (full at the full press time and faster, no floor, a very
+slow press playing as the quietest note, and a slower press never louder);
+Max's anchors of 2026-11-22 on the defaults (input velocity 123 at −6.4 dB, 105
+at −19.6 dB, 80 on the quietest note); the two scalars (`full` moves where full
+loudness sits, gamma is an exponent on the law and does not move it); a strike
+(`lumatoneVelocity`: the key's scaled press time straight into the curve); and
+that `applyInputCurve` at a whole input velocity equals the strike on three
+interval tables. No dev server or MIDI device is needed. **Run it before
+declaring any change to the Lumatone curve or the note-on velocity path done.**
 
 ## Built-in key / aftertouch calibration (hardware-free)
 
@@ -174,7 +243,7 @@ node test/hkl-midi/velocity-owners.mjs   # requires `pnpm dev`; exits non-zero o
 Gate for who owns each velocity store (docs/architecture/engine.md → Velocity
 architecture, Owners): Composer and `.hkr` playback never leave or read
 `audio.keyVelocity`, so a click on a cell after playback strikes at the default
-dynamic, not the score's (P, R); the Lumatone's per-key gain and stats follow
+dynamic, not the score's (P, R); the Lumatone's per-key scale and stats follow
 the physical key across an anchor change, and the key that slides onto a
 calibrated key's old cell is not calibrated (K); v3 prefs keyed by lattice cell
 migrate to physical keys under the capture anchor the saved cells prove — A3,

@@ -1,5 +1,5 @@
-// Velocity calibration: global curve + per-key gain + auto-capture + per-key
-// velocity statistics + Lumatone input-velocity curve.
+// Velocity calibration: global curve + per-key press-time scale + auto-capture +
+// per-key velocity statistics + Lumatone input-velocity curve.
 //
 // One audio-stage transform applied at audio-engine entry, so every source
 // (MIDI input, QWERTY, mouse, playback) benefits:
@@ -8,41 +8,45 @@
 //
 // Plus two Lumatone-input-stage transforms applied at midi/handler.ts before
 // the velocity lands in audio.keyVelocity[key]:
-//   2. Per-key gain — multiplicative scalar on incoming velocity (default 1.0).
-//      Smooths out per-key mechanical variance on the physical Lumatone, since
-//      the firmware has no per-key threshold commands. Keyed by the PHYSICAL
-//      key ("ch,note"), not the lattice cell under it, so a ref change that
-//      slides the lattice leaves each correction on its key; auto-capture and
-//      the per-key stats key the same way.
-//   3. Input curve — `floor + (ceiling - floor) · (v/127)^gamma` in velocity
-//      space (0..127 → 0..127, integer-snapped). Applied ONLY to Lumatone-
-//      source MIDI velocity; QWERTY/mouse paths are untouched. Compensates
-//      for keyboards whose firmware emits a compressed velocity range (e.g.
-//      ~60-127 because the keys' physical ADC swing is narrow). Default is
-//      identity (floor=0, ceiling=127, gamma=1) so the build is a no-op until
-//      tuned in the lumadiag panel. Because it sits at the input boundary,
-//      everything downstream — audio, recording, MIDI export — sees the
-//      shaped value. Lumadiag stats keep sampling RAW velocity so they remain
-//      diagnostic of the firmware's natural output.
+//   2. Per-key press-time scale — one multiplier per key on the press time in
+//      ticks that the raw velocity stands for (default 1.0), returned as the
+//      velocity that scaled press time would have read, fraction kept. For the
+//      same touch a key's press time follows its timing window in sensor counts
+//      (docs/lessons.md → "Press time follows the timing window"), so a key
+//      differs from its neighbors by a factor on time; a factor on velocity is
+//      right at one dynamic only. Keyed by the PHYSICAL key ("ch,note"), not
+//      the lattice cell under it, so a ref change that slides the lattice
+//      leaves each correction on its key; auto-capture and the per-key stats
+//      key the same way.
+//   3. Lumatone curve — the piano's law in the device's units: the gain a press
+//      should sound at is `(fullTicks / ticks)^gamma`, never above 1, with gamma
+//      1 the measured piano (amplitude proportional to hammer velocity) and
+//      `fullTicks` the press time of the input velocity set as full loudness.
+//      The gain is turned into the musical velocity that plays at it under the
+//      house curve, so everything downstream — audio, recording, MIDI export —
+//      sees a device-neutral velocity. Applied ONLY to Lumatone-source MIDI
+//      velocity; QWERTY/mouse paths are untouched. Lumadiag stats keep sampling
+//      RAW velocity so they remain diagnostic of the firmware's natural output.
 //
 // Recording captures the velocity noteOn received (both input stages already
 // applied), so playback reproduces it and only the audio-stage curve re-runs.
 //
-// Auto-capture: while capturing, every note-on velocity is appended to a
-// per-key list. On stop, per-key gain = clamp(target / median(samples), 0.3..3.0)
-// so a single hard press doesn't zero out the key.
+// The scales come from a table (tools/lumatone-cal/keydata-compare.py --scales:
+// the median timing window over each key's own) or from auto-capture: while
+// capturing, every note-on velocity is appended to a per-key list, and on stop
+// a key's scale = the target's press time / the median press time captured.
 //
 // Per-key velocity statistics: separate from auto-capture. When statsEnabled,
 // every real MIDI note-on velocity feeds a ring buffer (KEY_HISTORY_CAP per
 // key). We compute mean / stddev / CV on demand. Surfaces "which keys are
 // noisy in velocity output" (high CV → consider raising hardware MIN) and
-// "which keys are loudness outliers" (mean drift → per-key gain candidate).
+// "which keys are loudness outliers" (mean drift → per-key scale candidate).
 // Snapshot stats persist to localStorage; raw samples are session-only.
 
 import { savePrefs, loadPrefs, type VelocityCalPrefs, type KeyStatsSnapshot } from '../state/persistence.js';
 import { HOUSE_VELOCITY_CURVE } from '@hkl/shared/velocity.js';
 import { baseKeys } from '../layout/baseKeys.js';
-import type { LumatoneKeyId } from '../types.js';
+import type { KeyId, LumatoneKeyId } from '../types.js';
 
 export interface VelocityCalState {
   /** Audio gain at velocity = 1 (smallest non-zero). 0..1. */
@@ -56,24 +60,37 @@ export interface VelocityCalState {
    *  (Device-specific compensation — e.g. the Lumatone's compressed range —
    *  lives in the per-device input curve below, NOT here.) */
   gamma: number;
-  /** Multiplicative velocity gain per key. Absent entries default to 1.0. */
-  perKey: Record<LumatoneKeyId, number>;
+  /** Press-time multiplier per physical key. Absent entries default to 1.0. */
+  keyScale: Record<LumatoneKeyId, number>;
 }
 
-/** Lumatone TARGET-GAIN curve — floor/ceiling/gamma in audio-gain space (0..1),
- *  the same shape that used to be the audio curve and that the user tuned by ear.
- *  It defines the gain a raw Lumatone velocity SHOULD produce. The handler maps
- *  raw velocity through this to a target gain, then through the inverse of the
- *  gentle house curve to the canonical musical velocity that reproduces that gain
- *  (`musical = houseCurve⁻¹(targetGain(rawVel))`). So the composite
- *  `houseCurve(applyInputCurve(rawVel))` equals this target curve EXACTLY — set
- *  it to the old audio curve and the Lumatone feels identical to before, while
- *  keyVelocity is still a canonical musical velocity that round-trips to external
- *  synths. (A single power law in velocity space can't do this — the floor offset
- *  makes the exact inverse non-power-law; expressing it in gain space is exact.) */
+/** Lumatone TARGET-GAIN curve: the gain (0..1) a Lumatone press SHOULD sound at,
+ *  as a function of its press time in ticks (after the key's own scale):
+ *
+ *    gain = min(1, fullTicks / ticks)^gamma
+ *
+ *  It is the piano's own law in the device's units. On a piano the peak amplitude
+ *  of a tone is linearly proportional to the hammer's velocity (Palmer & Brown,
+ *  "Investigations in the amplitude of sounded piano tones", JASA 1991), and on
+ *  the Lumatone the speed of a press is 1 / its press time, so the amplitude is
+ *  proportional to 1 / ticks: `gamma` 1, 6.02 dB per doubling of press time, and
+ *  no floor. The device has no hammer, so one constant places the scale: `full`,
+ *  the INPUT velocity (the hardware velocity after the key's scale, the unit the
+ *  Diagnostics overlay shows and the curve is tuned in) at which a press reaches
+ *  full loudness; `fullTicks` is its press time. Anything faster is full too.
+ *  `gamma` other than 1 bends the law for a wider or narrower dynamic range.
+ *
+ *  The handler turns the gain into the canonical musical velocity that
+ *  reproduces it through the inverse of the gentle house curve
+ *  (`musical = houseCurve⁻¹(targetGain)`), so `houseCurve(musicalForTicks(t))`
+ *  equals this curve within the rounding of a whole velocity, while keyVelocity
+ *  is still a musical velocity that round-trips to external synths. A gain under
+ *  the house curve's floor plays as its quietest note (velocity 1, −25.9 dB),
+ *  which is the bottom of the range. */
 export interface InputCurveState {
-  floor: number;
-  ceiling: number;
+  /** Input velocity of full loudness (on the one-tick table, 128 − its ticks). */
+  full: number;
+  /** Exponent on the piano law. 1 = the measured piano. */
   gamma: number;
 }
 
@@ -95,17 +112,17 @@ export interface IntervalCurveState {
    bakes per-layer gains against the exact same curve HKL plays back with. */
 export const DEFAULT_CAL: VelocityCalState = {
   ...HOUSE_VELOCITY_CURVE,
-  perKey: {},
+  keyScale: {},
 };
 
-/* Lumatone target-gain curve default = the legacy audio curve (floor 0.10,
-   ceiling 1.0, gamma 15.5). Through the house-curve inverse this reproduces the
-   pre-refactor Lumatone response exactly, so a fresh Lumatone feels as before;
-   the user tunes it (in gain space) in lumadiag. */
+/* Lumatone target-gain curve default: the piano's gamma, and full loudness at
+   input velocity 125.6 (2.4 ticks), which puts input velocity 80 (48 ticks) on
+   the house curve's quietest note. On Max's unit with `min lo` 3 (2026-11-22)
+   his ppp sits just under 80, his p at 105 (−19.6 dB here) and his f at 123
+   (−6.4 dB). The user tunes `full` and, if wanted, gamma in lumadiag. */
 export const DEFAULT_INPUT_CURVE: InputCurveState = {
-  floor: 0.10,
-  ceiling: 1.0,
-  gamma: 15.5,
+  full: 125.6,
+  gamma: 1.0,
 };
 
 /** Identity-style table tuned for Max's Lumatone: low=1, high=127, gamma=1.0
@@ -124,7 +141,7 @@ const state: VelocityCalState = {
   floor: DEFAULT_CAL.floor,
   ceiling: DEFAULT_CAL.ceiling,
   gamma: DEFAULT_CAL.gamma,
-  perKey: {},
+  keyScale: {},
 };
 
 const inputCurve: InputCurveState = { ...DEFAULT_INPUT_CURVE };
@@ -138,12 +155,24 @@ const intervalCurve: IntervalCurveState = { ...DEFAULT_INTERVAL_CURVE };
    sub-low presses and bin 127 for above-high). */
 const observedVelocities: Set<number> = new Set();
 
+/* Each key's latest Lumatone strike: the raw velocity the device sent, the input
+   velocity (the raw one after the key's press-time scale: what goes INTO the
+   Lumatone curve, and the Calibrate Keys graph's x-axis), and the musical
+   velocity it became. Session-only; the Diagnostics overlay shows the input
+   velocity and the press time from it (a voice carries only the musical one). */
+const lastStrike: Map<KeyId, { raw: number; input: number; musical: number }> = new Map();
+
 /* Capture session state — lives in-module, not persisted. */
 let capturing = false;
 const captures: Map<LumatoneKeyId, number[]> = new Map();
 
-const PER_KEY_GAIN_MIN = 0.3;
-const PER_KEY_GAIN_MAX = 3.0;
+/* A key's press-time scale is held to this range, imported or captured. The
+   2026-11-16 calibration's own values run from 0.63 to 3.8. */
+export const KEY_SCALE_MIN = 0.1;
+export const KEY_SCALE_MAX = 10;
+const KEY_ID = /^[1-5],(?:[0-9]|[1-4][0-9]|5[0-5])$/;
+const validScale = (g: unknown): g is number =>
+  typeof g === 'number' && g >= KEY_SCALE_MIN && g <= KEY_SCALE_MAX;
 
 /* Per-key velocity statistics.
    - `statsEnabled` and `snapshots` persist to localStorage.
@@ -209,11 +238,11 @@ function clampVel(v: number): number {
 
 function persist(): void {
   savePrefs({ velocityCal: {
-    version: 4,
+    version: 7,
     floor: state.floor,
     ceiling: state.ceiling,
     gamma: state.gamma,
-    perKey: { ...state.perKey },
+    keyScale: { ...state.keyScale },
     statsEnabled,
     stats: Object.keys(snapshots).length > 0 ? { ...snapshots } : undefined,
     inputCurve: { ...inputCurve },
@@ -228,11 +257,11 @@ function loadFromPrefs(): void {
   if (typeof v.floor === 'number') state.floor = v.floor;
   if (typeof v.ceiling === 'number') state.ceiling = v.ceiling;
   if (typeof v.gamma === 'number') state.gamma = v.gamma;
-  if (v.perKey && typeof v.perKey === 'object') {
-    state.perKey = {};
-    for (const k of Object.keys(v.perKey)) {
-      const g = v.perKey[k];
-      if (typeof g === 'number' && g > 0 && g < 10) state.perKey[k] = g;
+  if (v.keyScale && typeof v.keyScale === 'object') {
+    state.keyScale = {};
+    for (const k of Object.keys(v.keyScale)) {
+      const g = v.keyScale[k];
+      if (KEY_ID.test(k) && validScale(g)) state.keyScale[k] = g;
     }
   }
   if (typeof v.statsEnabled === 'boolean') statsEnabled = v.statsEnabled;
@@ -240,8 +269,7 @@ function loadFromPrefs(): void {
     snapshots = { ...v.stats };
   }
   if (v.inputCurve && typeof v.inputCurve === 'object') {
-    if (typeof v.inputCurve.floor === 'number') inputCurve.floor = v.inputCurve.floor;
-    if (typeof v.inputCurve.ceiling === 'number') inputCurve.ceiling = v.inputCurve.ceiling;
+    if (typeof v.inputCurve.full === 'number') inputCurve.full = v.inputCurve.full;
     if (typeof v.inputCurve.gamma === 'number') inputCurve.gamma = v.inputCurve.gamma;
   }
   if (v.intervalCurve && typeof v.intervalCurve === 'object') {
@@ -250,41 +278,41 @@ function loadFromPrefs(): void {
     intervalCurve.gamma = v.intervalCurve.gamma;
   }
 
-  /* Migration to v3 (canonical musical velocity + gain-space Lumatone target
-     curve). Two prior shapes to handle:
-       • v1 (no version): state.{floor,ceiling,gamma} held the user's tuned AUDIO
-         curve — that IS the target-gain curve now; copy it verbatim (exact
-         reproduction), reset the house curve to gentle.
-       • v2 (the short-lived velocity-domain attempt): inputCurve held a velocity
-         power-law with gamma ≈ oldAudioGamma / 1.5; recover oldAudioGamma =
-         inputCurve.gamma × 1.5; floor/ceiling were lost, use the legacy default.
-     One-time; persist. The user then tunes in gain space in lumadiag. */
+  /* Migration to v3 (canonical musical velocity): before it, state.{floor,
+     ceiling,gamma} held the user's tuned Lumatone AUDIO curve, where the gentle
+     house curve lives now; reset the house curve. (v3 also carried that tuned
+     curve over as the Lumatone curve; v7, below, replaces it.) One-time. */
   const migrateCurve = (v.version ?? 0) < 3;
   if (migrateCurve) {
-    if (v.version === 2) {
-      inputCurve.gamma = Math.min(20, Math.max(0.5, inputCurve.gamma * DEFAULT_CAL.gamma));
-      inputCurve.floor = DEFAULT_INPUT_CURVE.floor;
-      inputCurve.ceiling = DEFAULT_INPUT_CURVE.ceiling;
-    } else {
-      inputCurve.floor = state.floor;
-      inputCurve.ceiling = state.ceiling;
-      inputCurve.gamma = state.gamma;
-    }
     state.floor = DEFAULT_CAL.floor;
     state.ceiling = DEFAULT_CAL.ceiling;
     state.gamma = DEFAULT_CAL.gamma;
   }
 
-  /* Migration to v4: per-key gains and stats keyed by physical key
-     ("ch,note"). Before v4 they were keyed by the lattice cell the key struck,
-     baseKeys[i] + the kbAnchor at capture time, which was not stored. Each map
-     is read back under the anchor its cells prove (rekeyByAnchor). One-time. */
+  /* Migration to v4: per-key stats keyed by physical key ("ch,note"). Before
+     v4 they were keyed by the lattice cell the key struck, baseKeys[i] + the
+     kbAnchor at capture time, which was not stored. The map is read back under
+     the anchor its cells prove (rekeyByAnchor). One-time. */
   const migrateKeys = (v.version ?? 0) < 4;
-  if (migrateKeys) {
-    state.perKey = rekeyByAnchor(state.perKey, 'per-key gains');
-    snapshots = rekeyByAnchor(snapshots, 'per-key stats');
+  if (migrateKeys) snapshots = rekeyByAnchor(snapshots, 'per-key stats');
+
+  /* Migration to v5: the per-key gain (`perKey`, a multiplier on velocity) is
+     gone, replaced by the press-time scale (`keyScale`). A gain is not carried
+     over: it corrects one dynamic, and every saved one was captured while the
+     device ran its preset's velocity tables (docs/lessons.md). The prefs loader
+     no longer reads it; saving here drops it from storage. One-time. */
+  const migrateScale = (v.version ?? 0) < 5;
+
+  /* Migration to v7: the Lumatone curve is the piano law, `full` and `gamma`
+     (v6 was floor + (ceiling − floor) · (top / ticks)^gamma; before v6 the
+     exponent was on the velocity number). No saved setting of an earlier curve
+     means anything in this one, so both scalars take their defaults. One-time. */
+  const migratePiano = (v.version ?? 0) < 7;
+  if (migratePiano) {
+    inputCurve.full = DEFAULT_INPUT_CURVE.full;
+    inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
   }
-  if (migrateCurve || migrateKeys) persist();
+  if (migrateCurve || migrateKeys || migrateScale || migratePiano) persist();
 }
 
 /* Pre-v4 per-key data → physical keys. Saved cells are baseKeys[i] + one
@@ -322,10 +350,10 @@ export const velocityCal = {
   get floor(): number { return state.floor; },
   get ceiling(): number { return state.ceiling; },
   get gamma(): number { return state.gamma; },
-  get perKey(): Readonly<Record<LumatoneKeyId, number>> { return state.perKey; },
+  get keyScale(): Readonly<Record<LumatoneKeyId, number>> { return state.keyScale; },
   get capturing(): boolean { return capturing; },
   get capturedKeyCount(): number { return captures.size; },
-  get calibratedKeyCount(): number { return Object.keys(state.perKey).length; },
+  get calibratedKeyCount(): number { return Object.keys(state.keyScale).length; },
 
   /* Curve setters — caller is responsible for sensible ranges; the panel
      constrains via slider min/max. */
@@ -340,55 +368,101 @@ export const velocityCal = {
     persist();
   },
 
-  clearPerKey(): void {
-    state.perKey = {};
+  clearKeyScale(): void {
+    state.keyScale = {};
     persist();
   },
 
-  /* ── Lumatone input velocity curve ────────────────────────────────────────
-     Applied at midi/handler.ts before storage. Output is integer velocity
-     0..127, not audio gain. Identity-by-default; the Phase A entry point for
-     compensating compressed firmware velocity output. */
-  get inputCurveFloor(): number { return inputCurve.floor; },
-  get inputCurveCeiling(): number { return inputCurve.ceiling; },
+  /** Replace the per-key scales with a table written by
+   *  `tools/lumatone-cal/keydata-compare.py --scales`:
+   *  `{ format: "hkl-key-scales", version: 1, scales: { "ch,note": number } }`.
+   *  All or nothing: a file with a key that is not a physical key id, or a
+   *  scale outside KEY_SCALE_MIN…KEY_SCALE_MAX, is some other file, and the
+   *  table in use stays as it was. */
+  importKeyScales(data: unknown): { ok: true; count: number } | { ok: false; error: string } {
+    const bad = (error: string) => ({ ok: false as const, error });
+    if (!data || typeof data !== 'object') return bad('not a key-scale file');
+    const d = data as Record<string, unknown>;
+    if (d.format !== 'hkl-key-scales') return bad('not a key-scale file (format is not "hkl-key-scales")');
+    if (d.version !== 1) return bad('key-scale file version ' + String(d.version) + ' is not supported');
+    if (!d.scales || typeof d.scales !== 'object') return bad('the file has no scales');
+    const entries = Object.entries(d.scales as Record<string, unknown>);
+    if (entries.length === 0) return bad('the file has no scales');
+    const next: Record<LumatoneKeyId, number> = {};
+    for (const [k, g] of entries) {
+      if (!KEY_ID.test(k)) return bad('"' + k + '" is not a Lumatone key (board 1–5, key 0–55)');
+      if (!validScale(g)) return bad('the scale for key ' + k + ' is not a number from ' + KEY_SCALE_MIN + ' to ' + KEY_SCALE_MAX);
+      next[k] = g;
+    }
+    state.keyScale = next;
+    persist();
+    return { ok: true, count: entries.length };
+  },
+
+  /* ── Lumatone velocity curve ──────────────────────────────────────────────
+     Applied at midi/handler.ts before storage (lumatoneVelocity). Its output is
+     a whole musical velocity 0..127, not audio gain. */
+  get inputCurveFull(): number { return inputCurve.full; },
   get inputCurveGamma(): number { return inputCurve.gamma; },
 
-  setInputCurveFloor(v: number): void { inputCurve.floor = v; persist(); },
-  setInputCurveCeiling(v: number): void { inputCurve.ceiling = v; persist(); },
+  setInputCurveFull(v: number): void { inputCurve.full = v; persist(); },
   setInputCurveGamma(v: number): void { inputCurve.gamma = v; persist(); },
 
   resetInputCurve(): void {
-    inputCurve.floor = DEFAULT_INPUT_CURVE.floor;
-    inputCurve.ceiling = DEFAULT_INPUT_CURVE.ceiling;
+    inputCurve.full = DEFAULT_INPUT_CURVE.full;
     inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
     persist();
   },
 
-  /** True iff the input curve is the identity transform (no shaping). Lets
-   *  the MIDI handler take the fast path without arithmetic per note-on. */
-  isInputCurveIdentity(): boolean {
-    return inputCurve.floor === 0
-        && inputCurve.ceiling === 127
-        && inputCurve.gamma === 1;
+  /** The gain the Lumatone curve asks for at a press time in ticks: the piano
+   *  law, `(fullTicks / ticks)^gamma`, and 1 at or under `fullTicks`, the press
+   *  time of the `full` input velocity. */
+  targetGainForTicks(ticks: number): number {
+    const fullTicks = this.ticksForVelocity(inputCurve.full);
+    if (!(ticks > fullTicks)) return 1;
+    return Math.pow(fullTicks / ticks, inputCurve.gamma);
   },
 
-  /** Map a raw 0..127 Lumatone velocity to the canonical musical velocity (int
-   *  0..127). Two steps: (1) the target-gain curve gives the gain this velocity
-   *  should produce; (2) invert the gentle house curve (state.floor/ceiling/gamma)
-   *  to find the musical velocity that yields that gain. So
-   *  `curveGain(applyInputCurve(v)) === targetGain(v)` (within rounding) — exact
-   *  reproduction of the target curve. v=0 → 0 (note-off); v>0 floor-clamped to 1. */
-  applyInputCurve(v: number): number {
-    if (v <= 0) return 0;
-    const vn = (v >= 127 ? 127 : v) / 127;
-    const targetGain = inputCurve.floor + (inputCurve.ceiling - inputCurve.floor) * Math.pow(vn, inputCurve.gamma);
+  /** The canonical musical velocity (a whole 1..127) for a press time in ticks:
+   *  the curve's gain, through the inverse of the gentle house curve
+   *  (state.floor/ceiling/gamma), so `curveGain(musicalForTicks(t))` is the
+   *  curve's gain within the rounding of a whole velocity. A gain at or under
+   *  the house floor is the softest audible velocity. */
+  musicalForTicks(ticks: number): number {
     const den = state.ceiling - state.floor;
     if (den <= 0) return 1;
-    const num = targetGain - state.floor;
-    if (num <= 0) return 1;                 /* below the house floor → softest audible */
+    const num = this.targetGainForTicks(ticks) - state.floor;
+    if (num <= 0) return 1;
     const musical = 127 * Math.pow(num / den, 1 / state.gamma);
     if (musical >= 127) return 127;
     return Math.max(1, Math.round(musical));
+  },
+
+  /** A Lumatone strike → its musical velocity: the raw velocity read back as
+   *  the key's press time, scaled by the key's own number, and put through the
+   *  curve. This is the note-on path (midi/handler.ts). Raw 0 → 0 (a note-off). */
+  lumatoneVelocity(key: LumatoneKeyId, raw: number): number {
+    if (raw <= 0) return 0;
+    const ticks = this.keyTicks(key, raw);
+    return ticks === null ? 1 : this.musicalForTicks(ticks);
+  },
+
+  /** The press time a device velocity stands for, fractions included: `ticksOf`
+   *  at whole velocities, linear between them. */
+  ticksForVelocity(v: number): number {
+    const c = v < 1 ? 1 : v > 127 ? 127 : v;
+    const lo = Math.floor(c), hi = Math.min(127, lo + 1);
+    const a = this.ticksOf(lo) ?? 0, b = this.ticksOf(hi) ?? 0;
+    return a + (b - a) * (c - lo);
+  },
+
+  /** The same curve for a device velocity (raw, or the scaled one
+   *  `applyKeyScale` returns), which is the Calibrate Keys graph's x-axis:
+   *  the velocity's press time, through the curve. At a whole raw velocity it is
+   *  exactly an unscaled key's `lumatoneVelocity`. v ≤ 0 → 0 (note-off). */
+  applyInputCurve(v: number): number {
+    if (v <= 0) return 0;
+    return this.musicalForTicks(this.ticksForVelocity(v));
   },
 
   /* ── Lumatone firmware velocity-interval table (CMD 0x20) ────────────────
@@ -438,13 +512,64 @@ export const velocityCal = {
     return out;
   },
 
-  /** True iff the interval curve matches Terpstra factory defaults — used by
-   *  the connection auto-push to skip the SysEx send when nothing's been
-   *  customized. */
-  isIntervalCurveFactory(): boolean {
-    return intervalCurve.low === DEFAULT_INTERVAL_CURVE.low
-        && intervalCurve.high === DEFAULT_INTERVAL_CURVE.high
-        && intervalCurve.gamma === DEFAULT_INTERVAL_CURVE.gamma;
+  /** The velocity LUT HKL keeps on the device (CMD 0x08), in natural order
+   *  (`lut[i]` = the velocity for input i, 127 = the shortest press): identity,
+   *  with the slowest bin at 1, because a note-on at velocity 0 is a note-off to
+   *  every receiver. With it the firmware's bin is `127 - velocity`. */
+  buildIdentityLut(): number[] {
+    const lut: number[] = new Array(128);
+    for (let i = 0; i < 128; i++) lut[i] = i === 0 ? 1 : i;
+    return lut;
+  },
+
+  /** The press times, in whole ticks, that the firmware turns into this raw
+   *  velocity under the identity LUT and the current interval table: `lo`…`hi`
+   *  inclusive, `hi` null when open-ended. The firmware's bin b holds the press
+   *  times above the threshold before `table[b]` and up to `table[b]`; velocity 1
+   *  is bins 126 and 127 together. Where thresholds repeat, the firmware's
+   *  bisection puts a press that equals them in some bin of the run, not the
+   *  first (docs/lessons.md → "binary_search on duplicates"), so the lower bound
+   *  is the last threshold that DIFFERS, and every bin of a run decodes alike.
+   *  Null only for a velocity below 1. True only while the device holds the
+   *  tables HKL pushed (lumatone/sync.ts sends both with the connect-time setup). */
+  pressTicks(raw: number): { lo: number; hi: number | null } | null {
+    if (!(raw >= 1)) return null;
+    const table = this.buildIntervalTable();
+    const bin = raw >= 127 ? 0 : Math.min(126, 127 - Math.round(raw));
+    let before = bin - 1;
+    while (before >= 0 && table[before] === table[bin]) before--;
+    const lo = before < 0 ? 0 : table[before] + 1;
+    return { lo, hi: bin >= 126 ? null : table[bin] };
+  },
+
+  /** `pressTicks` as the overlay prints it: "16", "64–65", "≤1", "≥127". */
+  pressTicksLabel(raw: number): string {
+    const r = this.pressTicks(raw);
+    if (!r) return '?';
+    if (r.hi === null) return '≥' + r.lo;
+    if (r.lo === 0) return '≤' + r.hi;
+    return r.lo === r.hi ? String(r.lo) : r.lo + '–' + r.hi;
+  },
+
+  /** Called from the Lumatone note-on path: the strike's raw velocity, its input
+   *  velocity (`applyKeyScale` of it) and the musical velocity it became, by
+   *  lattice key. */
+  noteStrike(key: KeyId, raw: number, input: number, musical: number): void {
+    lastStrike.set(key, { raw, input, musical });
+  },
+
+  /** The Lumatone strike that gave this key this musical velocity: its raw and
+   *  input velocities. Undefined when the key's voice came from anything else. */
+  strikeOf(key: KeyId, musical: number): { raw: number; input: number } | undefined {
+    const s = lastStrike.get(key);
+    return s && s.musical === musical ? { raw: s.raw, input: s.input } : undefined;
+  },
+
+  /** An input velocity as the overlay prints it: whole when it is whole (an
+   *  unscaled key's always is), one decimal otherwise. */
+  inputVelocityLabel(v: number): string {
+    const r = Math.round(v * 10) / 10;
+    return Number.isInteger(r) ? String(r) : r.toFixed(1);
   },
 
   /* ── Distinct-velocity counter (session-only) ────────────────────────────
@@ -459,12 +584,54 @@ export const velocityCal = {
   getObservedVelocities(): ReadonlySet<number> { return observedVelocities; },
   clearObservedVelocities(): void { observedVelocities.clear(); },
 
-  /* Stage 1: per-key gain. Returns adjusted velocity (clamped 0..127). */
-  applyPerKeyGain(key: LumatoneKeyId, v: number): number {
-    if (v <= 0) return 0;
-    const g = state.perKey[key];
-    if (g === undefined || g === 1.0) return clampVel(v);
-    return clampVel(v * g);
+  /** The press time, in ticks, a raw velocity stands for: its bin's own tick,
+   *  the middle of a bin several ticks wide, the threshold of the open bin at
+   *  either end. Null for a velocity no press time produces. */
+  ticksOf(raw: number): number | null {
+    const r = this.pressTicks(raw);
+    if (!r) return null;
+    if (r.hi === null) return r.lo;
+    if (r.lo === 0) return r.hi;
+    return (r.lo + r.hi) / 2;
+  },
+
+  /** The velocity a press time reads as: the firmware's own map on whole ticks
+   *  (bin = the first threshold not exceeded, velocity = 127 − bin), linear
+   *  between thresholds, so a scaled press time keeps its fraction. 127 at or
+   *  under the first threshold, 1 past the last. Where thresholds repeat, a
+   *  press time lands in the first bin of the run, the firmware's own in one
+   *  inside it: on such a table a scaled key can sit a bin or two from an
+   *  unscaled one. The one-tick table (low to low + 126) has no repeats. */
+  velocityForTicks(ticks: number): number {
+    const table = this.buildIntervalTable();
+    if (!(ticks > table[0])) return 127;
+    for (let i = 1; i < 127; i++) {
+      if (ticks <= table[i]) {
+        const bin = i - 1 + (ticks - table[i - 1]) / (table[i] - table[i - 1]);
+        return Math.max(1, 127 - bin);
+      }
+    }
+    return 1;
+  },
+
+  /* Stage 1: per-key press-time scale. A key's press time for a raw velocity:
+     the ticks the velocity stands for, times the key's scale (1 when it has
+     none). Null for a velocity below 1. */
+  keyTicks(key: LumatoneKeyId, raw: number): number | null {
+    const ticks = this.ticksOf(raw);
+    return ticks === null ? null : ticks * (state.keyScale[key] ?? 1);
+  },
+
+  /* The same, as a device velocity: the velocity that scaled press time reads as
+     (1..127, not rounded). A key with no scale, or a scale of 1, passes through
+     exactly. The note-on path does not use it (it feeds the curve the ticks);
+     this is the key's position on the Calibrate Keys graph's x-axis. */
+  applyKeyScale(key: LumatoneKeyId, raw: number): number {
+    if (raw <= 0) return 0;
+    const g = state.keyScale[key];
+    if (g === undefined || g === 1) return raw;
+    const ticks = this.ticksOf(raw);
+    return ticks === null ? raw : this.velocityForTicks(ticks * g);
   },
 
   /* Stage 2: curve. Returns audio gain 0..1. */
@@ -494,22 +661,23 @@ export const velocityCal = {
     arr.push(rawVelocity);
   },
 
-  /* Stops capture, computes per-key gains from medians, and merges into state.
-     Returns the number of keys for which a gain was assigned (or revised). */
+  /* Stops capture, computes each captured key's scale from its median press
+     time, and merges into state: scale = the target velocity's press time / the
+     key's median press time, so the touch that was captured reads as the target.
+     Returns the number of keys for which a scale was assigned (or revised). */
   stopCaptureAndCompute(targetVel: number): number {
     if (!capturing) return 0;
     capturing = false;
+    const targetTicks = this.ticksOf(targetVel);
     let count = 0;
     for (const [key, capSamples] of captures) {
-      if (capSamples.length === 0) continue;
-      const sorted = capSamples.slice().sort((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      if (median <= 0) continue;
-      const raw = targetVel / median;
-      const gain = raw < PER_KEY_GAIN_MIN ? PER_KEY_GAIN_MIN
-                 : raw > PER_KEY_GAIN_MAX ? PER_KEY_GAIN_MAX
-                 : raw;
-      state.perKey[key] = gain;
+      const ticks: number[] = [];
+      for (const raw of capSamples) { const t = this.ticksOf(raw); if (t !== null && t > 0) ticks.push(t); }
+      if (ticks.length === 0 || targetTicks === null) continue;
+      ticks.sort((a, b) => a - b);
+      const median = ticks[Math.floor(ticks.length / 2)];
+      const g = targetTicks / median;
+      state.keyScale[key] = g < KEY_SCALE_MIN ? KEY_SCALE_MIN : g > KEY_SCALE_MAX ? KEY_SCALE_MAX : g;
       count++;
     }
     captures.clear();

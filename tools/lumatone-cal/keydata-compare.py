@@ -4,7 +4,8 @@
 #
 # Usage:
 #   python3 keydata-compare.py [--swap-boards-34] [--top N] [--level L]
-#                              [--write DIR] [--maps DIR] <run-dir> [<run-dir> ...]
+#                              [--write DIR] [--maps DIR] [--scales FILE]
+#                              <run-dir> [<run-dir> ...]
 #
 # Each <run-dir> holds KeyData_1..5 and ThresholdData_1..5: a folder made by
 # `keydata-backup.sh save` right after a confirmed calibration. Give them in
@@ -12,8 +13,8 @@
 # sections; the repeatability sections need two or more.
 #
 #   --swap-boards-34   the unit has boards 3 and 4 physically swapped (HKL's
-#                      "Swap boards 3 <-> 4"); only the (q, r) labels and the
-#                      maps depend on it
+#                      "Swap boards 3 <-> 4"); the (q, r) labels, the maps and
+#                      the key ids in --scales depend on it
 #   --top N            rows per ranked list (default 12)
 #   --level L          combine the runs with each run's overall level (its
 #                      mean MAX) removed, and place the result at level L: run
@@ -31,6 +32,15 @@
 #   --maps DIR         draw the keyboard maps as PNG files (needs matplotlib):
 #                      window.png, siblings.png and, with two or more runs,
 #                      spread.png
+#   --scales FILE      write HKL's per-key press-time scales as JSON: for each
+#                      key, the median timing window over the key's own window,
+#                      from the same values --write would store. For the same
+#                      touch a key's press time follows its window (docs/
+#                      lessons.md, "Press time follows the timing window"), so
+#                      HKL multiplies each key's press time by this number.
+#                      Give the folder the device runs (one folder is enough),
+#                      and import the file in HKL's Calibrate Keys. Keys are
+#                      named "<board group 1-5>,<key 0-55>", as HKL names them.
 #
 # What the numbers mean (docs/lessons.md, "What the key routine stores"): the
 # built-in routine stores each key's highest sensor reading as MAX and its rest
@@ -42,6 +52,7 @@
 # Nothing here talks to the device.
 
 import importlib.util
+import json
 import math
 import os
 import shutil
@@ -255,6 +266,50 @@ def write_median(out_dir, last_dir, runs, keys, target_level=None):
     print('  next: keydata-backup.sh check {0}'.format(out_dir))
 
 
+SCALE_MIN, SCALE_MAX = 0.1, 10.0     # HKL's KEY_SCALE_MIN / KEY_SCALE_MAX
+
+
+def write_scales(out_file, names, keys, swap, target_level=None):
+    """HKL's per-key press-time scales: the median window over each key's window."""
+    if os.path.exists(out_file):
+        sys.exit('--scales: {0} exists'.format(out_file))
+    reference = st.median(x['window'] for x in keys)
+    scales, held = {}, []
+    for x in keys:
+        if x['window'] <= 0:
+            # the note-on point is at or under the timer's start: no press time to scale
+            held.append((x, None))
+            continue
+        scale = reference / x['window']
+        if not SCALE_MIN <= scale <= SCALE_MAX:
+            held.append((x, scale))
+            scale = max(SCALE_MIN, min(SCALE_MAX, scale))
+        scales['{0},{1}'.format(x['board'], x['slot'])] = round(scale, 4)
+    data = {
+        'format': 'hkl-key-scales',
+        'version': 1,
+        'runs': names,
+        'level': target_level,
+        'swapBoards34': swap,
+        'referenceWindow': reference,
+        'scales': scales,
+    }
+    os.makedirs(os.path.dirname(os.path.abspath(out_file)), exist_ok=True)
+    with open(out_file, 'w') as f:
+        json.dump(data, f, indent=1)
+        f.write('\n')
+    vals = sorted(scales.values())
+    print('\nwrote {0} press-time scales to {1}'.format(len(scales), out_file))
+    print('  reference window (the median): {0:g} counts;  scales {1:.2f}..{2:.2f}, middle 80% {3:.2f}..{4:.2f}'.format(
+        reference, vals[0], vals[-1], percentile(vals, 0.1), percentile(vals, 0.9)))
+    for x, scale in held:
+        print('  {0}  window {1}: {2}'.format(
+            key_label(x), x['window'],
+            'left out (no timing window)' if scale is None else 'scale {0:.2f} held to {1:g}..{2:g}'.format(scale, SCALE_MIN, SCALE_MAX)))
+    print('  key ids are for a unit {0} boards 3 and 4 swapped'.format('with' if swap else 'without'))
+    print('  next: Calibrate Keys → Import key scales in HKL')
+
+
 def draw_maps(out_dir, keys, n_runs, overhead_text, target_level=None):
     try:
         import matplotlib
@@ -353,7 +408,7 @@ def main():
     swap = '--swap-boards-34' in argv
     if swap:
         argv.remove('--swap-boards-34')
-    opts = {'--top': '12', '--write': None, '--maps': None, '--level': None}
+    opts = {'--top': '12', '--write': None, '--maps': None, '--level': None, '--scales': None}
     for name in list(opts):
         if name in argv:
             i = argv.index(name)
@@ -362,7 +417,7 @@ def main():
             opts[name] = argv[i + 1]
             del argv[i:i + 2]
     if not argv or any(a.startswith('--') for a in argv):
-        sys.exit('Usage: keydata-compare.py [--swap-boards-34] [--top N] [--level L] [--write DIR] [--maps DIR] <run-dir> [<run-dir> ...]')
+        sys.exit('Usage: keydata-compare.py [--swap-boards-34] [--top N] [--level L] [--write DIR] [--maps DIR] [--scales FILE] <run-dir> [<run-dir> ...]')
 
     base_keys, standard_map, swapped_map = load_base_keys()
     runs = [load_run(d) for d in argv]
@@ -372,6 +427,8 @@ def main():
     report(names, runs, keys, int(opts['--top']), target_level)
     if opts['--write']:
         write_median(opts['--write'], argv[-1], runs, keys, target_level)
+    if opts['--scales']:
+        write_scales(opts['--scales'], names, keys, swap, target_level)
     if opts['--maps']:
         overheads = sorted(set(runs[-1][b]['overhead'] for b in BOARDS))
         draw_maps(opts['--maps'], keys, len(runs), '/'.join(map(str, overheads)), target_level)

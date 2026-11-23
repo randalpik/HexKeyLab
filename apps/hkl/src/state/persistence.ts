@@ -53,19 +53,23 @@ export interface ToolbarVisibility {
   secrets: boolean;
 }
 
-/* Velocity calibration (curve + per-key gain + per-key stats).
+/* Velocity calibration (curve + per-key press-time scale + per-key stats).
    Set by src/audio/velocityCal.ts.
    Absent = defaults. */
 export interface VelocityCalPrefs {
   /** Schema version. v3 = canonical-musical-velocity architecture (gentle house
-   *  curve + Lumatone gain-space target curve in inputCurve); v4 = `perKey` and
-   *  `stats` keyed by physical Lumatone key ("ch,note") instead of lattice cell.
+   *  curve + Lumatone gain-space target curve in inputCurve); v4 = `stats` keyed
+   *  by physical Lumatone key ("ch,note") instead of lattice cell; v5 =
+   *  `keyScale` (a multiplier on press time) in place of `perKey` (a gain on
+   *  velocity, no longer read); v6 = `inputCurve.gamma` is an exponent on
+   *  finger speed (1 / press time), where it was one on the velocity number;
+   *  v7 = `inputCurve` is `{ full, gamma }`, the piano law (no floor or ceiling).
    *  Older versions get a one-time migration in velocityCal.ts. */
   version?: number;
   floor: number;
   ceiling: number;
   gamma: number;
-  perKey: Record<string, number>;
+  keyScale: Record<string, number>;
   statsEnabled?: boolean;
   /** Persisted snapshot of per-key velocity stats. Raw samples are session-only
    *  in velocityCal.ts; only this aggregate persists. */
@@ -78,7 +82,7 @@ export interface VelocityCalPrefs {
    *  Phase C: superseded by `intervalCurve` (which shapes at the firmware level
    *  via SysEx 0x20). Kept as a defensive identity layer; migration in
    *  velocityCal.ts resets to identity once the user adopts intervalCurve. */
-  inputCurve?: { floor: number; ceiling: number; gamma: number };
+  inputCurve?: { full?: number; gamma: number };
   /** Lumatone firmware velocity-interval (CMD 0x20) curve parameters. Defines
    *  the press-time tick thresholds that separate the firmware's 128 velocity
    *  bins, via the parametric `low + (high - low) · (i/126)^gamma` map. HKL
@@ -433,10 +437,10 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
   if (!o || typeof o !== 'object') return undefined;
   const v = o as Record<string, unknown>;
   if (typeof v.floor !== 'number' || typeof v.ceiling !== 'number' || typeof v.gamma !== 'number') return undefined;
-  const perKey: Record<string, number> = {};
-  if (v.perKey && typeof v.perKey === 'object') {
-    for (const [k, val] of Object.entries(v.perKey as Record<string, unknown>)) {
-      if (typeof val === 'number' && val > 0 && val < 10) perKey[k] = val;
+  const keyScale: Record<string, number> = {};
+  if (v.keyScale && typeof v.keyScale === 'object') {
+    for (const [k, val] of Object.entries(v.keyScale as Record<string, unknown>)) {
+      if (typeof val === 'number' && val > 0) keyScale[k] = val;
     }
   }
   const statsEnabled = typeof v.statsEnabled === 'boolean' ? v.statsEnabled : undefined;
@@ -458,11 +462,14 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
     }
     if (Object.keys(s).length > 0) stats = s;
   }
-  let inputCurve: { floor: number; ceiling: number; gamma: number } | undefined;
+  /* `full` is absent from prefs saved before v7, whose curve had a floor and a
+     ceiling instead; velocityCal's migration replaces such a curve. */
+  let inputCurve: { full?: number; gamma: number } | undefined;
   if (v.inputCurve && typeof v.inputCurve === 'object') {
     const ic = v.inputCurve as Record<string, unknown>;
-    if (typeof ic.floor === 'number' && typeof ic.ceiling === 'number' && typeof ic.gamma === 'number') {
-      inputCurve = { floor: ic.floor, ceiling: ic.ceiling, gamma: ic.gamma };
+    if (typeof ic.gamma === 'number' && ic.gamma > 0) {
+      inputCurve = { gamma: ic.gamma };
+      if (typeof ic.full === 'number' && ic.full >= 1 && ic.full <= 127) inputCurve.full = ic.full;
     }
   }
   let intervalCurve: { low: number; high: number; gamma: number } | undefined;
@@ -474,7 +481,7 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
     }
   }
   const version = typeof v.version === 'number' ? v.version : undefined;
-  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, perKey, statsEnabled, stats, inputCurve, intervalCurve };
+  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, keyScale, statsEnabled, stats, inputCurve, intervalCurve };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

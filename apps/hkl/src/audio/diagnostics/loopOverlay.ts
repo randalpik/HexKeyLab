@@ -16,7 +16,9 @@
 // by SampleEngine.tapMaster.
 //
 // Also overlays per-frame max(velocity) and max(PA) across held keys, mapped
-// 0–127 onto the same y-axis as the dB scale (so 127 = top, 0 = bottom). Lets
+// 0–127 onto the same y-axis as the dB scale (so 127 = top, 0 = bottom). For a
+// Lumatone strike the velocity is the INPUT velocity (what goes into the
+// Lumatone curve), not the musical velocity that comes out of it. Lets
 // us eyeball whether output jerks track the input signals or are introduced
 // downstream.
 
@@ -87,7 +89,7 @@ const seamBuf: SeamEvent[] = [];
 /* Per-frame max(keyVelocity), max(aftertouchSnapshot), and max(paFilter.v)
    across all held keys, sampled in tick(). Capped at ENV_CAP. paSmooth is
    the post-filter (gated + EWMA-smoothed) value being fed downstream. */
-const inputBuf: { ctxTime: number; vel: number; pa: number; paSmooth: number }[] = [];
+const inputBuf: { ctxTime: number; vel: number; raw?: number; pa: number; paSmooth: number }[] = [];
 const COLOR_VEL = '#f80';      // orange
 const COLOR_PA = '#f0f';       // magenta — raw PA
 const COLOR_PA_SMOOTH = '#08f'; // blue — filtered PA (what's fed to gain)
@@ -349,10 +351,17 @@ function tick(): void {
     /* Max strike velocity across sounding voices (live and playback) keeps
        the trace meaningful for chords; a single key shows its value directly. */
     let vMax = 0, pMax = 0, pSmoothMax = 0;
-    for (const k in audio.activeOscs) { const v = audio.activeOscs[k].vel; if (v > vMax) vMax = v; }
+    let kMax: string | null = null;
+    for (const k in audio.activeOscs) { const v = audio.activeOscs[k].vel; if (v > vMax) { vMax = v; kMax = k; } }
+    /* The Lumatone strike behind that voice, when it has one. The trace then
+       plots the strike's INPUT velocity: the hardware velocity after the key's
+       scale, which is what goes into the Lumatone curve and is that curve's
+       x-axis in Calibrate Keys. It does not move when the curve is changed. Any
+       other voice (mouse, QWERTY, playback) plots the velocity it sounds at. */
+    const strike = kMax === null ? undefined : velocityCal.strikeOf(kMax, vMax);
     for (const k in audio.aftertouchSnapshot) { const p = audio.aftertouchSnapshot[k]; if (p > pMax) pMax = p; }
     for (const k in audio.paFilter) { const f = audio.paFilter[k]; if (f.v > pSmoothMax) pSmoothMax = f.v; }
-    inputBuf.push({ ctxTime, vel: vMax, pa: pMax, paSmooth: pSmoothMax });
+    inputBuf.push({ ctxTime, vel: strike ? strike.input : vMax, raw: strike?.raw, pa: pMax, paSmooth: pSmoothMax });
     if (inputBuf.length > ENV_CAP) inputBuf.shift();
     measureSeams();
   }
@@ -524,37 +533,22 @@ function draw(): void {
     }
     cctx.stroke();
     /* Per-event labels on the velocity trace. Each label sits at a local peak
-       (end of a rising sequence) and shows the emitted MIDI velocity plus the
-       press-time tick range that produced it, reverse-mapped through the
-       firmware's CMD 0x08 (identity LUT + wire-reversal) and CMD 0x20
-       (interval table). Note the inversion: HKL pushes identity to 0x08, so
-       firmware bin index = 127 - MIDI velocity (bin 0 is fastest/loudest).
-       Bin B's press-time range is [table[B-1], table[B]) — open at the ends. */
-    const intTable = velocityCal.buildIntervalTable();
+       (end of a rising sequence). For a Lumatone strike it shows the input
+       velocity the trace plots (above) and the press time in ticks the device
+       reported: "v124.2 (1t)", "v112 (16t)". The press time comes from the
+       strike's RAW velocity, decoded through the identity LUT and the interval
+       table HKL keeps on the device (velocityCal.pressTicks), so on a scaled key
+       the two differ by the key's scale. Neither depends on the Lumatone curve.
+       A voice no Lumatone strike made shows the velocity it sounds at, alone. */
     const ctx = cctx;
-    const labelEvent = (ctxTime: number, vel: number, lastX: number): number => {
+    const labelEvent = (ctxTime: number, vel: number, raw: number | undefined, lastX: number): number => {
       const x = xOf(ctxTime);
       /* Cheap horizontal-overlap guard — events ≤ 36 px apart collapse into
          the first one rendered. */
       if (lastX >= 0 && x - lastX < 36) return lastX;
-      /* Reverse-map MIDI velocity → firmware bin via the identity LUT
-         (`bin = 127 - vel`). With the identity-from-1 LUT (slowest bin → vel
-         1) the two slowest bins both emit vel 1; the label collapses to
-         "≥thresh[126]" in that case. Then bracket the bin with the two
-         adjacent CMD 0x20 thresholds. */
-      const bin = 127 - vel;
-      let rangeStr: string;
-      if (bin <= 0) {
-        rangeStr = '≤' + intTable[0];
-      } else if (bin >= 126) {
-        rangeStr = '>' + intTable[126];
-      } else {
-        const lo = intTable[bin - 1];
-        const hi = intTable[bin];
-        if (lo === hi) rangeStr = '~' + lo;
-        else rangeStr = lo + '–' + hi;
-      }
-      const label = 'v' + vel + ' (' + rangeStr + 't)';
+      const label = raw === undefined
+        ? 'v' + vel
+        : 'v' + velocityCal.inputVelocityLabel(vel) + ' (' + velocityCal.pressTicksLabel(raw) + 't)';
       ctx.font = '10px sans-serif';
       ctx.fillStyle = COLOR_VEL;
       ctx.textBaseline = 'bottom';
@@ -570,7 +564,7 @@ function draw(): void {
       const rose = b.vel > a.vel;
       /* Falling/steady edge after a rise → a is the local peak. */
       if (prevRose && !rose && a.vel > 0 && a.ctxTime >= tStart) {
-        lastLabelX = labelEvent(a.ctxTime, a.vel, lastLabelX);
+        lastLabelX = labelEvent(a.ctxTime, a.vel, a.raw, lastLabelX);
       }
       prevRose = rose;
     }
@@ -580,7 +574,7 @@ function draw(): void {
     if (prevRose && inputBuf.length > 0) {
       const last = inputBuf[inputBuf.length - 1];
       if (last.vel > 0 && last.ctxTime >= tStart) {
-        lastLabelX = labelEvent(last.ctxTime, last.vel, lastLabelX);
+        lastLabelX = labelEvent(last.ctxTime, last.vel, last.raw, lastLabelX);
       }
     }
     cctx.strokeStyle = COLOR_PA;
