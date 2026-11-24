@@ -18,15 +18,18 @@
 //      the lattice cell under it, so a ref change that slides the lattice
 //      leaves each correction on its key; auto-capture and the per-key stats
 //      key the same way.
-//   3. Lumatone curve — the piano's law in the device's units: the gain a press
-//      should sound at is `(fullTicks / ticks)^gamma`, never above 1, with gamma
-//      1 the measured piano (amplitude proportional to hammer velocity) and
-//      `fullTicks` the press time of the input velocity set as full loudness.
-//      The gain is turned into the musical velocity that plays at it under the
-//      house curve, so everything downstream — audio, recording, MIDI export —
-//      sees a device-neutral velocity. Applied ONLY to Lumatone-source MIDI
-//      velocity; QWERTY/mouse paths are untouched. Lumadiag stats keep sampling
-//      RAW velocity so they remain diagnostic of the firmware's natural output.
+//   3. Lumatone curve — the piano's law in the device's units, run up to full,
+//      with the corner where they meet rounded. `(F / ticks)^gamma` is the
+//      piano line (amplitude proportional to hammer velocity; gamma 1 is the
+//      measurement), with `F` the press time of the input velocity set as
+//      `full`; above full the gain is 1; `corner` says how many dB under their
+//      meeting point the curve passes (0 = a hard corner) and changes nothing
+//      away from it. The gain is turned into the musical velocity that plays at
+//      it under the house curve, so everything downstream — audio, recording,
+//      MIDI export — sees a device-neutral velocity. Applied ONLY to Lumatone-
+//      source MIDI velocity; QWERTY/mouse paths are untouched. Lumadiag stats
+//      keep sampling RAW velocity so they remain diagnostic of the firmware's
+//      natural output.
 //
 // Recording captures the velocity noteOn received (both input stages already
 // applied), so playback reproduces it and only the audio-stage curve re-runs.
@@ -67,18 +70,31 @@ export interface VelocityCalState {
 /** Lumatone TARGET-GAIN curve: the gain (0..1) a Lumatone press SHOULD sound at,
  *  as a function of its press time in ticks (after the key's own scale):
  *
- *    gain = min(1, fullTicks / ticks)^gamma
+ *    line = (F / ticks)^gamma
+ *    gain = line / (1 + line^k)^(1/k),   k = 6.02 / corner
  *
- *  It is the piano's own law in the device's units. On a piano the peak amplitude
- *  of a tone is linearly proportional to the hammer's velocity (Palmer & Brown,
- *  "Investigations in the amplitude of sounded piano tones", JASA 1991), and on
- *  the Lumatone the speed of a press is 1 / its press time, so the amplitude is
- *  proportional to 1 / ticks: `gamma` 1, 6.02 dB per doubling of press time, and
- *  no floor. The device has no hammer, so one constant places the scale: `full`,
- *  the INPUT velocity (the hardware velocity after the key's scale, the unit the
- *  Diagnostics overlay shows and the curve is tuned in) at which a press reaches
- *  full loudness; `fullTicks` is its press time. Anything faster is full too.
- *  `gamma` other than 1 bends the law for a wider or narrower dynamic range.
+ *  `F` is the press time of the `full` input velocity. With `corner` 0 the gain
+ *  is `min(1, line)`.
+ *
+ *  The line is the piano's own law in the device's units. On a piano the peak
+ *  amplitude of a tone is linearly proportional to the hammer's velocity
+ *  (Palmer & Brown, "Investigations in the amplitude of sounded piano tones",
+ *  JASA 1991), and on the Lumatone the speed of a press is 1 / its press time,
+ *  so the amplitude is proportional to 1 / ticks: `gamma` 1, 6.02 dB per
+ *  doubling of press time, and no floor. The device has no hammer, so one
+ *  constant places the line: `full`, the INPUT velocity (the hardware velocity
+ *  after the key's scale, the unit the Diagnostics overlay shows and the curve
+ *  is tuned in) at which the line reaches full loudness. Faster than that is
+ *  full too. `gamma` other than 1 bends the line for a wider or narrower range.
+ *
+ *  `corner` rounds the point where the line meets the ceiling, and only that
+ *  point: it is how many dB under it the curve passes. The formula is the line
+ *  where the line is well under 1 and 1 where it is well over (within 0.1 dB of
+ *  `min(1, line)` once the press time is half again longer or shorter than `F`,
+ *  at the default 1 dB), so the ramp below and the ceiling above are not moved. This is what
+ *  Max asked for on 2026-11-23: "round the corner, not reshape the whole curve.
+ *  I mean the actual corner." Two attempts that day rounded far too much of it
+ *  (decisions.md).
  *
  *  The handler turns the gain into the canonical musical velocity that
  *  reproduces it through the inverse of the gentle house curve
@@ -92,6 +108,9 @@ export interface InputCurveState {
   full: number;
   /** Exponent on the piano law. 1 = the measured piano. */
   gamma: number;
+  /** How many dB under the point where the line meets full the curve passes.
+   *  0 = a hard corner. */
+  corner: number;
 }
 
 /** Lumatone firmware velocity-interval curve (CMD 0x20). Generates a 127-entry
@@ -117,14 +136,16 @@ export const DEFAULT_CAL: VelocityCalState = {
   keyScale: {},
 };
 
-/* Lumatone target-gain curve default: the piano's gamma, and full loudness at
-   input velocity 125.6 (2.4 ticks), which puts input velocity 80 (48 ticks) on
-   the house curve's quietest note. On Max's unit with `min lo` 3 (2026-11-22)
-   his ppp sits just under 80, his p at 105 (−19.6 dB here) and his f at 123
-   (−6.4 dB). The user tunes `full` and, if wanted, gamma in lumadiag. */
+/* Lumatone target-gain curve default: the piano's gamma, the piano line
+   reaching full at input velocity 125.6 (2.4 ticks), which puts input velocity
+   80 (48 ticks) on the house curve's quietest note, and a corner 1 dB under
+   that meeting point. On Max's unit with `min lo` 3 (2026-11-22) his ppp sits
+   just under 80, his p at 105 (−19.6 dB here) and his f at 123 (−6.4 dB). The
+   user tunes `full`, the corner and, if wanted, gamma in lumadiag. */
 export const DEFAULT_INPUT_CURVE: InputCurveState = {
   full: 125.6,
   gamma: 1.0,
+  corner: 1.0,
 };
 
 /** The one-tick table: low=1, high=127, gamma=1.0 gives thresholds 1..127, one
@@ -274,6 +295,7 @@ function loadFromPrefs(): void {
   if (v.inputCurve && typeof v.inputCurve === 'object') {
     if (typeof v.inputCurve.full === 'number') inputCurve.full = v.inputCurve.full;
     if (typeof v.inputCurve.gamma === 'number') inputCurve.gamma = v.inputCurve.gamma;
+    if (typeof v.inputCurve.corner === 'number') inputCurve.corner = v.inputCurve.corner;
   }
   if (v.intervalCurve && typeof v.intervalCurve === 'object') {
     intervalCurve.low = v.intervalCurve.low;
@@ -314,6 +336,7 @@ function loadFromPrefs(): void {
   if (migratePiano) {
     inputCurve.full = DEFAULT_INPUT_CURVE.full;
     inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
+    inputCurve.corner = DEFAULT_INPUT_CURVE.corner;
   }
   if (migrateCurve || migrateKeys || migrateScale || migratePiano) persist();
 }
@@ -407,23 +430,33 @@ export const velocityCal = {
      a whole musical velocity 0..127, not audio gain. */
   get inputCurveFull(): number { return inputCurve.full; },
   get inputCurveGamma(): number { return inputCurve.gamma; },
+  get inputCurveCorner(): number { return inputCurve.corner; },
 
   setInputCurveFull(v: number): void { inputCurve.full = v; persist(); },
   setInputCurveGamma(v: number): void { inputCurve.gamma = v; persist(); },
+  setInputCurveCorner(v: number): void { inputCurve.corner = v < 0 ? 0 : v; persist(); },
 
   resetInputCurve(): void {
     inputCurve.full = DEFAULT_INPUT_CURVE.full;
     inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
+    inputCurve.corner = DEFAULT_INPUT_CURVE.corner;
     persist();
   },
 
   /** The gain the Lumatone curve asks for at a press time in ticks: the piano
-   *  law, `(fullTicks / ticks)^gamma`, and 1 at or under `fullTicks`, the press
-   *  time of the `full` input velocity. */
+   *  line `(F / ticks)^gamma` (`F` the press time of the `full` input velocity)
+   *  up to a ceiling of 1, with the corner between them rounded so that the
+   *  curve passes `corner` dB under it: `line / (1 + line^k)^(1/k)` with
+   *  `k = 6.02 / corner`, and `min(1, line)` when `corner` is 0. A press too fast
+   *  to time (0 ticks) is full. */
   targetGainForTicks(ticks: number): number {
-    const fullTicks = this.ticksForVelocity(inputCurve.full);
-    if (!(ticks > fullTicks)) return 1;
-    return Math.pow(fullTicks / ticks, inputCurve.gamma);
+    if (!(ticks > 0)) return 1;
+    const line = Math.pow(this.ticksForVelocity(inputCurve.full) / ticks, inputCurve.gamma);
+    if (!(inputCurve.corner > 0)) return line < 1 ? line : 1;
+    const k = 20 * Math.LOG10E * Math.LN2 / inputCurve.corner;
+    /* The same expression, written for each side so a large k cannot overflow. */
+    return line < 1 ? line / Math.pow(1 + Math.pow(line, k), 1 / k)
+                    : 1 / Math.pow(1 + Math.pow(line, -k), 1 / k);
   },
 
   /** The canonical musical velocity (a whole 1..127) for a press time in ticks:

@@ -2,18 +2,23 @@
 // Run with the repo's .js → .ts resolution hook:
 // node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/lumatone-curve.mjs
 //
-// The curve is the piano's own law in the device's units. On a piano the peak
-// amplitude of a tone is proportional to the hammer's velocity (Palmer & Brown, JASA
-// 1991); on the Lumatone the speed of a press is 1 ÷ its press time. So
-//   gain = (fullTicks ÷ ticks)^gamma, never above 1
+// The curve is the piano's own law in the device's units, run up to full loudness,
+// with the corner where the two meet rounded. On a piano the peak amplitude of a tone
+// is proportional to the hammer's velocity (Palmer & Brown, JASA 1991); on the
+// Lumatone the speed of a press is 1 ÷ its press time. So the piano line is
+//   line = (F ÷ ticks)^gamma
 // with gamma 1 the measured piano, no floor, and one calibration constant: `full`,
-// the input velocity at which a press reaches full loudness (fullTicks is its press
-// time). The press time is the key's own, after its per-key scale. The gain is then
-// turned into the musical velocity that the house curve plays at that gain; the
+// the input velocity whose press time F is where the line reaches full loudness.
+// Above that the gain is 1. `corner` rounds the point where the line meets that
+// ceiling, and nothing else: it is how many dB under the corner point the curve
+// passes, 0 being the hard corner, and away from the corner the curve is the line or
+// the ceiling. The press time is the key's own, after its per-key scale. The gain is
+// then turned into the musical velocity that the house curve plays at that gain; the
 // house curve's quietest note is the bottom.
-// Checks the law, the ends, the two scalars, Max's anchors of 2026-11-22, the two
-// routes into the curve (a strike, and an input velocity as the Calibrate Keys graph
-// passes it), and the one-time reset of settings saved for the previous curve.
+// Checks the law, that only the corner is rounded, the three scalars, Max's anchors of
+// 2026-11-22, the two routes into the curve (a strike, and an input velocity as the
+// Calibrate Keys graph passes it), and the one-time reset of settings saved before the
+// piano law.
 import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
@@ -46,7 +51,7 @@ assert.equal(velocityCal.inputCurveGamma, 1, 'the default gamma is the piano\'s,
 assert.equal(DEFAULT_INPUT_CURVE.gamma, 1);
 assert.equal(velocityCal.inputCurveFull, DEFAULT_INPUT_CURVE.full);
 assert.equal(stored().version, 7);
-assert.deepEqual(stored().inputCurve, { full: DEFAULT_INPUT_CURVE.full, gamma: 1 }, 'no floor or ceiling is saved any more');
+assert.deepEqual(stored().inputCurve, { full: DEFAULT_INPUT_CURVE.full, gamma: 1, corner: DEFAULT_INPUT_CURVE.corner }, 'no floor or ceiling is saved any more');
 assert.deepEqual(stored().keyScale, { '4,18': 2.5 }, 'the key scales are untouched');
 ok('saved v6 prefs: the curve becomes full ' + DEFAULT_INPUT_CURVE.full + ' / gamma 1, key scales kept, stored as v7');
 
@@ -63,9 +68,17 @@ const fullTicks = () => 128 - velocityCal.inputCurveFull;
    that plays at a gain. */
 const musicalAt = (gain) => gain <= 0.05 ? 1 : Math.max(1, Math.min(127, Math.round(127 * Math.pow((gain - 0.05) / 0.95, 1 / 1.5))));
 
-// ── B: the law: amplitude proportional to speed ──
+// ── B: the law: the piano line, its ceiling, and a rounded corner between them ──
+/* line = F ÷ ticks. With k = 6.02 ÷ corner, gain = line ÷ (1 + line^k)^(1/k): the line
+   where the line is under 1, 1 where it is over, and `corner` dB under both where they
+   meet. */
+const K = () => 20 * Math.log10(2) / velocityCal.inputCurveCorner;
+const rounded = (x, k) => x / Math.pow(1 + Math.pow(x, k), 1 / k);
+const hard = (t) => Math.min(1, fullTicks() / t); // the piano line run into a hard ceiling
+assert.equal(velocityCal.inputCurveCorner, DEFAULT_INPUT_CURVE.corner);
+assert.equal(DEFAULT_INPUT_CURVE.corner, 1, 'the default corner passes 1 dB under the corner point');
 for (let t = 1; t <= 126; t++) {
-  const want = Math.min(1, fullTicks() / t);
+  const want = rounded(fullTicks() / t, K());
   near(velocityCal.targetGainForTicks(t), want, 1e-12, t + ' ticks');
   assert.equal(velocityCal.musicalForTicks(t), musicalAt(want), t + ' ticks → musical velocity');
   /* No stacking: played back through the house curve, that musical velocity sounds at
@@ -74,17 +87,25 @@ for (let t = 1; t <= 126; t++) {
   near(velocityCal.curveGain(velocityCal.musicalForTicks(t)), Math.max(want, velocityCal.curveGain(1)), 0.006,
     t + ' ticks plays at the curve\'s gain through the house curve');
 }
-for (const t of [3, 5, 8, 13, 21, 40]) {
-  near(dB(velocityCal.targetGainForTicks(t)) - dB(velocityCal.targetGainForTicks(2 * t)), 20 * Math.log10(2), 1e-9,
-    'doubling ' + t + ' ticks costs 6.02 dB');
-}
-ok('gain = fullTicks ÷ ticks, 6.02 dB per doubling; through the house curve the note sounds at that gain');
+ok('gain = line ÷ (1 + line^k)^(1/k); through the house curve the note sounds at that gain');
 
-// ── C: the ends: nothing above full, no floor, the house curve\'s quietest note below ──
-assert.equal(velocityCal.targetGainForTicks(fullTicks()), 1, 'the full press time is full');
-assert.equal(velocityCal.targetGainForTicks(1), 1, 'and so is anything faster');
-assert.equal(velocityCal.targetGainForTicks(0), 1);
+// ── C: only the corner is rounded: the ramp and the ceiling are where they were ──
+near(dB(velocityCal.targetGainForTicks(fullTicks())), -1, 1e-9, 'at the corner the curve is `corner` dB under it');
+/* Away from the corner it is the hard-topped line: within 0.1 dB once the press time
+   is half again longer or shorter than the corner's, within 0.03 dB at double or half. */
+for (let t = 0.25; t <= 400; t += 0.25) {
+  const off = dB(velocityCal.targetGainForTicks(t)) - dB(hard(t));
+  assert.equal(off <= 1e-12 && off >= -1.0001, true, t + ' ticks: never above the line or its ceiling, never more than the corner under');
+  const ratio = Math.max(t / fullTicks(), fullTicks() / t);
+  if (ratio >= 1.5) assert.equal(off >= -0.1, true, t + ' ticks is on the hard-topped line (' + off.toFixed(3) + ' dB)');
+  if (ratio >= 2) assert.equal(off >= -0.03, true, t + ' ticks: ' + off.toFixed(4) + ' dB');
+}
+for (const t of [5, 13, 23, 48, 100]) {
+  near(dB(velocityCal.targetGainForTicks(t)) - dB(velocityCal.targetGainForTicks(2 * t)), 6.02, 0.02, 'doubling ' + t + ' ticks costs 6 dB');
+}
+near(dB(velocityCal.targetGainForTicks(1)), 0, 0.01, 'the fastest bin is full');
 assert.equal(velocityCal.musicalForTicks(1), 127);
+assert.equal(velocityCal.targetGainForTicks(0), 1, 'a press too fast to time is full');
 near(velocityCal.targetGainForTicks(1e6), 0, 1e-5, 'no floor: a very slow press tends to silence');
 assert.equal(velocityCal.musicalForTicks(1e6), 1, 'which plays as the quietest note');
 let prev = Infinity;
@@ -93,39 +114,49 @@ for (let t = 0; t <= 600; t++) {
   assert.equal(m <= prev && m >= 1 && m <= 127, true, 'a slower press is never louder (' + t / 2 + ' ticks)');
   prev = m;
 }
-ok('full at the full press time and faster; no floor; a slower press is never louder');
+ok('1 dB under the corner point, on the hard-topped line to 0.1 dB half again away from it; full at the top, no floor');
 
 // ── D: Max\'s anchors (2026-11-22, input velocities with min lo 3) on the defaults ──
-/* f v123, p v105, ppp under v80. The default `full` is the one that puts v80 on the
-   house curve\'s quietest note (velocity 1, −25.9 dB). */
+/* f v123, p v105, ppp under v80. The default `full` puts v80 on the house curve\'s
+   quietest note (velocity 1, −25.9 dB). The rounded corner moves none of them. */
 near(dB(velocityCal.targetGainForTicks(128 - 123)), -6.4, 0.05, 'f, input velocity 123');
 near(dB(velocityCal.targetGainForTicks(128 - 105)), -19.6, 0.05, 'p, input velocity 105');
 near(dB(velocityCal.targetGainForTicks(128 - 80)), -26.0, 0.05, 'ppp, input velocity 80');
+near(dB(velocityCal.targetGainForTicks(2)), -0.4, 0.05, 'two ticks, just above the corner');
+near(dB(velocityCal.targetGainForTicks(3)), -2.3, 0.05, 'three ticks, just below it (the hard corner: −1.9)');
 assert.equal(velocityCal.applyInputCurve(80), 1, 'ppp plays as the quietest note');
 assert.equal(velocityCal.applyInputCurve(60), 1, 'and so does anything softer');
-assert.equal(velocityCal.applyInputCurve(81) >= 1 && velocityCal.applyInputCurve(86) > 1, true, 'the curve rises from there');
+assert.equal(velocityCal.applyInputCurve(86) > 1, true, 'the curve rises from there');
 assert.equal(velocityCal.applyInputCurve(127), 127);
-assert.equal(velocityCal.applyInputCurve(126), 127, 'two ticks is full on the defaults');
-ok('defaults: f −6.4 dB, p −19.6 dB, ppp at the quietest note, full by input velocity ' + DEFAULT_INPUT_CURVE.full);
+ok('defaults: f −6.4 dB, p −19.6 dB, ppp at the quietest note, as with the hard corner');
 
-// ── E: the two scalars ──
-velocityCal.setInputCurveFull(123);
-assert.equal(velocityCal.targetGainForTicks(5), 1, 'full at 123: a 5-tick press is full');
-near(dB(velocityCal.targetGainForTicks(10)), -6.02, 0.01, 'and 10 ticks is one doubling under it');
-velocityCal.setInputCurveFull(127);
-assert.equal(velocityCal.targetGainForTicks(1), 1);
-near(dB(velocityCal.targetGainForTicks(2)), -6.02, 0.01, 'full at 127: only the fastest bin is full');
+// ── E: the three scalars ──
+/* `corner`: 0 is the hard corner exactly; larger is rounder, and still only near it. */
+velocityCal.setInputCurveCorner(0);
+for (let t = 0.5; t <= 200; t += 0.5) assert.equal(velocityCal.targetGainForTicks(t), hard(t), 'corner 0 is the hard-topped line at ' + t + ' ticks');
+velocityCal.setInputCurveCorner(3);
+near(dB(velocityCal.targetGainForTicks(fullTicks())), -3, 1e-9, 'corner 3: 3 dB under the corner point');
+near(velocityCal.targetGainForTicks(5), rounded(fullTicks() / 5, K()), 1e-12);
+assert.equal(dB(velocityCal.targetGainForTicks(23)) - dB(hard(23)) > -0.05, true, 'and p is still on the line');
 velocityCal.resetInputCurve();
-const piano = [5, 10, 20, 40].map((t) => velocityCal.targetGainForTicks(t));
+assert.equal(velocityCal.inputCurveCorner, 1);
+/* `full` is where the piano line reaches full: the corner sits there. */
+const softBefore = velocityCal.targetGainForTicks(400);
+velocityCal.setInputCurveFull(120);
+near(dB(velocityCal.targetGainForTicks(8)), -1, 1e-9, 'full at 120: the corner is at 8 ticks');
+near(dB(velocityCal.targetGainForTicks(4)), 0, 0.03, 'presses well above it are full');
+near(dB(velocityCal.targetGainForTicks(16)), -6.02, 0.03, 'and well below it the line');
+near(dB(velocityCal.targetGainForTicks(400)) - dB(softBefore), 20 * Math.log10(8 / 2.4), 0.01, 'the soft end follows the line');
+velocityCal.resetInputCurve();
 velocityCal.setInputCurveGamma(1.5);
-const steep = [5, 10, 20, 40].map((t) => velocityCal.targetGainForTicks(t));
-for (let i = 0; i < 4; i++) near(steep[i], Math.pow(piano[i], 1.5), 1e-12, 'gamma is an exponent on the piano law');
-assert.equal(velocityCal.targetGainForTicks(fullTicks()), 1, 'full does not move with gamma');
+for (const t of [1, 2, 3, 5, 10, 20, 40]) {
+  near(velocityCal.targetGainForTicks(t), rounded(Math.pow(fullTicks() / t, 1.5), K()), 1e-12, 'gamma is an exponent on the line, under the same corner');
+}
 velocityCal.resetInputCurve();
 assert.equal(velocityCal.inputCurveGamma, 1);
 assert.equal(velocityCal.inputCurveFull, DEFAULT_INPUT_CURVE.full);
-assert.deepEqual(stored().inputCurve, { full: DEFAULT_INPUT_CURVE.full, gamma: 1 });
-ok('`full` moves where full loudness sits; gamma bends the law around it and is 1 for a piano');
+assert.deepEqual(stored().inputCurve, { full: DEFAULT_INPUT_CURVE.full, gamma: 1, corner: 1 });
+ok('`corner` 0 is the hard corner and 3 a rounder one; `full` places the line and its corner; gamma is an exponent on the line');
 
 // ── F: a strike: the key\'s own press time, scaled, straight into the curve ──
 assert.equal(velocityCal.lumatoneVelocity('1,0', 0), 0, 'velocity 0 stays a note-off');

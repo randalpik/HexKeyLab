@@ -102,23 +102,30 @@ done.**
 node --import ./test/orchestrator-smoke/register-ts.mjs test/hkl-midi/lumatone-curve.mjs
 ```
 
-The curve is the piano's law in the device's units:
-`gain = (fullTicks ÷ ticks)^gamma`, never above 1, with `full` the input
-velocity of full loudness and gamma 1 the measured piano. Starts from saved v6
-prefs holding the previous curve (a floor, a ceiling and its gamma) and checks
-the one-time reset (`full` and gamma to their defaults, key scales kept, stored
-as v7 with no floor or ceiling); then the law at every tick from 1 to 126 and
-the musical velocity it becomes, with every doubling of press time costing
-6.02 dB, and that velocity sounding at the curve's own gain when played back
-through the house curve (no stacking); the ends (full at the full press time and faster, no floor, a very
-slow press playing as the quietest note, and a slower press never louder);
-Max's anchors of 2026-11-22 on the defaults (input velocity 123 at −6.4 dB, 105
-at −19.6 dB, 80 on the quietest note); the two scalars (`full` moves where full
-loudness sits, gamma is an exponent on the law and does not move it); a strike
-(`lumatoneVelocity`: the key's scaled press time straight into the curve); and
-that `applyInputCurve` at a whole input velocity equals the strike on three
-interval tables. No dev server or MIDI device is needed. **Run it before
-declaring any change to the Lumatone curve or the note-on velocity path done.**
+The curve is the piano's law in the device's units, run up to full loudness,
+with the corner where they meet rounded: `line = (F ÷ ticks)^gamma`, and
+`gain = line ÷ (1 + line^k)^(1/k)` with `k = 6.02 ÷ corner`. `full` is the input
+velocity where the line reaches full, gamma 1 the measured piano, and `corner`
+how many dB under the meeting point the curve passes (0 = `min(1, line)`).
+Starts from saved v6 prefs holding an earlier curve (a floor, a ceiling and its
+gamma) and checks the one-time reset (the three scalars to their defaults, key
+scales kept, stored as v7 with no floor or ceiling); then the law at every tick
+from 1 to 126, the musical velocity it becomes, and that velocity sounding at
+the curve's own gain when played back through the house curve (no stacking);
+that only the corner is rounded (1 dB under the corner point, never above the
+hard-topped line or more than the corner under it, within 0.1 dB of it once the
+press time is half again longer or shorter than the corner's and 0.03 dB at
+double or half, 6 dB per doubling from 5 ticks down, full at the fastest bin,
+no floor, a slower press never louder); Max's anchors of 2026-11-22 on the
+defaults (input velocity 123 at −6.4 dB, 105 at −19.6 dB, 80 on the quietest
+note, the same as with a hard corner); the three scalars (`corner` 0 is the
+hard-topped line exactly and 3 dB a rounder corner that still leaves p on the
+line; `full` places the line and its corner; gamma is an exponent on the line
+under the same corner); a strike (`lumatoneVelocity`: the key's scaled press
+time straight into the curve); and that `applyInputCurve` at a whole input
+velocity equals the strike on three interval tables. No dev server or MIDI
+device is needed. **Run it before declaring any change to the Lumatone curve or
+the note-on velocity path done.**
 
 ## Built-in key / aftertouch calibration (hardware-free)
 

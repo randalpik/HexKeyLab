@@ -11834,3 +11834,51 @@ A note on a key that changes pitch with the tuning stays on that key in HKL: a P
 **Superseded by today's entries**, for a reader arriving from the older ones: the velocity recipe of 2026-05-18 (`low` 3, `high` 130, an audio gamma of 13.9, the tick range 3..50); raising MIN or MAX per key or per board to move a key's velocities (2026-05-17); the per-key gain and its capture (2026-05-17, replaced by the press-time scale); the conclusion that this unit has a narrow sensor swing (it had narrow timing windows, from non-stock per-board thresholds).
 
 **Left open**: the outlier lists in Calibrate Keys' per-key statistics still name thresholds and fixes from May 2026 ("raise MAX", "raise MIN"); `max` at 15 against a stock 8, which cannot be lowered safely on top of a firmly pressed calibration; whether the constant `full` wants a different value once Max has played more.
+
+## The Lumatone curve bends under the piano line near the top: a logistic in log press time (2026-11-23, Max)
+
+**Picked**: `gain = (F / (ticks + F − top))^gamma`, 1 at or under `top` (the fastest bin), with `F` the press time of the `full` input velocity (`velocityCal.targetGainForTicks`). Far from the top it is the piano line `F / ticks` of the previous entry; it leaves that line near the top and meets full only at the fastest bin. With x = (ticks − top) / F the curve is 1 / (1 + x), a logistic function of ln x. `full` keeps its name, its saved value and its meaning (where the piano line reaches full), so nothing migrates and the soft end stays where it was; gamma is unchanged. It replaces the same line run up to a hard ceiling at `full`.
+
+**Why** (Max, after a day of playing the hard-topped curve): "There's something that still feels off about the loud end … regardless of where I place 'full at', the slope up to it is just too steep. I know that's the piano curve doing its job, so I don't want to adjust the whole gamma, because it feels great at soft ranges. I think the limitation is with the Lumatone key hardware itself, not only the tick bins that kill continuity, but also the resistance which is less than a piano key. This means it's harder for the keys to distinguish between extreme forces consistently … So I'm envisioning a logistic-shaped curve rather than an exponential with a ceiling." The line costs 8.7 / ticks dB per tick, which around forte (3 to 6 ticks) is 1.6 to 2.5 dB for a difference the hand and the bins cannot hold steady.
+
+**The domain matters**: a logistic drawn in input velocity (linear in ticks) falls by the same dB for every tick at the soft end, which is the original curve's shape and would put p near −48 dB. In the log of press time the soft end is the piano law untouched.
+
+**What it trades** (shown to him before building): with the default `full` 125.6 a tick around forte costs 1.2 to 1.7 dB, forte itself is 2 dB lower (−8.5 dB), two ticks is 3 dB under the top where it was full, and ppp stays on the quietest note. A lower `full` widens the knee further and raises the soft end with the line, so a gentler top is paid for in range: at 124.6 a tick around forte is about 1.2 dB and ppp sits 3 dB above the bottom. Max's question "couldn't we just … take those numbers and add 3 to them?" is what the formula does: it is normalized to full at the fastest bin, and the 3 dB appears at whichever end `full` leaves it.
+
+**This is the soft top rejected two entries back** (`((1 + c) / (ticks + c))^gamma`, with c = F − top), then set aside as "a correction for the device, not piano data". It still is one. What changed is the reason for it: his finding that the device cannot support the line at the top, where before the only argument was that f and fff were adjacent bins.
+
+**Rejected**: a second scalar for the knee's width (it would let the knee widen without moving the soft end only by giving up the top or the bottom; one slider already moves between the useful cases); a logistic in input velocity (above).
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/lumatone/lumadiag.ts` (tooltips and comments); `test/hkl-midi/lumatone-curve.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md, docs/guide/core.md.
+
+## Correction: the logistic Max asked for rounds the corner; it does not bend the top under the line (2026-11-23, Max)
+
+**Picked**: `gain = tanh((F / ticks)^gamma)`: the piano line of the 2026-11-22 entry through a logistic saturation (`velocityCal.targetGainForTicks`). It replaces, the same day, the curve of the entry just above (`(F / (ticks + F − top))^gamma`), which was my misreading of his request and should not be built on.
+
+**What he asked for**: "I'm envisioning a logistic-shaped curve rather than an exponential with a ceiling." And, after the first attempt: "That curve doesn't look logistic and doesn't feel any better. And logically it actually isn't possible for it to fix the issue I mentioned. Reducing either 'full at' or gamma just raises the floor and doesn't touch the top part, which is the part that needs attention." Then, when I claimed a shoulder could not leave the soft range alone: "If the starting point is a curve that ramps up to the ceiling and levels off suddenly, logically that corner has room to be angled. This would soften the ramp toward the top without touching anything below it. That's the logistic shape I meant, and I don't know why you're calling it impossible."
+
+**Where I went wrong, twice**:
+- I built a curve that is a logistic in the *log* of press time. On his graph, which is linear in input velocity, that is still a hockey stick, steepest at the very top: one tick to two went from 0 dB to 3.0 dB, forte dropped 2 dB, and its only control lifted the whole soft end.
+- I then argued from a wide shoulder (the top flattened from forte up), which does cost either range or the soft end, and called his request impossible. He had asked for the corner to be rounded, which costs neither.
+
+**What the rounded corner does** (defaults, `full` 125.6): the soft range is the piano line to within 0.1 dB from 13 ticks (input velocity 115) down; p and ppp are where they were; forte is 0.6 dB lower; the steepest tick is 2.0 dB where the hard ceiling had 2.5; ticks 1, 2 and 3 are −0.1, −1.6 and −3.6 dB where they were 0, 0 and −1.9. tanh is the logistic function rescaled through 0 with slope 1, so "the line through a logistic" is literal.
+
+**What it does not do**: make whole ticks finer. Max ruled out his hand as the source of the loud end's inconsistency ("That I can control, at least as well as I can control it on a piano"), which leaves the tick bins: a press of 2.5 scans reads 2 or 3 ticks. The remedy for that is fractional press time in the Lumatone's firmware (lessons.md → "A tick is one scan of the board"), which is Lumatone's to ship.
+
+**Not built**: a knee-width scalar; the wide shoulders drawn as A and B.
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts`, `apps/hkl/src/lumatone/lumadiag.ts` (tooltips and comments); `test/hkl-midi/lumatone-curve.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md, docs/guide/core.md.
+
+## Second correction: only the corner is rounded, by a `corner` scalar (2026-11-23, Max)
+
+**Picked**: the Lumatone curve is the piano line run into a ceiling, as accepted on 2026-11-22, with one addition: `corner`, how many dB under the point where the line meets the ceiling the curve passes. `gain = line / (1 + line^k)^(1/k)`, `line = (F / ticks)^gamma`, `k = 6.02 / corner`; `corner` 0 is `min(1, line)`. Default 1 dB. It replaces the tanh curve of the entry above, the same day.
+
+**Why**: tanh was still not what he asked for. "That STILL doesn't look logistic. I said round the corner, not reshape the whole curve. I mean the actual corner." tanh's knee spans a factor of about three in press time on either side of the corner, so it lowered the whole ramp (three ticks from −1.9 to −3.6 dB, four from −4.4 to −5.4) and never visibly leveled off inside the graph. The formula here leaves the ramp and the ceiling alone: at 1 dB it is within 0.1 dB of the hard-cornered curve once the press time is half again longer or shorter than the corner's.
+
+**Three misreadings in one day, for the record**: (1) a logistic in the log of press time, which on his graph is not S-shaped and steepened the top; (2) a wide shoulder, which I then called impossible without moving the soft range; (3) tanh, a corner so wide it reshaped the ramp. He described the shape correctly each time, as drawn on the Calibrate Keys graph (linear gain against input velocity). A curve change is to be drawn in those coordinates and confirmed before it is built.
+
+**Why a third scalar** (mine, against his preference for one or two): how round "the actual corner" is was the one quantity left to guess, and I had guessed wrong three times. It can be frozen into a constant once he has a value.
+
+**What it does and does not do**: with `full` at 125.6 the corner lies between two and three ticks, so at 1 dB it moves those two levels (to −0.4 and −2.3 dB, from 0 and −1.9) and nothing else. The steepness of the ramp below is the line's own, 8.7 / ticks dB per tick, and comes from the size of a tick; no corner changes it (lessons.md → "A tick is one scan of the board").
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts` (`corner` in `InputCurveState`, `targetGainForTicks`), `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts` (third slider); `test/hkl-midi/lumatone-curve.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md, docs/guide/core.md.

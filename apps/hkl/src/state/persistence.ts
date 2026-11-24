@@ -63,7 +63,8 @@ export interface VelocityCalPrefs {
    *  `keyScale` (a multiplier on press time) in place of `perKey` (a gain on
    *  velocity, no longer read); v6 = `inputCurve.gamma` is an exponent on
    *  finger speed (1 / press time), where it was one on the velocity number;
-   *  v7 = `inputCurve` is `{ full, gamma }`, the piano law (no floor or ceiling).
+   *  v7 = `inputCurve` is `{ full, gamma, corner }`, the piano law (no floor or
+   *  ceiling; `corner` was added later and defaults when absent).
    *  Older versions get a one-time migration in velocityCal.ts. */
   version?: number;
   floor: number;
@@ -82,7 +83,7 @@ export interface VelocityCalPrefs {
    *  Phase C: superseded by `intervalCurve` (which shapes at the firmware level
    *  via SysEx 0x20). Kept as a defensive identity layer; migration in
    *  velocityCal.ts resets to identity once the user adopts intervalCurve. */
-  inputCurve?: { full?: number; gamma: number };
+  inputCurve?: { full?: number; gamma: number; corner?: number };
   /** Lumatone firmware velocity-interval (CMD 0x20) curve parameters. Defines
    *  the press-time tick thresholds that separate the firmware's 128 velocity
    *  bins, via the parametric `low + (high - low) · (i/126)^gamma` map. HKL
@@ -464,12 +465,13 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
   }
   /* `full` is absent from prefs saved before v7, whose curve had a floor and a
      ceiling instead; velocityCal's migration replaces such a curve. */
-  let inputCurve: { full?: number; gamma: number } | undefined;
+  let inputCurve: { full?: number; gamma: number; corner?: number } | undefined;
   if (v.inputCurve && typeof v.inputCurve === 'object') {
     const ic = v.inputCurve as Record<string, unknown>;
     if (typeof ic.gamma === 'number' && ic.gamma > 0) {
       inputCurve = { gamma: ic.gamma };
       if (typeof ic.full === 'number' && ic.full >= 1 && ic.full <= 127) inputCurve.full = ic.full;
+      if (typeof ic.corner === 'number' && ic.corner >= 0 && ic.corner <= 12) inputCurve.corner = ic.corner;
     }
   }
   let intervalCurve: { low: number; high: number; gamma: number } | undefined;

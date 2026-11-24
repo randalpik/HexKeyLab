@@ -478,6 +478,8 @@ function makeGlobalFooter(): HTMLDivElement {
 const velCalUi: {
   fullSlider?: HTMLInputElement;
   fullVal?: HTMLSpanElement;
+  cornerSlider?: HTMLInputElement;
+  cornerVal?: HTMLSpanElement;
   gammaSlider?: HTMLInputElement;
   gammaVal?: HTMLSpanElement;
   preview?: HTMLCanvasElement;
@@ -605,6 +607,10 @@ function refreshCurveUi(): void {
   if (velCalUi.fullSlider) {
     velCalUi.fullSlider.value = String(Math.round(velocityCal.inputCurveFull * 10));
     velCalUi.fullVal!.textContent = velocityCal.inputCurveFull.toFixed(1);
+  }
+  if (velCalUi.cornerSlider) {
+    velCalUi.cornerSlider.value = String(Math.round(velocityCal.inputCurveCorner * 10));
+    velCalUi.cornerVal!.textContent = velocityCal.inputCurveCorner.toFixed(1) + ' dB';
   }
   if (velCalUi.gammaSlider) {
     velCalUi.gammaSlider.value = String(Math.round(velocityCal.inputCurveGamma * 100));
@@ -983,15 +989,17 @@ function makeVelocityCalSection(): HTMLDivElement {
   sec.appendChild(blendRow);
 
   /* ── Lumatone velocity curve ──
-     The piano's law in the device's units: gain = (fullTicks ÷ ticks)^gamma,
-     never above 1, no floor (velocityCal.targetGainForTicks). `full` is the
-     input velocity of full loudness, gamma 1 the measured piano. Internally
-     the gain is converted to the canonical musical velocity that reproduces it
-     through the house curve, so keyVelocity stays device-neutral; a gain under
-     the house curve's floor plays as its quietest note. The preview below is
-     this exact curve against the input velocity (the hardware velocity after
-     the key's scale: 128 − ticks on the one-tick table), which is the number
-     the Diagnostics overlay plots and labels for a Lumatone strike. */
+     The piano's law in the device's units, run up to full loudness, with the
+     corner where they meet rounded (velocityCal.targetGainForTicks). `full` is
+     the input velocity where the piano line (F ÷ ticks)^gamma reaches full;
+     gamma 1 is the measured piano; `corner` is how many dB under that meeting
+     point the curve passes, and moves nothing away from it. Internally the gain
+     is converted to the canonical musical velocity that reproduces it through
+     the house curve, so keyVelocity stays device-neutral; a gain under the house
+     curve's floor plays as its quietest note. The preview below is this exact
+     curve against the input velocity (the hardware velocity after the key's
+     scale: 128 − ticks on the one-tick table), which is the number the
+     Diagnostics overlay plots and labels for a Lumatone strike. */
   const curveLabel = document.createElement('div');
   curveLabel.textContent = 'Lumatone velocity curve';
   Object.assign(curveLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
@@ -1045,27 +1053,36 @@ function makeVelocityCalSection(): HTMLDivElement {
      convert back to fractional gain. The composite preview = this exact curve. */
   /* `full` in tenths of an input velocity: on the one-tick table 125.6 is 2.4 ticks. */
   const fullUi = mkCurveSlider(
-    'full at', 'The input velocity at which a press reaches full loudness; anything faster is full too. Input velocity is the number the Diagnostics overlay shows (128 − ticks, after the key\'s scale). Lower = full loudness comes sooner and everything is louder.',
+    'full at', 'Where the piano line reaches full loudness, as an input velocity (the number the Diagnostics overlay shows: 128 − ticks, after the key\'s scale). Faster presses are full too. Lower = full loudness comes sooner and everything is louder.',
     1000, 1270, 1,
     () => Math.round(velocityCal.inputCurveFull * 10),
     (v: number) => velocityCal.setInputCurveFull(v / 10),
     (v: number) => (v / 10).toFixed(1),
   );
   const gammaUi = mkCurveSlider(
-    'gamma', 'Exponent on the piano law. 1.00 is a piano: amplitude proportional to the speed of the press, 6 dB per doubling of press time. Higher = wider dynamic range (soft presses quieter); lower = narrower.',
+    'gamma', 'Exponent on the piano line. 1.00 is a piano: amplitude proportional to the speed of the press, 6 dB per doubling of press time. Higher = wider dynamic range (soft presses quieter); lower = narrower.',
     50, 200, 1,
     () => velocityCal.inputCurveGamma * 100,
     (v: number) => velocityCal.setInputCurveGamma(v / 100),
     (v: number) => (v / 100).toFixed(2),
   );
+  const cornerUi = mkCurveSlider(
+    'corner', 'Rounds the corner where the line meets full loudness, and only the corner: how many dB under that point the curve passes. 0 = a hard corner.',
+    0, 30, 1,
+    () => Math.round(velocityCal.inputCurveCorner * 10),
+    (v: number) => velocityCal.setInputCurveCorner(v / 10),
+    (v: number) => (v / 10).toFixed(1) + ' dB',
+  );
   velCalUi.fullSlider = fullUi.slider; velCalUi.fullVal = fullUi.val;
   velCalUi.gammaSlider = gammaUi.slider; velCalUi.gammaVal = gammaUi.val;
+  velCalUi.cornerSlider = cornerUi.slider; velCalUi.cornerVal = cornerUi.val;
   sec.appendChild(fullUi.row);
+  sec.appendChild(cornerUi.row);
   sec.appendChild(gammaUi.row);
 
   const curveResetBtn = document.createElement('button');
   curveResetBtn.textContent = 'Reset curve (full at ' + DEFAULT_INPUT_CURVE.full.toFixed(1)
-    + ', gamma ' + DEFAULT_INPUT_CURVE.gamma.toFixed(2) + ')';
+    + ', corner ' + DEFAULT_INPUT_CURVE.corner.toFixed(1) + ' dB, gamma ' + DEFAULT_INPUT_CURVE.gamma.toFixed(2) + ')';
   Object.assign(curveResetBtn.style, {
     fontSize: '11px', padding: '1px 6px', marginTop: '4px',
     background: 'rgba(255,255,255,0.08)', color: '#eee',
