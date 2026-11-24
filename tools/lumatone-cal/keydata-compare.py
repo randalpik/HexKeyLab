@@ -38,9 +38,13 @@
 #                      touch a key's press time follows its window (docs/
 #                      lessons.md, "Press time follows the timing window"), so
 #                      HKL multiplies each key's press time by this number.
-#                      Give the folder the device runs (one folder is enough),
-#                      and import the file in HKL's Calibrate Keys. Keys are
-#                      named "<board group 1-5>,<key 0-55>", as HKL names them.
+#                      HKL makes this table itself, from the same values read
+#                      off the device over SysEx (apps/hkl/src/lumatone/
+#                      keyscales.ts); the file is for looking at the numbers and
+#                      for test/hkl-midi/key-scale.mjs, which holds the two to
+#                      the same table. Give the folder the device runs (one
+#                      folder is enough). Keys are named
+#                      "<board group 1-5>,<key 0-55>", as HKL names them.
 #
 # What the numbers mean (docs/lessons.md, "What the key routine stores"): the
 # built-in routine stores each key's highest sensor reading as MAX and its rest
@@ -307,7 +311,7 @@ def write_scales(out_file, names, keys, swap, target_level=None):
             key_label(x), x['window'],
             'left out (no timing window)' if scale is None else 'scale {0:.2f} held to {1:g}..{2:g}'.format(scale, SCALE_MIN, SCALE_MAX)))
     print('  key ids are for a unit {0} boards 3 and 4 swapped'.format('with' if swap else 'without'))
-    print('  next: Calibrate Keys → Import key scales in HKL')
+    print('  HKL reads the calibration off the device and makes this table itself; nothing to import')
 
 
 def draw_maps(out_dir, keys, n_runs, overhead_text, target_level=None):

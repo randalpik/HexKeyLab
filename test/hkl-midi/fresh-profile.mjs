@@ -16,7 +16,7 @@
 //   D1-D7  selOutline, selRotation, selTuning, selMapping, selHexSize,
 //          waveform, pedalExpr, pedalSus each show their DEFAULT_PREFS value
 //   D8     audio.activeWaveform === DEFAULT_PREFS.waveform
-//   H1     Shift+\ opens Calibrate Keys before its overlay was ever built
+//   H1     Shift+\ opens Calibration before its overlay was ever built
 //          (the listener used to be registered only by the first build)
 //   H2     a plain D holds a QWERTY note
 //   H3     Shift+D holds none (any modifier means a hotkey, never a note)
@@ -62,7 +62,7 @@ const SCRIPT = `(async () => {
   const before = cb.checked;
   window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backslash', key: '|', shiftKey: true, bubbles: true }));
   await new Promise((r) => setTimeout(r, 100));
-  results.push({ name: 'H1: Shift+\\\\ opens Calibrate Keys on a fresh session', ok: !before && cb.checked, got: before + ' -> ' + cb.checked, want: 'false -> true' });
+  results.push({ name: 'H1: Shift+\\\\ opens Calibration on a fresh session', ok: !before && cb.checked, got: before + ' -> ' + cb.checked, want: 'false -> true' });
   if (cb.checked) window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backslash', key: '|', shiftKey: true, bubbles: true }));
 
   const kn = await depUrl(root, '/src/input/keyboard-notes.ts');

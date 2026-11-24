@@ -63,17 +63,15 @@ both with its setup. Drives the real `lumatone/sync.ts` and `lumatone/sysex.ts`
 against the scripted device and checks that a connect carries each table once,
 after the layout and the flags and before the colors, on both firmware paths;
 that the LUT on the wire is the identity (bins 126 and 127 at 1) and the
-intervals are the table `velocityCal` builds from the current low / high /
-gamma; that a color-only sync sends neither; that the preset-switch pair sends
+intervals are thresholds 0…126, a constant with no setting; that the setup also
+reads the calibration back for the key scales (three reads per board); that a
+color-only sync sends neither; that the preset-switch pair sends
 both again; and that Auto-sync off sends nothing. Then the decode the
 Diagnostics overlay prints (`velocityCal.pressTicks`), against a model of the
 device's count and binning (the count starts at 0, so the press time is the
 count plus one): every count from 0 to 400 lands in the range its velocity
-decodes to; on the default table (0…126) each count has its own velocity and the
-press time is 128 − the velocity; a table that starts at 1 gives counts 0 and 1
-the same velocity, labeled `1–2`; `65–66` where low 1 / high 128 skips a
-threshold; and, on a table with repeated thresholds, the bin the firmware's
-bisection lands on inside a run decodes to its own press time. No dev server or MIDI device is needed. **Run it before declaring
+decodes to, and each count has its own velocity, the press time being 128 − the
+velocity. No dev server or MIDI device is needed. **Run it before declaring
 any change to the setup batch, the two table builders or the tick label done.**
 
 ## Per-key press-time scale (hardware-free)
@@ -89,15 +87,21 @@ exactly; that ticks ↔ velocity round-trips on whole ticks and is continuous
 between them; that one touch on keys with timing windows of 78, 49 and 13
 counts lands within each key's own tick rounding once scaled (92 velocity steps
 apart unscaled); that a slower press is never louder and both ends clamp; that
-the fraction reaches the curve; the import (a well-formed file replaces the
-table, eleven malformed ones change nothing); persistence under `keyScale`
-with no `perKey`; the capture pass (scale = target press time ÷ the key's
-median); and, end to end, that `tools/lumatone-cal/keydata-compare.py --scales`
-on a synthetic calibration folder writes the median window over each key's
-window, keyed by board group under either board map, in a file the import
-takes. Needs `python3`; no dev server or MIDI device. **Run it before declaring
-any change to the scale, the import format or `keydata-compare.py --scales`
-done.**
+the fraction reaches the curve; that `setKeyScales` replaces the table and
+leaves out anything that is not a key's scale; persistence under `keyScale`
+(v9, with no `perKey`, interval table or statistics). Then where the numbers
+come from (`lumatone/keyscales.ts`): the arithmetic (`computeKeyScales`: window
+= MAX − MIN − (`max` + `min lo`), scale = the median window ÷ the key's, a key
+with no window left out, a scale out of range held); the same table, on all 280
+keys and under either board map, as `tools/lumatone-cal/keydata-compare.py
+--scales` writes from a synthetic calibration folder; the saved table from the
+saved device folder, when `tools/lumatone-cal/backups/` holds them (local
+files; skipped otherwise); and the read against a scripted device
+(`refreshKeyScales`: `19h`, `1Ah` and `3Ah` to every board, named by board
+group under either board map, a BUSY reply retried, and the table left alone by
+a refusal, by a calibration in progress and with no device). Needs `python3`;
+no dev server or MIDI device. **Run it before declaring any change to the
+scale, `keyscales.ts` or `keydata-compare.py --scales` done.**
 
 ## Lumatone velocity curve (hardware-free)
 
@@ -112,8 +116,8 @@ velocity where the line reaches full, gamma 1 the measured piano, and `corner`
 how many dB under the meeting point the curve passes (0 = `min(1, line)`).
 Starts from saved v6 prefs holding an earlier curve (a floor, a ceiling and its
 gamma) and checks the one-time reset (the three scalars to their defaults, key
-scales kept, the saved interval table replaced by 0…126, stored as v8 with no
-floor or ceiling); then the law at every tick
+scales kept, the saved interval table dropped, stored as v9 with no floor or
+ceiling); then the law at every tick
 from 1 to 126, the musical velocity it becomes, and that velocity sounding at
 the curve's own gain when played back through the house curve (no stacking);
 that only the corner is rounded (1 dB under the corner point, never above the
@@ -128,7 +132,7 @@ hard-topped line exactly and 3 dB a rounder corner that still leaves p on the
 line; `full` places the line and its corner; gamma is an exponent on the line
 under the same corner); a strike (`lumatoneVelocity`: the key's scaled press
 time straight into the curve); and that `applyInputCurve` at a whole input
-velocity equals the strike on four interval tables; and that the law runs on the
+velocity equals the strike; and that the law runs on the
 press time, the device's count plus one (counts 7 and 15 are 6 dB apart, counts 0
 and 1 are separate velocities, a key's scale multiplies the ticks). No dev server
 or MIDI device is needed. **Run it before declaring any change to the Lumatone curve or
@@ -159,12 +163,19 @@ done.**
 node test/hkl-midi/keycal-overlay.mjs   # requires `pnpm dev`; exits non-zero on failure
 ```
 
-The overlay around it, in headless Chromium: builds the real Calibrate Keys
-overlay, clicks the real buttons against a fake output, and checks that the
-section sits first under the header, that the two start buttons give way to
-Confirm / Cancel while a calibration runs and return after it, the status
-line, the bytes on the wire, the read-back of the per-board values, and that
-firmware 1.4.0 is refused with a reason.
+The overlay around it, in headless Chromium: builds the real Lumatone
+Calibration panel, uses the real controls against a fake output, and checks the
+title and the order of the sections (velocity curve, built-in calibration, the
+five boards with Reset all 5 boards under them, the board swap), that the
+controls removed on 2026-11-24 are gone, and that the scroll bar has a strip of
+its own; that the two start buttons give way to Confirm / Cancel while a
+calibration runs and return after it, the status line, the bytes on the wire,
+the read-back of the per-board values, and that firmware 1.4.0 is refused with
+a reason; that the key scales are read after a calibration and after a board's
+`max` is changed, and the line under the curve follows; and that Reset all
+calibration and Reset all 5 boards send nothing when declined and, accepted,
+the factory resets (after the first, the setup with both velocity tables
+again).
 
 ## Color sync ordering (hardware-free)
 
@@ -219,7 +230,7 @@ dropdowns, a damper source, or the recording's pedal streams done.**
 
 Behavioral gate for HKL's **Lumatone MIDI input path** — device-departure
 handling, the liveness heartbeat that detects a power-off, confirmed
-re-adoption of a port that reappears, and the Calibrate Keys checkbox staying
+re-adoption of a port that reappears, and the Calibration checkbox staying
 unchecked (its overlay closed) while a disconnect hides it, including after a
 reload with the pref on.
 
@@ -417,7 +428,7 @@ value in its `<select>` — assigning a value with no `<option>` silently blanks
 the select, which is how the default instrument once drifted from the menu's
 "Piano" and played the first note through an empty-type oscillator — and the
 audio engine's starting instrument must agree with the pref. Also checks the
-hotkeys: `Shift+\` opens Calibrate Keys before its overlay was ever built; a
+hotkeys: `Shift+\` opens Calibration before its overlay was ever built; a
 plain `D` holds a QWERTY note but `Shift+D` doesn't (a modified key is never a
 note); with Diagnostics open, `Ctrl+D` is claimed by the overlay and holds no
 note. **Run it after changing `DEFAULT_PREFS`, a pref-backed menu's options,

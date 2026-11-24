@@ -9,7 +9,8 @@
 // messages (fixed MIDI layout: channels 1-5 × notes 0-55), the global
 // aftertouch + keystroke-light flags, and the two velocity tables (the identity
 // LUT and the press-time interval table). Gated by lumatone.fixedLayoutSent so
-// re-syncs don't repeat the setup.
+// re-syncs don't repeat the setup. With each setup the per-key press-time scales
+// are read back from the device's calibration (lumatone/keyscales.ts).
 //
 // A preset switch on the device (one of its preset buttons) replaces all of
 // that; watchPresetSwitch sees the firmware's end-of-switch marker and
@@ -38,6 +39,7 @@ import {
 } from './protocol.js';
 import { sysex } from './sysex.js';
 import { velocityCal } from '../audio/velocityCal.js';
+import { refreshKeyScales } from './keyscales.js';
 import { hexToOklab, oklabToHex, type Oklab } from './oklab.js';
 import { orderColorSync } from './sync-order.js';
 import type { SysexMessage } from '../types.js';
@@ -247,6 +249,7 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
   }
 
   const newQ: SysexMessage[] = [];
+  let setup = false;
 
   /* One-time setup: fixed MIDI layout + aftertouch flag + keystroke-light flag
      + the two velocity tables. The device keeps the tables in RAM and reloads
@@ -269,6 +272,7 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
     newQ.push(buildSetVelocityLut(velocityCal.buildIdentityLut()));
     newQ.push(buildSetVelocityIntervalConfig(velocityCal.buildIntervalTable()));
     lumatone.fixedLayoutSent = true;
+    setup = true;
   }
 
   /* Diff predicted vs target — collect changed key indices */
@@ -310,6 +314,11 @@ export function syncLumatoneColors(cause: 'hover' | 'sync' | 'slide' = 'sync'): 
   /* Option B: swap queue in place, let in-flight message complete naturally.
      The new queue takes over once the wire is free. */
   sysex.replaceQueue(newQ);
+
+  /* The per-key scales describe the calibration the device holds now: a power
+     cycle may have loaded restored files, and a board swap renames the keys.
+     Read only, queued behind the setup so the re-push is not held up. */
+  if (setup) refreshKeyScales();
 }
 
 /* What the device holds can no longer be assumed (a preset was loaded on it; the

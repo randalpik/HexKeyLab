@@ -217,19 +217,6 @@ function routeChannelMessage(data: Uint8Array): void {
     if (fromGame === 'swallow') return;
     const key = heldKey('lumatone', physId) ?? fixedMidiToKey(ch, d1);
     if (!key) return;
-    /* Per-key velocity statistics: always-on rolling sample collection when
-       statsEnabled (toggled in lumadiag). RAW velocity here — the (p5, p95)
-       scatter must reflect the firmware's natural output, not whatever the
-       input curve has been tuned to, so we can keep diagnosing the
-       underlying hardware envelope. Single boolean check when disabled. */
-    velocityCal.recordForStats(physId, d2);
-    /* Distinct-velocity tracker — feeds the lumadiag counter and lets
-       loopdiag flag velocities outside the predicted-reachable-bin set. */
-    velocityCal.recordObservedVelocity(d2);
-    /* Lumatone-only input velocity curve. Identity by default; user dials it
-       in via lumadiag to compensate for compressed firmware velocity range.
-       Everything downstream (audio engine, recording, MIDI export) sees the
-       shaped value. */
     /* Lumatone → canonical musical velocity: the key's press time, scaled by its
        own number (hardware variance correction), through the Lumatone curve, at input time.
        keyVelocity now holds musical velocity (the house curve maps it to gain at
@@ -241,10 +228,6 @@ function routeChannelMessage(data: Uint8Array): void {
        the key's scale, which is what the curve takes) and its press time; a voice
        carries only the musical velocity. A game's note has neither. */
     if (fromGame === null) velocityCal.noteStrike(key, d2, velocityCal.applyKeyScale(physId, d2), velocity);
-    /* Per-key scale auto-capture samples RAW d2 — the scale corrects the raw
-       firmware press time before the curve. Keyed by the physical key, like the
-       gain and the stats. Out of capture mode, a boolean check. */
-    velocityCal.recordSample(physId, d2);
     /* Forward the strike to Composer for Performance mode. No-op unless that
        mode is active; fires on every note-on (incl. re-articulations) in the
        MIDI handler's synchronous call stack (low-latency, tab-throttle-proof). */

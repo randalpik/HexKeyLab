@@ -124,7 +124,7 @@ function applyPrefsToDom(p: PrefsV1): void {
   $<HTMLInputElement>('cbCalibrateKeys').checked = p.calibrateKeys && calibrateKeysShown();
 }
 
-/** Whether the Calibrate Keys checkbox is on screen (`luma-conn-only`). */
+/** Whether the Calibration checkbox is on screen (`luma-conn-only`). */
 function calibrateKeysShown(): boolean {
   return !!document.getElementById('tb-group-lumatone')?.classList.contains('lumatone-connected');
 }
@@ -170,7 +170,7 @@ pedal.roles.expr = prefs.pedalExpr;
 pedal.roles.sus = prefs.pedalSus;
 tuning.hejiEnabled = prefs.hejiEnabled;
 /* Seed the board-routing swap before the first Lumatone sync. The toggle lives
-   in the Calibrate Keys overlay, but the routing must be correct even if it's
+   in the Calibration overlay, but the routing must be correct even if it's
    never opened. */
 setBoards34Swapped(prefs.swapBoards34);
 

@@ -356,7 +356,7 @@ function tick(): void {
     /* The Lumatone strike behind that voice, when it has one. The trace then
        plots the strike's INPUT velocity: the hardware velocity after the key's
        scale, which is what goes into the Lumatone curve and is that curve's
-       x-axis in Calibrate Keys. It does not move when the curve is changed. Any
+       x-axis in the Calibration panel. It does not move when the curve is changed. Any
        other voice (mouse, QWERTY, playback) plots the velocity it sounds at. */
     const strike = kMax === null ? undefined : velocityCal.strikeOf(kMax, vMax);
     for (const k in audio.aftertouchSnapshot) { const p = audio.aftertouchSnapshot[k]; if (p > pMax) pMax = p; }

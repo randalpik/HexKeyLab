@@ -7,7 +7,7 @@ import type { SysexMessage } from '../types.js';
 // Board routing: the baseKeys group index (0-4) → SysEx board byte mapping is
 // normally the identity [1,2,3,4,5]. Some units (e.g. Max's) have boards 3 & 4
 // physically swapped, which needs [1,2,3,5,4]. That swap is a runtime toggle
-// (Calibrate Keys → "Swap boards 3 ↔ 4", off by default, persisted) routed
+// (Calibration → "Swap boards 3 ↔ 4", off by default, persisted) routed
 // through sysexBoardFor() below — do NOT hardcode either map at call sites.
 
 export const SYSEX_MANU = [0x00, 0x21, 0x50] as const;
@@ -50,7 +50,8 @@ export const SYSEX_CMD_PERIPHERAL_CALIBRATION_DATA = 0x3E;
    NOTE: 0x08 is "velocity config" — bin index → output MIDI velocity (128 × 7-bit).
    It's an OUTPUT RELABELING table. The complementary 0x20 SET_VELOCITY_INTERVALS
    (127 × 12-bit) is what controls the press-time → bin BOUNDARIES. The two are
-   independent and HKL drives both: 0x08 stays at identity, 0x20 is user-tuned. */
+   independent and HKL drives both: 0x08 stays at identity, and 0x20 is the
+   one-count table 0…126 (velocityCal.buildIntervalTable). */
 export const SYSEX_CMD_SET_VELOCITY_CONFIG = 0x08;
 export const SYSEX_CMD_SET_VELOCITY_INTERVALS = 0x20;
 export const SYSEX_CMD_GET_VELOCITY_INTERVALS = 0x21;
@@ -69,6 +70,47 @@ export const SYSEX_CMD_SET_CC_ACTIVE_THRESHOLD = 0x32;
 export const SYSEX_CMD_RESET_BOARD_THRESHOLDS = 0x34;
 export const SYSEX_CMD_GET_BOARD_THRESHOLDS = 0x3A;
 export const SYSEX_CMD_GET_BOARD_SENSITIVITY = 0x3B;
+
+/* Per-key calibration, read only: 19h answers with a board's 56 per-key MAX
+   values and 1Ah with its 56 MIN values, the numbers the built-in calibration
+   learns and `KeyData_N` stores. The controller answers from its own memory,
+   which it fills before it writes the file (docs/lessons.md → "The per-key
+   calibration can be read over SysEx"). F0 00 21 50 <board> <cmd> 00 00 00 00 F7
+   (buildBoardRequestSysEx); the reply is 120 bytes, each value as two nibbles,
+   high first (parseKeyParams). */
+export const SYSEX_CMD_GET_KEY_MAX = 0x19;
+export const SYSEX_CMD_GET_KEY_MIN = 0x1A;
+export const KEYS_PER_BOARD = 56;
+
+const nibblePair = (data: Uint8Array, at: number): number => ((data[at] & 0xF) << 4) | (data[at + 1] & 0xF);
+
+/** The 56 values of an ACKed 19h or 1Ah reply, in key order; null for any other
+ *  message (a refusal, a short reply). */
+export function parseKeyParams(data: Uint8Array): number[] | null {
+  /* F0 00 21 50 <board> <cmd> <status> <112 nibbles> F7 */
+  if (data.length < 7 + 2 * KEYS_PER_BOARD + 1 || data[6] !== SYSEX_ACK) return null;
+  const out: number[] = new Array(KEYS_PER_BOARD);
+  for (let i = 0; i < KEYS_PER_BOARD; i++) out[i] = nibblePair(data, 7 + 2 * i);
+  return out;
+}
+
+export interface BoardThresholds {
+  minHigh: number;
+  minLow: number;
+  max: number;
+  atThresh: number;
+  ccThresh: number;
+}
+
+/** The five values of an ACKed 3Ah reply; null for any other message. */
+export function parseBoardThresholds(data: Uint8Array): BoardThresholds | null {
+  /* F0 00 21 50 <board> 3A <status> <10 nibbles> F7 = 18 bytes */
+  if (data.length < 18 || data[6] !== SYSEX_ACK) return null;
+  return {
+    minHigh: nibblePair(data, 7), minLow: nibblePair(data, 9), max: nibblePair(data, 11),
+    atThresh: nibblePair(data, 13), ccThresh: nibblePair(data, 15),
+  };
+}
 
 /* Built-in touch calibration: the firmware learns every key's thresholds from
    presses. 24h starts key calibration and 0Fh aftertouch calibration, both
@@ -99,7 +141,7 @@ const BOARD_MAP_STANDARD = [1, 2, 3, 4, 5] as const;
 const BOARD_MAP_SWAPPED = [1, 2, 3, 5, 4] as const;
 
 /* Runtime swap state, seeded from the persisted `swapBoards34` pref at startup
-   (init.ts) and flipped live by the Calibrate Keys toggle. Off by default so
+   (init.ts) and flipped live by the Calibration panel's toggle. Off by default so
    HKL routes correctly on a standard unit out of the box. */
 let boards34Swapped = false;
 export function setBoards34Swapped(v: boolean): void { boards34Swapped = v; }

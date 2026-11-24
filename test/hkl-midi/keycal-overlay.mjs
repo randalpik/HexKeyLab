@@ -1,11 +1,21 @@
-// Calibrate Keys → Built-in calibration: the overlay section, in a real browser.
+// The Lumatone Calibration overlay, in a real browser.
 //
-// test/hkl-midi/keycal.mjs covers the state machine hardware-free; this covers the
-// DOM around it: the section sits at the top of the overlay, Start key / Start
-// aftertouch give way to Confirm / Cancel while a calibration runs, and the status
-// line follows. The real buttons are clicked; a fake MIDI output answers as the
-// firmware does (24h / 0Fh enter a mode, 52h leaves it, everything else is refused
-// with STATE meanwhile).
+// test/hkl-midi/keycal.mjs covers the built-in calibration's state machine
+// hardware-free; this covers the DOM around it and the rest of the panel:
+//   - the title, the order of the sections (velocity curve, built-in calibration,
+//     the five boards with Reset all 5 boards under them, the board swap), and
+//     that the controls removed on 2026-11-24 are gone;
+//   - Start key / Start aftertouch give way to Confirm / Cancel while a
+//     calibration runs, and the status line follows;
+//   - the key scales are read from the device after a calibration and after a
+//     board's `max` is changed, and the line under the curve says where they stand;
+//   - Reset all calibration and Reset all 5 boards send nothing when declined,
+//     and when accepted the factory resets, after which the setup (the two
+//     velocity tables among it) goes out again;
+//   - the scroll bar has a strip of its own.
+// The real controls are used; a fake MIDI output answers as the firmware does
+// (24h / 0Fh enter a mode, 52h leaves it, everything else is refused with STATE
+// meanwhile; 19h / 1Ah / 3Ah / 3Bh answer with a synthetic calibration).
 //
 // Requires `pnpm dev` running (umbrella proxy at :5170).
 //
@@ -40,10 +50,22 @@ const SCRIPT = `(async () => {
   const check = (name, got, want) => results.push({ name, got, want, ok: got === want });
 
   /* the fake device */
-  const dev = { mode: 0, sent: [] };
+  const dev = { mode: 0, sent: [], maxOf: {} };
+  /* A synthetic calibration: each key's MAX and MIN by SysEx board and slot, and
+     the per-board thresholds (min hi 15, min lo 3, max 15, AT 10, CC 7). */
+  const calMax = (board, k) => 100 + ((board * 7 + k) % 40);
+  const calMin = (board, k) => k % 5;
+  const nib = (vals) => vals.flatMap((v) => [v >> 4, v & 15]);
+  const keys56 = [...Array(56).keys()];
   const answer = (m) => {
     const cmd = m[5];
     if (dev.mode !== 0 && cmd !== 0x52) return [4];
+    if (cmd === 0x19) return [1, ...nib(keys56.map((k) => calMax(m[4], k)))];
+    if (cmd === 0x1A) return [1, ...nib(keys56.map((k) => calMin(m[4], k)))];
+    if (cmd === 0x3A) return [1, ...nib([15, 3, dev.maxOf[m[4]] ?? 15, 10, 7])];
+    if (cmd === 0x3B) return [1, ...nib([8, 8])];
+    if (cmd === 0x29) { dev.maxOf[m[4]] = m[7]; return [1]; }
+    if (cmd === 0x34) { delete dev.maxOf[m[4]]; return [1]; }
     if (cmd === 0x24) { dev.mode = 1; return [1]; }
     if (cmd === 0x0F) { dev.mode = 2; return [1]; }
     if (cmd === 0x52) { if (dev.mode === 0) return [0]; dev.mode = 0; return [1]; }
@@ -73,14 +95,32 @@ const SCRIPT = `(async () => {
   const statusText = () => section?.lastElementChild?.textContent ?? '';
   const calCmds = () => dev.sent.filter((m) => m[5] === 0x24 || m[5] === 0x0F || m[5] === 0x52).map((m) => m[5] + ':' + m[6]).join(' ');
 
-  check('section is first under the header', section?.parentElement?.children[1] === section, true);
+  const panel = document.getElementById('lumaDiagOverlay');
+  const kids = [...panel.children];
+  const firstText = (el) => el?.querySelector('strong, button, label')?.textContent ?? '';
+  check('title', kids[0]?.textContent, 'Lumatone Calibration');
+  check('order: curve, calibration, boards 1-5, reset all boards, swap',
+    kids.slice(1).map((el) => firstText(el).split(' (SysEx')[0]).join(' | '),
+    'Lumatone velocity curve | Built-in calibration | Board 1 | Board 2 | Board 3 | Board 4 | Board 5 | Reset all 5 boards\u2026 | Swap boards 3 \u2194 4 (this unit)');
+  const gone = ['Get all values', 'Push identity LUT', 'Push to Lumatone', 'Import key scales', 'Start capture', 'Clear all per-key',
+    'Reset velocity LUT', 'Reset AT LUT', 'Reset Lumatouch LUT', 'Layer loudness', 'Per-key velocity statistics',
+    'Hardware velocity intervals', 'Distinct velocities', 'lumadiag'];
+  check('removed controls are gone', gone.filter((t) => panel.textContent.includes(t)).join(', '), '');
+  check('one graph', panel.querySelectorAll('canvas').length, 1);
+  check('the scroll bar has its own strip',
+    getComputedStyle(panel).scrollbarGutter === 'stable' && (panel.offsetWidth - panel.clientWidth > 2 || panel.style.paddingRight === '12px'), true);
+  const scaleLine = () => [...panel.querySelectorAll('div')].find((d) => d.firstChild?.nodeValue === 'Key scales: ')?.textContent ?? '';
+  check('key scales: nothing read yet', scaleLine().startsWith('Key scales: '), true);
+  check('section is second, under the curve', kids[2] === section, true);
   check('section is titled', section?.firstElementChild?.textContent, 'Built-in calibration');
+  check('idle: Reset all calibration is offered', shown('Reset all calibration\u2026'), true);
   check('idle: the two starts', state(), '1100');
   check('idle: no status line', statusText(), '');
 
   button('Start key calibration').click();
   await sleep(60);
   check('key running: Confirm / Cancel', state(), '0011');
+  check('key running: no Reset all calibration', shown('Reset all calibration\u2026'), false);
   check('key running: phase', lumatone.keyCal, 'key');
   check('key running: status', statusText().startsWith('Key calibration running'), true);
 
@@ -99,6 +139,62 @@ const SCRIPT = `(async () => {
   check('confirmed: status', statusText().startsWith('Calibration confirmed'), true);
   check('wire: 24h, 52h 0, 0Fh, 52h 1', calCmds(), '36:0 82:0 15:0 82:1');
   check('values re-read after each calibration', dev.sent.filter((m) => m[5] === 0x3A).length >= 10, true);
+
+  /* The key scales, read after the calibration: the median window over each key's. */
+  const count = (cmd) => dev.sent.filter((m) => m[5] === cmd).length;
+  const expectScales = (maxOfBoard1) => {
+    const w = [];
+    for (let b = 1; b <= 5; b++) for (const k of keys56) w.push(calMax(b, k) - calMin(b, k) - ((b === 1 ? maxOfBoard1 : 15) + 3));
+    const so = [...w].sort((x, y) => x - y), ref = (so[139] + so[140]) / 2;
+    return '280 keys, ' + (ref / so[279]).toFixed(2) + '\u2013' + (ref / so[0]).toFixed(2);
+  };
+  await sleep(300);
+  check('key scales read after a calibration: 19h and 1Ah to each board', [count(0x19) >= 5, count(0x1A) >= 5].join(), 'true,true');
+  check('key scales: the line under the curve', scaleLine(), 'Key scales: ' + expectScales(15));
+
+  /* A board\u2019s max changed: the windows changed, so the scales are read again. */
+  const maxSlider = kids[3].querySelector('input[type=range]');
+  const reads = count(0x19);
+  maxSlider.value = '9';
+  maxSlider.dispatchEvent(new Event('input'));
+  maxSlider.dispatchEvent(new Event('change'));
+  await sleep(900);
+  check('max changed: 29h sent to board 1', dev.sent.some((m) => m[5] === 0x29 && m[4] === 1 && m[7] === 9), true);
+  check('max changed: the scales are read again', count(0x19) - reads, 5);
+  check('max changed: the line follows', scaleLine(), 'Key scales: ' + expectScales(9));
+
+  /* Reset all 5 boards: declined sends nothing; accepted, five 34h. */
+  const realConfirm = window.confirm;
+  let asked = 0;
+  window.confirm = () => { asked++; return false; };
+  let at = dev.sent.length;
+  button('Reset all 5 boards\u2026').click();
+  await sleep(100);
+  check('reset all boards, declined: asked, nothing sent', asked + ':' + (dev.sent.length - at), '1:0');
+  window.confirm = () => { asked++; return true; };
+  button('Reset all 5 boards\u2026').click();
+  await sleep(900);
+  check('reset all boards, accepted: 34h to boards 1-5', dev.sent.slice(at).filter((m) => m[5] === 0x34).map((m) => m[4]).sort().join(''), '12345');
+
+  /* Reset all calibration: declined sends nothing; accepted, the three table
+     resets and five 34h, then the setup again with HKL\u2019s two velocity tables. */
+  window.confirm = () => { asked++; return false; };
+  at = dev.sent.length;
+  button('Reset all calibration\u2026').click();
+  await sleep(100);
+  check('reset all calibration, declined: asked, nothing sent', asked + ':' + (dev.sent.length - at), '3:0');
+  window.confirm = () => { asked++; return true; };
+  lumatone.autoSyncEnabled = true;
+  button('Reset all calibration\u2026').click();
+  for (let i = 0; i < 100 && !(dev.sent.slice(at).some((m) => m[5] === 0x20) && count(0x19) >= reads + 15); i++) await sleep(100);
+  await sleep(300);
+  lumatone.autoSyncEnabled = false;
+  window.confirm = realConfirm;
+  const after = dev.sent.slice(at).map((m) => m[5]);
+  check('reset all calibration, accepted: 0Ah, 12h, 2Fh, then 34h x 5', after.slice(0, 8).join(' '), '10 18 47 52 52 52 52 52');
+  check('then the setup again: both velocity tables after the resets',
+    after.indexOf(0x08) > 7 && after.indexOf(0x20) > 7, true);
+  check('and the key scales are read again', after.filter((c) => c === 0x19).length >= 5, true);
 
   lumatone.firmware = [1, 4, 0];
   const before = dev.sent.length;

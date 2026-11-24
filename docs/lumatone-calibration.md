@@ -8,9 +8,9 @@ This is a **developer/maintenance** document, separate from the user-facing HKL 
 
 ## Two ways to set the per-key thresholds
 
-**The built-in routine** learns by touch. SysEx `0x24` (sysexCallibrateKeys) puts every board into calibration, you press every key, and the routine ends when it is confirmed or canceled. Through firmware 1.4.x only a board's own two macro buttons could end it, so a board with broken buttons stayed in calibration until a power cycle. Firmware 1.5.0 adds SysEx `0x52` (ConfirmCalibration), which sends the PICs a software button press (PIC command `0x6a`), and HKL's Calibrate Keys overlay drives the whole routine: **Start key calibration** / **Start aftertouch calibration**, then **Confirm** or **Cancel** (architecture/hkl.md → Built-in calibration). It has been run to completion on a unit with three sets of broken macro buttons (2026-11-11; lessons.md → "The PIC's calibration mode").
+**The built-in routine** learns by touch. SysEx `0x24` (sysexCallibrateKeys) puts every board into calibration, you press every key, and the routine ends when it is confirmed or canceled. Through firmware 1.4.x only a board's own two macro buttons could end it, so a board with broken buttons stayed in calibration until a power cycle. Firmware 1.5.0 adds SysEx `0x52` (ConfirmCalibration), which sends the PICs a software button press (PIC command `0x6a`), and HKL's Calibration panel drives the whole routine: **Start key calibration** / **Start aftertouch calibration**, then **Confirm** or **Cancel** (architecture/hkl.md → Built-in calibration). It has been run to completion on a unit with three sets of broken macro buttons (2026-11-11; lessons.md → "The PIC's calibration mode").
 
-**By number**: the routine never shows the values it settles on, and it can't set one key. The values are plain text files on the device, though, so any of them can be read and changed: save the files, edit a number, write them back, power-cycle. Use it when the learned value for a key is off (a weak key that needs a lower trigger point), to set a whole row at once, or to put an earlier calibration back.
+**By number**: the routine never shows the values it settles on, and it can't set one key. The values are plain text files on the device, though, so any of them can be read and changed (they can also be read, not set, over SysEx, which is how HKL makes its key scales: workflow step 6): save the files, edit a number, write them back, power-cycle. Use it when the learned value for a key is off (a weak key that needs a lower trigger point), to set a whole row at once, or to put an earlier calibration back.
 
 Confirming a built-in calibration replaces the per-key numbers (Cancel writes nothing), so **save the files first**.
 
@@ -43,7 +43,7 @@ The userspace firmware on the BBB is a single ARM ELF binary, `/home/debian/Luma
 
 2. **In running memory**: the `boardId[5]` array in TC's `.bss` (`board_properties`, 638 bytes per board; same layout in 1.4.0 and 1.5.0, different address). Earlier notes called it `kbd_preset_params`, which is really a 5-byte flags struct. Same four rows at offsets `+0x118`, `+0x150`, `+0x1c0`, `+0x1fe` relative to that board's slot. Slot `i` (0..4) corresponds to `KeyData_(i+1)`. Editing a file does not touch this copy: the new values load when TC next starts.
 
-The per-board thresholds and sensitivities (the sliders in Calibrate Keys) are a separate layer, stored in `files/ThresholdData_1..5`: ten rows of one value each, in the order `max`, AT max, `min hi`, `min lo`, CC sens, AT sens, CC-active threshold, AT trigger, Lumatouch off-delay, Lumatouch threshold. The firmware writes a slider change to the file itself, and nothing in HKL keeps a copy.
+The per-board thresholds and sensitivities (the sliders in HKL's Calibration panel) are a separate layer, stored in `files/ThresholdData_1..5`: ten rows of one value each, in the order `max`, AT max, `min hi`, `min lo`, CC sens, AT sens, CC-active threshold, AT trigger, Lumatouch off-delay, Lumatouch threshold. The firmware writes a slider change to the file itself, and nothing in HKL keeps a copy.
 
 ### The per-board thresholds set every key's timing window
 
@@ -61,8 +61,8 @@ So `max` + `min lo` counts of every key's swing are not timed: 11 at stock. For 
 
 - **`min lo`** can be lowered freely. What a low value costs is that the timer starts on the first few counts of travel; 3 is the firmware's own choice.
 - **`max`** interacts with how the built-in calibration was pressed: the note fires `max` counts under the stored peak, so a small `max` on top of a firmly pressed calibration puts the note-on point above what a gentle press reaches, and soft notes fail to sound. On that unit the ten narrowest keys reach only 7–10 counts above their note-on points on a gentle press with `max` 15, so `max` stayed at 15.
-- **Reset** (per board, and **Reset all 5 boards**) in Calibrate Keys returns all ten values to stock at once, `max` included.
-- After any change, save the device's files and regenerate the per-key scales (workflow step 6): the scales are computed from the windows.
+- **Reset** (per board, and **Reset all 5 boards…**, which asks first) in the Calibration panel returns all ten values to stock at once, `max` included. **Reset all calibration…**, in the panel's calibration section, does the same to every board along with the three tables (below).
+- After any change, save the device's files. The per-key scales are computed from the windows, and HKL remakes them itself: at once when `max` or `min lo` is changed from the panel, and at the next connect for a change made any other way (workflow step 6).
 
 ### Indexing quirk: spatial vs PIC
 
@@ -90,7 +90,7 @@ Velocity is computed as `time(MAX crossing) - time(MIN crossing)`. The **gap** b
 
 Practical use:
 - **Onset issue (key won't register on light press)**: MAX is too high relative to the key's physical ADC swing. *Lower MAX* until it registers.
-- **A key louder or softer than its neighbors at the same touch**: its window differs from theirs. Do not narrow or widen windows key by key to chase velocities: HKL's per-key press-time scale (workflow step 6) corrects it from the files, and a narrowed window loses resolution for good. (This guide used to say to raise MIN for a key that could not reach 127; that advice, applied through the per-board sliders, is what cost this unit 11 counts of every window for six months.)
+- **A key louder or softer than its neighbors at the same touch**: its window differs from theirs. Do not narrow or widen windows key by key to chase velocities: HKL's per-key press-time scale (workflow step 6) corrects it from the calibration the device holds, and a narrowed window loses resolution for good. (This guide used to say to raise MIN for a key that could not reach 127; that advice, applied through the per-board sliders, is what cost this unit 11 counts of every window for six months.)
 - **Per-key MIN and MAX are 8-bit** (0..254), not the 4-bit clamp that the per-board SysEx (0x29/0x2A) suffers from on this firmware. Don't confuse the two layers.
 
 ---
@@ -155,7 +155,7 @@ A run stores one number per key (the deepest reading it saw), so the only way to
 - **Timing window**: MAX − MIN − (`max` + `min lo`) from the per-key medians, smallest first. A shorter window reads louder at the same touch.
 - **Siblings**: each key's window against the median of the same slot on the other four boards, in both directions. Slot position explains about half of the variation in MAX, so a key far from its siblings is a better suspect than a key that is merely low.
 
-`--write DIR` writes a folder whose MAX and MIN rows are the per-key medians (validity, AT MAX and `ThresholdData` come from the last run), ready for `keydata-backup.sh check` and `restore`. `--level L` separates the two things a run measures: it takes the key-to-key pattern from every run, with each run's level removed, and places the median at a level you choose, given as run labels (`R3,R4`: the mean of those runs' levels) or as a number (a mean MAX). Pressing more firmly raises a run's level and, with it, every key's note-on depth and timing window by the same count, so the level is a choice and the pattern is the measurement. With `--level`, the windows, the sibling comparison and the maps describe what `--write` would store. `--maps DIR` draws `window.png`, `siblings.png` and, with two or more runs, `spread.png`: the keyboard as HKL's Lumatone rotation shows it, each key labeled with its value and (q, r). Maps need matplotlib; keep them in a folder under `tools/lumatone-cal/backups/`. `--scales FILE` writes HKL's per-key press-time scales (workflow step 6): for each key the median window over its own, from the same values `--write` would store, as JSON; it never overwrites a file, leaves out a key with no timing window, and holds a scale to 0.1–10.
+`--write DIR` writes a folder whose MAX and MIN rows are the per-key medians (validity, AT MAX and `ThresholdData` come from the last run), ready for `keydata-backup.sh check` and `restore`. `--level L` separates the two things a run measures: it takes the key-to-key pattern from every run, with each run's level removed, and places the median at a level you choose, given as run labels (`R3,R4`: the mean of those runs' levels) or as a number (a mean MAX). Pressing more firmly raises a run's level and, with it, every key's note-on depth and timing window by the same count, so the level is a choice and the pattern is the measurement. With `--level`, the windows, the sibling comparison and the maps describe what `--write` would store. `--maps DIR` draws `window.png`, `siblings.png` and, with two or more runs, `spread.png`: the keyboard as HKL's Lumatone rotation shows it, each key labeled with its value and (q, r). Maps need matplotlib; keep them in a folder under `tools/lumatone-cal/backups/`. `--scales FILE` writes HKL's per-key press-time scales (workflow step 6): for each key the median window over its own, from the same values `--write` would store, as JSON; it never overwrites a file, leaves out a key with no timing window, and holds a scale to 0.1–10. HKL makes the same table itself from the device, so the file is for looking at the numbers and for the gate that holds the two together (`test/hkl-midi/key-scale.mjs`); nothing imports it.
 
 ### `KeyData_default`
 
@@ -167,13 +167,13 @@ A minimal PIC18 disassembler for the octave-board image (`LMTN-01_OctaveBoard*.h
 
 ### `tools/reset-calibration.sh` (run locally)
 
-Sends the SysEx factory resets for the velocity, aftertouch and Lumatouch tables and the per-board thresholds. It does not touch the per-key `KeyData` files.
+Sends the SysEx factory resets for the velocity and aftertouch tables (`0x0A`, `0x12`) and each board's thresholds and sensitivities (`0x34`), over `amidi`. It does not touch the per-key `KeyData` files. HKL's Calibration panel has the same reset as **Reset all calibration…** (with the Lumatouch table, `0x2F`, as well); from HKL the two velocity tables HKL keeps on the device are sent again afterwards, and after the script they are sent at the next connect.
 
 ---
 
 ## Workflow: full-keyboard calibration
 
-Calibrate with the built-in routine, look at what the keys report, set the velocity response (one-tick tables on the device, the curve in HKL), adjust single keys by number where the learned value isn't right, and even the keys out with HKL's per-key press-time scales.
+Calibrate with the built-in routine, look at what the keys report, set the velocity response (one-tick tables on the device, the curve in HKL), and adjust single keys by number where the learned value isn't right. HKL evens the keys out with per-key press-time scales it makes from the calibration, with nothing to do.
 
 ### 1 — Save what the device holds
 
@@ -183,9 +183,9 @@ tools/lumatone-cal/keydata-backup.sh save
 
 ### 2 — Built-in key calibration (from HKL, firmware 1.5.0+)
 
-1. Open **Calibrate Keys** in HKL (Lumatone tab, or `Shift+\`). Under **Built-in calibration**, click **Start key calibration**.
+1. Open **Calibration** in HKL (Lumatone tab, or `Shift+\`). Under **Built-in calibration**, click **Start key calibration**.
 2. Press every key all the way down. Don't rush: the routine marks a key learned only once it has seen it pressed.
-3. Click **Confirm (save)**. HKL waits for every board to leave calibration, then re-reads the board values. **Cancel (discard)** leaves the files as they were.
+3. Click **Confirm (save)**. HKL waits for every board to leave calibration, then re-reads the board values and the per-key thresholds, and remakes the key scales from them (step 6). **Cancel (discard)** leaves the files as they were.
 4. Save again (`keydata-backup.sh save`) so the result has its own snapshot.
 
 One run is one sample per key: the routine keeps the deepest reading it saw, so a key squeezed harder or lighter than usual gets a value that is off. To check a calibration, or to build one from several, repeat steps 2–4 and compare the saved folders with `keydata-compare.py`; its `--write` makes the per-key median, which goes back with `keydata-backup.sh restore`. Press each key once, firmly, the way it bottoms out in normal play, and keep hands off the keys when starting: the rest reading is taken at that moment.
@@ -196,13 +196,11 @@ A confirmed key calibration also resets every key's **AT MAX to 254**, so an aft
 
 On the one unit measured (2026-11-11) the routine landed on MAX 36–101 (median 72) and MIN 0–8, and the five keys previously lowered by ear came back among its seven weakest.
 
-### 3 — Collect velocity statistics
+### 3 — Look at what the keys report
 
-1. Connect with Auto-sync on: HKL then sends the identity LUT and the interval table itself (step 4), so the raw velocities are press times (velocity = 128 − ticks on the one-tick table).
-2. Enable "Collect" in the **Per-key velocity statistics** section.
-3. Play every key 30-50 times across the full range of forces you'd use in normal play. The scatter populates with each key's (p5, p95) point, in raw velocity: on the one-tick table that is 128 − ticks before the key's scale, so a key with a narrow window sits further right (shorter press times) than its neighbors for the same playing.
+Connect with Auto-sync on: HKL then sends the identity LUT and the interval table itself (step 4), so the raw velocities are press times. Enable the Diagnostics overlay (the **Diagnostics** checkbox on HKL's Playback tab, with Audio on) and play. Each strike is labeled `vN (Mt)`: its input velocity, which is the hardware velocity after the key's scale, and the press time in ticks the device reported.
 
-The panel's three outlier lists ("Can't play quiet", "Can't play loud", "Narrow range") and the fixes their headings name use velocity thresholds chosen in May 2026 for other tables. On the one-tick table a p5 of 30 is a 98-tick press. Read the scatter for keys that sit apart from the rest, and take the correction from step 6, not from the lists.
+A key that still reads apart from its neighbors at the same touch, after its scale, is one the scale rule does not fit (step 6), or one whose learned value is off (step 5). HKL collected per-key statistics of live play until 2026-11-24 (a scatter and three outlier lists); nothing was derived from them, and the scales come from the calibration alone, so they were removed.
 
 ### 4 — Velocity shaping: one-tick tables on the device, the curve in HKL
 
@@ -211,16 +209,16 @@ The device reports a press as a velocity through two tables, and HKL sets both s
 | Setting | Value | What it does |
 |---|---|---|
 | CMD 0x08 LUT | identity (slowest bin sent as 1) | velocity = 127 − bin. Sent by HKL with every connect. |
-| CMD 0x20 intervals: `low` | **0** | the thresholds are in the device's count, which starts at 0: a press seen between a key's thresholds on one scan. 0 gives that press its own velocity, 127; a table that starts at 1 merges it with the two-scan press |
-| CMD 0x20 intervals: `high` | **126** (`low` + 126) | thresholds 0…126, one count per velocity. The press time is the count plus one, so velocity = 128 − ticks. `low` + 127 skips one threshold (two counts share a bin); a narrower span repeats thresholds and merges nothing useful. |
-| CMD 0x20 intervals: `gamma` | **1.0** | linear; anything else gives up the one-tick-per-velocity reading |
+| CMD 0x20 intervals: first threshold | **0** | the thresholds are in the device's count, which starts at 0: a press seen between a key's thresholds on one scan. 0 gives that press its own velocity, 127; a table that starts at 1 merges it with the two-scan press |
+| CMD 0x20 intervals: last threshold | **126** | thresholds 0…126, one count per velocity. The press time is the count plus one, so velocity = 128 − ticks. A span of 127 skips one threshold (two counts share a bin); a narrower span repeats thresholds and merges nothing useful. |
+| CMD 0x20 intervals: spacing | **linear** | anything else gives up the one-tick-per-velocity reading |
 | Lumatone velocity curve: `full at` | **125.0** to taste | the input velocity at which the piano line reaches full loudness; the one constant that places the scale |
 | Lumatone velocity curve: `corner` | **1.0 dB** to taste | rounds the corner where the line meets full loudness; 0 is a hard corner |
 | Lumatone velocity curve: `gamma` | **1.00** | the piano; raise or lower it only to widen or narrow the dynamic range |
 
 **Ticks.** A tick is one scan of the board, about 1.25 ms by the firmware's timer settings. The board's counter starts at 0 on the first scan that finds a key between its two thresholds, so the count it sends is one less than the scans the press took. HKL adds the one, and every press time it shows or uses is in ticks (lessons.md → "A tick is one scan of the board"). Until 2026-11-23 the table started at 1 and HKL read the count as the time: tick numbers and input velocities noted before that date are one tick short and one velocity high.
 
-**The curve** (Calibrate Keys → Lumatone velocity curve) is the piano's own law in the device's units, run up to full loudness. On a piano the peak amplitude of a tone is linearly proportional to the hammer's velocity (Palmer & Brown, "Investigations in the amplitude of sounded piano tones", JASA 1991); on the Lumatone the speed of a press is 1 ÷ its press time. So the piano line is
+**The curve** (Calibration → Lumatone velocity curve) is the piano's own law in the device's units, run up to full loudness. On a piano the peak amplitude of a tone is linearly proportional to the hammer's velocity (Palmer & Brown, "Investigations in the amplitude of sounded piano tones", JASA 1991); on the Lumatone the speed of a press is 1 ÷ its press time. So the piano line is
 
 `line = (F ÷ ticks)^gamma`
 
@@ -282,7 +280,7 @@ What to change, from the direction table above:
 - **A key that reads louder or softer than its neighbors**: leave its thresholds alone and use the per-key press-time scale (step 6). Raising a key's MIN does shorten its press times, but by narrowing its window, which is resolution it does not get back.
 - **A whole row**: replace the row in each of the five files, e.g. row 4 with 56 × `200` to put AT MAX back to the project baseline after a key calibration reset it to 254.
 
-Each round costs a power cycle, so collect the keys to change (step 3's outlier lists) and edit them in one pass.
+Each round costs a power cycle, so collect the keys to change (step 3) and edit them in one pass.
 
 **Raising MAX across the board** to widen the velocity range is a hardware lever that works on some units and not on others: keys with a small sensor swing go dead as MAX passes it, and have to be rescued one by one. It was an iterative, live procedure with the retired `keydata-live.py` (lessons.md → "Per-key calibration converges in 3-4 passes of bulk-raise + per-key rescue"); with files it is one power cycle per pass. On a unit whose swing distribution is tight it doesn't pay off at all, and step 4's interval table is the lever that works on every unit (lessons.md → "Hardware MAX is not a reliable dynamic-range lever for narrow-ADC-swing keyboards"; decisions.md → "Velocity shaping: software input curve over hardware MAX raising").
 
@@ -290,7 +288,11 @@ Each round costs a power cycle, so collect the keys to change (step 3's outlier 
 
 ### 6 — Even the keys out: per-key press-time scales
 
-For the same touch a key's press time follows its timing window, MAX − MIN − (`max` + `min lo`) sensor counts (lessons.md → "Press time follows the timing window"), and the windows of one calibration differ by a factor of several. HKL corrects that with one number per key that multiplies the key's press time before the velocity curve (architecture/engine.md → Velocity architecture). The numbers come from the calibration files, with no pressing:
+For the same touch a key's press time follows its timing window, MAX − MIN − (`max` + `min lo`) sensor counts (lessons.md → "Press time follows the timing window"), and the windows of one calibration differ by a factor of several. HKL corrects that with one number per key that multiplies the key's press time before the velocity curve (architecture/engine.md → Velocity architecture). Each key's scale is the median window over its own window, so a median key keeps its feel and the curve's gamma stays the one sensitivity knob.
+
+**HKL makes the scales itself, with nothing to do.** It reads each key's MAX and MIN and each board's `max` and `min lo` off the device over SysEx (`0x19`, `0x1A` and `0x3A`, read only: architecture/hkl.md → Per-key calibration over SysEx) whenever it connects (with Auto-sync on), when a built-in calibration ends, and when `max` or `min lo` is changed or a board reset from the panel. The line **Key scales** under the curve in the Calibration panel says where they stand: how many keys are scaled and the smallest and largest scale, or that the calibration is being read, or that a read did not complete and the last table is still in use. A `restore` takes effect on the device at its next power cycle, and HKL reads the result when it connects again.
+
+To look at the numbers, the tool writes the same table from a saved folder (`--swap-boards-34` matters here, since the file names keys the way HKL does: board group 1–5, key 0–55):
 
 ```bash
 # The folder must hold what the device runs: verify it first.
@@ -298,11 +300,9 @@ tools/lumatone-cal/keydata-backup.sh verify <dir>
 python3 tools/lumatone-cal/keydata-compare.py [--swap-boards-34] --scales tools/lumatone-cal/backups/key-scales-<name>.json <dir>
 ```
 
-Then, in HKL's Calibrate Keys, **Per-key press-time scale → Import key scales…** and choose the file. Each key's scale is the median window over its own window, so a median key keeps its feel and the curve's gamma stays the one sensitivity knob. Do it again after every confirmed calibration, `restore` or change to the per-board thresholds: the scales describe one set of `KeyData` and `ThresholdData` files. `--swap-boards-34` matters here, since the file names keys the way HKL does (board group 1–5, key 0–55).
+Until 2026-11-24 that file had to be imported into HKL by hand after every calibration, restore or threshold change, and single keys could be captured by touch; both are gone (decisions.md).
 
-To correct single keys by touch instead, use the capture in the same section: **Start capture**, press the keys at the touch you intend for the target velocity, **Stop & compute**. Each pressed key's scale becomes the target's press time over the key's median press time; keys not pressed keep theirs.
-
-Two limits. A narrow key has few ticks, so after scaling its velocities come in steps of its scale, and its fastest press (one tick) tops out below full loudness; that is where its neighbors are at the same force (on the narrowest key of this unit, with `min lo` at 14, the force that read 1 tick read 5–6 on its neighbors). And the rule was established on few keys (2026-11-22); a key it does not fit can be set by the capture pass above.
+Two limits. A narrow key has few ticks, so after scaling its velocities come in steps of its scale, and its fastest press (one tick) tops out below full loudness; that is where its neighbors are at the same force (on the narrowest key of this unit, with `min lo` at 14, the force that read 1 tick read 5–6 on its neighbors). And the rule was established on few keys (2026-11-22); a key it does not fit has no separate correction in HKL, so the remedy is the key's own numbers (step 5).
 
 ### Seeding a baseline
 
@@ -336,14 +336,14 @@ The launcher script (`lmtn_launcher.sh`) ends in `while :; do sudo <controller>;
 
 ### Lumatone factory reset
 
-Beyond what's in this guide, the Lumatone supports a full factory reset via SysEx commands `0x0A` (velocity LUT), `0x12` (AT LUT), `0x2F` (Lumatouch LUT), `0x34` per board (per-board thresholds), `0x46` (preset slots), and the helper `tools/reset-calibration.sh` bundles several of these. None of those touch the per-key KeyData files; only a confirmed built-in calibration or a file restore does.
+Beyond what's in this guide, the Lumatone supports a full factory reset via SysEx commands `0x0A` (velocity LUT), `0x12` (AT LUT), `0x2F` (Lumatouch LUT), `0x34` per board (per-board thresholds), `0x46` (preset slots), and both `tools/reset-calibration.sh` and the Calibration panel's **Reset all calibration…** bundle several of these (not `0x46`: HKL never writes or resets preset slots). None of those touch the per-key KeyData files; only a confirmed built-in calibration or a file restore does.
 
 ---
 
 ## What's deliberately NOT here
 
 - **Live per-key edits.** A file edit takes a power cycle to load. Writing the running controller's memory (what the retired `keydata-live.py` did on 1.4.0) avoids that, but ties a tool to one firmware build's addresses. If live tuning is needed again, start from that script in git history and re-derive every address from the installed binary; never just rename the process it looks for.
-- **A way to set per-key thresholds over MIDI.** That would require running a daemon on the BBB that translates SysEx → file or memory writes. Numeric edits need SSH; the built-in routine and everyday play don't.
+- **A way to set per-key thresholds over MIDI.** The firmware reads them out over SysEx (`0x19` MAX, `0x1A` MIN, `0x1C` validity, per board) and has no command that sets one; that would require running a daemon on the BBB that translates SysEx → file or memory writes. Numeric edits need SSH; the built-in routine, the key scales and everyday play don't.
 - **A GUI in HKL for per-key threshold editing.** HKL handles the software side, the per-key press-time scale and the velocity curves (see `apps/hkl/src/audio/velocityCal.ts`), which is enough for normal use. Direct hardware-side edits are rare enough to live in CLI tools.
 - **A per-key sensor readout.** Firmware SysEx `0x35` streams one key's raw sensor reading, but no tool is built on it (lessons.md → "The PIC's calibration mode").
 
@@ -351,7 +351,7 @@ Beyond what's in this guide, the Lumatone supports a full factory reset via SysE
 
 ## Caveats and known limits
 
-- The 4-bit clamp on per-board SysEx commands (`0x29`/`0x2A` for max/min thresholds) does NOT apply to the per-key values in `KeyData_N` — those are 8-bit (0–254). Don't confuse the two; Calibrate Keys' sliders work with the 4-bit per-board values, the files with the 8-bit per-key ones.
+- The 4-bit clamp on per-board SysEx commands (`0x29`/`0x2A` for max/min thresholds) does NOT apply to the per-key values in `KeyData_N` — those are 8-bit (0–254). Don't confuse the two; the Calibration panel's sliders work with the 4-bit per-board values, the files with the 8-bit per-key ones.
 - The PIC firmware has no per-key velocity LUT or per-key gain knob. Beyond MIN/MAX threshold tuning, per-key loudness differences are corrected in HKL by the per-key press-time scale in `velocityCal.ts` (workflow step 6).
 - Sensor swing is a physical floor. A key whose ADC barely moves on full press will never have the resolution of a healthy key, no matter how the thresholds are tuned. Stock per-board thresholds (which time the most of every key's swing) plus HKL's per-key press-time scale is the realistic ceiling.
 - `lmtn_launcher.sh`'s firmware-update hook runs only when a `Lumatone-v*.tgz` file is found at `/home/debian/` at boot, and the installer leaves `files/` alone (the 1.5.0 install kept every file byte-identical). Every boot also deletes any other `.tgz` in `/home/debian`, so don't keep backups there as tarballs. A package that fails to unpack is deleted and the application still starts under the 1.5.0 launcher; the 1.4.0 launcher aborted instead, leaving the boards frozen in their boot animation on every boot until the package was removed (lessons.md, 2026-11-08).

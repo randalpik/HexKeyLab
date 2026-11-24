@@ -1,18 +1,23 @@
-// Lumatone per-board calibration overlay (dev-only).
+// The Lumatone Calibration overlay.
 //
-// Toggled via the "Calibrate Keys" checkbox in the Lumatone toolbar. Lazy:
+// Toggled via the "Calibration" checkbox in the Lumatone toolbar. Lazy:
 // ensureLumaDiag() builds DOM on first call; setLumaDiagVisible toggles
 // display. A Shift+\ hotkey is also wired — when pressed it invokes the
 // registered hotkey callback so init.ts can keep the checkbox + pref in sync.
+// ("lumadiag" is this module's internal name; the player sees "Lumatone
+// Calibration".)
 //
-// Lets the user adjust per-board key thresholds and CC/aftertouch sensitivity
-// live from HKL. There is no SysEx command for per-key threshold tuning; the
-// firmware-internal "SET_KEY_*" commands (0x29–0x2C, 0x32) are board-scoped,
-// so per-board is the ceiling for numeric control from here.
+// Top to bottom: the Lumatone velocity curve (with the state of the per-key
+// press-time scales, which HKL makes from the device's calibration:
+// lumatone/keyscales.ts); the firmware's own touch-learning calibration (keys
+// 0x24, aftertouch 0x0F, ended from here with 0x52 on firmware 1.5.0+:
+// lumatone/keycal.ts) and the factory reset of everything but what that routine
+// learns; the per-board key thresholds and CC/aftertouch sensitivities; the
+// board 3 ↔ 4 swap.
 //
-// The top section runs the firmware's own touch-learning calibration instead
-// (keys 0x24, aftertouch 0x0F), ended from here with 0x52 on firmware 1.5.0+
-// (lumatone/keycal.ts) — no macro buttons needed.
+// There is no SysEx command that sets a per-key threshold; the firmware-internal
+// "SET_KEY_*" commands (0x29–0x2C, 0x32) are board-scoped, so per-board is the
+// ceiling for numeric control from here.
 //
 // CRITICAL: two of the SET commands pack two values per message:
 //   • 0x29 sets (maxThreshold, aftertouchThreshold) together
@@ -47,28 +52,14 @@ import {
   buildSetMaxThreshold,
   buildSetMinThreshold,
   buildSetBoardSens,
-  buildSetVelocityLut,
-  buildSetVelocityIntervalConfig,
+  parseBoardThresholds,
 } from './protocol.js';
-import { velocityCal, DEFAULT_INPUT_CURVE, DEFAULT_INTERVAL_CURVE, STATS_MIN_N, STATS_HIGH_CV } from '../audio/velocityCal.js';
-import type { LumatoneKeyId } from '../types.js';
+import { velocityCal, DEFAULT_INPUT_CURVE } from '../audio/velocityCal.js';
 import { lumatone } from '../state/lumatone.js';
-import { savePrefs, loadPrefs } from '../state/persistence.js';
-import { SampleEngine } from '../audio/samples.js';
+import { savePrefs } from '../state/persistence.js';
 import { resyncLumatoneDevice } from './sync.js';
 import { startKeyCal, endKeyCal, keyCalStatus, onKeyCalChange } from './keycal.js';
-
-/* Per-key stats are keyed by physical key, "ch,note": in the fixed layout the
-   channel is the board (group + 1) and the note the key's index on it. */
-function statsBoard(key: LumatoneKeyId): number {
-  return +key.slice(0, key.indexOf(','));
-}
-function statsKeyLabel(key: LumatoneKeyId): string {
-  return 'brd ' + statsBoard(key) + ' key ' + key.slice(key.indexOf(',') + 1);
-}
-
-/* Per-board palette for the scatter. Five visually distinct hues. */
-const STATS_BOARD_COLORS = ['#5af', '#9c5', '#fc5', '#f95', '#c5f'];
+import { refreshKeyScales, keyScaleStatus, onKeyScaleChange } from './keyscales.js';
 
 /* Per-board values, mirrored from the device. `null` = not yet fetched; the
    corresponding slider stays disabled until the read-back populates it. */
@@ -198,9 +189,19 @@ function sendBoardField(logical: number, field: FieldKey): void {
     if (s.atSens == null) return;
     msg = buildSetBoardSens(board, SYSEX_CMD_SET_KEY_AT_SENS, s.atSens);
   }
+  /* `max` and `min lo` are part of every key's timing window. */
+  if (field === 'max' || field === 'minLow') msg.onResponse = scheduleKeyScaleRefresh;
   const ok = sysex.enqueueControl(msg);
   if (!ok) console.warn('[lumadiag] no Lumatone connected — change not sent');
   else console.log('[lumadiag] board ' + (logical + 1) + ' ' + field + ' → ' + hex(s[field]!));
+}
+
+/* The key scales follow the per-board thresholds. Several changes in a row (a
+   reset of all five boards) make one read. */
+let scaleRefreshTimer: number | null = null;
+function scheduleKeyScaleRefresh(): void {
+  if (scaleRefreshTimer !== null) clearTimeout(scaleRefreshTimer);
+  scaleRefreshTimer = window.setTimeout(() => { scaleRefreshTimer = null; refreshKeyScales(); }, 400);
 }
 
 /* Send a board-addressed RESET (0x34) for one logical board. After the reset
@@ -209,24 +210,19 @@ function resetBoard(logical: number): void {
   const board = sysexBoardFor(logical);
   console.log('[lumadiag] reset board ' + (logical + 1) + ' (SysEx board ' + board + ')');
   const msg = buildBoardRequestSysEx(board, SYSEX_CMD_RESET_BOARD_THRESHOLDS);
-  msg.onResponse = () => { window.setTimeout(() => getBoardValues(logical), 50); };
+  msg.onResponse = () => {
+    window.setTimeout(() => getBoardValues(logical), 50);
+    scheduleKeyScaleRefresh();
+  };
   const ok = sysex.enqueueControl(msg);
   if (!ok) console.warn('[lumadiag] no Lumatone connected — reset not sent');
 }
 
-/* Parse a CMD 3Ah response (5 packed 8-bit values: 10 payload nibbles). */
+/* A CMD 3Ah response into the board's state. */
 function parse3AResponse(logical: number, data: Uint8Array): boolean {
-  /* F0 00 21 50 <board> 3A <status> <10 nibble bytes> F7 = 18 bytes */
-  if (data.length < 18) return false;
-  if (data[6] !== SYSEX_ACK) return false;
-  const off = 7;
-  const u = (i: number): number => ((data[off + i * 2] & 0xF) << 4) | (data[off + i * 2 + 1] & 0xF);
-  const s = boardStates[logical];
-  s.minHigh = u(0);
-  s.minLow = u(1);
-  s.max = u(2);
-  s.atThresh = u(3);
-  s.ccThresh = u(4);
+  const t = parseBoardThresholds(data);
+  if (!t) return false;
+  Object.assign(boardStates[logical], t);
   return true;
 }
 
@@ -265,6 +261,15 @@ function getBoardValues(logical: number): void {
   sysex.enqueueControl(sMsg);
 }
 
+/* Every board's values, read when the panel is built or shown: the device may
+   have been power-cycled, or changed from elsewhere, since the last look. */
+let boardsReadAt = -Infinity;
+function getAllBoardValues(): void {
+  if (!midi.midiOut || performance.now() - boardsReadAt < 1000) return;
+  boardsReadAt = performance.now();
+  for (let i = 0; i < 5; i++) getBoardValues(i);
+}
+
 /* Apply current boardStates[logical] values to the slider DOM. Programmatic
    .value writes do NOT fire 'input' or 'change' events, so no SysEx echo. */
 function refreshSliders(logical: number): void {
@@ -286,9 +291,34 @@ function refreshSliders(logical: number): void {
   }
 }
 
+/* The factory reset tools/reset-calibration.sh sends, plus the Lumatouch table:
+   the velocity (0x0A), aftertouch (0x12) and Lumatouch (0x2F) tables and each
+   board's thresholds and sensitivities (0x34). It does not touch the per-key
+   thresholds a calibration learned. The device then holds its factory velocity
+   table, which HKL's curve means nothing over, so the setup is sent again (the
+   two velocity tables among it, and the key scales are read back). */
+function resetAllCalibration(): void {
+  if (!window.confirm('Reset the Lumatone\u2019s velocity, aftertouch and Lumatouch tables and every board\u2019s '
+    + 'thresholds and sensitivities to their factory values?\n\nThe per-key thresholds a key calibration '
+    + 'learned are kept. HKL sends its own velocity tables again afterwards.')) return;
+  for (const cmd of [SYSEX_CMD_RESET_VELOCITY_CONFIG, SYSEX_CMD_RESET_AFTERTOUCH_CONFIG, SYSEX_CMD_RESET_LUMATOUCH_CONFIG]) {
+    sysex.enqueueControl(buildRequestSysEx(cmd));
+  }
+  for (let i = 0; i < 5; i++) {
+    const msg = buildBoardRequestSysEx(sysexBoardFor(i), SYSEX_CMD_RESET_BOARD_THRESHOLDS);
+    if (i === 4) msg.onResponse = () => {
+      resyncLumatoneDevice();
+      boardsReadAt = -Infinity;
+      getAllBoardValues();
+    };
+    if (!sysex.enqueueControl(msg)) { console.warn('[lumadiag] no Lumatone connected — reset not sent'); return; }
+  }
+  console.log('[lumadiag] reset all calibration: velocity, aftertouch and Lumatouch tables, five boards\u2019 thresholds');
+}
+
 /* Built-in touch calibration (lumatone/keycal.ts). Idle: the two start
-   buttons. While a calibration runs they give way to Confirm / Cancel. When
-   one has ended, the per-board values are read back. */
+   buttons and the factory reset. While a calibration runs they give way to
+   Confirm / Cancel. When one has ended, the per-board values are read back. */
 function makeBuiltinCalSection(): HTMLDivElement {
   const sec = document.createElement('div');
   Object.assign(sec.style, {
@@ -330,6 +360,9 @@ function makeBuiltinCalSection(): HTMLDivElement {
     () => endKeyCal(true));
   const cancel = mkBtn('Cancel (discard)', 'CMD 0x52, value 0 — leave calibration; nothing is saved',
     () => endKeyCal(false));
+  const resetAll = mkBtn('Reset all calibration\u2026', 'Factory values for the velocity, aftertouch and Lumatouch tables and '
+    + 'every board\u2019s thresholds and sensitivities (CMD 0x0A, 0x12, 0x2F, 0x34 × 5). Asks first. The per-key '
+    + 'thresholds a calibration learned are kept.', resetAllCalibration);
   sec.appendChild(row);
   const statusEl = document.createElement('div');
   Object.assign(statusEl.style, {
@@ -341,15 +374,15 @@ function makeBuiltinCalSection(): HTMLDivElement {
     const phase = lumatone.keyCal;
     const ending = phase !== 'idle' && phase !== 'starting'; /* running, or its end in flight */
     const busy = phase === 'starting' || phase === 'ending';
-    for (const b of [startKey, startAt]) b.style.display = ending ? 'none' : '';
+    for (const b of [startKey, startAt, resetAll]) b.style.display = ending ? 'none' : '';
     for (const b of [confirm, cancel]) b.style.display = ending ? '' : 'none';
-    for (const b of [startKey, startAt, confirm, cancel]) {
+    for (const b of [startKey, startAt, confirm, cancel, resetAll]) {
       b.disabled = busy;
       b.style.opacity = busy ? '0.5' : '1';
     }
     statusEl.textContent = keyCalStatus();
     statusEl.style.display = statusEl.textContent ? '' : 'none';
-    if (phase === 'idle' && prev === 'ending') for (let i = 0; i < 5; i++) getBoardValues(i);
+    if (phase === 'idle' && prev === 'ending') { boardsReadAt = -Infinity; getAllBoardValues(); }
     prev = phase;
   };
   onKeyCalChange(refresh);
@@ -439,42 +472,29 @@ function makeBoardSection(logical: number): HTMLDivElement {
   return sec;
 }
 
-function makeGlobalFooter(): HTMLDivElement {
-  const foot = document.createElement('div');
-  Object.assign(foot.style, {
-    borderTop: '1px solid rgba(255,255,255,0.2)',
-    padding: '8px',
-    display: 'flex', flexWrap: 'wrap', gap: '4px',
+/* Under the last board: all five back to factory thresholds and sensitivities. */
+function makeResetBoardsRow(): HTMLDivElement {
+  const row = document.createElement('div');
+  Object.assign(row.style, { padding: '0 8px 8px' });
+  const b = document.createElement('button');
+  b.textContent = 'Reset all 5 boards\u2026';
+  b.title = 'CMD 0x34 × 5 — factory thresholds and sensitivities for every board. Asks first.';
+  Object.assign(b.style, {
+    fontSize: '11px', padding: '2px 6px',
+    background: 'rgba(255,255,255,0.08)', color: '#eee',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+    cursor: 'pointer',
   });
-  const mkBtn = (label: string, title: string, onClick: () => void): HTMLButtonElement => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.title = title;
-    Object.assign(b.style, {
-      fontSize: '11px', padding: '2px 6px',
-      background: 'rgba(255,255,255,0.08)', color: '#eee',
-      border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-      cursor: 'pointer',
-    });
-    b.addEventListener('click', onClick);
-    return b;
-  };
-  foot.appendChild(mkBtn('Reset velocity LUT', 'CMD 0x0A',
-    () => sysex.enqueueControl(buildRequestSysEx(SYSEX_CMD_RESET_VELOCITY_CONFIG))));
-  foot.appendChild(mkBtn('Reset AT LUT', 'CMD 0x12',
-    () => sysex.enqueueControl(buildRequestSysEx(SYSEX_CMD_RESET_AFTERTOUCH_CONFIG))));
-  foot.appendChild(mkBtn('Reset Lumatouch LUT', 'CMD 0x2F',
-    () => sysex.enqueueControl(buildRequestSysEx(SYSEX_CMD_RESET_LUMATOUCH_CONFIG))));
-  foot.appendChild(mkBtn('Reset all 5 boards', 'CMD 0x34 × 5',
-    () => { for (let i = 0; i < 5; i++) resetBoard(i); }));
-  foot.appendChild(mkBtn('Get all values', 'CMD 0x3A + 0x3B × 5',
-    () => { for (let i = 0; i < 5; i++) getBoardValues(i); }));
-  return foot;
+  b.addEventListener('click', () => {
+    if (!window.confirm('Reset all five boards\u2019 thresholds and sensitivities to their factory values?')) return;
+    for (let i = 0; i < 5; i++) resetBoard(i);
+  });
+  row.appendChild(b);
+  return row;
 }
 
-/* Velocity calibration UI: hardware LUT push, HKL curve sliders, per-key scale
-   auto-capture. Built once; element refs cached so external state changes can
-   refresh the displayed values. */
+/* The velocity curve's controls. Built once; element refs cached so external
+   state changes can refresh the displayed values. */
 const velCalUi: {
   fullSlider?: HTMLInputElement;
   fullVal?: HTMLSpanElement;
@@ -483,56 +503,12 @@ const velCalUi: {
   gammaSlider?: HTMLInputElement;
   gammaVal?: HTMLSpanElement;
   preview?: HTMLCanvasElement;
-  captureBtn?: HTMLButtonElement;
-  captureStatus?: HTMLSpanElement;
-  calKeyCount?: HTMLSpanElement;
-  targetSlider?: HTMLInputElement;
-  targetVal?: HTMLSpanElement;
-  intLowSlider?: HTMLInputElement;
-  intLowVal?: HTMLSpanElement;
-  intHighSlider?: HTMLInputElement;
-  intHighVal?: HTMLSpanElement;
-  intGammaSlider?: HTMLInputElement;
-  intGammaVal?: HTMLSpanElement;
-  intervalPreview?: HTMLCanvasElement;
-  observedCount?: HTMLSpanElement;
+  keyScales?: HTMLSpanElement;
 } = {};
 
-let captureTicker: number | null = null;
-
-function pushIdentityVelocityLut(): void {
-  /* The identity-from-1 LUT (velocityCal.buildIdentityLut), which the connect-time
-     setup also sends (lumatone/sync.ts); this button sends it again on demand.
-     buildSetVelocityLut reverses internally to match the firmware wire order. */
-  const msg = buildSetVelocityLut(velocityCal.buildIdentityLut());
-  const ok = sysex.enqueueControl(msg);
-  if (ok) console.log('[lumadiag] pushed identity velocity LUT to Lumatone (CMD 0x08, range 1..127)');
-  else console.warn('[lumadiag] no Lumatone connected — identity LUT not sent');
-}
-
-function pushVelocityIntervalTable(): void {
-  /* CMD 0x20: 127 × 12-bit press-time thresholds. Generated from the parametric
-     low/high/gamma curve in velocityCal. */
-  const table = velocityCal.buildIntervalTable();
-  const msg = buildSetVelocityIntervalConfig(table);
-  const ok = sysex.enqueueControl(msg);
-  if (ok) console.log('[lumadiag] pushed velocity interval table to Lumatone (CMD 0x20): low='
-    + velocityCal.intervalCurveLow + ' high=' + velocityCal.intervalCurveHigh
-    + ' gamma=' + velocityCal.intervalCurveGamma.toFixed(2));
-  else console.warn('[lumadiag] no Lumatone connected — interval table not sent');
-}
-
-function refreshObservedCounter(): void {
-  if (velCalUi.observedCount) {
-    velCalUi.observedCount.textContent = String(velocityCal.getObservedVelocityCount());
-  }
-}
-
-/* Plot-area margins used by both curve preview canvases. Left margin holds
-   y-axis tick labels (right-aligned + tick marks) plus a rotated axis name.
-   Bottom margin holds x-axis tick labels + axis name. The canvas footprint
-   matches the per-key scatter (PREVIEW_W) so all three graphs line up in the
-   velocity panel. */
+/* Plot-area margins of the curve preview canvas. Left margin holds y-axis tick
+   labels (right-aligned + tick marks) plus a rotated axis name. Bottom margin
+   holds x-axis tick labels + axis name. */
 const PREVIEW_W = 290;
 const PREVIEW_H = 120;
 const PREVIEW_PAD_L = 28;
@@ -616,395 +592,46 @@ function refreshCurveUi(): void {
     velCalUi.gammaSlider.value = String(Math.round(velocityCal.inputCurveGamma * 100));
     velCalUi.gammaVal!.textContent = velocityCal.inputCurveGamma.toFixed(2);
   }
-  if (velCalUi.calKeyCount) {
-    velCalUi.calKeyCount.textContent = String(velocityCal.calibratedKeyCount);
-  }
-  if (velCalUi.intLowSlider) {
-    velCalUi.intLowSlider.value = String(velocityCal.intervalCurveLow);
-    velCalUi.intLowVal!.textContent = String(velocityCal.intervalCurveLow);
-  }
-  if (velCalUi.intHighSlider) {
-    velCalUi.intHighSlider.value = String(velocityCal.intervalCurveHigh);
-    velCalUi.intHighVal!.textContent = String(velocityCal.intervalCurveHigh);
-  }
-  if (velCalUi.intGammaSlider) {
-    velCalUi.intGammaSlider.value = String(Math.round(velocityCal.intervalCurveGamma * 100));
-    velCalUi.intGammaVal!.textContent = velocityCal.intervalCurveGamma.toFixed(2);
-  }
   drawCurvePreview();
-  drawIntervalCurvePreview();
-  refreshObservedCounter();
+  refreshKeyScaleLine();
 }
 
-/* Terpstra factory default interval table (KeyboardDataStructure.cpp:49). Used
-   for the faint reference trace on the interval curve preview canvas. */
-const FACTORY_INTERVAL_TABLE: readonly number[] = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-  21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-  41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 60, 61,
-  62, 63, 64, 66, 67, 68, 70, 71, 72, 73, 74, 76, 77, 79, 81, 82, 84, 86, 88, 90,
-  92, 94, 96, 98, 101, 104, 107, 111, 115, 119, 124, 129, 134, 140, 146, 152, 159, 170, 171, 175,
-  180, 185, 190, 195, 200, 205, 210, 215, 220, 225, 230, 235, 240, 245, 250, 255, 260, 265, 270, 275,
-  280, 285, 290, 295, 300, 305, 310,
-];
-
-function drawIntervalCurvePreview(): void {
-  const cv = velCalUi.intervalPreview;
-  if (!cv) return;
-  const ctx = cv.getContext('2d');
-  if (!ctx) return;
-  const w = cv.width, h = cv.height;
-  ctx.clearRect(0, 0, w, h);
-  const px = PREVIEW_PAD_L, py = PREVIEW_PAD_T;
-  const pw = w - PREVIEW_PAD_L - PREVIEW_PAD_R;
-  const ph = h - PREVIEW_PAD_T - PREVIEW_PAD_B;
-  /* Y-scale covers both user curve and factory reference so neither clips. */
-  const yMax = Math.max(velocityCal.intervalCurveHigh, 310);
-  const yMin = 0;
-  /* Frame. */
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(px + 0.5, py + 0.5, pw, ph);
-  /* Y-axis ticks. Round to a nice number for the midpoint readout. */
-  ctx.font = '9px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'right';
-  const yTicks = [yMin, Math.round(yMax / 2), yMax];
-  for (const t of yTicks) {
-    const y = py + ph - ((t - yMin) / (yMax - yMin)) * ph;
-    ctx.fillText(String(t), px - 3, y);
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.moveTo(px - 2, y); ctx.lineTo(px, y); ctx.stroke();
-  }
-  /* X-axis ticks: bin index 126..0 (reversed so the right edge corresponds to
-     louder output, matching the audio curve's left-to-right velocity axis). */
-  ctx.textBaseline = 'top';
-  ctx.textAlign = 'center';
-  for (const t of [126, 63, 0]) {
-    const x = px + ((126 - t) / 126) * pw;
-    ctx.fillText(String(t), x, py + ph + 3);
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.moveTo(x, py + ph); ctx.lineTo(x, py + ph + 2); ctx.stroke();
-  }
-  /* Axis names. */
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.fillText('bin index (slow/soft → fast/loud)', px + pw / 2, py + ph + 12);
-  ctx.save();
-  ctx.translate(8, py + ph / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('device count (ticks − 1)', 0, 0);
-  ctx.restore();
-  /* Factory trace (dim). X-axis reversed: bin i plots at the (126-i) screen
-     position so bin 0 (fast/loud) lands on the right. */
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let i = 0; i < 127; i++) {
-    const x = px + ((126 - i) / 126) * pw;
-    const y = py + ph - ((FACTORY_INTERVAL_TABLE[i] - yMin) / (yMax - yMin)) * ph;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  /* User curve (bright). */
-  const table = velocityCal.buildIntervalTable();
-  ctx.strokeStyle = '#fd9';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for (let i = 0; i < 127; i++) {
-    const x = px + ((126 - i) / 126) * pw;
-    const y = py + ph - ((table[i] - yMin) / (yMax - yMin)) * ph;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  /* Legend in the top-RIGHT of the plot area — with the reversed X, the curve
-     runs top-left (slow/soft, large ticks) to bottom-right (fast/loud, small
-     ticks), so top-right is the empty quadrant. */
-  ctx.font = '9px sans-serif';
-  ctx.textBaseline = 'top';
-  ctx.textAlign = 'left';
-  const lx = px + pw - 60, ly = py + 4;
-  ctx.strokeStyle = '#fd9'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(lx, ly + 4); ctx.lineTo(lx + 10, ly + 4); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('your curve', lx + 13, ly);
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(lx, ly + 14); ctx.lineTo(lx + 10, ly + 14); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.45)';
-  ctx.fillText('factory', lx + 13, ly + 10);
+/* Where the per-key scales stand (lumatone/keyscales.ts). */
+function refreshKeyScaleLine(): void {
+  const el = velCalUi.keyScales;
+  if (!el) return;
+  const st = keyScaleStatus();
+  const kept = velocityCal.calibratedKeyCount;
+  if (st.state === 'reading') el.textContent = 'reading the Lumatone\u2019s calibration\u2026';
+  else if (st.state === 'read') {
+    el.textContent = st.count + ' keys, ' + st.min.toFixed(2) + '\u2013' + st.max.toFixed(2)
+      + (st.noWindow ? ' (' + st.noWindow + ' with no timing window)' : '');
+  } else if (st.state === 'failed') el.textContent = 'not read; the last table is in use (' + kept + ' keys)';
+  else el.textContent = kept ? 'the last table read (' + kept + ' keys)' : 'none yet';
 }
 
-function startCaptureTicker(): void {
-  if (captureTicker !== null) return;
-  captureTicker = window.setInterval(() => {
-    if (velCalUi.captureStatus) {
-      velCalUi.captureStatus.textContent = velocityCal.capturedKeyCount
-        + ' / 280 keys recorded';
-    }
-  }, 250);
-}
-
-function stopCaptureTicker(): void {
-  if (captureTicker !== null) { clearInterval(captureTicker); captureTicker = null; }
-}
-
-function makeVelocityCalSection(): HTMLDivElement {
+/* ── Lumatone velocity curve ──
+   The piano's law in the device's units, run up to full loudness, with the
+   corner where they meet rounded (velocityCal.targetGainForTicks). `full` is
+   the input velocity where the piano line (F ÷ ticks)^gamma reaches full;
+   gamma 1 is the measured piano; `corner` is how many dB under that meeting
+   point the curve passes, and moves nothing away from it. Internally the gain
+   is converted to the canonical musical velocity that reproduces it through
+   the house curve, so keyVelocity stays device-neutral; a gain under the house
+   curve's floor plays as its quietest note. The preview is this exact curve
+   against the input velocity (the hardware velocity after the key's scale:
+   128 − ticks), which is the number the Diagnostics overlay plots and labels
+   for a Lumatone strike. */
+function makeVelocityCurveSection(): HTMLDivElement {
   const sec = document.createElement('div');
   Object.assign(sec.style, {
-    borderTop: '2px solid rgba(255,255,255,0.25)',
-    padding: '8px',
-    background: 'rgba(80,160,255,0.04)',
+    borderTop: '1px solid rgba(255,255,255,0.12)',
+    padding: '6px 8px',
   });
   const title = document.createElement('strong');
-  title.textContent = 'Velocity calibration';
+  title.textContent = 'Lumatone velocity curve';
   Object.assign(title.style, { fontSize: '12px', color: '#9cf', display: 'block', marginBottom: '6px' });
   sec.appendChild(title);
-
-  /* ── Hardware foundation ── */
-  const hwBlock = document.createElement('div');
-  Object.assign(hwBlock.style, { marginBottom: '8px' });
-  const hwLabel = document.createElement('div');
-  hwLabel.textContent = 'Hardware foundation';
-  Object.assign(hwLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '2px' });
-  const hwHint = document.createElement('div');
-  hwHint.textContent = 'Push identity LUT so the firmware emits its full 0–127 range — gives HKL the maximum input resolution to shape from.';
-  Object.assign(hwHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px', lineHeight: '1.3' });
-  const hwBtn = document.createElement('button');
-  hwBtn.textContent = 'Push identity LUT to Lumatone (CMD 0x08)';
-  Object.assign(hwBtn.style, {
-    fontSize: '11px', padding: '2px 6px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer', width: '100%',
-  });
-  hwBtn.addEventListener('click', pushIdentityVelocityLut);
-  hwBlock.appendChild(hwLabel);
-  hwBlock.appendChild(hwHint);
-  hwBlock.appendChild(hwBtn);
-
-  sec.appendChild(hwBlock);
-
-  /* Unique-velocity counter + reset. The expected count under identity 0x08
-     plus an integer-range CMD 0x20 curve is ~(high − low + 2): one velocity
-     per integer threshold, plus the two open-ended boundary bins. */
-  const counterRow = document.createElement('div');
-  Object.assign(counterRow.style, {
-    display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px',
-    fontSize: '11px', color: 'rgba(255,255,255,0.7)',
-    marginBottom: '8px', marginTop: '4px', alignItems: 'center',
-  });
-  const observedCell = document.createElement('span');
-  observedCell.title = 'Distinct MIDI velocities emitted since last reset. Should converge to ~(high − low + 2) as you play across the full dynamic range.';
-  const observedVal = document.createElement('span');
-  Object.assign(observedVal.style, { fontFamily: 'monospace', color: '#fd9' });
-  observedCell.appendChild(document.createTextNode('Distinct velocities observed: '));
-  observedCell.appendChild(observedVal);
-  velCalUi.observedCount = observedVal;
-  const resetBtn = document.createElement('button');
-  resetBtn.textContent = 'Reset';
-  resetBtn.title = 'Clear observed-velocity counter.';
-  Object.assign(resetBtn.style, {
-    fontSize: '11px', padding: '1px 8px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer',
-  });
-  resetBtn.addEventListener('click', () => {
-    velocityCal.clearObservedVelocities();
-    refreshObservedCounter();
-  });
-  counterRow.appendChild(observedCell);
-  counterRow.appendChild(resetBtn);
-  sec.appendChild(counterRow);
-
-  const hwResetHint = document.createElement('div');
-  hwResetHint.textContent = '(Use "Reset velocity LUT" below to revert to factory firmware curve.)';
-  Object.assign(hwResetHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '2px', marginBottom: '8px', lineHeight: '1.2' });
-  sec.appendChild(hwResetHint);
-
-  /* ── Hardware velocity intervals (CMD 0x20) ──
-     Designs the 127-threshold press-time → bin table and pushes it to the
-     firmware. This is the real bin-distribution lever (CMD 0x08 stays at
-     identity; that's the output relabeling). Phase A's HKL-side input curve
-     is now a defensive identity layer with no UI — the firmware does the
-     shaping. */
-  const intLabel = document.createElement('div');
-  intLabel.textContent = 'Hardware velocity intervals (CMD 0x20)';
-  Object.assign(intLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '2px' });
-  sec.appendChild(intLabel);
-  const intHint = document.createElement('div');
-  intHint.textContent = 'Shapes press-time → velocity bin thresholds INSIDE the firmware. Tightening into your keyboard’s actual press-time range gives more distinct velocities. Faint trace = factory default. Push to apply.';
-  Object.assign(intHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px', lineHeight: '1.3' });
-  sec.appendChild(intHint);
-
-  const intPreviewWrap = document.createElement('div');
-  Object.assign(intPreviewWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '6px' });
-  const intPreview = document.createElement('canvas');
-  intPreview.width = PREVIEW_W; intPreview.height = PREVIEW_H;
-  Object.assign(intPreview.style, { background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.15)' });
-  intPreviewWrap.appendChild(intPreview);
-  sec.appendChild(intPreviewWrap);
-  velCalUi.intervalPreview = intPreview;
-
-  const mkIntSlider = (
-    label: string, tip: string, min: number, max: number, step: number,
-    valueOf: () => number, setter: (v: number) => void, format: (v: number) => string,
-  ): { row: HTMLDivElement; slider: HTMLInputElement; val: HTMLSpanElement } => {
-    const row = document.createElement('div');
-    Object.assign(row.style, {
-      display: 'grid', gridTemplateColumns: '50px 1fr 44px',
-      alignItems: 'center', gap: '6px', margin: '2px 0',
-    });
-    const lbl = document.createElement('span');
-    lbl.textContent = label;
-    lbl.title = tip;
-    Object.assign(lbl.style, { fontSize: '11px', color: 'rgba(255,255,255,0.75)' });
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = String(min); slider.max = String(max); slider.step = String(step);
-    slider.value = String(valueOf());
-    Object.assign(slider.style, { width: '100%' });
-    const val = document.createElement('span');
-    val.textContent = format(valueOf());
-    Object.assign(val.style, {
-      fontSize: '11px', fontFamily: 'monospace', textAlign: 'right',
-      color: 'rgba(255,255,255,0.9)',
-    });
-    slider.addEventListener('input', () => {
-      const raw = parseFloat(slider.value);
-      setter(raw);
-      val.textContent = format(raw);
-      drawIntervalCurvePreview();
-    });
-    row.appendChild(lbl);
-    row.appendChild(slider);
-    row.appendChild(val);
-    return { row, slider, val };
-  };
-
-  /* Interval curve sliders. The thresholds are in the device's count, which is
-     the press time in ticks less one (velocityCal.pressTicks): 12-bit integers
-     (0..4095), in practice 0..~500 for fast keyboards, up to ~2000 for very
-     slow. gamma is × 100 to give 0.5..5.0 resolution on the slider. */
-  const intLowUi = mkIntSlider(
-    'low', 'Fastest-press threshold: the device count (press time in ticks, less one) for the highest velocity bin. 0 gives the shortest press its own velocity.',
-    0, 100, 1,
-    () => velocityCal.intervalCurveLow,
-    (v: number) => velocityCal.setIntervalCurveLow(v),
-    (v: number) => String(Math.round(v)),
-  );
-  const intHighUi = mkIntSlider(
-    'high', 'Slowest-press threshold: the device count (press time in ticks, less one) for the lowest velocity bin. low + 126 gives every count its own velocity.',
-    0, 200, 1,
-    () => velocityCal.intervalCurveHigh,
-    (v: number) => velocityCal.setIntervalCurveHigh(v),
-    (v: number) => String(Math.round(v)),
-  );
-  const intGammaUi = mkIntSlider(
-    'gamma', 'Distribution exponent (×100). >1 concentrates bins at fast presses; <1 at slow. Factory ≈ 2.1.',
-    50, 500, 5,
-    () => velocityCal.intervalCurveGamma * 100,
-    (v: number) => velocityCal.setIntervalCurveGamma(v / 100),
-    (v: number) => (v / 100).toFixed(2),
-  );
-  velCalUi.intLowSlider = intLowUi.slider; velCalUi.intLowVal = intLowUi.val;
-  velCalUi.intHighSlider = intHighUi.slider; velCalUi.intHighVal = intHighUi.val;
-  velCalUi.intGammaSlider = intGammaUi.slider; velCalUi.intGammaVal = intGammaUi.val;
-  sec.appendChild(intLowUi.row);
-  sec.appendChild(intHighUi.row);
-  sec.appendChild(intGammaUi.row);
-
-  const intBtnRow = document.createElement('div');
-  Object.assign(intBtnRow.style, { display: 'flex', gap: '4px', marginTop: '4px', marginBottom: '8px' });
-  const intPushBtn = document.createElement('button');
-  intPushBtn.textContent = 'Push to Lumatone (CMD 0x20)';
-  Object.assign(intPushBtn.style, {
-    fontSize: '11px', padding: '2px 6px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer', flex: '1 1 auto',
-  });
-  intPushBtn.addEventListener('click', pushVelocityIntervalTable);
-  const intResetBtn = document.createElement('button');
-  intResetBtn.textContent = 'Reset (' + DEFAULT_INTERVAL_CURVE.low + '/'
-    + DEFAULT_INTERVAL_CURVE.high + '/' + DEFAULT_INTERVAL_CURVE.gamma.toFixed(2) + ')';
-  Object.assign(intResetBtn.style, {
-    fontSize: '11px', padding: '2px 6px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer',
-  });
-  intResetBtn.addEventListener('click', () => {
-    velocityCal.resetIntervalCurve();
-    refreshCurveUi();
-  });
-  intBtnRow.appendChild(intPushBtn);
-  intBtnRow.appendChild(intResetBtn);
-  sec.appendChild(intBtnRow);
-
-  /* ── Layer loudness match (re-gained layered .hki) ──
-     A bundle re-gained by analyzer/cli/hki-regain.mjs carries two gains per
-     sample: layers matched in K-weighted level (`gainLevel`) and in Bark-sones
-     (`gain`). Neither metric alone is audibly smooth at the layer boundaries
-     (2026-09-13), so the blend is one live knob — log-linear, applied at the
-     next note-on. Persisted as prefs.layerBlend; once a value is chosen, bake it
-     into the bundle with `hki-regain.mjs --bake-blend <t>`. Instruments without
-     `gainLevel` ignore the setting. */
-  const blendLabel = document.createElement('div');
-  blendLabel.textContent = 'Layer loudness match: level (0) ↔ sones (1)';
-  Object.assign(blendLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
-  sec.appendChild(blendLabel);
-  const blendRow = document.createElement('div');
-  Object.assign(blendRow.style, {
-    display: 'grid', gridTemplateColumns: '50px 1fr 44px',
-    alignItems: 'center', gap: '6px', margin: '2px 0 8px',
-  });
-  const blendLbl = document.createElement('span');
-  blendLbl.textContent = 'match';
-  blendLbl.title = 'Inter-layer loudness matching for re-gained layered instruments. 0 = layers matched in K-weighted level, 1 = matched in Bark-sones; log-linear in between. Takes effect on the next note played.';
-  Object.assign(blendLbl.style, { fontSize: '11px', color: 'rgba(255,255,255,0.75)' });
-  const blendSlider = document.createElement('input');
-  blendSlider.type = 'range';
-  blendSlider.min = '0'; blendSlider.max = '1'; blendSlider.step = '0.05';
-  blendSlider.value = String(loadPrefs().layerBlend);
-  Object.assign(blendSlider.style, { width: '100%' });
-  const blendVal = document.createElement('span');
-  blendVal.textContent = parseFloat(blendSlider.value).toFixed(2);
-  Object.assign(blendVal.style, {
-    fontSize: '11px', fontFamily: 'monospace', textAlign: 'right',
-    color: 'rgba(255,255,255,0.9)',
-  });
-  blendSlider.addEventListener('input', () => {
-    const t = parseFloat(blendSlider.value);
-    SampleEngine.setLayerBlend(t);
-    blendVal.textContent = t.toFixed(2);
-  });
-  blendSlider.addEventListener('change', () => {
-    savePrefs({ layerBlend: parseFloat(blendSlider.value) });
-  });
-  blendRow.appendChild(blendLbl);
-  blendRow.appendChild(blendSlider);
-  blendRow.appendChild(blendVal);
-  sec.appendChild(blendRow);
-
-  /* ── Lumatone velocity curve ──
-     The piano's law in the device's units, run up to full loudness, with the
-     corner where they meet rounded (velocityCal.targetGainForTicks). `full` is
-     the input velocity where the piano line (F ÷ ticks)^gamma reaches full;
-     gamma 1 is the measured piano; `corner` is how many dB under that meeting
-     point the curve passes, and moves nothing away from it. Internally the gain
-     is converted to the canonical musical velocity that reproduces it through
-     the house curve, so keyVelocity stays device-neutral; a gain under the house
-     curve's floor plays as its quietest note. The preview below is this exact
-     curve against the input velocity (the hardware velocity after the key's
-     scale: 128 − ticks on the default table), which is the number the
-     Diagnostics overlay plots and labels for a Lumatone strike. */
-  const curveLabel = document.createElement('div');
-  curveLabel.textContent = 'Lumatone velocity curve';
-  Object.assign(curveLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' });
-  sec.appendChild(curveLabel);
 
   const previewWrap = document.createElement('div');
   Object.assign(previewWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '6px' });
@@ -1049,9 +676,6 @@ function makeVelocityCalSection(): HTMLDivElement {
     row.appendChild(val);
     return { row, slider, val };
   };
-  /* Target-gain curve, in audio-gain space (the familiar floor/ceiling/gamma).
-     Sliders work in integer hundredths so HTML range resolution is fine; setters
-     convert back to fractional gain. The composite preview = this exact curve. */
   /* `full` in tenths of an input velocity: on the default table 125.0 is 3 ticks. */
   const fullUi = mkCurveSlider(
     'full at', 'Where the piano line reaches full loudness, as an input velocity (the number the Diagnostics overlay shows: 128 − ticks, after the key\'s scale). Faster presses are full too. Lower = full loudness comes sooner and everything is louder.',
@@ -1096,564 +720,24 @@ function makeVelocityCalSection(): HTMLDivElement {
   });
   sec.appendChild(curveResetBtn);
 
-  /* ── Per-key auto-capture ── */
-  const capLabel = document.createElement('div');
-  capLabel.textContent = 'Per-key press-time scale';
-  Object.assign(capLabel.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '10px', marginBottom: '4px' });
-  sec.appendChild(capLabel);
-
-  const capHint = document.createElement('div');
-  capHint.textContent = 'One number per key multiplies its press time before the curve, so the same touch sounds the same on every key. Import the table that tools/lumatone-cal/keydata-compare.py --scales writes from the calibration the device runs; or capture: Start, press keys at the loudness you intend "pp" to be, Stop, and each pressed key is scaled so that touch reads as the target velocity.';
-  Object.assign(capHint.style, { fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginBottom: '6px', lineHeight: '1.3' });
-  sec.appendChild(capHint);
-
-  const targetUi = mkCurveSlider(
-    'target', 'Desired output velocity for a "pp" press during capture',
-    5, 50, 1,
-    () => 25,
-    () => {}, /* setter no-op; value read on stop */
-    (v: number) => String(Math.round(v)),
-  );
-  velCalUi.targetSlider = targetUi.slider;
-  velCalUi.targetVal = targetUi.val;
-  /* Override the input handler: target is read-on-demand, no curve preview update. */
-  targetUi.slider.oninput = () => { targetUi.val.textContent = targetUi.slider.value; };
-  sec.appendChild(targetUi.row);
-
-  const capRow = document.createElement('div');
-  Object.assign(capRow.style, { display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' });
-  const captureBtn = document.createElement('button');
-  captureBtn.textContent = 'Start capture';
-  Object.assign(captureBtn.style, {
-    fontSize: '11px', padding: '2px 6px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer',
+  /* The per-key press-time scales: nothing to set, only where they stand. */
+  const scaleRow = document.createElement('div');
+  Object.assign(scaleRow.style, {
+    marginTop: '8px', fontSize: '11px', color: 'rgba(255,255,255,0.7)', lineHeight: '1.35',
   });
-  const status = document.createElement('span');
-  status.textContent = '0 / 280 keys recorded';
-  Object.assign(status.style, { fontSize: '11px', color: 'rgba(255,255,255,0.6)' });
-  captureBtn.addEventListener('click', () => {
-    if (!velocityCal.capturing) {
-      velocityCal.startCapture();
-      captureBtn.textContent = 'Stop & compute';
-      captureBtn.style.background = 'rgba(255,140,0,0.25)';
-      status.textContent = '0 / 280 keys recorded';
-      startCaptureTicker();
-    } else {
-      const target = parseFloat(velCalUi.targetSlider!.value);
-      const n = velocityCal.stopCaptureAndCompute(target);
-      stopCaptureTicker();
-      captureBtn.textContent = 'Start capture';
-      captureBtn.style.background = 'rgba(255,255,255,0.08)';
-      status.textContent = n + ' key' + (n === 1 ? '' : 's') + ' scaled (target ' + target + ')';
-      refreshCurveUi();
-    }
-  });
-  velCalUi.captureBtn = captureBtn;
-  velCalUi.captureStatus = status;
-  capRow.appendChild(captureBtn);
-  capRow.appendChild(status);
-  sec.appendChild(capRow);
-
-  const totalRow = document.createElement('div');
-  Object.assign(totalRow.style, {
-    display: 'flex', gap: '8px', alignItems: 'center',
-    marginTop: '6px', fontSize: '11px', color: 'rgba(255,255,255,0.7)',
-  });
-  const totalLabel = document.createElement('span');
-  totalLabel.textContent = 'Keys with a scale: ';
-  const totalVal = document.createElement('span');
-  totalVal.textContent = String(velocityCal.calibratedKeyCount);
-  Object.assign(totalVal.style, { fontFamily: 'monospace', color: '#9cf' });
-  velCalUi.calKeyCount = totalVal;
-  /* Import a key-scale table (a JSON file). The file input is created per click
-     so choosing the same file twice in a row still fires. */
-  const importBtn = document.createElement('button');
-  importBtn.textContent = 'Import key scales…';
-  Object.assign(importBtn.style, {
-    fontSize: '11px', padding: '1px 6px', marginLeft: 'auto',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer',
-  });
-  importBtn.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,application/json';
-    input.addEventListener('change', () => {
-      const f = input.files && input.files[0];
-      if (!f) return;
-      f.text().then((text) => {
-        let data: unknown;
-        try { data = JSON.parse(text); } catch { data = null; }
-        const r = velocityCal.importKeyScales(data);
-        status.textContent = r.ok
-          ? r.count + ' key scale' + (r.count === 1 ? '' : 's') + ' imported from ' + f.name
-          : 'Not imported: ' + r.error;
-        refreshCurveUi();
-      });
-    });
-    input.click();
-  });
-  const clearBtn = document.createElement('button');
-  clearBtn.textContent = 'Clear all per-key';
-  Object.assign(clearBtn.style, {
-    fontSize: '11px', padding: '1px 6px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer',
-  });
-  clearBtn.addEventListener('click', () => {
-    velocityCal.clearKeyScale();
-    refreshCurveUi();
-  });
-  totalRow.appendChild(totalLabel);
-  totalRow.appendChild(totalVal);
-  totalRow.appendChild(importBtn);
-  totalRow.appendChild(clearBtn);
-  sec.appendChild(totalRow);
+  scaleRow.title = 'One number per key multiplies its press time before the curve, so the same touch sounds the same '
+    + 'on every key. HKL makes them from the calibration the Lumatone holds and reads it again whenever it connects, '
+    + 'after a calibration, and after a change to a board\u2019s max or min lo.';
+  scaleRow.appendChild(document.createTextNode('Key scales: '));
+  const scaleVal = document.createElement('span');
+  Object.assign(scaleVal.style, { color: '#9cf' });
+  scaleRow.appendChild(scaleVal);
+  velCalUi.keyScales = scaleVal;
+  sec.appendChild(scaleRow);
+  onKeyScaleChange(refreshKeyScaleLine);
 
   drawCurvePreview();
-  drawIntervalCurvePreview();
-  return sec;
-}
-
-/* ── Per-key velocity statistics section ──────────────────────────────────
-   Always-on rolling sample collection (when enabled), scatter visualization
-   of (mean, CV) per key, top-N outlier lists (high-CV → noisy; mean-drift →
-   per-key scale candidates), and a sticky per-key inspector with histogram
-   sparkline. Refreshed 1Hz while panel exists. */
-
-interface StatsUi {
-  enableCheckbox: HTMLInputElement;
-  status: HTMLSpanElement;
-  scatter: HTMLCanvasElement;
-  inspector: HTMLDivElement;
-  highCvList: HTMLDivElement;
-  meanDriftList: HTMLDivElement;
-}
-
-let statsUi: StatsUi | null = null;
-let statsInspectorKey: string | null = null;
-let statsTickerId: number | null = null;
-
-const STATS_SCATTER_W = 290;
-const STATS_SCATTER_H = 180;
-const STATS_SCATTER_PAD = 12;
-
-/* Scatter axes: x = p5 (low-end floor), y = p95 (high-end ceiling).
-   Both 0..127. Ideal key sits TOP-LEFT (low floor, high ceiling — full range).
-   Cluster A (saturated high) ends up top-right. Cluster B (stuck middle)
-   clusters near the diagonal in the center. */
-function scatterXY(p5: number, p95: number): [number, number] {
-  const p5c = Math.min(127, Math.max(0, p5));
-  const p95c = Math.min(127, Math.max(0, p95));
-  const x = STATS_SCATTER_PAD + (p5c / 127) * (STATS_SCATTER_W - 2 * STATS_SCATTER_PAD);
-  const y = (STATS_SCATTER_H - STATS_SCATTER_PAD) - (p95c / 127) * (STATS_SCATTER_H - 2 * STATS_SCATTER_PAD);
-  return [x, y];
-}
-
-function findKeyAtScatterPos(mx: number, my: number): string | null {
-  let bestKey: string | null = null;
-  let bestDist = 36;  // squared 6px
-  for (const { key, stats } of velocityCal.getAllStats()) {
-    if (stats.n < STATS_MIN_N) continue;
-    const [x, y] = scatterXY(stats.p5, stats.p95);
-    const dx = x - mx, dy = y - my;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestDist) { bestDist = d2; bestKey = key; }
-  }
-  return bestKey;
-}
-
-const STATS_LOW_FLOOR = 30;   // p5 above this = "can't play quiet"
-const STATS_HIGH_CEIL = 100;  // p95 below this = "can't play loud"
-const STATS_MIN_RANGE = 60;   // (p95 - p5) below this = "narrow range"
-
-function drawScatter(): void {
-  if (!statsUi) return;
-  const cv = statsUi.scatter;
-  const ctx = cv.getContext('2d');
-  if (!ctx) return;
-  ctx.clearRect(0, 0, STATS_SCATTER_W, STATS_SCATTER_H);
-
-  /* The y = x diagonal is the impossibility boundary (p95 must exceed p5).
-     Dim it so the eye knows valid space is above-left. */
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  const [diag0x, diag0y] = scatterXY(0, 0);
-  const [diag1x, diag1y] = scatterXY(127, 127);
-  ctx.moveTo(diag0x, diag0y);
-  ctx.lineTo(diag1x, diag1y);
-  ctx.stroke();
-
-  /* Threshold lines: vertical at p5=STATS_LOW_FLOOR, horizontal at
-     p95=STATS_HIGH_CEIL. The TARGET ZONE is the upper-left rectangle
-     bounded by these (low floor + high ceiling). */
-  ctx.strokeStyle = 'rgba(255,120,80,0.30)';
-  const [floorX] = scatterXY(STATS_LOW_FLOOR, 0);
-  ctx.beginPath();
-  ctx.moveTo(floorX, STATS_SCATTER_PAD);
-  ctx.lineTo(floorX, STATS_SCATTER_H - STATS_SCATTER_PAD);
-  ctx.stroke();
-  const [, ceilY] = scatterXY(0, STATS_HIGH_CEIL);
-  ctx.beginPath();
-  ctx.moveTo(STATS_SCATTER_PAD, ceilY);
-  ctx.lineTo(STATS_SCATTER_W - STATS_SCATTER_PAD, ceilY);
-  ctx.stroke();
-
-  /* Soft tint on the ideal-zone rectangle (above ceilY, left of floorX). */
-  ctx.fillStyle = 'rgba(120,255,120,0.04)';
-  ctx.fillRect(STATS_SCATTER_PAD, STATS_SCATTER_PAD,
-    floorX - STATS_SCATTER_PAD, ceilY - STATS_SCATTER_PAD);
-
-  /* Axis tick labels. */
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.font = '9px sans-serif';
-  for (const v of [0, 32, 64, 96, 127]) {
-    const [tx] = scatterXY(v, 0);
-    ctx.fillText(String(v), tx - 6, STATS_SCATTER_H - 1);
-    const [, ty] = scatterXY(0, v);
-    ctx.fillText(String(v), 0, ty + 3);
-  }
-
-  /* Per-key dots. Selected (inspector) key drawn last with a white outline. */
-  let selectedDot: { x: number; y: number; color: string } | null = null;
-  for (const { key, stats } of velocityCal.getAllStats()) {
-    if (stats.n < STATS_MIN_N) continue;
-    const [x, y] = scatterXY(stats.p5, stats.p95);
-    const color = STATS_BOARD_COLORS[statsBoard(key) - 1];
-    if (key === statsInspectorKey) {
-      selectedDot = { x, y, color };
-      continue;
-    }
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (selectedDot) {
-    ctx.fillStyle = selectedDot.color;
-    ctx.beginPath();
-    ctx.arc(selectedDot.x, selectedDot.y, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
-}
-
-function refreshInspector(): void {
-  if (!statsUi) return;
-  const inspector = statsUi.inspector;
-  inspector.innerHTML = '';
-  if (!statsInspectorKey) {
-    inspector.textContent = velocityCal.statsEnabled
-      ? 'Hover a dot to inspect.'
-      : '(stats off)';
-    return;
-  }
-  const stats = velocityCal.getKeyStats(statsInspectorKey);
-  if (!stats) {
-    inspector.textContent = statsKeyLabel(statsInspectorKey) + ': no data';
-    return;
-  }
-  const range = stats.p95 - stats.p5;
-  /* Two lines: primary range info, then variance/cv as a secondary indicator. */
-  const line1 = document.createElement('div');
-  line1.textContent = statsKeyLabel(statsInspectorKey)
-    + '  n=' + stats.n
-    + '  p5=' + stats.p5.toFixed(0)
-    + '  p95=' + stats.p95.toFixed(0)
-    + '  range=' + range.toFixed(0);
-  inspector.appendChild(line1);
-  const cvStr = stats.cv < 0 ? '—' : stats.cv.toFixed(2);
-  const line2 = document.createElement('div');
-  line2.textContent = '  μ=' + stats.mean.toFixed(1)
-    + '  σ=' + stats.stddev.toFixed(1)
-    + '  CV=' + cvStr;
-  Object.assign(line2.style, { color: 'rgba(255,255,255,0.55)', fontSize: '10px' });
-  inspector.appendChild(line2);
-
-  /* Histogram sparkline (live samples only), with p5/p95 markers overlaid. */
-  const hist = velocityCal.getKeyHistogram(statsInspectorKey, 32);
-  const sparkW = 270, sparkH = 26;
-  const spark = document.createElement('canvas');
-  spark.width = sparkW; spark.height = sparkH;
-  Object.assign(spark.style, {
-    display: 'block', marginTop: '4px',
-    background: 'rgba(0,0,0,0.3)',
-  });
-  const sctx = spark.getContext('2d');
-  if (sctx) {
-    let maxCount = 1;
-    for (let i = 0; i < hist.length; i++) if (hist[i] > maxCount) maxCount = hist[i];
-    const barW = sparkW / hist.length;
-    sctx.fillStyle = '#9fc';
-    for (let i = 0; i < hist.length; i++) {
-      const bh = (hist[i] / maxCount) * (sparkH - 4);
-      sctx.fillRect(i * barW, sparkH - bh, barW - 1, bh);
-    }
-    /* p5 / p95 vertical markers. Map velocity 0..127 to sparkline x. */
-    sctx.strokeStyle = 'rgba(255,200,80,0.85)';
-    sctx.lineWidth = 1;
-    for (const v of [stats.p5, stats.p95]) {
-      const x = (v / 127) * sparkW;
-      sctx.beginPath();
-      sctx.moveTo(x, 0); sctx.lineTo(x, sparkH);
-      sctx.stroke();
-    }
-  }
-  inspector.appendChild(spark);
-}
-
-function drawOutlierLists(): void {
-  if (!statsUi) return;
-  const all = velocityCal.getAllStats();
-  const valid = all.filter(({ stats }) => stats.n >= STATS_MIN_N);
-
-  /* Reuse two existing container divs for three action-oriented lists:
-     can't-play-quiet + narrow-range packed into the first slot, can't-play-loud
-     into the second. (Keeps the existing DOM shape; cheaper than reflowing.) */
-  const mkRow = (
-    key: string,
-    color: string,
-    text: string,
-  ): HTMLDivElement => {
-    const row = document.createElement('div');
-    row.textContent = text;
-    Object.assign(row.style, {
-      fontSize: '10px', fontFamily: 'monospace',
-      color, cursor: 'pointer',
-    });
-    row.addEventListener('click', () => {
-      statsInspectorKey = key;
-      refreshInspector();
-      drawScatter();
-    });
-    return row;
-  };
-
-  const mkHeader = (text: string, topGap: boolean): HTMLDivElement => {
-    const h = document.createElement('div');
-    h.textContent = text;
-    Object.assign(h.style, {
-      fontSize: '11px',
-      color: 'rgba(255,255,255,0.65)',
-      marginTop: topGap ? '6px' : '0',
-      marginBottom: '2px',
-    });
-    return h;
-  };
-
-  const mkEmpty = (text: string): HTMLDivElement => {
-    const e = document.createElement('div');
-    e.textContent = text;
-    Object.assign(e.style, { fontSize: '10px', color: 'rgba(255,255,255,0.4)' });
-    return e;
-  };
-
-  /* List 1 container: "Can't play quiet" + "Narrow range" stacked. */
-  statsUi.highCvList.innerHTML = '';
-
-  statsUi.highCvList.appendChild(mkHeader("Can't play quiet (p5 high → raise MAX):", false));
-  const byFloor = valid.slice().sort((a, b) => b.stats.p5 - a.stats.p5);
-  const floorHits = byFloor.filter(({ stats }) => stats.p5 > STATS_LOW_FLOOR).slice(0, 5);
-  if (floorHits.length === 0) {
-    statsUi.highCvList.appendChild(mkEmpty('  (none)'));
-  } else {
-    for (const { key, stats } of floorHits) {
-      const flagged = stats.p5 >= 50;
-      statsUi.highCvList.appendChild(mkRow(key,
-        flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-        '  ' + statsKeyLabel(key)
-        + '  p5=' + stats.p5.toFixed(0)
-        + '  p95=' + stats.p95.toFixed(0)
-        + '  n=' + stats.n));
-    }
-  }
-
-  statsUi.highCvList.appendChild(mkHeader('Narrow range (range < ' + STATS_MIN_RANGE
-    + ' → raise MAX, accept hardware ceiling):', true));
-  const byRange = valid.slice().sort((a, b) => (a.stats.p95 - a.stats.p5) - (b.stats.p95 - b.stats.p5));
-  const rangeHits = byRange.filter(({ stats }) => (stats.p95 - stats.p5) < STATS_MIN_RANGE).slice(0, 5);
-  if (rangeHits.length === 0) {
-    statsUi.highCvList.appendChild(mkEmpty('  (none)'));
-  } else {
-    for (const { key, stats } of rangeHits) {
-      const r = stats.p95 - stats.p5;
-      const flagged = r < 40;
-      statsUi.highCvList.appendChild(mkRow(key,
-        flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-        '  ' + statsKeyLabel(key)
-        + '  range=' + r.toFixed(0)
-        + '  [' + stats.p5.toFixed(0) + '..' + stats.p95.toFixed(0) + ']'
-        + '  n=' + stats.n));
-    }
-  }
-
-  /* List 2 container: "Can't play loud". */
-  statsUi.meanDriftList.innerHTML = '';
-  statsUi.meanDriftList.appendChild(mkHeader("Can't play loud (p95 < " + STATS_HIGH_CEIL
-    + ' → raise MIN):', false));
-  const byCeil = valid.slice().sort((a, b) => a.stats.p95 - b.stats.p95);
-  const ceilHits = byCeil.filter(({ stats }) => stats.p95 < STATS_HIGH_CEIL).slice(0, 5);
-  if (ceilHits.length === 0) {
-    statsUi.meanDriftList.appendChild(mkEmpty('  (none)'));
-  } else {
-    for (const { key, stats } of ceilHits) {
-      const flagged = stats.p95 < 80;
-      statsUi.meanDriftList.appendChild(mkRow(key,
-        flagged ? '#f95' : 'rgba(255,255,255,0.7)',
-        '  ' + statsKeyLabel(key)
-        + '  p5=' + stats.p5.toFixed(0)
-        + '  p95=' + stats.p95.toFixed(0)
-        + '  n=' + stats.n));
-    }
-  }
-}
-
-function refreshStatsSection(): void {
-  if (!statsUi) return;
-  /* Sync any new samples to snapshots — persists to localStorage when dirty. */
-  velocityCal.syncStatsSnapshot();
-
-  const total = velocityCal.getTotalSamples();
-  const enough = velocityCal.getKeyCountWithEnoughSamples();
-  statsUi.status.textContent = velocityCal.statsEnabled
-    ? enough + ' keys · ' + total + ' samples'
-    : 'off';
-
-  drawScatter();
-  refreshInspector();
-  drawOutlierLists();
-}
-
-function makePerKeyStatsSection(): HTMLDivElement {
-  const sec = document.createElement('div');
-  Object.assign(sec.style, {
-    borderTop: '2px solid rgba(255,255,255,0.25)',
-    padding: '8px',
-    background: 'rgba(160,255,80,0.04)',
-  });
-  const title = document.createElement('strong');
-  title.textContent = 'Per-key velocity statistics';
-  Object.assign(title.style, { fontSize: '12px', color: '#9fc', display: 'block', marginBottom: '6px' });
-  sec.appendChild(title);
-
-  /* Controls row: enable toggle, clear button, status line. */
-  const controls = document.createElement('div');
-  Object.assign(controls.style, {
-    display: 'flex', alignItems: 'center', gap: '6px',
-    marginBottom: '6px', fontSize: '11px',
-  });
-  const enableCb = document.createElement('input');
-  enableCb.type = 'checkbox';
-  enableCb.id = 'lmDiagStatsEnable';
-  enableCb.checked = velocityCal.statsEnabled;
-  Object.assign(enableCb.style, { cursor: 'pointer' });
-  enableCb.addEventListener('change', () => {
-    velocityCal.setStatsEnabled(enableCb.checked);
-    refreshStatsSection();
-  });
-  const enableLbl = document.createElement('label');
-  enableLbl.htmlFor = 'lmDiagStatsEnable';
-  enableLbl.textContent = 'Collect';
-  Object.assign(enableLbl.style, { cursor: 'pointer', color: 'rgba(255,255,255,0.75)' });
-  const clearBtn = document.createElement('button');
-  clearBtn.textContent = 'Clear';
-  Object.assign(clearBtn.style, {
-    fontSize: '11px', padding: '1px 6px',
-    background: 'rgba(255,255,255,0.08)', color: '#eee',
-    border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
-    cursor: 'pointer',
-  });
-  clearBtn.addEventListener('click', () => {
-    if (!window.confirm('Clear all per-key velocity statistics?')) return;
-    velocityCal.clearStats();
-    statsInspectorKey = null;
-    refreshStatsSection();
-  });
-  const status = document.createElement('span');
-  Object.assign(status.style, {
-    color: 'rgba(255,255,255,0.6)', marginLeft: 'auto',
-    fontFamily: 'monospace',
-  });
-  status.textContent = '—';
-  controls.appendChild(enableCb);
-  controls.appendChild(enableLbl);
-  controls.appendChild(clearBtn);
-  controls.appendChild(status);
-  sec.appendChild(controls);
-
-  /* Scatter plot canvas. */
-  const scatterWrap = document.createElement('div');
-  Object.assign(scatterWrap.style, { display: 'flex', justifyContent: 'center', marginBottom: '4px' });
-  const scatter = document.createElement('canvas');
-  scatter.width = STATS_SCATTER_W;
-  scatter.height = STATS_SCATTER_H;
-  Object.assign(scatter.style, {
-    background: 'rgba(0,0,0,0.4)',
-    border: '1px solid rgba(255,255,255,0.15)',
-    cursor: 'crosshair',
-  });
-  scatterWrap.appendChild(scatter);
-  sec.appendChild(scatterWrap);
-
-  const axisHint = document.createElement('div');
-  axisHint.textContent = 'x: p5 (floor) · y: p95 (ceiling). Green-tinted zone = ideal. '
-    + 'Right of red line: can\'t play quiet (raise MAX). Below red line: can\'t play loud (raise MIN).';
-  Object.assign(axisHint.style, {
-    fontSize: '10px', color: 'rgba(255,255,255,0.5)',
-    marginBottom: '6px', textAlign: 'center', lineHeight: '1.3',
-  });
-  sec.appendChild(axisHint);
-
-  /* Per-key inspector — sticky on hover; reused for histogram. */
-  const inspector = document.createElement('div');
-  Object.assign(inspector.style, {
-    fontSize: '11px', color: 'rgba(255,255,255,0.85)',
-    background: 'rgba(0,0,0,0.3)', padding: '4px 6px',
-    borderRadius: '2px', marginBottom: '6px',
-    minHeight: '40px', fontFamily: 'monospace',
-  });
-  inspector.textContent = 'Hover a dot to inspect.';
-  sec.appendChild(inspector);
-
-  /* Outlier lists. */
-  const highCvList = document.createElement('div');
-  sec.appendChild(highCvList);
-  const meanDriftList = document.createElement('div');
-  sec.appendChild(meanDriftList);
-
-  /* Wire interactions on scatter. */
-  scatter.addEventListener('mousemove', (e: MouseEvent) => {
-    const rect = scatter.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const hit = findKeyAtScatterPos(mx, my);
-    if (hit) {
-      statsInspectorKey = hit;
-      refreshInspector();
-      drawScatter();
-    }
-  });
-
-  statsUi = { enableCheckbox: enableCb, status, scatter, inspector, highCvList, meanDriftList };
-  refreshStatsSection();
-
-  /* 1Hz refresh while the panel exists. Cheap; pauses are handled by the
-     stats functions short-circuiting when disabled. */
-  if (statsTickerId === null) {
-    statsTickerId = window.setInterval(() => {
-      if (!panel || panel.style.display === 'none') return;
-      refreshStatsSection();
-      refreshObservedCounter();
-    }, 1000);
-  }
-
+  refreshKeyScaleLine();
   return sec;
 }
 
@@ -1683,7 +767,18 @@ export function setLumaDiagHotkeyCallback(fn: (() => void) | null): void {
 export function setLumaDiagVisible(visible: boolean): void {
   if (!panel) return;
   panel.style.display = visible ? 'block' : 'none';
+  if (!visible) return;
+  getAllBoardValues();
+  /* The scroll bar gets a strip of its own (`scrollbar-gutter`). A browser that
+     draws its scroll bars over the content reserves nothing for them, so there
+     the strip is padding. Measured once the panel is laid out. */
+  if (!gutterChecked) {
+    gutterChecked = true;
+    if (panel.offsetWidth - panel.clientWidth <= 2) panel.style.paddingRight = SCROLLBAR_STRIP_PX + 'px';
+  }
 }
+const SCROLLBAR_STRIP_PX = 12;
+let gutterChecked = false;
 
 export function ensureLumaDiag(): void {
   if (domBuilt) return;
@@ -1696,9 +791,10 @@ export function ensureLumaDiag(): void {
     position: 'fixed',
     top: '8px',
     left: '8px',
-    width: '320px',
+    width: (320 + SCROLLBAR_STRIP_PX) + 'px',
     maxHeight: 'calc(100vh - 16px)',
     overflowY: 'auto',
+    scrollbarGutter: 'stable',
     background: 'rgba(0,0,0,0.82)',
     color: 'rgba(255,255,255,0.9)',
     font: '12px sans-serif',
@@ -1710,7 +806,7 @@ export function ensureLumaDiag(): void {
     display: 'none',
   });
   const header = document.createElement('div');
-  header.textContent = 'lumadiag · per-board calibration';
+  header.textContent = 'Lumatone Calibration';
   Object.assign(header.style, {
     padding: '6px 8px',
     background: 'rgba(255,255,255,0.06)',
@@ -1719,24 +815,17 @@ export function ensureLumaDiag(): void {
     fontSize: '12px',
   });
   panel.appendChild(header);
+  panel.appendChild(makeVelocityCurveSection());
   panel.appendChild(makeBuiltinCalSection());
-  panel.appendChild(makeSwapSection());
   for (let i = 0; i < 5; i++) panel.appendChild(makeBoardSection(i));
-  panel.appendChild(makeVelocityCalSection());
-  panel.appendChild(makePerKeyStatsSection());
-  panel.appendChild(makeGlobalFooter());
+  panel.appendChild(makeResetBoardsRow());
+  panel.appendChild(makeSwapSection());
   document.body.appendChild(panel);
 
-  /* Auto-fetch real values after a short delay so MIDI access has time to
-     resolve. Sliders remain disabled until each board's response arrives. */
-  window.setTimeout(() => {
-    if (midi.midiOut) {
-      console.log('[lumadiag] fetching real per-board values from device');
-      for (let i = 0; i < 5; i++) getBoardValues(i);
-    } else {
-      console.log('[lumadiag] no Lumatone yet — click "Get all values" once connected');
-    }
-  }, 1500);
+  /* Read the per-board values after a short delay, so that a panel restored at
+     page load finds MIDI access resolved. Sliders remain disabled until each
+     board's response arrives; showing the panel reads them again. */
+  window.setTimeout(getAllBoardValues, 1500);
 
   console.log('%c[lumadiag] built · Shift+\\ toggles visibility · sliders enable once values are read from device',
     'color:#0ff;font-weight:bold');

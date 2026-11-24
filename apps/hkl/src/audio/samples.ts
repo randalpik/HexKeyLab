@@ -31,6 +31,4 @@ export const SampleEngine = {
   isInstrumentLoaded: engine.isInstrumentLoaded,
   unloadInstrument: engine.unloadInstrument,
   tapMaster: engine.tapMaster,
-  setLayerBlend: engine.setLayerBlend,
-  getLayerBlend: engine.getLayerBlend,
 };

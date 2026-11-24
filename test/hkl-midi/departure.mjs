@@ -30,7 +30,7 @@
 //         detaches the old object, so a burst can't leak through it
 //   I     after a self-declared departure, a reappearing port is adopted only
 //         once it answers a ping
-//   J     Calibrate Keys is unchecked (and its overlay closed) while a
+//   J     Calibration is unchecked (and its overlay closed) while a
 //         departure hides the checkbox, and comes back on reconnect
 //   K     reloaded with the pref on and no Lumatone, the overlay stays shut
 //         until one connects
@@ -340,7 +340,7 @@ const SCRIPT = `(async () => {
   check('I8: badge reads connected', badge(), 'Lumatone connected|luma-connected');
   midi.midiAccess = savedAccess;
 
-  /* ══ J. Calibrate Keys is never checked while its checkbox is hidden ══
+  /* ══ J. Calibration is never checked while its checkbox is hidden ══
      The checkbox is luma-conn-only, so a departure hides it; an overlay left
      open then has no visible control to close it. Connected here (I6). */
   const cbCal = document.getElementById('cbCalibrateKeys');

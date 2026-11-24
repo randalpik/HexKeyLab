@@ -109,4 +109,4 @@ or HTTPS); `file://` doesn't work. Chromium also works for testing.
 
 Plug it in and tick Auto-sync. HKL pushes a fixed `(channel, note)` mapping once, then only color
 updates ride the SysEx wire. On a unit whose boards 3 and 4 are physically swapped, tick **Swap
-boards 3 ↔ 4** in Calibrate Keys (off by default).
+boards 3 ↔ 4** in the Calibration panel (off by default).

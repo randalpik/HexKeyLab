@@ -22,8 +22,9 @@
 // 128 − the input velocity.
 // Checks the law, that only the corner is rounded, the three scalars, Max's anchors of
 // 2026-11-22, the two routes into the curve (a strike, and an input velocity as the
-// Calibrate Keys graph passes it), that the law runs on count + 1, and the one-time
-// resets of settings saved before the piano law and before the zero-based table.
+// Calibration graph passes it), that the law runs on count + 1, and the one-time
+// reset of settings saved before the piano law (a saved interval table is dropped:
+// the table is the constant 0…126).
 import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
@@ -55,17 +56,17 @@ const dB = (g) => 20 * Math.log10(g);
 assert.equal(velocityCal.inputCurveGamma, 1, 'the default gamma is the piano\'s, 1');
 assert.equal(DEFAULT_INPUT_CURVE.gamma, 1);
 assert.equal(velocityCal.inputCurveFull, DEFAULT_INPUT_CURVE.full);
-assert.equal(stored().version, 8);
+assert.equal(stored().version, 9);
 assert.deepEqual(stored().inputCurve, { full: DEFAULT_INPUT_CURVE.full, gamma: 1, corner: DEFAULT_INPUT_CURVE.corner }, 'no floor or ceiling is saved any more');
 assert.deepEqual(stored().keyScale, { '4,18': 2.5 }, 'the key scales are untouched');
-/* The saved interval table (1…127) read the device's count as the press time; it
-   becomes the zero-based one, on which the press time is 128 − the velocity. */
-assert.deepEqual(stored().intervalCurve, { low: 0, high: 126, gamma: 1 }, 'a saved interval table becomes 0…126');
-assert.deepEqual([velocityCal.intervalCurveLow, velocityCal.intervalCurveHigh], [0, 126]);
-ok('saved v6 prefs: the curve becomes full ' + DEFAULT_INPUT_CURVE.full + ' / gamma 1 and the interval table 0…126, key scales kept, stored as v8');
+/* The interval table is not a setting: a saved one (here 1…127, which read the
+   device's count as the press time) is dropped, and the table is 0…126, on which
+   the press time is 128 − the velocity. */
+assert.equal('intervalCurve' in stored(), false, 'a saved interval table is dropped');
+assert.deepEqual(velocityCal.buildIntervalTable(), Array.from({ length: 127 }, (_, i) => i));
+ok('saved v6 prefs: the curve becomes full ' + DEFAULT_INPUT_CURVE.full + ' / gamma 1, the saved interval table is dropped, key scales kept, stored as v9');
 
 velocityCal.resetInputCurve();
-velocityCal.resetIntervalCurve(); // thresholds 0…126: input velocity = 128 − ticks
 const table = velocityCal.buildIntervalTable();
 /* The device: the board sends a count, and the controller's bin is the first threshold
    the count does not exceed. A press seen in the zone on `ticks` scans sends ticks − 1. */
@@ -196,14 +197,9 @@ assert.equal(velocityCal.lumatoneVelocity('4,18', firmwareRaw(4)), velocityCal.l
 ok('a strike plays at the curve\'s value for its scaled press time');
 
 // ── G: an input velocity (the graph\'s axis) takes the same curve ──
-for (const [low, high] of [[0, 126], [1, 127], [1, 128], [3, 50]]) {
-  velocityCal.setIntervalCurveLow(low);
-  velocityCal.setIntervalCurveHigh(high);
-  for (let raw = 1; raw <= 127; raw++) {
-    assert.equal(velocityCal.applyInputCurve(raw), velocityCal.lumatoneVelocity('1,0', raw), low + '…' + high + ', raw ' + raw);
-  }
+for (let raw = 1; raw <= 127; raw++) {
+  assert.equal(velocityCal.applyInputCurve(raw), velocityCal.lumatoneVelocity('1,0', raw), 'raw ' + raw);
 }
-velocityCal.resetIntervalCurve();
 assert.equal(velocityCal.applyInputCurve(0), 0);
 for (const k of ['1,0', '4,18']) {
   for (let t = 1; t <= 50; t++) {
@@ -211,7 +207,7 @@ for (const k of ['1,0', '4,18']) {
       k + ' at ' + t + ' ticks: the input velocity and the strike agree');
   }
 }
-ok('applyInputCurve(v) is the strike\'s value at every whole input velocity, on four interval tables');
+ok('applyInputCurve(v) is the strike\'s value at every whole input velocity');
 
 // ── H: the piano law runs on the press time, the device\'s count plus one ──
 /* A count of c is c + 1 scans, so the amplitude is proportional to 1 ÷ (c + 1): well

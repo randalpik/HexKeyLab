@@ -178,6 +178,8 @@ Opposite directions. Both apply per-key (0..254 each in KeyData_N). Use MAX to d
 
 ### Use p5/p95 to diagnose per-key calibration, not mean/CV
 
+> **2026-11-24**: the per-key statistics this entry reads from (the scatter, the outlier lists, the Collect switch) were removed from HKL with the rest of the Calibration panel's rework: nothing was derived from them, and the per-key scales come from the calibration alone (decisions.md 2026-11-24). What follows is history.
+
 > **2026-11-22**: p5/p95 remain the right statistics, but the target zone and the three failure modes below were defined on the tables and thresholds of May 2026 (and on a unit that from the next power cycle ran its preset's tables). On the one-tick table a raw velocity is 128 − ticks; a key that sits apart from the rest in the scatter has a different timing window, and its fix is the per-key scale, not MAX or MIN.
 
 The natural metrics for "what's this key's realistic velocity range during normal play" are the outlier-rejecting percentiles, not the moments. lumadiag's per-key velocity statistics scatter plots (p5, p95) per key. The target zone is upper-left (p5 ≤ 30, p95 ≥ 100). Three failure modes diagnose directly from position:
@@ -904,6 +906,19 @@ Measured by Max on 2026-11-22, on the identity LUT and one-tick interval table, 
 - **The proportionality is across keys at one setting of the thresholds, not across settings.** With `min lo` at 14 Max's ppp, p and f sat at about 21, 6 and 2 scaled ticks; with `min lo` at 3 (the median window 49 → 60 counts, +22%) he read them at more than 48, 23 and 5. The first counts of a key's travel take far longer than the rest, so starting the timer 11 counts earlier lengthens every press time by much more than the window grows, and by more for a soft press. (Approximate figures from two sittings the same day.)
 
 HKL's per-key press-time scale (`velocityCal.applyKeyScale`; architecture/engine.md → Velocity architecture) is built on this: scale = median window ÷ the key's window, written by `tools/lumatone-cal/keydata-compare.py --scales`. The per-key *gain* it replaced multiplied velocity, which under a one-tick table is 128 − ticks: a gain fitted at one dynamic is wrong at the others.
+
+### The per-key calibration can be read over SysEx
+
+Found on 2026-11-24, when Max asked what it would take for HKL to make the per-key press-time scales by itself after a calibration. Until then every doc here said the per-key values could only be reached over SSH.
+
+- **The commands**: `0x19` answers with a board's 56 per-key MAX values and `0x1A` with its 56 MIN values (`F0 00 21 50 <board> <cmd> 00 00 00 00 F7`; the reply is 120 bytes, each value two nibbles, high first). `0x1C` answers with the 56 validity flags, one byte each, not nibble pairs. `0x1B` (aftertouch MAX) is in the same enum and was not probed. Read only: the firmware has no command that sets one of them.
+- **Where the answer comes from**: the controller's RAM copy (`boardId[board − 1]` at `+0x118` for MAX and `+0x150` for MIN, read in the 1.4.0 binary's `decodeMidiMessage`), which is the layer hkl.md already documented for the retired `/proc/<pid>/mem` scripts.
+- **RAM is filled before the file is written.** In the 1.5.0 binary `storeKeySetting`, the `KeyData_N` writer, is called after boot from two places in `decodePicMessage`, each directly after a copy of the board's report into those same offsets. So a read is never older than the file. Not yet checked on hardware: a read made directly after Confirm against a fresh SSH save.
+- **Checked on Max's unit** (1.5.0, 2026-11-24): MAX and MIN from all five boards equal the save of 2026-11-22, 280 keys of 280 in both rows, and the scales computed from the read equal the table the tool wrote from that save.
+- **How it was missed**: the getters are in the firmware's command enum, which gdb prints by name (`gdb -batch -ex "print/x sysexGetMax" <binary>`; the names show in `strings`, and `info address` calls each "constant"). Nobody had listed the `sysexGet*` names against what HKL reads over SSH. Before writing that the device cannot report something, list that enum.
+- **Finding callers without an ARM `objdump`**: read `.text`'s address and offset from `readelf -S`, scan it for `BL` words (`(word >> 24) & 0xF == 0xB`, target = address + 8 + the signed 24-bit offset × 4), and name each hit with gdb's `info symbol`. That is how `storeKeySetting`'s callers were found.
+- **A probe can share the port with a running HKL**: mido over RtMidi goes through the ALSA sequencer (the bench tool's virtualenv has both), and HKL drops any reply that does not match the command it is waiting on.
+- **A control message queued before a setup goes out ahead of it**: `sysex.replaceQueue` keeps unsent non-color messages in front of the new batch. The calibration read is therefore queued after `replaceQueue`, or a preset switch's re-push would wait behind fifteen reads (`test/hkl-midi/departure.mjs`, case F2, caught it).
 
 ### A tick is one scan of the board, about 1.25 ms, and it is a firmware choice
 

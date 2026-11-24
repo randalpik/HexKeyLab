@@ -35,6 +35,7 @@ import { midi } from '../state/midi.js';
 import { lumatone, type KeyCalPhase } from '../state/lumatone.js';
 import { sysex } from './sysex.js';
 import { syncLumatoneColors } from './sync.js';
+import { refreshKeyScales } from './keyscales.js';
 import {
   SYSEX_ACK, SYSEX_NACK, SYSEX_BUSY, SYSEX_STATE,
   SYSEX_CMD_CALIBRATE_KEYS, SYSEX_CMD_CALIBRATE_AFTERTOUCH,
@@ -66,7 +67,7 @@ const ADOPTED = 'The Lumatone is already in a calibration mode. Confirm saves wh
 let status = '';
 const listeners: (() => void)[] = [];
 
-/** Text for the Calibrate Keys status line. */
+/** Text for the Calibration panel's status line. */
 export function keyCalStatus(): string { return status; }
 
 /** Called after every phase or status change. */
@@ -156,7 +157,9 @@ function awaitNormalMode(running: KeyCalPhase, confirm: boolean, triesLeft: numb
 }
 
 /* The device is out of calibration mode. The routine repainted the keys, so
-   the color cache is void: sync every key again. askVersion: the device is in
+   the color cache is void: sync every key again. A confirmed key calibration
+   replaced the per-key thresholds, so the press-time scales are read again
+   (after a cancel the read returns the table already in use). askVersion: the device is in
    normal mode but an adopted calibration left its version unknown, so ask as a
    connect does. */
 function finish(text: string, askVersion = false): void {
@@ -164,6 +167,7 @@ function finish(text: string, askVersion = false): void {
   lumatone.deviceColors = null;
   if (askVersion && !lumatone.firmware) sysex.queryFirmware(() => syncLumatoneColors(), adoptKeyCal);
   syncLumatoneColors();
+  refreshKeyScales();
 }
 
 /** Connect-time firmware query refused with `st` (sysex.queryFirmware's

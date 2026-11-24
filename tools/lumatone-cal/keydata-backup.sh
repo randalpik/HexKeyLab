@@ -14,8 +14,8 @@
 #
 # KeyData_N holds the per-key thresholds (MAX / MIN / validity / AT-MAX), the only files the
 # firmware's built-in key and aftertouch calibration rewrites when it is confirmed.
-# ThresholdData_N holds the per-board thresholds and sensitivities (HKL's Calibrate Keys
-# sliders). <dir> is any folder holding those files: one made by `save`, or the `files/`
+# ThresholdData_N holds the per-board thresholds and sensitivities (the sliders of HKL's
+# Calibration panel). <dir> is any folder holding those files: one made by `save`, or the `files/`
 # folder of a full device backup.
 #
 # Saved copies default to backups/ beside this script (gitignored), never the home directory.

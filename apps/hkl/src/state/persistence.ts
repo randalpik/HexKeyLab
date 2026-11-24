@@ -53,7 +53,8 @@ export interface ToolbarVisibility {
   secrets: boolean;
 }
 
-/* Velocity calibration (curve + per-key press-time scale + per-key stats).
+/* Velocity calibration (the house curve, the per-key press-time scale and the
+   Lumatone curve).
    Set by src/audio/velocityCal.ts.
    Absent = defaults. */
 export interface VelocityCalPrefs {
@@ -65,44 +66,19 @@ export interface VelocityCalPrefs {
    *  finger speed (1 / press time), where it was one on the velocity number;
    *  v7 = `inputCurve` is `{ full, gamma, corner }`, the piano law (no floor or
    *  ceiling; `corner` was added later and defaults when absent); v8 = the
-   *  press time is the device's count plus one and `intervalCurve` defaults to
-   *  0…126 (a table saved before it is replaced by that default).
+   *  press time is the device's count plus one; v9 = no `intervalCurve` (the
+   *  table on the device is the constant 0…126) and no per-key statistics, and
+   *  `keyScale` is the last table read from the device's calibration.
    *  Older versions get a one-time migration in velocityCal.ts. */
   version?: number;
   floor: number;
   ceiling: number;
   gamma: number;
   keyScale: Record<string, number>;
-  statsEnabled?: boolean;
-  /** Persisted snapshot of per-key velocity stats. Raw samples are session-only
-   *  in velocityCal.ts; only this aggregate persists. */
-  stats?: Record<string, KeyStatsSnapshot>;
-  /** Velocity-input curve, applied to Lumatone-source MIDI velocity at the
-   *  midi/handler.ts entry point before storage/audio/recording. Same shape as
-   *  the audio-stage curve but the output domain is 0..127 (integer velocity),
-   *  not 0..1 (audio gain). Default identity (floor=0, ceiling=127, gamma=1)
-   *  is a no-op. Lives here, not above, because it's a Lumatone-only knob.
-   *  Phase C: superseded by `intervalCurve` (which shapes at the firmware level
-   *  via SysEx 0x20). Kept as a defensive identity layer; migration in
-   *  velocityCal.ts resets to identity once the user adopts intervalCurve. */
+  /** The Lumatone velocity curve (velocityCal.ts → InputCurveState), applied to
+   *  Lumatone-source MIDI velocity at the midi/handler.ts entry point before
+   *  storage, audio and recording. */
   inputCurve?: { full?: number; gamma: number; corner?: number };
-  /** Lumatone firmware velocity-interval (CMD 0x20) curve parameters. Defines
-   *  the press-time tick thresholds that separate the firmware's 128 velocity
-   *  bins, via the parametric `low + (high - low) · (i/126)^gamma` map. HKL
-   *  pushes the resolved table to the Lumatone via SysEx 0x20. */
-  intervalCurve?: { low: number; high: number; gamma: number };
-}
-
-export interface KeyStatsSnapshot {
-  n: number;
-  mean: number;
-  stddev: number;
-  /** Coefficient of variation; -1 if undefined. */
-  cv: number;
-  /** 5th and 95th percentile velocity. Action targets: p5 ≤ 30 (can play quiet)
-   *  and p95 ≥ 100 (can play loud) for an unrestricted key. */
-  p5: number;
-  p95: number;
 }
 
 export interface PrefsV1 {
@@ -146,10 +122,6 @@ export interface PrefsV1 {
    *  physically transposed). Off by default — standard units need no swap. */
   swapBoards34: boolean;
   captureAudio: boolean;
-  /** Inter-layer matching blend for re-gained layered decay instruments:
-   *  0 = layers matched in K-weighted level, 1 = matched in Bark-sones (the
-   *  engine blends log-linearly). Lumadiag slider; default 1. */
-  layerBlend: number;
   velocityCal?: VelocityCalPrefs;
   /** Piano-toolbar input. Selected device is a Web MIDI input id (stable per
    *  port across reloads in modern browsers). */
@@ -237,7 +209,6 @@ export const DEFAULT_PREFS: PrefsV1 = {
   calibrateKeys: false,
   swapBoards34: false,
   captureAudio: false,
-  layerBlend: 1,
   pianoInputDeviceId: null,
   pianoEnabled: false,
   pianoOutputEnabled: false,
@@ -383,10 +354,6 @@ export function loadPrefs(): PrefsV1 {
       typeof o.captureAudio === "boolean"
         ? o.captureAudio
         : DEFAULT_PREFS.captureAudio,
-    layerBlend:
-      typeof o.layerBlend === "number" && isFinite(o.layerBlend)
-        ? Math.min(1, Math.max(0, o.layerBlend))
-        : DEFAULT_PREFS.layerBlend,
     velocityCal: loadVelocityCal(o.velocityCal),
     pianoInputDeviceId:
       typeof o.pianoInputDeviceId === 'string'
@@ -446,25 +413,6 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
       if (typeof val === 'number' && val > 0) keyScale[k] = val;
     }
   }
-  const statsEnabled = typeof v.statsEnabled === 'boolean' ? v.statsEnabled : undefined;
-  let stats: Record<string, KeyStatsSnapshot> | undefined;
-  if (v.stats && typeof v.stats === 'object') {
-    const s: Record<string, KeyStatsSnapshot> = {};
-    for (const [k, val] of Object.entries(v.stats as Record<string, unknown>)) {
-      if (!val || typeof val !== 'object') continue;
-      const r = val as Record<string, unknown>;
-      if (typeof r.n === 'number' && typeof r.mean === 'number'
-          && typeof r.stddev === 'number' && typeof r.cv === 'number') {
-        /* p5/p95 are new — accept stored values when present, otherwise fall
-           back to mean ± stddev as a reasonable approximation until samples
-           accumulate. */
-        const p5 = typeof r.p5 === 'number' ? r.p5 : Math.max(0, r.mean - r.stddev);
-        const p95 = typeof r.p95 === 'number' ? r.p95 : Math.min(127, r.mean + r.stddev);
-        s[k] = { n: r.n, mean: r.mean, stddev: r.stddev, cv: r.cv, p5, p95 };
-      }
-    }
-    if (Object.keys(s).length > 0) stats = s;
-  }
   /* `full` is absent from prefs saved before v7, whose curve had a floor and a
      ceiling instead; velocityCal's migration replaces such a curve. */
   let inputCurve: { full?: number; gamma: number; corner?: number } | undefined;
@@ -476,16 +424,8 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
       if (typeof ic.corner === 'number' && ic.corner >= 0 && ic.corner <= 12) inputCurve.corner = ic.corner;
     }
   }
-  let intervalCurve: { low: number; high: number; gamma: number } | undefined;
-  if (v.intervalCurve && typeof v.intervalCurve === 'object') {
-    const ic = v.intervalCurve as Record<string, unknown>;
-    if (typeof ic.low === 'number' && typeof ic.high === 'number' && typeof ic.gamma === 'number'
-        && ic.low >= 0 && ic.high <= 4095 && ic.low < ic.high && ic.gamma > 0) {
-      intervalCurve = { low: ic.low, high: ic.high, gamma: ic.gamma };
-    }
-  }
   const version = typeof v.version === 'number' ? v.version : undefined;
-  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, keyScale, statsEnabled, stats, inputCurve, intervalCurve };
+  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, keyScale, inputCurve };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

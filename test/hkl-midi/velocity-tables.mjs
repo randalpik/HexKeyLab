@@ -80,7 +80,6 @@ let checks = 0;
 const ok = (label) => { checks++; console.log('  ✓ ' + label); };
 
 // ── A: a connect carries both tables, after the layout and the flags ──
-velocityCal.resetIntervalCurve();
 connect();
 assert.equal(only(LUT).length, 1, 'one 08h in the connect batch');
 assert.equal(only(INTERVALS).length, 1, 'one 20h in the connect batch');
@@ -94,8 +93,11 @@ assert.deepEqual(wireLut(only(LUT)[0]), identityByBin, 'identity LUT: bin 0 → 
 assert.deepEqual(wireIntervals(only(INTERVALS)[0]), velocityCal.buildIntervalTable(),
   'the interval table is the one velocityCal builds');
 assert.deepEqual(velocityCal.buildIntervalTable(), Array.from({ length: 127 }, (_, i) => i),
-  'default curve (low 0, high 126, gamma 1): thresholds 0…126, one count each');
-ok('a connect sends the identity LUT and the interval table once each, before the colors');
+  'thresholds 0…126, one count each');
+/* With the setup the per-key calibration is read back for the key scales
+   (lumatone/keyscales.ts; test/hkl-midi/key-scale.mjs covers the read). */
+assert.deepEqual([only(0x19).length, only(0x1A).length, only(0x3A).length], [5, 5, 5], 'three reads per board');
+ok('a connect sends the identity LUT and the interval table once each, before the colors, and reads the calibration');
 
 // ── B: a sync that is not a setup sends neither ──
 sent = [];
@@ -118,17 +120,16 @@ assert.equal(only(INTERVALS).length, 1);
 assert.deepEqual(wireLut(only(LUT)[0]), identityByBin);
 ok('after a preset switch both tables are pushed again');
 
-// ── D: the pushed interval table follows the curve's settings ──
-velocityCal.setIntervalCurveLow(3);
-velocityCal.setIntervalCurveHigh(60);
+// ── D: the interval table is a constant: nothing sets it ──
+velocityCal.buildIntervalTable()[5] = 999; // a caller's copy
 connect();
-assert.deepEqual(wireIntervals(only(INTERVALS)[0]), velocityCal.buildIntervalTable());
-assert.equal(wireIntervals(only(INTERVALS)[0])[0], 3);
-assert.equal(wireIntervals(only(INTERVALS)[0])[126], 60);
-ok('the table on the wire is built from the current low / high / gamma');
+assert.deepEqual(wireIntervals(only(INTERVALS)[0]), Array.from({ length: 127 }, (_, i) => i));
+for (const gone of ['setIntervalCurveLow', 'setIntervalCurveHigh', 'setIntervalCurveGamma', 'resetIntervalCurve', 'intervalCurveLow']) {
+  assert.equal(gone in velocityCal, false, gone + ' is gone');
+}
+ok('the table on the wire is 0…126 at every setup; velocityCal has no setting for it');
 
 // ── E: per-key firmware (1.4.0) gets the tables too ──
-velocityCal.resetIntervalCurve();
 connect([1, 4, 0]);
 assert.equal(only(LUT).length, 1);
 assert.equal(only(INTERVALS).length, 1);
@@ -176,7 +177,6 @@ function decodeHolds(label) {
   }
   return reached;
 }
-velocityCal.resetIntervalCurve();
 decodeHolds('0…126');
 for (let count = 0; count <= 125; count++) {
   const raw = firmwareRaw(count, velocityCal.buildIntervalTable());
@@ -191,49 +191,6 @@ assert.equal(velocityCal.pressTicksLabel(112), '16');
 assert.equal(velocityCal.pressTicksLabel(2), '126');
 assert.equal(velocityCal.pressTicksLabel(1), '≥127');
 ok('thresholds 0…126: every count from 0 to 125 has its own velocity, and its press time is the count plus one');
-
-/* A table that starts at 1 (HKL's default until 2026-11-23) cannot tell a count of 0
-   from 1: one scan seen in the zone or two. */
-velocityCal.setIntervalCurveLow(1);
-velocityCal.setIntervalCurveHigh(127);
-decodeHolds('1…127');
-const t127 = velocityCal.buildIntervalTable();
-assert.equal(firmwareRaw(0, t127), 127);
-assert.equal(firmwareRaw(1, t127), 127);
-assert.deepEqual(velocityCal.pressTicks(127), { lo: 1, hi: 2 });
-assert.equal(velocityCal.pressTicksLabel(127), '1–2');
-assert.equal(velocityCal.ticksOf(127), 1.5, 'a bin two ticks wide stands for its middle');
-for (let count = 2; count <= 126; count++) {
-  assert.deepEqual(velocityCal.pressTicks(firmwareRaw(count, t127)), { lo: count + 1, hi: count + 1 });
-}
-ok('thresholds 1…127: counts 0 and 1 share the top velocity, "1–2" ticks');
-
-velocityCal.setIntervalCurveHigh(128);
-decodeHolds('1…128');
-const t128 = velocityCal.buildIntervalTable();
-assert.equal(t128.includes(64), false, 'low 1, high 128 has no threshold at 64');
-assert.deepEqual(velocityCal.pressTicks(firmwareRaw(64, t128)), { lo: 65, hi: 66 });
-assert.equal(velocityCal.pressTicksLabel(firmwareRaw(65, t128)), '65–66');
-ok('low 1, high 128: counts 64 and 65 share a bin, and the label says so');
-
-velocityCal.setIntervalCurveLow(3);
-velocityCal.setIntervalCurveHigh(50);
-const repeated = velocityCal.buildIntervalTable();
-assert.equal(new Set(repeated).size < 127, true, 'low 3, high 50 repeats thresholds');
-const reached = decodeHolds('3…50 (repeated thresholds)');
-/* Every count from 4 to 49 has a run of equal thresholds, and for some of them the
-   bisection finds the count inside the run, not at its start. Whichever bin it is,
-   the velocity decodes to that count's press time alone. */
-let insideRun = 0;
-for (let count = 4; count <= 49; count++) {
-  const raw = firmwareRaw(count, repeated);
-  if (raw !== identityByBin[repeated.indexOf(count)]) insideRun++;
-  assert.deepEqual(velocityCal.pressTicks(raw), { lo: count + 1, hi: count + 1 }, 'count ' + count + ' → raw ' + raw);
-}
-assert.equal(insideRun > 0, true, 'the bisection lands inside a run for ' + insideRun + ' of the 46 counts');
-assert.equal(reached.size, 50, '3…50 reaches 48 one-count bins and the two open ends');
-ok('repeated thresholds: the velocity the firmware\'s bisection sends decodes to its own press time');
-velocityCal.resetIntervalCurve();
 
 // ── H: the overlay finds a voice's strike: its raw velocity and its input velocity ──
 /* A voice carries only the musical velocity it sounds at. The overlay shows the

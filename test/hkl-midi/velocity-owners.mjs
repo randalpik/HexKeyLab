@@ -2,7 +2,7 @@
 //   • audio.keyVelocity is LIVE input's (Lumatone / QWERTY / piano strikes,
 //     cleared on release). Composer playback carries its own velocity per
 //     event and must neither leave entries there nor read them.
-//   • Per-key velocity calibration (scale, capture, stats) belongs to the
+//   • The per-key press-time scale belongs to the
 //     PHYSICAL Lumatone key ("ch,note"), not the lattice cell under it, so it
 //     survives a ref change that slides the lattice.
 //
@@ -23,11 +23,9 @@
 //   R1  the same as P1 for .hkr recording playback
 //   K1  the per-key press-time scale follows the physical key across an anchor change
 //   K2  the key now under the calibrated key's old cell is not calibrated
-//   K3  velocity stats accumulate per physical key across an anchor change
-//   M   v3 prefs: lattice-keyed per-key stats migrate to physical keys under
-//       the capture anchor the saved cells prove, unexplainable data is dropped,
-//       and the per-key gains (a multiplier on velocity, replaced in v5 by the
-//       press-time scale) are not carried over
+//   M   v3 prefs: the per-key gains (a multiplier on velocity, replaced in v5 by
+//       the press-time scale) are not carried over, and the saved per-key
+//       statistics and interval table (both removed in v9) are dropped
 
 import { launchChromium, newTabWsUrl } from '../composer-test/lib/chromium.mjs';
 import { CDP } from '../composer-test/lib/cdp.mjs';
@@ -178,10 +176,8 @@ const SCRIPT = `(async () => {
   };
 
   reset();
-  velocityCal.clearKeyScale();
-  velocityCal.startCapture();
-  on(1, CAL, 60); off(1, CAL);
-  velocityCal.stopCaptureAndCompute(120);      /* ch 1 note 24: a press read as 60 now counts as 120 */
+  /* ch 1 note 24: a press read as 60 counts as 120 */
+  velocityCal.setKeyScales({ ['1,' + CAL]: velocityCal.ticksOf(120) / velocityCal.ticksOf(60) });
   const calibrated = velocityCal.applyInputCurve(120);
   const plain = velocityCal.applyInputCurve(60);
   truthy('K0: the test velocities are distinguishable', calibrated !== plain);
@@ -197,20 +193,7 @@ const SCRIPT = `(async () => {
       if (midiEng.fixedMidiToKey(ch, n) === oldCell) other = [ch, n];
   check('K2a: the key now on the old cell', JSON.stringify(other), JSON.stringify([1, 21]));
   if (other) check('K2b: that key is not calibrated', strikeVel(other[0], other[1]), plain);
-  velocityCal.clearKeyScale();
-
-  reset();
-  const statsWas = velocityCal.statsEnabled;
-  velocityCal.setStatsEnabled(true);
-  velocityCal.clearStats();
-  on(1, CAL, 60); off(1, CAL);
-  setAnchor(a0q + 3, a0r);
-  on(1, CAL, 60); off(1, CAL);
-  const all = velocityCal.getAllStats();
-  check('K3a: one physical key → one stats entry', all.length, 1);
-  check('K3b: both strikes counted for it', all[0]?.stats.n, 2);
-  velocityCal.clearStats();
-  velocityCal.setStatsEnabled(statsWas);
+  velocityCal.setKeyScales({});
 
   /* leave nothing running */
   reset();
@@ -241,11 +224,11 @@ await sleep(2500);
 
 const out = await cdp.evalJSON(SCRIPT);
 
-/* M: v3 prefs (per-key data keyed by the lattice cell a key struck: baseKeys[i]
-   + the unrecorded capture-time anchor). On load the stats migrate to physical
-   keys, under the anchor the saved cells prove; the gains are dropped, since v5
+/* M: v3 prefs (per-key gains and statistics keyed by the lattice cell a key
+   struck, and an interval table). On load the gains are dropped, since v5
    corrects a key by a scale on its press time and a gain on velocity does not
-   convert. Each round seeds a v3 velocityCal, reloads, and checks. */
+   convert; the statistics and the interval table went in v9. The round seeds a
+   v3 velocityCal, reloads, and checks. */
 const MODS = `
   const depUrl = async (fromPath, depPath) => {
     const src = await (await fetch(fromPath)).text();
@@ -259,7 +242,6 @@ const MODS = `
   const handlerUrl = await depUrl(refUrl, '/src/midi/handler.ts');
   const calUrl = await depUrl(handlerUrl, '/src/audio/velocityCal.ts');
   const { velocityCal } = await import(calUrl);
-  const { baseKeys } = await import(await depUrl(calUrl, '/src/layout/baseKeys.ts'));
   const sorted = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).sort()));
   const results = [];
   const check = (name, got, want) => results.push({ name, got, want, ok: got === want });
@@ -294,26 +276,10 @@ const mig = [
   ...await migrationRound(
     `return { perKey: { '-12,5': 2, '-15,5': 0.5 }, stats: { '-12,5': ${JSON.stringify(STAT)} } };`,
     `check('M1: per-key gains are not carried over', sorted(velocityCal.keyScale), sorted({}));
-     check('M2: stats that all land on keys at A3 migrate there', velocityCal.getAllStats().map((s) => s.key).join(' '), '1,24');
-     check('M3: the migration is persisted as v8', stored.version, 8);
+     check('M2: the saved statistics and interval table are dropped', ['stats', 'statsEnabled', 'intervalCurve'].filter((k) => k in stored).join(' '), '');
+     check('M3: the migration is persisted as v9', stored.version, 9);
      check('M4: the stored prefs no longer hold the gains', 'perKey' in stored, false);
      check('M5: a v3 curve is not re-migrated', velocityCal.floor, 0.07);`),
-  /* The whole keyboard's stats saved under a ref whose anchor was (3, 0): A3 puts
-     cells off the keyboard, and only (3, 0) puts them all on it. Each stat's mean
-     names the key it was taken on. */
-  ...await migrationRound(
-    `const stats = {};
-     baseKeys.forEach(([q, r], i) => { stats[(q + 3) + ',' + r] = { ...${JSON.stringify(STAT)}, mean: i }; });
-     return { stats };`,
-    `const all = velocityCal.getAllStats();
-     let wrong = 0;
-     for (const s of all) { const [ch, n] = s.key.split(',').map(Number); if (s.stats.mean !== (ch - 1) * 56 + n) wrong++; }
-     check('M6a: stats saved under another ref are all kept', all.length, 280);
-     check('M6b: each lands on the key it was taken on', wrong, 0);`),
-  /* Stats mixing a key with an off-keyboard cell fit no single anchor. */
-  ...await migrationRound(
-    `return { stats: { '-12,5': ${JSON.stringify(STAT)}, '99,99': ${JSON.stringify(STAT)} } };`,
-    `check('M7: data no single anchor explains is dropped, not guessed', velocityCal.getAllStats().length, 0);`),
 ];
 if (out?.results) {
   out.results.push(...mig);

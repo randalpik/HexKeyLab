@@ -70,7 +70,7 @@ const ok = (label) => { checks++; console.log('  ✓ ' + label); };
 
 // ── A: the pair re-pushes everything a connect pushes (frame path) ──
 let connect = synced([1, 5, 0]);
-assert.equal(connect.length, 285, 'connect: 280 key writes, 2 flags, 2 velocity tables, 1 frame');
+assert.equal(connect.length, 300, 'connect: 280 key writes, 2 flags, 2 velocity tables, 1 frame, 15 calibration reads (lumatone/keyscales.ts)');
 marker();
 drain();
 assert.deepEqual(bytes(sent), bytes(connect), 'the same messages, in the same order, as a connect');
@@ -80,7 +80,7 @@ ok('1.5.0: the pair re-pushes the fixed layout, the flags and one frame');
 
 // ── B: the per-key path (firmware < 1.5.0) ──
 connect = synced([1, 4, 0]);
-assert.equal(connect.length, 564, 'connect: 280 key writes, 2 flags, 2 velocity tables, 280 colors');
+assert.equal(connect.length, 579, 'connect: 280 key writes, 2 flags, 2 velocity tables, 280 colors, 15 calibration reads');
 marker();
 drain();
 assert.deepEqual(bytes(sent), bytes(connect));
@@ -141,7 +141,11 @@ sent = [];
 marker();
 drain();
 assert(count(0x00) >= 280, 'every key is written again after the second pair');
-assert.equal(sent[sent.length - 1][5], 0x55);
+/* The calibration reads for the key scales are queued behind the setup and its frame. */
+assert.equal(sent.filter((m) => ![0x19, 0x1A, 0x3A].includes(m[5])).at(-1)[5], 0x55, 'the frame follows the layout');
+/* The first switch's read was still queued: its requests go out too, and their
+   replies are ignored as superseded (lumatone/keyscales.ts). */
+assert(count(0x19) >= 5, 'and the calibration is read again');
 assert.deepEqual(lumatone.deviceColors, base());
 assert.equal(lumatone.fixedLayoutSent, true);
 ok('a second pair mid-push re-pushes every key again');
