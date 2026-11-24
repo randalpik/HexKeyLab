@@ -45,6 +45,7 @@ export function instrumentDefFromManifest(m: HkiManifest): InstrumentDef {
   if (m.transpose) def.transpose = m.transpose;
   if (m.replayOnTranspose) def.replayOnTranspose = true;
   if (m.vibrato) def.vibrato = true;
+  if (m.timbre) def.timbre = m.timbre;
   return def;
 }
 

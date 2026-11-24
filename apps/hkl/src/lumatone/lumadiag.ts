@@ -695,7 +695,7 @@ function drawIntervalCurvePreview(): void {
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('press-time ticks', 0, 0);
+  ctx.fillText('device count (ticks − 1)', 0, 0);
   ctx.restore();
   /* Factory trace (dim). X-axis reversed: bin i plots at the (126-i) screen
      position so bin 0 (fast/loud) lands on the right. */
@@ -884,18 +884,19 @@ function makeVelocityCalSection(): HTMLDivElement {
     return { row, slider, val };
   };
 
-  /* Interval curve sliders. Tick counts are 12-bit integers (0..4095) but in
-     practice the usable range is 0..~500 for fast keyboards, up to ~2000 for
-     very slow. gamma is × 100 to give 0.5..5.0 resolution on the slider. */
+  /* Interval curve sliders. The thresholds are in the device's count, which is
+     the press time in ticks less one (velocityCal.pressTicks): 12-bit integers
+     (0..4095), in practice 0..~500 for fast keyboards, up to ~2000 for very
+     slow. gamma is × 100 to give 0.5..5.0 resolution on the slider. */
   const intLowUi = mkIntSlider(
-    'low', 'Fastest-press threshold (tick count for highest velocity bin). Tighten toward your keyboard’s minimum press-time.',
+    'low', 'Fastest-press threshold: the device count (press time in ticks, less one) for the highest velocity bin. 0 gives the shortest press its own velocity.',
     0, 100, 1,
     () => velocityCal.intervalCurveLow,
     (v: number) => velocityCal.setIntervalCurveLow(v),
     (v: number) => String(Math.round(v)),
   );
   const intHighUi = mkIntSlider(
-    'high', 'Slowest-press threshold (tick count for lowest velocity bin). Tighten toward your keyboard’s maximum press-time.',
+    'high', 'Slowest-press threshold: the device count (press time in ticks, less one) for the lowest velocity bin. low + 126 gives every count its own velocity.',
     0, 200, 1,
     () => velocityCal.intervalCurveHigh,
     (v: number) => velocityCal.setIntervalCurveHigh(v),
@@ -998,7 +999,7 @@ function makeVelocityCalSection(): HTMLDivElement {
      the house curve, so keyVelocity stays device-neutral; a gain under the house
      curve's floor plays as its quietest note. The preview below is this exact
      curve against the input velocity (the hardware velocity after the key's
-     scale: 128 − ticks on the one-tick table), which is the number the
+     scale: 128 − ticks on the default table), which is the number the
      Diagnostics overlay plots and labels for a Lumatone strike. */
   const curveLabel = document.createElement('div');
   curveLabel.textContent = 'Lumatone velocity curve';
@@ -1051,7 +1052,7 @@ function makeVelocityCalSection(): HTMLDivElement {
   /* Target-gain curve, in audio-gain space (the familiar floor/ceiling/gamma).
      Sliders work in integer hundredths so HTML range resolution is fine; setters
      convert back to fractional gain. The composite preview = this exact curve. */
-  /* `full` in tenths of an input velocity: on the one-tick table 125.6 is 2.4 ticks. */
+  /* `full` in tenths of an input velocity: on the default table 125.6 is 2.4 ticks. */
   const fullUi = mkCurveSlider(
     'full at', 'Where the piano line reaches full loudness, as an input velocity (the number the Diagnostics overlay shows: 128 − ticks, after the key\'s scale). Faster presses are full too. Lower = full loudness comes sooner and everything is louder.',
     1000, 1270, 1,

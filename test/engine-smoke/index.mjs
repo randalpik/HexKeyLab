@@ -17,12 +17,13 @@ const REQUIRED = [
   'init', 'loadInstrument', 'sNoteOn', 'sNoteOff', 'sRampFreq',
   'sSetAftertouch', 'sSetVoiceDamperDepth', 'sSetVoicePan', 'isInstrumentLoaded',
   'inflightExpRampValue', 'pickLayer', 'findPerceptualOnset', 'bakeOnsetFade',
-  'setLayerBlend', 'getLayerBlend', 'blendedGain',
+  'setLayerBlend', 'getLayerBlend', 'blendedGain', 'timbreCutoff',
 ];
 const missing = REQUIRED.filter((k) => typeof engine[k] !== 'function');
 if (missing.length) throw new Error('@hkl/engine missing exports: ' + missing.join(', '));
 
 // Minimal Web Audio stub — just enough for init() to build its gain graph.
+const filters = []; // every BiquadFilterNode the engine creates
 const param = () => ({
   value: 1, setValueAtTime() {}, linearRampToValueAtTime() {},
   exponentialRampToValueAtTime() {}, cancelScheduledValues() {},
@@ -34,6 +35,7 @@ const ctx = {
   createGain: node,
   createBufferSource: () => ({ ...node(), buffer: null, playbackRate: param(), loopStart: 0, loopEnd: 0, start() {}, stop() {} }),
   createStereoPanner: () => ({ ...node(), pan: param() }),
+  createBiquadFilter: () => { const f = { ...node(), type: 'lowpass', frequency: param(), Q: param(), connected: 0, connect() { f.connected++; } }; filters.push(f); return f; },
   decodeAudioData: async () => ({ getChannelData: () => new Float32Array(0), numberOfChannels: 1, length: 0, sampleRate: 44100 }),
 };
 
@@ -47,7 +49,7 @@ const PAN_DEF = {
 };
 
 engine.init(ctx, node(), {
-  instrumentProvider: async (k) => (k === 'pantest' ? { 'a3.wav': new Uint8Array(8) } : null),
+  instrumentProvider: async (k) => (k === 'pantest' || k === 'timbretest' ? { 'a3.wav': new Uint8Array(8) } : null),
   velocityToGain: (v) => v / 127,
   onSeamEvent: () => {},
 });
@@ -230,6 +232,60 @@ function assertEq(actual, expected, msg) {
   engine.sHardStop('pv3');
   ctx.createStereoPanner = csp;
   console.log('   sSetVoicePan: lazy splice, node reuse, note-on pan arg, no-op guards — all OK.');
+}
+
+// ── brightness curve (HkiTimbre): one lowpass per voice, set from the note's level ──
+// An instrument with a curve plays its single sample through a 12 dB/oct lowpass whose
+// cutoff comes from the level the note sounds at; the level itself is the voice's gain
+// as for any instrument. The curve here is the one fitted to the Korg SP-250 bundle.
+{
+  const curve = { type: 'lowpass12', points: [
+    { gainDb: -22.9, cutoffHz: 364 }, { gainDb: -14.4, cutoffHz: 795 }, { gainDb: -8.5, cutoffHz: 1514 },
+    { gainDb: -3.7, cutoffHz: 5007 }, { gainDb: 0, cutoffHz: 20000 }] };
+  const lvl = (d) => Math.pow(10, d / 20);
+  const close = (a, b, msg) => { if (!(Math.abs(a - b) <= 1e-6 * Math.abs(b))) throw new Error(`timbre: ${msg} — got ${a}, expected ${b}`); };
+  for (const pt of curve.points.slice(0, -1)) close(engine.timbreCutoff(curve, lvl(pt.gainDb)), pt.cutoffHz, `at ${pt.gainDb} dB`);
+  close(engine.timbreCutoff(curve, lvl(-11.45)), Math.sqrt(795 * 1514), 'midway between two points: the geometric mean');
+  close(engine.timbreCutoff(curve, lvl(-31.4)), 364 * 364 / 795, 'below the first point: the first segment continued');
+  assertEq(engine.timbreCutoff(curve, 1), Infinity, 'full level, the last point: no filter');
+  assertEq(engine.timbreCutoff(curve, lvl(6)), Infinity, 'above the last point: no filter');
+  close(engine.timbreCutoff(curve, lvl(-1.85)), Math.sqrt(5007 * 20000), 'just under it the curve heads for the last point\'s cutoff');
+  assertEq(engine.timbreCutoff(curve, 0), engine.TIMBRE_MIN_HZ, 'level 0 → the floor');
+  assertEq(engine.timbreCutoff(curve, 1e-9), engine.TIMBRE_MIN_HZ, 'a vanishing level → the floor');
+  let prev = 0;
+  for (let d = -60; d < 0; d += 0.25) { const fc = engine.timbreCutoff(curve, lvl(d)); if (fc < prev) throw new Error(`timbre: cutoff fell as the level rose at ${d} dB`); prev = fc; }
+  if (Math.abs(engine.TIMBRE_LOWPASS_Q_DB + 3.0103) > 1e-4) throw new Error('timbre: the lowpass Q is not linear 0.7071 in dB (−3.01)');
+
+  // The manifest field is carried into the def (its validation and round trip: test/hki-timbre).
+  const manifest = { version: 2, instrumentKey: 't', name: 'T', loop: false, decays: true, releaseTime: 0.2, volume: 1,
+    samples: [{ name: 'A3', file: 'a.wav', freq: 220 }], timbre: curve };
+  if (instrumentDefFromManifest(manifest).timbre !== curve) throw new Error('timbre: not carried into the InstrumentDef');
+  const { timbre: _none, ...plain } = manifest;
+  if ('timbre' in instrumentDefFromManifest(plain)) throw new Error('timbre: a def without a curve has a timbre key');
+  // The voice: a soft note gets one lowpass with the curve's cutoff; a note at full level, and an
+  // instrument with no curve, get none (their graph is what it was).
+  await engine.loadInstrument('timbretest', { ...PAN_DEF, name: 'TimbreTest', timbre: curve });
+  await engine.loadInstrument('pantest', PAN_DEF);
+  filters.length = 0;
+  engine.sNoteOn('tv', 220, 40, 'timbretest');
+  assertEq(filters.length, 1, 'timbre: one filter for a soft note');
+  assertEq(filters[0].type, 'lowpass', 'timbre: filter type');
+  close(filters[0].Q.value, engine.TIMBRE_LOWPASS_Q_DB, 'filter Q');
+  close(filters[0].frequency.value, engine.timbreCutoff(curve, 40 / 127), 'filter cutoff = the curve at the house gain of velocity 40');
+  assertEq(filters[0].connected, 1, 'timbre: the filter is wired on into the voice chain');
+  engine.sHardStop('tv');
+  engine.sNoteOn('tv2', 220, 127, 'timbretest');
+  assertEq(filters.length, 1, 'timbre: no filter at full level (at the curve\'s last point the sample plays as stored)');
+  engine.sHardStop('tv2');
+  engine.sNoteOn('tv2', 220, 126, 'timbretest');
+  assertEq(filters.length, 2, 'timbre: just under full level there is a filter');
+  if (!(filters[1].frequency.value <= ctx.sampleRate * engine.TIMBRE_OPEN_FRACTION)) throw new Error('timbre: cutoff above the cap for the sample rate');
+  filters.length = 1;
+  engine.sHardStop('tv2');
+  engine.sNoteOn('tv3', 220, 40, 'pantest');
+  assertEq(filters.length, 1, 'timbre: no filter for an instrument without a curve');
+  engine.sHardStop('tv3');
+  console.log('   brightness curve: lookup at / between / below / above its points, carried into the def, one lowpass per soft voice — all OK.');
 }
 
 console.log('OK — @hkl/engine imported + init() ran standalone (zero HKL app/state imports).');

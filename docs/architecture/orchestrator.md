@@ -203,7 +203,10 @@ The bundle is the same `.hki` format bumped to version 2 (`packages/shared/src/h
 `samples[]` rows sharing `name`+`freq` at different `vel`. At play time the engine picks the nearest
 layer by velocity (`pickLayer` in `@hkl/engine`) and the house velocity curve supplies the overall
 dynamics; single-layer notes omit `vel` and behave identically to v1. `readHki` losslessly upcasts
-v1 bundles. Audio is the cleaned capture encoded to 32-bit float WAV.
+v1 bundles. Audio is the cleaned capture encoded to 32-bit float WAV. Where a device's layers turn
+out to be one waveform through a filter that opens with velocity (the SP-250's piano), the layered
+bundle can be turned into one sample per note plus a brightness curve with
+`apps/analyzer/cli/hki-timbre.mjs` (analyzer.md; engine.md → Brightness curve).
 
 **Per-layer gain = flat normalization × perceptual softening** *(superseded post-export by `apps/analyzer/cli/hki-regain.mjs` — the 2026-09-12 SP-250 audit found the flat normalization peak-limited on 127/144 layers, so baked loudness followed crest factor, and the sweep-derived softening left +27 % sones steps at layer boundaries; the re-gain tool measures Bark-sones per layer and equalizes them, see analyzer.md → "Perceptual re-gain". Porting that model into `buildHki` is pending the by-ear pass.)*. Each layer is first normalized to the
 −18 dBFS target (analyzer gain finder), then multiplied by a **softening scale** (`layerSofteningScale`

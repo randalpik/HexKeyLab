@@ -45,7 +45,7 @@ packages/
   notation/   @hkl/notation — Verovio/MEI rendering
   bridge/     @hkl/bridge — BroadcastChannel protocol + message types; analytics.ts (usage events)
   analysis/   @hkl/analysis — DOM-free sample-analysis DSP (Analyzer + Orchestrator) → analyzer.md
-test/         composer-test, composer-inspect, picker, interval-names, engine-smoke, orchestrator-smoke, *-check.mjs
+test/         composer-test, composer-inspect, picker, interval-names, engine-smoke, hki-timbre, orchestrator-smoke, *-check.mjs
 tools/        lumatone-cal, reset-calibration.sh   (hardware/ops)
 vite/         dev-proxy.mjs + middleware (the dev umbrella); assemble-dist.mjs (the publish dir,
               `pnpm assemble`) + third-party-notices.mjs (its THIRD-PARTY-NOTICES.txt: the license

@@ -64,7 +64,9 @@ export interface VelocityCalPrefs {
    *  velocity, no longer read); v6 = `inputCurve.gamma` is an exponent on
    *  finger speed (1 / press time), where it was one on the velocity number;
    *  v7 = `inputCurve` is `{ full, gamma, corner }`, the piano law (no floor or
-   *  ceiling; `corner` was added later and defaults when absent).
+   *  ceiling; `corner` was added later and defaults when absent); v8 = the
+   *  press time is the device's count plus one and `intervalCurve` defaults to
+   *  0…126 (a table saved before it is replaced by that default).
    *  Older versions get a one-time migration in velocityCal.ts. */
   version?: number;
   floor: number;

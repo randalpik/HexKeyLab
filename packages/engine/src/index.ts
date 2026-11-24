@@ -12,4 +12,4 @@ export * from './hki-instrument.js';
 // Re-export the shared bundle API: external installs get only `@hexkeylab/engine`
 // (not `@hkl/shared`), and tsup bundles `@hkl/shared` into dist, so these resolve
 // with no additional dependency.
-export { readHki, writeHki, type HkiManifest, type HkiBundle, type HkiSampleEntry } from '@hkl/shared/hki.js';
+export { readHki, writeHki, type HkiManifest, type HkiBundle, type HkiSampleEntry, type HkiTimbre } from '@hkl/shared/hki.js';

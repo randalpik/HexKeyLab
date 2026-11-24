@@ -67,10 +67,13 @@ intervals are the table `velocityCal` builds from the current low / high /
 gamma; that a color-only sync sends neither; that the preset-switch pair sends
 both again; and that Auto-sync off sends nothing. Then the decode the
 Diagnostics overlay prints (`velocityCal.pressTicks`), against a model of the
-firmware's binning: every press time from 0 to 400 ticks lands in the range its
-velocity decodes to, exactly one tick wide on the default table, `64–65` where
-low 1 / high 128 skips a threshold, and, on a table with repeated thresholds,
-the bin the firmware's bisection lands on inside a run decodes to its own tick. No dev server or MIDI device is needed. **Run it before declaring
+device's count and binning (the count starts at 0, so the press time is the
+count plus one): every count from 0 to 400 lands in the range its velocity
+decodes to; on the default table (0…126) each count has its own velocity and the
+press time is 128 − the velocity; a table that starts at 1 gives counts 0 and 1
+the same velocity, labeled `1–2`; `65–66` where low 1 / high 128 skips a
+threshold; and, on a table with repeated thresholds, the bin the firmware's
+bisection lands on inside a run decodes to its own press time. No dev server or MIDI device is needed. **Run it before declaring
 any change to the setup batch, the two table builders or the tick label done.**
 
 ## Per-key press-time scale (hardware-free)
@@ -109,22 +112,26 @@ velocity where the line reaches full, gamma 1 the measured piano, and `corner`
 how many dB under the meeting point the curve passes (0 = `min(1, line)`).
 Starts from saved v6 prefs holding an earlier curve (a floor, a ceiling and its
 gamma) and checks the one-time reset (the three scalars to their defaults, key
-scales kept, stored as v7 with no floor or ceiling); then the law at every tick
+scales kept, the saved interval table replaced by 0…126, stored as v8 with no
+floor or ceiling); then the law at every tick
 from 1 to 126, the musical velocity it becomes, and that velocity sounding at
 the curve's own gain when played back through the house curve (no stacking);
 that only the corner is rounded (1 dB under the corner point, never above the
 hard-topped line or more than the corner under it, within 0.1 dB of it once the
 press time is half again longer or shorter than the corner's and 0.03 dB at
 double or half, 6 dB per doubling from 5 ticks down, full at the fastest bin,
-no floor, a slower press never louder); Max's anchors of 2026-11-22 on the
-defaults (input velocity 123 at −6.4 dB, 105 at −19.6 dB, 80 on the quietest
-note, the same as with a hard corner); the three scalars (`corner` 0 is the
+no floor, a slower press never louder); the defaults by input velocity (123 at
+−6.4 dB, 105 at −19.6 dB, 80 on the quietest note) and Max's f, p and ppp of
+2026-11-22 as the counts they were (5, 23 and 48: −8.0, −20.0 and −26.2 dB); the
+three scalars (`corner` 0 is the
 hard-topped line exactly and 3 dB a rounder corner that still leaves p on the
 line; `full` places the line and its corner; gamma is an exponent on the line
 under the same corner); a strike (`lumatoneVelocity`: the key's scaled press
 time straight into the curve); and that `applyInputCurve` at a whole input
-velocity equals the strike on three interval tables. No dev server or MIDI
-device is needed. **Run it before declaring any change to the Lumatone curve or
+velocity equals the strike on four interval tables; and that the law runs on the
+press time, the device's count plus one (counts 7 and 15 are 6 dB apart, counts 0
+and 1 are separate velocities, a key's scale multiplies the ticks). No dev server
+or MIDI device is needed. **Run it before declaring any change to the Lumatone curve or
 the note-on velocity path done.**
 
 ## Built-in key / aftertouch calibration (hardware-free)

@@ -65,6 +65,31 @@ export interface HkiSampleEntry {
   crossfadeSec?: number;
 }
 
+/** A brightness curve: one sample per note, darkened as it gets softer.
+ *
+ *  Some instruments make every dynamic of a note from one waveform, through a
+ *  lowpass filter that opens with velocity (the Korg SP-250's piano does: its
+ *  velocity layers are the top layer through a 12 dB/oct lowpass whose cutoff
+ *  depends on velocity alone, not on pitch; docs/lessons.md). For such an
+ *  instrument the bundle carries the top layer of each note and this curve in
+ *  place of the layers, and the engine sets one lowpass per voice at note-on.
+ *  Written by the analyzer's `hki-timbre.mjs`, which fits it to a layered
+ *  bundle. */
+export interface HkiTimbre {
+  /** The filter. `lowpass12`: 12 dB/oct, no resonance (linear Q 0.7071), the
+   *  cutoff the same at every pitch. */
+  type: 'lowpass12';
+  /** The cutoff against the level a note sounds at: `gainDb` is that level in
+   *  dB relative to full (0 = the sample as stored), `cutoffHz` the cutoff there.
+   *  At least two points, `gainDb` strictly ascending, `cutoffHz` never
+   *  descending. Between points the cutoff moves linearly in log frequency
+   *  against dB, and below the first point it continues the first segment's
+   *  slope. At and above the last point there is no filter: the sample plays as
+   *  stored, and the last point's cutoff is only where the curve heads just
+   *  below it (so it should be at the top of the audio band). */
+  points: Array<{ gainDb: number; cutoffHz: number }>;
+}
+
 export interface HkiManifest {
   /** Format version. v1 bundles are losslessly upcast to v2 on read (a v1
    *  sample is a v2 single-layer note — no `vel`). Unknown versions are
@@ -88,6 +113,8 @@ export interface HkiManifest {
   replayOnTranspose?: boolean;
   /** Opt-in: analyzer ran with vibrato-loose phase defaults. */
   vibrato?: boolean;
+  /** Optional brightness curve (single-layer decaying instruments). */
+  timbre?: HkiTimbre;
   samples: HkiSampleEntry[];
 }
 
@@ -131,6 +158,7 @@ function validateManifest(raw: unknown): HkiManifest {
   if (typeof raw.releaseTime !== 'number') throw new Error('manifest.releaseTime missing');
   if (typeof raw.volume !== 'number') throw new Error('manifest.volume missing');
   if (!Array.isArray(raw.samples) || raw.samples.length === 0) throw new Error('manifest.samples missing or empty');
+  if (raw.timbre !== undefined) validateTimbre(raw.timbre);
   for (const s of raw.samples) {
     if (!isPlainObject(s)) throw new Error('sample entry is not an object');
     if (typeof s.name !== 'string') throw new Error('sample.name missing');
@@ -141,6 +169,23 @@ function validateManifest(raw: unknown): HkiManifest {
     }
   }
   return upcastV1(raw as unknown as HkiManifest);
+}
+
+function validateTimbre(t: unknown): void {
+  if (!isPlainObject(t)) throw new Error('manifest.timbre is not an object');
+  if (t.type !== 'lowpass12') throw new Error(`manifest.timbre.type ${String(t.type)} is not supported (expected lowpass12)`);
+  const pts = t.points;
+  if (!Array.isArray(pts) || pts.length < 2) throw new Error('manifest.timbre.points needs at least two points');
+  let prev: { gainDb: number; cutoffHz: number } | null = null;
+  for (const p of pts) {
+    if (!isPlainObject(p) || typeof p.gainDb !== 'number' || typeof p.cutoffHz !== 'number'
+        || !Number.isFinite(p.gainDb) || !Number.isFinite(p.cutoffHz) || !(p.cutoffHz > 0)) {
+      throw new Error('manifest.timbre.points: each point needs a finite gainDb and a cutoffHz above 0');
+    }
+    if (prev && !(p.gainDb > prev.gainDb)) throw new Error('manifest.timbre.points: gainDb must ascend');
+    if (prev && p.cutoffHz < prev.cutoffHz) throw new Error('manifest.timbre.points: cutoffHz must not descend');
+    prev = p as { gainDb: number; cutoffHz: number };
+  }
 }
 
 /** v1 → v2 upcast. A v1 bundle has no `vel` on any sample and reads identically

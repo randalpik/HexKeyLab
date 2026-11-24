@@ -211,12 +211,14 @@ The device reports a press as a velocity through two tables, and HKL sets both s
 | Setting | Value | What it does |
 |---|---|---|
 | CMD 0x08 LUT | identity (slowest bin sent as 1) | velocity = 127 − bin. Sent by HKL with every connect. |
-| CMD 0x20 intervals: `low` | **1** | the fastest bin is a press of one tick or less, which every key can produce (Max, 2026-11-22) |
-| CMD 0x20 intervals: `high` | **127** (`low` + 126) | thresholds 1…127, one tick per velocity: velocity = 128 − ticks. `low` + 127 skips one threshold (64 and 65 ticks share a bin); a narrower span repeats thresholds and merges nothing useful. |
+| CMD 0x20 intervals: `low` | **0** | the thresholds are in the device's count, which starts at 0: a press seen between a key's thresholds on one scan. 0 gives that press its own velocity, 127; a table that starts at 1 merges it with the two-scan press |
+| CMD 0x20 intervals: `high` | **126** (`low` + 126) | thresholds 0…126, one count per velocity. The press time is the count plus one, so velocity = 128 − ticks. `low` + 127 skips one threshold (two counts share a bin); a narrower span repeats thresholds and merges nothing useful. |
 | CMD 0x20 intervals: `gamma` | **1.0** | linear; anything else gives up the one-tick-per-velocity reading |
 | Lumatone velocity curve: `full at` | **125.6** to taste | the input velocity at which the piano line reaches full loudness; the one constant that places the scale |
 | Lumatone velocity curve: `corner` | **1.0 dB** to taste | rounds the corner where the line meets full loudness; 0 is a hard corner |
 | Lumatone velocity curve: `gamma` | **1.00** | the piano; raise or lower it only to widen or narrow the dynamic range |
+
+**Ticks.** A tick is one scan of the board, about 1.25 ms by the firmware's timer settings. The board's counter starts at 0 on the first scan that finds a key between its two thresholds, so the count it sends is one less than the scans the press took. HKL adds the one, and every press time it shows or uses is in ticks (lessons.md → "A tick is one scan of the board"). Until 2026-11-23 the table started at 1 and HKL read the count as the time: tick numbers and input velocities noted before that date are one tick short and one velocity high.
 
 **The curve** (Calibrate Keys → Lumatone velocity curve) is the piano's own law in the device's units, run up to full loudness. On a piano the peak amplitude of a tone is linearly proportional to the hammer's velocity (Palmer & Brown, "Investigations in the amplitude of sounded piano tones", JASA 1991); on the Lumatone the speed of a press is 1 ÷ its press time. So the piano line is
 
@@ -236,7 +238,7 @@ where F is the press time of `full at` and the press time is taken after the key
 
 With `full at` at 125.6 the corner lies between two and three ticks, so rounding it moves just those two values. What makes the ramp below it steep is the line itself and the size of a tick (lessons.md → "A tick is one scan of the board"); the corner does not change that.
 
-`full at` 125.6 was chosen on one unit (Max's, 2026-11-22, `min lo` 3) so that the softest press he can play consistently, just under input velocity 80, lands on the quietest note; his comfortable soft sits at 105 and his comfortable loud at 123. To set it on another unit: play your softest consistent press, read its input velocity off the overlay, and move `full at` until that velocity is where the graph meets the bottom. A lower `full at` makes everything louder and full loudness easier to reach.
+`full at` 125.6 was chosen on one unit (Max's, 2026-11-22, `min lo` 3) so that the softest press he can play consistently, just under input velocity 80, lands on the quietest note; his comfortable soft sits at 105 and his comfortable loud at 123. (Those were read on the 1…127 table of that day; on the 0…126 table the same presses read 79, 104 and 122, and `full at` has not been chosen again since.) To set it on another unit: play your softest consistent press, read its input velocity off the overlay, and move `full at` until that velocity is where the graph meets the bottom. A lower `full at` makes everything louder and full loudness easier to reach.
 
 What comes *out* of the curve is the **musical velocity** the note sounds at: the curve's gain re-expressed on the gentle house curve (floor 0.05, gamma 1.5) that every instrument and Piano output share. The overlay does not show it.
 

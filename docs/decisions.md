@@ -11882,3 +11882,51 @@ A note on a key that changes pitch with the tuning stays on that key in HKL: a P
 **What it does and does not do**: with `full` at 125.6 the corner lies between two and three ticks, so at 1 dB it moves those two levels (to −0.4 and −2.3 dB, from 0 and −1.9) and nothing else. The steepness of the ramp below is the line's own, 8.7 / ticks dB per tick, and comes from the size of a tick; no corner changes it (lessons.md → "A tick is one scan of the board").
 
 **Where**: `apps/hkl/src/audio/velocityCal.ts` (`corner` in `InputCurveState`, `targetGainForTicks`), `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts` (third slider); `test/hkl-midi/lumatone-curve.mjs`; docs/architecture/engine.md, docs/lumatone-calibration.md, docs/guide/core.md.
+
+## The corner-rounded curve is accepted (2026-11-23, Max)
+
+"That I will take as is. I'll experiment with values for the corner there, but that's the customization I was looking for from the start." The Lumatone curve stays as the previous entry describes: the piano line into a ceiling at `full`, the corner rounded by `corner`, gamma 1. The `corner` slider stays while he experiments; its default (1 dB) is mine and unconfirmed.
+
+The loud end's remaining unevenness is the whole-tick press time, which HKL cannot improve. Max is preparing a request to Lumatone for fractional press time in the firmware (lessons.md → "A tick is one scan of the board").
+
+## Press time is the device's count plus one, and the interval table starts at 0 (2026-11-23, Max)
+
+**Context**: Max doubted the request to Lumatone would be taken seriously if it said the hardest presses take 1 or 2 ticks, "equivalent to claiming that a human keypress took 1.25 ms, which is physically impossible", and asked why his unit reports them. The board's play routine answers it: the counter is set to 0 on the first scan that finds the key between its thresholds, one is added on each later scan there, and it is sent as it stands (lessons.md → "A tick is one scan of the board"). A press seen in the zone on n scans sends n − 1, so the time is the count plus one on average, and HKL's curve, which took the count as the time, was the piano law on the wrong variable.
+
+**Picked**: the default interval table is 0…126 (it was 1…127), and a press time in HKL is the count plus one, added and removed in `velocityCal.pressTicks` and `velocityForTicks` and nowhere else. On that table the press time is 128 − the input velocity, which is what the curve and the per-key scale already divided and multiplied; the curve's formula, its three settings and the Calibrate Keys graph are unchanged. Counts 0 and 1 (one scan and two) get separate velocities, 127 and 126. Max: "Isn't this fix required to make the model actually be the piano curve we were aiming at?", then "Proceed with the velocity changes."
+
+**What the player sees**: every press reads one input velocity lower and one tick higher than before, and the "≤1t" label is gone. With `full at` left at 125.6 his f, p and ppp of 2026-11-22 (counts 5, 23 and 48) sound at −8.0, −20.0 and −26.2 dB, where they were −6.4, −19.6 and −26.0. The largest step between neighboring counts stays 2.2 dB; it falls one count higher. The per-key scale now multiplies the real time: on a key scaled 2.5 a count of 1 is 5 ticks, where it was 2.5.
+
+**Rejected**:
+- **Leave the curve as accepted** (my recommendation, on the grounds that the audible difference is a 1.4 dB narrower f-to-ppp range): the wrong test. The model was asked to be the piano law.
+- **Keep 1…127 and add the one in the decode**: fixes the law but leaves counts 0 and 1 sharing the top velocity, read as 1.5 ticks. It is the fallback if the running firmware does not take a 0 threshold.
+
+**Migration**: velocityCal prefs v8 replace a saved interval table with 0…126 (Max's was low 1 / high 128, which also had no threshold at 64) and keep the curve's settings.
+
+**Not verified**: that firmware 1.5.0's controller takes a 0 threshold. 1.4.0's does (`setMyVelocityInterval` stores the values unchecked and sorts them; `binary_search` puts count 0 in bin 0 and count 1 in bin 1). The test is Max's, on the device: the hardest presses should split between 127 and 126.
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts` (`DEFAULT_INTERVAL_CURVE`, `pressTicks`, `pressTicksLabel`, `ticksOf`, `velocityForTicks`, the v8 migration), `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/lumatone/lumadiag.ts` (tooltips and the interval graph's axis name); gates `test/hkl-midi/{velocity-tables,key-scale,lumatone-curve,velocity-owners}.mjs`; docs/architecture/engine.md, docs/architecture/hkl.md, docs/lumatone-calibration.md, docs/lessons.md, test/hkl-midi/README.md.
+
+## The Korg piano becomes one sample per note and a brightness curve (2026-11-23, Max)
+
+**Context**: with the Lumatone's velocity consistent, Max still heard gaps in the single-digit ticks: on one key 5 and 6 ticks, one input velocity apart, sounded clearly different, in the middle of his forte. The cause was the instrument, not the velocity: the engine plays the nearest of five velocity layers with no blend, and that pair straddled the switch between layers 72 and 96 (lessons.md → "A layer switch is a step down in level and a large step up in the top of the spectrum"). Asked whether the next step was a crossfade between layers, he asked the better question: "If it's the same waveform, do we really need the separate level files at all? Can we just translate it to a native smooth brightness curve, modeled after the points we have?" The inventory had shown the five captures of a note to be one waveform progressively brightened; he knows the instrument to be continuous.
+
+**Found**: each layer is the note's top layer through a 12 dB/oct lowpass whose cutoff depends on the velocity alone, not the pitch, plus a gain close to velocity squared. Four settings rebuild all 30 notes (lessons.md → "Each layer is the note's top layer through one 12 dB/oct lowpass").
+
+**Picked**: a bundle may carry `timbre`, a curve of lowpass cutoff against the level a note sounds at, with one sample per note; the engine sets one lowpass per voice at note-on from the house curve's gain (engine.md → Brightness curve). `apps/analyzer/cli/hki-timbre.mjs` fits the curve to a layered bundle and writes the single-sample one. Max: "Proceed with your proposed build."
+
+- **Level and brightness are paired the Korg's way**: the level the curve asks for is read as a passband gain, and the cutoff is the one the Korg has at that passband gain. The voice's gain is the house curve's, with no gain table. A soft note high on the keyboard, whose fundamental is above the cutoff, comes out quieter than that gain, as on the Korg.
+- **The filter does not move during a note.** The Korg's own closes further as a soft note decays (to about 0.6 of its cutoff by 1.5 s on the softest layer). Max: "aggressive decay on soft notes is unnecessary and unwanted. If we want to add a reverb or other filters on top of this, consistency would be preferred." The curve is therefore fitted to the first half second, the strike.
+- **At and above the curve's last point there is no filter**: the top of the range is the stored sample exactly, at any sample rate.
+- **The five-layer bundle stays as it is**; the curve bundle is a second instrument (`korg-sp-250-curve`), so the two can be compared.
+
+**Rejected**:
+- **A crossfade between adjacent layers** (my proposal): two sources per voice and a load-time alignment step (layers sit up to 1.8 ms apart at the engine's onsets and comb when mixed), exact only at the five captured points, which are badly placed (two on the flat top of the curve, one on each large step of the soft and middle range). Max: "A blend seems like extra complexity if that's all it's doing."
+- **Keeping the sones match** (layers equalized in loudness): it has no job without layers to switch between, and it takes amplitude from the brighter layers, which is not the piano law the Lumatone curve asks for.
+- **Other filter shapes**: a one-pole and a 24 dB/oct lowpass fit about twice as badly; a shelf no better than the lowpass.
+
+**What changes for the player** (on the curve instrument, against the five-layer one at the sones end): no switch points; a brighter tone from forte down, the Korg's own at that level; and a wider level range, since amplitude now follows the Lumatone curve's full range where the layer gains compressed it to about 17 dB of 26. `full at` will want choosing again.
+
+**Not verified**: by ear, on the Lumatone, in Firefox. The Web Audio gate ran in Chromium. The Layer loudness match slider still blends the top-layer rows' two gains on the curve instrument, where it now only shifts the balance between notes; whether to keep `gainLevel` there is open.
+
+**Where**: `packages/shared/src/hki.ts` (`HkiTimbre`, validation), `packages/engine/src/samples-engine.ts` (`timbreCutoff`, `connectVoiceGain`, `TIMBRE_*`), `packages/engine/src/hki-instrument.ts`, `apps/analyzer/cli/hki-timbre.mjs`; gates `test/engine-smoke/`, `test/hki-timbre/{run,webaudio}.mjs`; docs/architecture/engine.md, analyzer.md, orchestrator.md, docs/lessons.md. The engine's published package gains the feature at its next version.

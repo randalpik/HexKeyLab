@@ -93,8 +93,8 @@ const identityByBin = Array.from({ length: 128 }, (_, bin) => Math.max(1, 127 - 
 assert.deepEqual(wireLut(only(LUT)[0]), identityByBin, 'identity LUT: bin 0 → 127 … bins 126 and 127 → 1');
 assert.deepEqual(wireIntervals(only(INTERVALS)[0]), velocityCal.buildIntervalTable(),
   'the interval table is the one velocityCal builds');
-assert.deepEqual(velocityCal.buildIntervalTable(), Array.from({ length: 127 }, (_, i) => i + 1),
-  'default curve (low 1, high 127, gamma 1): thresholds 1…127, one tick each');
+assert.deepEqual(velocityCal.buildIntervalTable(), Array.from({ length: 127 }, (_, i) => i),
+  'default curve (low 0, high 126, gamma 1): thresholds 0…126, one count each');
 ok('a connect sends the identity LUT and the interval table once each, before the colors');
 
 // ── B: a sync that is not a setup sends neither ──
@@ -142,72 +142,97 @@ assert.equal(sent.length, 0);
 lumatone.autoSyncEnabled = true;
 ok('Auto-sync off: no table, like the rest of the setup');
 
-// ── G: raw velocity → press-time ticks, against the firmware's binning ──
-/* The controller's SendMidiKeyStroke: a bisection over the 127 thresholds. A press
-   time equal to a threshold takes the index the bisection finds it at, which in a
-   run of equal thresholds is one inside the run; any other takes the first
-   threshold above it, 127 when there is none. The velocity is the LUT's entry for
-   that bin (docs/lessons.md → "Lumatone velocity pipeline", "binary_search on
-   duplicates"). */
-const firmwareRaw = (ticks, table) => {
+// ── G: raw velocity → press time, against the device's count and binning ──
+/* The board's count is zero-based: 0 on the first scan that finds the key between its
+   two thresholds, one more on each later scan there, sent as it stands when the key
+   passes the upper one. A press seen in the zone on n scans sends n − 1, so the press
+   time in ticks (scans) is the count plus one (docs/lessons.md → "A tick is one scan
+   of the board"). The controller's SendMidiKeyStroke puts the count through a
+   bisection over the 127 thresholds: a count equal to a threshold takes the index the
+   bisection finds it at, which in a run of equal thresholds is one inside the run; any
+   other takes the first threshold above it, 127 when there is none. The velocity is
+   the LUT's entry for that bin (docs/lessons.md → "Lumatone velocity pipeline",
+   "binary_search on duplicates"). */
+const firmwareRaw = (count, table) => {
   let lo = 0, hi = 126;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (table[mid] === ticks) return identityByBin[mid];
-    if (table[mid] < ticks) lo = mid + 1; else hi = mid - 1;
+    if (table[mid] === count) return identityByBin[mid];
+    if (table[mid] < count) lo = mid + 1; else hi = mid - 1;
   }
   return identityByBin[lo];
 };
 function decodeHolds(label) {
   const table = velocityCal.buildIntervalTable();
   const reached = new Set();
-  for (let t = 0; t <= 400; t++) {
-    const raw = firmwareRaw(t, table);
+  for (let count = 0; count <= 400; count++) {
+    const raw = firmwareRaw(count, table);
     const range = velocityCal.pressTicks(raw);
     assert(range, label + ': raw ' + raw + ' decodes');
     reached.add(raw);
+    const t = count + 1;
     assert.equal(range.lo <= t && (range.hi === null || t <= range.hi), true,
-      label + ': ' + t + ' ticks → raw ' + raw + ' → ' + range.lo + '…' + range.hi);
+      label + ': count ' + count + ' (' + t + ' ticks) → raw ' + raw + ' → ' + range.lo + '…' + range.hi);
   }
   return reached;
 }
 velocityCal.resetIntervalCurve();
-decodeHolds('1…127');
-for (let t = 2; t <= 126; t++) {
-  assert.deepEqual(velocityCal.pressTicks(firmwareRaw(t, velocityCal.buildIntervalTable())), { lo: t, hi: t },
-    'one-tick table: ' + t + ' ticks decodes to itself');
+decodeHolds('0…126');
+for (let count = 0; count <= 125; count++) {
+  const raw = firmwareRaw(count, velocityCal.buildIntervalTable());
+  assert.equal(raw, 127 - count, 'thresholds 0…126: a count of ' + count + ' has its own velocity');
+  assert.deepEqual(velocityCal.pressTicks(raw), { lo: count + 1, hi: count + 1 },
+    'thresholds 0…126: a count of ' + count + ' is ' + (count + 1) + ' ticks');
+  assert.equal(velocityCal.ticksOf(raw), 128 - raw, 'and the press time is 128 − the velocity');
 }
-assert.equal(velocityCal.pressTicksLabel(127), '≤1');
+assert.equal(velocityCal.pressTicksLabel(127), '1');
+assert.equal(velocityCal.pressTicksLabel(126), '2');
 assert.equal(velocityCal.pressTicksLabel(112), '16');
 assert.equal(velocityCal.pressTicksLabel(2), '126');
 assert.equal(velocityCal.pressTicksLabel(1), '≥127');
-ok('thresholds 1…127: every press time from 2 to 126 ticks decodes to itself');
+ok('thresholds 0…126: every count from 0 to 125 has its own velocity, and its press time is the count plus one');
+
+/* A table that starts at 1 (HKL's default until 2026-11-23) cannot tell a count of 0
+   from 1: one scan seen in the zone or two. */
+velocityCal.setIntervalCurveLow(1);
+velocityCal.setIntervalCurveHigh(127);
+decodeHolds('1…127');
+const t127 = velocityCal.buildIntervalTable();
+assert.equal(firmwareRaw(0, t127), 127);
+assert.equal(firmwareRaw(1, t127), 127);
+assert.deepEqual(velocityCal.pressTicks(127), { lo: 1, hi: 2 });
+assert.equal(velocityCal.pressTicksLabel(127), '1–2');
+assert.equal(velocityCal.ticksOf(127), 1.5, 'a bin two ticks wide stands for its middle');
+for (let count = 2; count <= 126; count++) {
+  assert.deepEqual(velocityCal.pressTicks(firmwareRaw(count, t127)), { lo: count + 1, hi: count + 1 });
+}
+ok('thresholds 1…127: counts 0 and 1 share the top velocity, "1–2" ticks');
 
 velocityCal.setIntervalCurveHigh(128);
 decodeHolds('1…128');
 const t128 = velocityCal.buildIntervalTable();
 assert.equal(t128.includes(64), false, 'low 1, high 128 has no threshold at 64');
-assert.deepEqual(velocityCal.pressTicks(firmwareRaw(64, t128)), { lo: 64, hi: 65 });
-assert.equal(velocityCal.pressTicksLabel(firmwareRaw(65, t128)), '64–65');
-ok('low 1, high 128: 64 and 65 ticks share a bin, and the label says so');
+assert.deepEqual(velocityCal.pressTicks(firmwareRaw(64, t128)), { lo: 65, hi: 66 });
+assert.equal(velocityCal.pressTicksLabel(firmwareRaw(65, t128)), '65–66');
+ok('low 1, high 128: counts 64 and 65 share a bin, and the label says so');
 
 velocityCal.setIntervalCurveLow(3);
 velocityCal.setIntervalCurveHigh(50);
 const repeated = velocityCal.buildIntervalTable();
 assert.equal(new Set(repeated).size < 127, true, 'low 3, high 50 repeats thresholds');
 const reached = decodeHolds('3…50 (repeated thresholds)');
-/* Every tick from 4 to 49 has a run of equal thresholds, and for some of them the
-   bisection finds the tick inside the run, not at its start. Whichever bin it is,
-   the velocity decodes to that tick alone. */
+/* Every count from 4 to 49 has a run of equal thresholds, and for some of them the
+   bisection finds the count inside the run, not at its start. Whichever bin it is,
+   the velocity decodes to that count's press time alone. */
 let insideRun = 0;
-for (let t = 4; t <= 49; t++) {
-  const raw = firmwareRaw(t, repeated);
-  if (raw !== identityByBin[repeated.indexOf(t)]) insideRun++;
-  assert.deepEqual(velocityCal.pressTicks(raw), { lo: t, hi: t }, t + ' ticks → raw ' + raw);
+for (let count = 4; count <= 49; count++) {
+  const raw = firmwareRaw(count, repeated);
+  if (raw !== identityByBin[repeated.indexOf(count)]) insideRun++;
+  assert.deepEqual(velocityCal.pressTicks(raw), { lo: count + 1, hi: count + 1 }, 'count ' + count + ' → raw ' + raw);
 }
-assert.equal(insideRun > 0, true, 'the bisection lands inside a run for ' + insideRun + ' of the 46 ticks');
-assert.equal(reached.size, 50, '3…50 reaches 48 one-tick bins and the two open ends');
-ok('repeated thresholds: the velocity the firmware\'s bisection sends decodes to its own tick');
+assert.equal(insideRun > 0, true, 'the bisection lands inside a run for ' + insideRun + ' of the 46 counts');
+assert.equal(reached.size, 50, '3…50 reaches 48 one-count bins and the two open ends');
+ok('repeated thresholds: the velocity the firmware\'s bisection sends decodes to its own press time');
 velocityCal.resetIntervalCurve();
 
 // ── H: the overlay finds a voice's strike: its raw velocity and its input velocity ──

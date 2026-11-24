@@ -37,14 +37,17 @@ const near = (a, b, tol, label) => assert.equal(Math.abs(a - b) <= tol, true, la
 const file = (scales) => ({ format: 'hkl-key-scales', version: 1, scales });
 const stored = () => JSON.parse(localStorage.getItem('hkl.prefs.v1')).velocityCal;
 
-/* The controller's binning under the identity LUT: the bin is the first threshold the
-   press time does not exceed, 127 when it exceeds them all; bins 126 and 127 both
-   send velocity 1. */
-velocityCal.resetIntervalCurve(); // thresholds 1…127: one tick per velocity
+/* The device, for a press seen between a key's thresholds on `ticks` scans: the board
+   sends the count ticks − 1 (it starts at 0), and under the identity LUT the
+   controller's bin is the first threshold the count does not exceed, 127 when it
+   exceeds them all; bins 126 and 127 both send velocity 1. */
+velocityCal.resetIntervalCurve(); // thresholds 0…126: one count per velocity
 const table = velocityCal.buildIntervalTable();
+assert.deepEqual([table[0], table[126]], [0, 126]);
 const firmwareRaw = (ticks) => {
+  const count = ticks - 1;
   let bin = 127;
-  for (let i = 0; i < 127; i++) if (ticks <= table[i]) { bin = i; break; }
+  for (let i = 0; i < 127; i++) if (count <= table[i]) { bin = i; break; }
   return Math.max(1, 127 - bin);
 };
 
@@ -55,11 +58,13 @@ for (let raw = 1; raw <= 127; raw++) assert.equal(velocityCal.applyKeyScale('1,0
 assert.equal(velocityCal.applyKeyScale('1,0', 0), 0, 'velocity 0 stays a note-off');
 ok('no scale: every velocity passes through exactly');
 
-// ── B: ticks ↔ velocity round-trips on the one-tick table ──
+// ── B: ticks ↔ velocity round-trips on the one-count table ──
 for (let t = 1; t <= 126; t++) {
+  assert.equal(firmwareRaw(t), 128 - t, t + ' ticks is velocity 128 − ' + t);
   assert.equal(velocityCal.ticksOf(firmwareRaw(t)), t, t + ' ticks read back');
   assert.equal(velocityCal.velocityForTicks(t), firmwareRaw(t), t + ' ticks → the velocity the firmware sends');
 }
+assert.equal(velocityCal.velocityForTicks(1.5), 126.5, 'one scan and two have their own velocities, and the map is linear between them');
 assert.equal(velocityCal.velocityForTicks(0.25), 127, 'faster than the table: 127');
 assert.equal(velocityCal.velocityForTicks(5000), 1, 'slower than the table: 1');
 near(velocityCal.velocityForTicks(16.5), 111.5, 1e-9, 'between two thresholds the velocity is fractional');
@@ -92,7 +97,7 @@ ok('one touch, three windows: within ' + worstScaled.toFixed(2) + ' velocity ste
 // ── D: order is kept, and the ends clamp ──
 for (const k of Object.keys(WIN)) {
   let prev = Infinity;
-  for (let ticks = 0; ticks <= 400; ticks++) {
+  for (let ticks = 1; ticks <= 400; ticks++) {
     const v = velocityCal.applyKeyScale(k, firmwareRaw(ticks));
     assert.equal(v <= prev && v >= 1 && v <= 127, true, k + ': ' + ticks + ' ticks → ' + v + ' after ' + prev);
     prev = v;
@@ -135,13 +140,13 @@ for (const [label, bad] of [
 ok('import: a well-formed file replaces the table; eleven malformed ones change nothing');
 
 // ── G: the table is saved, with no per-key gain ──
-assert.equal(stored().version, 7);
+assert.equal(stored().version, 8);
 assert.deepEqual(stored().keyScale, { '5,55': 2 });
 assert.equal('perKey' in stored(), false, 'the old per-key gain is not written');
 velocityCal.clearKeyScale();
 assert.deepEqual(stored().keyScale, {});
 assert.equal(velocityCal.calibratedKeyCount, 0);
-ok('saved under keyScale with no perKey (velocityCal v7); Clear empties it');
+ok('saved under keyScale with no perKey (velocityCal v8); Clear empties it');
 
 // ── H: a capture pass sets a key's scale from its median press time ──
 velocityCal.startCapture();

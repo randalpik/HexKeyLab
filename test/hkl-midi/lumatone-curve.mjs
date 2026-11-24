@@ -15,10 +15,15 @@
 // the ceiling. The press time is the key's own, after its per-key scale. The gain is
 // then turned into the musical velocity that the house curve plays at that gain; the
 // house curve's quietest note is the bottom.
+// The press time is in ticks, one scan of the board each, and it is the device's count
+// plus one: the board's counter starts at 0 on the first scan that finds the key between
+// its thresholds (docs/lessons.md → "A tick is one scan of the board"). HKL's interval
+// table starts at 0 so that every count has its own velocity, and then the press time is
+// 128 − the input velocity.
 // Checks the law, that only the corner is rounded, the three scalars, Max's anchors of
 // 2026-11-22, the two routes into the curve (a strike, and an input velocity as the
-// Calibrate Keys graph passes it), and the one-time reset of settings saved before the
-// piano law.
+// Calibrate Keys graph passes it), that the law runs on count + 1, and the one-time
+// resets of settings saved before the piano law and before the zero-based table.
 import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
@@ -50,19 +55,26 @@ const dB = (g) => 20 * Math.log10(g);
 assert.equal(velocityCal.inputCurveGamma, 1, 'the default gamma is the piano\'s, 1');
 assert.equal(DEFAULT_INPUT_CURVE.gamma, 1);
 assert.equal(velocityCal.inputCurveFull, DEFAULT_INPUT_CURVE.full);
-assert.equal(stored().version, 7);
+assert.equal(stored().version, 8);
 assert.deepEqual(stored().inputCurve, { full: DEFAULT_INPUT_CURVE.full, gamma: 1, corner: DEFAULT_INPUT_CURVE.corner }, 'no floor or ceiling is saved any more');
 assert.deepEqual(stored().keyScale, { '4,18': 2.5 }, 'the key scales are untouched');
-ok('saved v6 prefs: the curve becomes full ' + DEFAULT_INPUT_CURVE.full + ' / gamma 1, key scales kept, stored as v7');
+/* The saved interval table (1…127) read the device's count as the press time; it
+   becomes the zero-based one, on which the press time is 128 − the velocity. */
+assert.deepEqual(stored().intervalCurve, { low: 0, high: 126, gamma: 1 }, 'a saved interval table becomes 0…126');
+assert.deepEqual([velocityCal.intervalCurveLow, velocityCal.intervalCurveHigh], [0, 126]);
+ok('saved v6 prefs: the curve becomes full ' + DEFAULT_INPUT_CURVE.full + ' / gamma 1 and the interval table 0…126, key scales kept, stored as v8');
 
 velocityCal.resetInputCurve();
-velocityCal.resetIntervalCurve(); // thresholds 1…127: input velocity = 128 − ticks
+velocityCal.resetIntervalCurve(); // thresholds 0…126: input velocity = 128 − ticks
 const table = velocityCal.buildIntervalTable();
-const firmwareRaw = (ticks) => {
+/* The device: the board sends a count, and the controller's bin is the first threshold
+   the count does not exceed. A press seen in the zone on `ticks` scans sends ticks − 1. */
+const deviceRaw = (count) => {
   let bin = 127;
-  for (let i = 0; i < 127; i++) if (ticks <= table[i]) { bin = i; break; }
+  for (let i = 0; i < 127; i++) if (count <= table[i]) { bin = i; break; }
   return Math.max(1, 127 - bin);
 };
+const firmwareRaw = (ticks) => deviceRaw(ticks - 1);
 const fullTicks = () => 128 - velocityCal.inputCurveFull;
 /* The house curve (floor 0.05, ceiling 1, gamma 1.5), inverted: the musical velocity
    that plays at a gain. */
@@ -116,19 +128,26 @@ for (let t = 0; t <= 600; t++) {
 }
 ok('1 dB under the corner point, on the hard-topped line to 0.1 dB half again away from it; full at the top, no floor');
 
-// ── D: Max\'s anchors (2026-11-22, input velocities with min lo 3) on the defaults ──
-/* f v123, p v105, ppp under v80. The default `full` puts v80 on the house curve\'s
-   quietest note (velocity 1, −25.9 dB). The rounded corner moves none of them. */
-near(dB(velocityCal.targetGainForTicks(128 - 123)), -6.4, 0.05, 'f, input velocity 123');
-near(dB(velocityCal.targetGainForTicks(128 - 105)), -19.6, 0.05, 'p, input velocity 105');
-near(dB(velocityCal.targetGainForTicks(128 - 80)), -26.0, 0.05, 'ppp, input velocity 80');
+// ── D: the default curve by input velocity, and Max\'s anchors on it ──
+/* The default `full` puts input velocity 80 on the house curve\'s quietest note
+   (velocity 1, −25.9 dB). The rounded corner moves nothing away from the corner. */
+near(dB(velocityCal.targetGainForTicks(128 - 123)), -6.4, 0.05, 'input velocity 123');
+near(dB(velocityCal.targetGainForTicks(128 - 105)), -19.6, 0.05, 'input velocity 105');
+near(dB(velocityCal.targetGainForTicks(128 - 80)), -26.0, 0.05, 'input velocity 80');
+/* Max\'s f, p and ppp of 2026-11-22 (min lo 3) were device counts of 5, 23 and 48,
+   which the 1…127 table of that day showed as input velocities 123, 105 and 80. They
+   are 6, 24 and 49 ticks: input velocities 122, 104 and 79. */
+for (const [name, count, level] of [['f', 5, -8.0], ['p', 23, -20.0], ['ppp', 48, -26.2]]) {
+  assert.equal(deviceRaw(count), 127 - count, name + ': a count of ' + count + ' is input velocity ' + (127 - count));
+  near(dB(velocityCal.targetGainForTicks(velocityCal.ticksOf(deviceRaw(count)))), level, 0.05, name + ', a count of ' + count);
+}
 near(dB(velocityCal.targetGainForTicks(2)), -0.4, 0.05, 'two ticks, just above the corner');
 near(dB(velocityCal.targetGainForTicks(3)), -2.3, 0.05, 'three ticks, just below it (the hard corner: −1.9)');
 assert.equal(velocityCal.applyInputCurve(80), 1, 'ppp plays as the quietest note');
 assert.equal(velocityCal.applyInputCurve(60), 1, 'and so does anything softer');
 assert.equal(velocityCal.applyInputCurve(86) > 1, true, 'the curve rises from there');
 assert.equal(velocityCal.applyInputCurve(127), 127);
-ok('defaults: f −6.4 dB, p −19.6 dB, ppp at the quietest note, as with the hard corner');
+ok('defaults: −6.4 dB at input velocity 123, the quietest note at 80; Max\'s f, p and ppp at −8.0, −20.0 and −26.2 dB');
 
 // ── E: the three scalars ──
 /* `corner`: 0 is the hard corner exactly; larger is rounder, and still only near it. */
@@ -171,7 +190,7 @@ assert.equal(velocityCal.lumatoneVelocity('4,18', firmwareRaw(4)), velocityCal.l
 ok('a strike plays at the curve\'s value for its scaled press time');
 
 // ── G: an input velocity (the graph\'s axis) takes the same curve ──
-for (const [low, high] of [[1, 127], [1, 128], [3, 50]]) {
+for (const [low, high] of [[0, 126], [1, 127], [1, 128], [3, 50]]) {
   velocityCal.setIntervalCurveLow(low);
   velocityCal.setIntervalCurveHigh(high);
   for (let raw = 1; raw <= 127; raw++) {
@@ -186,6 +205,23 @@ for (const k of ['1,0', '4,18']) {
       k + ' at ' + t + ' ticks: the input velocity and the strike agree');
   }
 }
-ok('applyInputCurve(v) is the strike\'s value at every whole input velocity, on three interval tables');
+ok('applyInputCurve(v) is the strike\'s value at every whole input velocity, on four interval tables');
+
+// ── H: the piano law runs on the press time, the device\'s count plus one ──
+/* A count of c is c + 1 scans, so the amplitude is proportional to 1 ÷ (c + 1): well
+   under the corner, counts of 7 and 15 (8 and 16 ticks) are 6.02 dB apart, and so are
+   23 and 47. Read as the time itself, the count would put 7 and 15 at 6.6 dB. */
+for (let count = 0; count <= 125; count++) {
+  assert.equal(velocityCal.ticksOf(deviceRaw(count)), count + 1, 'a count of ' + count + ' is ' + (count + 1) + ' ticks');
+}
+const gainAtCount = (count) => velocityCal.targetGainForTicks(velocityCal.ticksOf(deviceRaw(count)));
+near(dB(gainAtCount(7)) - dB(gainAtCount(15)), 6.02, 0.02, 'counts 7 and 15 are 8 and 16 ticks: 6 dB');
+near(dB(gainAtCount(23)) - dB(gainAtCount(47)), 6.02, 0.02, 'counts 23 and 47 are 24 and 48 ticks: 6 dB');
+assert.equal(deviceRaw(0), 127, 'one scan seen in the zone is velocity 127');
+assert.equal(deviceRaw(1), 126, 'two scans seen is its own velocity, 126');
+assert.equal(velocityCal.lumatoneVelocity('1,0', deviceRaw(0)) >= velocityCal.lumatoneVelocity('1,0', deviceRaw(1)), true);
+near(dB(velocityCal.targetGainForTicks(velocityCal.keyTicks('4,18', deviceRaw(1)))), dB(gainAtCount(4)), 1e-9,
+  'a key scaled 2.5 at a count of 1 (2 ticks) is an unscaled key at 5 ticks, a count of 4');
+ok('amplitude ∝ 1 ÷ (count + 1): counts 0 and 1 are separate velocities, and a key\'s scale multiplies the ticks');
 
 console.log('\nlumatone-curve: ' + checks + ' checks passed');

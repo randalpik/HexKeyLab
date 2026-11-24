@@ -534,8 +534,9 @@ function draw(): void {
     cctx.stroke();
     /* Per-event labels on the velocity trace. Each label sits at a local peak
        (end of a rising sequence). For a Lumatone strike it shows the input
-       velocity the trace plots (above) and the press time in ticks the device
-       reported: "v124.2 (1t)", "v112 (16t)". The press time comes from the
+       velocity the trace plots (above) and the press time in ticks (scans; the
+       count the device reported, plus one): "v124.2 (1t)", "v112 (16t)". The
+       press time comes from the
        strike's RAW velocity, decoded through the identity LUT and the interval
        table HKL keeps on the device (velocityCal.pressTicks), so on a scaled key
        the two differ by the key's scale. Neither depends on the Lumatone curve.

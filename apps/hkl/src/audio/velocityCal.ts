@@ -9,7 +9,9 @@
 // Plus two Lumatone-input-stage transforms applied at midi/handler.ts before
 // the velocity lands in audio.keyVelocity[key]:
 //   2. Per-key press-time scale — one multiplier per key on the press time in
-//      ticks that the raw velocity stands for (default 1.0), returned as the
+//      ticks that the raw velocity stands for (default 1.0; a tick is one scan
+//      of the board, and the press time is the device's count plus one: see
+//      `pressTicks`), returned as the
 //      velocity that scaled press time would have read, fraction kept. For the
 //      same touch a key's press time follows its timing window in sensor counts
 //      (docs/lessons.md → "Press time follows the timing window"), so a key
@@ -81,7 +83,10 @@ export interface VelocityCalState {
  *  (Palmer & Brown, "Investigations in the amplitude of sounded piano tones",
  *  JASA 1991), and on the Lumatone the speed of a press is 1 / its press time,
  *  so the amplitude is proportional to 1 / ticks: `gamma` 1, 6.02 dB per
- *  doubling of press time, and no floor. The device has no hammer, so one
+ *  doubling of press time, and no floor. The ticks are the scans the press
+ *  took, which is the count the device sends plus one (`pressTicks`); the law
+ *  on the bare count would be too steep at the loud end, 6.0 dB where it is 3.5
+ *  between counts of 1 and 2. The device has no hammer, so one
  *  constant places the line: `full`, the INPUT velocity (the hardware velocity
  *  after the key's scale, the unit the Diagnostics overlay shows and the curve
  *  is tuned in) at which the line reaches full loudness. Faster than that is
@@ -104,7 +109,7 @@ export interface VelocityCalState {
  *  the house curve's floor plays as its quietest note (velocity 1, −25.9 dB),
  *  which is the bottom of the range. */
 export interface InputCurveState {
-  /** Input velocity of full loudness (on the one-tick table, 128 − its ticks). */
+  /** Input velocity of full loudness (on the default table, 128 − its ticks). */
   full: number;
   /** Exponent on the piano law. 1 = the measured piano. */
   gamma: number;
@@ -114,11 +119,12 @@ export interface InputCurveState {
 }
 
 /** Lumatone firmware velocity-interval curve (CMD 0x20). Generates a 127-entry
- *  table of press-time tick thresholds via the parametric map
+ *  table of thresholds via the parametric map
  *    thresh[i] = low + (high - low) · (i/126)^gamma
  *  HKL sends the resolved table to the firmware with every setup
- *  (lumatone/sync.ts); the firmware then bins press time into 128 velocity bins
- *  by comparison. The per-key scale and the Lumatone curve read a velocity back
+ *  (lumatone/sync.ts); the firmware then bins each press into 128 velocity bins
+ *  by comparing the board's count with them. The thresholds are in that count,
+ *  which is one less than the press time in ticks (`pressTicks`). The per-key scale and the Lumatone curve read a velocity back
  *  as press time through this same table (`pressTicks`), so they follow
  *  whatever it is set to. */
 export interface IntervalCurveState {
@@ -139,25 +145,29 @@ export const DEFAULT_CAL: VelocityCalState = {
 /* Lumatone target-gain curve default: the piano's gamma, the piano line
    reaching full at input velocity 125.6 (2.4 ticks), which puts input velocity
    80 (48 ticks) on the house curve's quietest note, and a corner 1 dB under
-   that meeting point. On Max's unit with `min lo` 3 (2026-11-22) his ppp sits
-   just under 80, his p at 105 (−19.6 dB here) and his f at 123 (−6.4 dB). The
-   user tunes `full`, the corner and, if wanted, gamma in lumadiag. */
+   that meeting point. On Max's unit with `min lo` 3 (2026-11-22) his ppp, p and
+   f were device counts of about 48, 23 and 5: 49, 24 and 6 ticks, input
+   velocities 79, 104 (−20.0 dB here) and 122 (−8.0 dB). (Chosen on 2026-11-22
+   against the 1…127 table of that day, which showed those presses one velocity
+   higher.) The user tunes `full`, the corner and, if wanted, gamma in lumadiag. */
 export const DEFAULT_INPUT_CURVE: InputCurveState = {
   full: 125.6,
   gamma: 1.0,
   corner: 1.0,
 };
 
-/** The one-tick table: low=1, high=127, gamma=1.0 gives thresholds 1..127, one
- *  tick of press time per velocity (velocity = 128 − ticks under the identity
- *  LUT), which is every bit of timing the device measures. 127 entries hold
- *  low..low+126; a wider span skips ticks, a narrower one repeats thresholds.
- *  The Terpstra factory table (1..58 in single ticks, then widening to 310) is
- *  what a preset file holds and what the device runs when HKL has not sent
- *  this one. */
+/** The one-count table: low=0, high=126, gamma=1.0 gives thresholds 0..126, one
+ *  device count per velocity (velocity = 127 − count under the identity LUT),
+ *  which is every bit of timing the device measures. The count starts at 0, so
+ *  the press time is count + 1 ticks and the velocity is 128 − ticks. A table
+ *  that starts at 1 gives counts 0 and 1 (one scan and two) the same velocity.
+ *  127 entries hold low..low+126; a wider span skips counts, a narrower one
+ *  repeats thresholds. The Terpstra factory table (1..58 in single counts, then
+ *  widening to 310) is what a preset file holds and what the device runs when
+ *  HKL has not sent this one. */
 export const DEFAULT_INTERVAL_CURVE: IntervalCurveState = {
-  low: 1,
-  high: 127,
+  low: 0,
+  high: 126,
   gamma: 1.0,
 };
 
@@ -262,7 +272,7 @@ function clampVel(v: number): number {
 
 function persist(): void {
   savePrefs({ velocityCal: {
-    version: 7,
+    version: 8,
     floor: state.floor,
     ceiling: state.ceiling,
     gamma: state.gamma,
@@ -338,7 +348,20 @@ function loadFromPrefs(): void {
     inputCurve.gamma = DEFAULT_INPUT_CURVE.gamma;
     inputCurve.corner = DEFAULT_INPUT_CURVE.corner;
   }
-  if (migrateCurve || migrateKeys || migrateScale || migratePiano) persist();
+
+  /* Migration to v8: the press time is the device's count plus one, and the
+     default interval table starts at 0 so that every count has its own velocity
+     (before, 1…127: counts 0 and 1 shared the top one, and the count was read
+     as the time). A saved table was set against that reading, so it takes the
+     default; the Lumatone curve's own settings are in input velocity and are
+     kept. One-time. */
+  const migrateCount = (v.version ?? 0) < 8;
+  if (migrateCount) {
+    intervalCurve.low = DEFAULT_INTERVAL_CURVE.low;
+    intervalCurve.high = DEFAULT_INTERVAL_CURVE.high;
+    intervalCurve.gamma = DEFAULT_INTERVAL_CURVE.gamma;
+  }
+  if (migrateCurve || migrateKeys || migrateScale || migratePiano || migrateCount) persist();
 }
 
 /* Pre-v4 per-key data → physical keys. Saved cells are baseKeys[i] + one
@@ -560,30 +583,39 @@ export const velocityCal = {
 
   /** The press times, in whole ticks, that the firmware turns into this raw
    *  velocity under the identity LUT and the current interval table: `lo`…`hi`
-   *  inclusive, `hi` null when open-ended. The firmware's bin b holds the press
-   *  times above the threshold before `table[b]` and up to `table[b]`; velocity 1
-   *  is bins 126 and 127 together. Where thresholds repeat, the firmware's
-   *  bisection puts a press that equals them in some bin of the run, not the
-   *  first (docs/lessons.md → "binary_search on duplicates"), so the lower bound
-   *  is the last threshold that DIFFERS, and every bin of a run decodes alike.
-   *  Null only for a velocity below 1. True only while the device holds the
-   *  tables HKL pushed (lumatone/sync.ts sends both with the connect-time setup). */
+   *  inclusive, `hi` null when open-ended.
+   *
+   *  A tick is one scan of the board, and the press time is the device's count
+   *  plus one. The board sets a key's counter to 0 on the first scan that finds
+   *  it between its two thresholds, adds one on each later scan there, and sends
+   *  the counter as it stands when the key passes the upper one, so a press seen
+   *  in the zone on n scans sends n − 1 (docs/lessons.md → "A tick is one scan
+   *  of the board"). This function and `velocityForTicks` are the only two
+   *  places that know it: everything else works in ticks.
+   *
+   *  The firmware's bin b holds the counts above the threshold before `table[b]`
+   *  and up to `table[b]`; velocity 1 is bins 126 and 127 together. Where
+   *  thresholds repeat, the firmware's bisection puts a count that equals them
+   *  in some bin of the run, not the first (docs/lessons.md → "binary_search on
+   *  duplicates"), so the lower bound is the last threshold that DIFFERS, and
+   *  every bin of a run decodes alike. Null only for a velocity below 1. True
+   *  only while the device holds the tables HKL pushed (lumatone/sync.ts sends
+   *  both with the connect-time setup). */
   pressTicks(raw: number): { lo: number; hi: number | null } | null {
     if (!(raw >= 1)) return null;
     const table = this.buildIntervalTable();
     const bin = raw >= 127 ? 0 : Math.min(126, 127 - Math.round(raw));
     let before = bin - 1;
     while (before >= 0 && table[before] === table[bin]) before--;
-    const lo = before < 0 ? 0 : table[before] + 1;
-    return { lo, hi: bin >= 126 ? null : table[bin] };
+    const loCount = before < 0 ? 0 : table[before] + 1;
+    return { lo: loCount + 1, hi: bin >= 126 ? null : table[bin] + 1 };
   },
 
-  /** `pressTicks` as the overlay prints it: "16", "64–65", "≤1", "≥127". */
+  /** `pressTicks` as the overlay prints it: "16", "65–66", "≥127". */
   pressTicksLabel(raw: number): string {
     const r = this.pressTicks(raw);
     if (!r) return '?';
     if (r.hi === null) return '≥' + r.lo;
-    if (r.lo === 0) return '≤' + r.hi;
     return r.lo === r.hi ? String(r.lo) : r.lo + '–' + r.hi;
   },
 
@@ -621,29 +653,30 @@ export const velocityCal = {
   clearObservedVelocities(): void { observedVelocities.clear(); },
 
   /** The press time, in ticks, a raw velocity stands for: its bin's own tick,
-   *  the middle of a bin several ticks wide, the threshold of the open bin at
-   *  either end. Null for a velocity no press time produces. */
+   *  the middle of a bin several ticks wide, the first tick of the open bin at
+   *  the slow end. On the default table it is 128 − the velocity. Null for a
+   *  velocity no press time produces. */
   ticksOf(raw: number): number | null {
     const r = this.pressTicks(raw);
     if (!r) return null;
-    if (r.hi === null) return r.lo;
-    if (r.lo === 0) return r.hi;
-    return (r.lo + r.hi) / 2;
+    return r.hi === null ? r.lo : (r.lo + r.hi) / 2;
   },
 
   /** The velocity a press time reads as: the firmware's own map on whole ticks
-   *  (bin = the first threshold not exceeded, velocity = 127 − bin), linear
-   *  between thresholds, so a scaled press time keeps its fraction. 127 at or
-   *  under the first threshold, 1 past the last. Where thresholds repeat, a
-   *  press time lands in the first bin of the run, the firmware's own in one
-   *  inside it: on such a table a scaled key can sit a bin or two from an
-   *  unscaled one. The one-tick table (low to low + 126) has no repeats. */
+   *  (its count is the ticks less one, see `pressTicks`; bin = the first
+   *  threshold the count does not exceed, velocity = 127 − bin), linear between
+   *  thresholds, so a scaled press time keeps its fraction. 127 at or under the
+   *  first threshold, 1 past the last. Where thresholds repeat, a press time
+   *  lands in the first bin of the run, the firmware's own in one inside it: on
+   *  such a table a scaled key can sit a bin or two from an unscaled one. The
+   *  one-count table (low to low + 126) has no repeats. */
   velocityForTicks(ticks: number): number {
     const table = this.buildIntervalTable();
-    if (!(ticks > table[0])) return 127;
+    const count = ticks - 1;
+    if (!(count > table[0])) return 127;
     for (let i = 1; i < 127; i++) {
-      if (ticks <= table[i]) {
-        const bin = i - 1 + (ticks - table[i - 1]) / (table[i] - table[i - 1]);
+      if (count <= table[i]) {
+        const bin = i - 1 + (count - table[i - 1]) / (table[i] - table[i - 1]);
         return Math.max(1, 127 - bin);
       }
     }

@@ -4,7 +4,7 @@
 // scheduleSegmentSwitch, commitRampSync integrates in-flight ramp position).
 
 import { DEFAULT_DYNAMIC_MAP } from '@hkl/shared/dynamics.js';
-import { readHki } from '@hkl/shared/hki.js';
+import { readHki, type HkiTimbre } from '@hkl/shared/hki.js';
 import { pickNextSeam as pickSegmentSeam } from '@hkl/shared/segments.js';
 
 /* ── Injected dependencies (set via init's config arg) ──
@@ -278,6 +278,40 @@ const loadedInstruments: Record<string, any> = {};
    the velocity curve and per-key gain, it is playback-side state and is NOT
    captured in a recording — an .hkr stores coordinates + velocity and the whole
    gain model is re-applied at playback under the current settings. */
+/* ── Brightness curve (HkiTimbre) ──
+   An instrument that carries one is played from a single sample per note
+   through a lowpass set once, at note-on, from the level the note sounds at:
+   the house curve's gain for its velocity, relative to full (no instrument
+   volume, no per-sample gain). The level is still the voice's gain as for any
+   instrument; the curve adds only the cutoff. The filter does not move during
+   the note (Max, 2026-11-23: a filter that closes as a soft note decays is
+   "unnecessary and unwanted", and a fixed one behaves predictably under later
+   effects). docs/architecture/engine.md → Brightness curve. */
+/** A BiquadFilterNode lowpass takes its Q in dB (Web Audio: alpha = sin(w0) /
+ *  (2 · 10^(Q/20))): this is linear Q 0.7071, the response with no peak. */
+export const TIMBRE_LOWPASS_Q_DB = 20 * Math.log10(Math.SQRT1_2);
+/** The highest cutoff a voice's lowpass is given, as a share of the sample rate
+ *  (the filter is not defined at half of it). At 48 kHz, 21.6 kHz. */
+export const TIMBRE_OPEN_FRACTION = 0.45;
+/** No curve is extrapolated below this cutoff. */
+export const TIMBRE_MIN_HZ = 40;
+/** The cutoff a brightness curve gives at a level (linear gain, 1 = full):
+ *  linear in log frequency against dB between the curve's points, the first
+ *  segment's slope continued below the first point, and `Infinity` at and above
+ *  the last point, where the sample plays as stored with no filter (the last
+ *  point's own cutoff is where the curve heads just below it). Pure; exported
+ *  for tests and for the tool that fits curves. */
+export function timbreCutoff(timbre: HkiTimbre, level: number): number {
+  var p = timbre.points, n = p.length;
+  if (!(level > 0)) return TIMBRE_MIN_HZ;
+  var d = 20 * Math.log10(level);
+  if (d >= p[n - 1].gainDb) return Infinity;
+  var i = 1; while (i < n - 1 && d > p[i].gainDb) i++;
+  var a = p[i - 1], b = p[i];
+  var fc = a.cutoffHz * Math.pow(b.cutoffHz / a.cutoffHz, (d - a.gainDb) / (b.gainDb - a.gainDb));
+  return fc < TIMBRE_MIN_HZ ? TIMBRE_MIN_HZ : fc;
+}
+
 let layerBlend = 1.0;
 export function setLayerBlend(t: number): void { layerBlend = t < 0 ? 0 : t > 1 ? 1 : (isFinite(t) ? t : 1); }
 export function getLayerBlend(): number { return layerBlend; }
@@ -563,6 +597,25 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
     }
     return pick;
   }
+  /* Wire a voice's gain into the rest of its chain: through the instrument's
+     brightness-curve lowpass when it has a curve and this level is under the
+     curve's last point, straight through otherwise. Every source of the voice
+     sums into voiceGain, so one filter here covers them all. It is set once and
+     never automated; it is released with the voice's other nodes. */
+  function connectVoiceGain(voiceGain: AudioNode, damperGain: AudioNode, instr: any, level: number): void {
+    var timbre: HkiTimbre | undefined = instr && instr.timbre;
+    if(timbre){
+      var fc=timbreCutoff(timbre,level);
+      if(isFinite(fc)){
+        var lowpass=ctx.createBiquadFilter();
+        lowpass.type='lowpass';lowpass.Q.value=TIMBRE_LOWPASS_Q_DB;
+        lowpass.frequency.value=Math.min(fc,ctx.sampleRate*TIMBRE_OPEN_FRACTION);
+        voiceGain.connect(lowpass);lowpass.connect(damperGain);
+        return;
+      }
+    }
+    voiceGain.connect(damperGain);
+  }
   /* Quantize a frequency to a 5-cent bucket so the velocity layers of one note
      group together. Layers of a note share an exact freq (the analyzer reuses one
      measured fundamental across a note's layers), but bucketing on cents avoids
@@ -634,8 +687,9 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
        setVoiceDamperDepth while the key is in sustainedKeys, pins to 1.0 for
        sostenuto-locked keys. Default 1.0 = no attenuation. */
     var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
-    /* voiceGain: persistent node for this voice — noteOff fades this to silence everything */
-    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
+    /* voiceGain: persistent node for this voice — noteOff fades this to silence everything.
+       An instrument with a brightness curve gets its lowpass between the two. */
+    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;connectVoiceGain(voiceGain,damperGain,instr,velocityToGain(resolvedVel));
     var segGain=ctx.createGain();
     /* Schedule the source slightly in the future, not at currentTime, and
        record sourceStartTime as the same future moment.
@@ -1525,7 +1579,9 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
     }
     var pressureGain=ctx.createGain();pressureGain.gain.value=1.0;pressureGain.connect(master);
     var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
-    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;voiceGain.connect(damperGain);
+    /* `baseVol` is the caller's velocity gain times the instrument's volume: the
+       level a brightness curve reads is the first of the two. */
+    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;connectVoiceGain(voiceGain,damperGain,instr,baseVol/((instr&&instr.volume)||1.0));
     var segGain=ctx.createGain();
     /* Pre-schedule 50ms ahead so source.start isn't clamped under any
        plausible JS stall — see the longer comment in sNoteOn for the

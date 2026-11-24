@@ -295,7 +295,7 @@ const mig = [
     `return { perKey: { '-12,5': 2, '-15,5': 0.5 }, stats: { '-12,5': ${JSON.stringify(STAT)} } };`,
     `check('M1: per-key gains are not carried over', sorted(velocityCal.keyScale), sorted({}));
      check('M2: stats that all land on keys at A3 migrate there', velocityCal.getAllStats().map((s) => s.key).join(' '), '1,24');
-     check('M3: the migration is persisted as v7', stored.version, 7);
+     check('M3: the migration is persisted as v8', stored.version, 8);
      check('M4: the stored prefs no longer hold the gains', 'perKey' in stored, false);
      check('M5: a v3 curve is not re-migrated', velocityCal.floor, 0.07);`),
   /* The whole keyboard's stats saved under a ref whose anchor was (3, 0): A3 puts
