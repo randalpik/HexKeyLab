@@ -214,7 +214,7 @@ The device reports a press as a velocity through two tables, and HKL sets both s
 | CMD 0x20 intervals: `low` | **0** | the thresholds are in the device's count, which starts at 0: a press seen between a key's thresholds on one scan. 0 gives that press its own velocity, 127; a table that starts at 1 merges it with the two-scan press |
 | CMD 0x20 intervals: `high` | **126** (`low` + 126) | thresholds 0…126, one count per velocity. The press time is the count plus one, so velocity = 128 − ticks. `low` + 127 skips one threshold (two counts share a bin); a narrower span repeats thresholds and merges nothing useful. |
 | CMD 0x20 intervals: `gamma` | **1.0** | linear; anything else gives up the one-tick-per-velocity reading |
-| Lumatone velocity curve: `full at` | **125.6** to taste | the input velocity at which the piano line reaches full loudness; the one constant that places the scale |
+| Lumatone velocity curve: `full at` | **125.0** to taste | the input velocity at which the piano line reaches full loudness; the one constant that places the scale |
 | Lumatone velocity curve: `corner` | **1.0 dB** to taste | rounds the corner where the line meets full loudness; 0 is a hard corner |
 | Lumatone velocity curve: `gamma` | **1.00** | the piano; raise or lower it only to widen or narrow the dynamic range |
 
@@ -226,19 +226,19 @@ The device reports a press as a velocity through two tables, and HKL sets both s
 
 where F is the press time of `full at` and the press time is taken after the key's own scale (step 6). At gamma 1 every doubling of press time costs 6 dB. A press faster than `full at` is full. There is no floor: what plays is bounded below by the house curve's quietest note (musical velocity 1, −25.9 dB).
 
-`corner` rounds the point where the line meets full loudness, and only that point. Its value is how many dB under the meeting point the curve passes; 0 leaves a hard corner. The ramp below and the flat top above stay where they are: at 1 dB the curve is within 0.1 dB of the hard-cornered one once the press time is half again longer or shorter than `full at`'s.
+`corner` rounds the point where the line meets full loudness. Its value is how many dB under the meeting point the curve passes; 0 leaves a hard corner. At a small value only that point moves, and the ramp below and the flat top above stay where they are: at 1 dB the curve is within 0.12 dB of the hard-cornered one once the press time is half again longer or shorter than `full at`'s. The control runs to 9.9 dB (it stopped at 3 dB until 2026-11-24, a limit nobody had asked for; past 9.9 the value's label wraps), and a large value rounds a wide stretch of the line: at 2.9 dB the curve is more than 0.5 dB under the line for press times up to 2.7 times `full at`'s. That is a way to make the loud end rise more gently without changing gamma.
 
 **Input velocity** is the unit the curve is tuned in and the number the Diagnostics overlay shows: the hardware velocity after the key's scale, 128 − ticks on the one-tick table. The graph plots the curve against it. With the defaults:
 
 | Input velocity | 127 | 126 | 125 | 124 | 123 | 120 | 115 | 105 | 80 |
 |---|---|---|---|---|---|---|---|---|---|
 | Press time (ticks) | 1 | 2 | 3 | 4 | 5 | 8 | 13 | 23 | 48 |
-| Level, corner 1 dB | full | −0.4 dB | −2.3 dB | −4.5 dB | −6.4 dB | −10.5 dB | −14.7 dB | −19.6 dB | −26.0 dB |
-| Level, corner 0 | full | full | −1.9 dB | −4.4 dB | −6.4 dB | −10.5 dB | −14.7 dB | −19.6 dB | −26.0 dB |
+| Level, corner 1 dB | full | −0.1 dB | −1.0 dB | −2.7 dB | −4.5 dB | −8.5 dB | −12.7 dB | −17.7 dB | −24.1 dB |
+| Level, corner 0 | full | full | full | −2.5 dB | −4.4 dB | −8.5 dB | −12.7 dB | −17.7 dB | −24.1 dB |
 
-With `full at` at 125.6 the corner lies between two and three ticks, so rounding it moves just those two values. What makes the ramp below it steep is the line itself and the size of a tick (lessons.md → "A tick is one scan of the board"); the corner does not change that.
+With `full at` at 125.0 the corner is at three ticks, and rounding it moves the values at two, three and four ticks, by 0.1, 1.0 and 0.2 dB (under 0.1 dB from five ticks on). What makes the ramp below it steep is the line itself and the size of a tick (lessons.md → "A tick is one scan of the board"); the corner does not change that.
 
-`full at` 125.6 was chosen on one unit (Max's, 2026-11-22, `min lo` 3) so that the softest press he can play consistently, just under input velocity 80, lands on the quietest note; his comfortable soft sits at 105 and his comfortable loud at 123. (Those were read on the 1…127 table of that day; on the 0…126 table the same presses read 79, 104 and 122, and `full at` has not been chosen again since.) To set it on another unit: play your softest consistent press, read its input velocity off the overlay, and move `full at` until that velocity is where the graph meets the bottom. A lower `full at` makes everything louder and full loudness easier to reach.
+`full at` 125.0 is the default since 2026-11-24: the value Max settled on with the SP-250 curve instrument (decisions.md 2026-11-24). There the line reaches the quietest note at 59 ticks, input velocity 69. The default before it, 125.6, was chosen on his unit (2026-11-22, `min lo` 3) so that the softest press he can play consistently lands on the quietest note; on the 0…126 table that press reads input velocity 79, his comfortable soft 104 and his comfortable loud 122 (80, 105 and 123 on the 1…127 table of that day). At 125.0 every press of about five ticks or longer is 1.9 dB louder than at 125.6: those three sit at −24.3, −18.1 and −6.0 dB on the curve, and the softest of them plays 1.8 dB above the quietest note. To set it on another unit: play your softest consistent press, read its input velocity off the overlay, and move `full at` until that velocity is where the graph meets the bottom. That puts the press on the quietest note; lower `full at` from there to bring it above the bottom (0.6 lower on Max's unit). A lower `full at` makes everything louder and full loudness easier to reach.
 
 What comes *out* of the curve is the **musical velocity** the note sounds at: the curve's gain re-expressed on the gentle house curve (floor 0.05, gamma 1.5) that every instrument and Piano output share. The overlay does not show it.
 

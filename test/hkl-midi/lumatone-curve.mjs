@@ -103,16 +103,18 @@ ok('gain = line ÷ (1 + line^k)^(1/k); through the house curve the note sounds a
 
 // ── C: only the corner is rounded: the ramp and the ceiling are where they were ──
 near(dB(velocityCal.targetGainForTicks(fullTicks())), -1, 1e-9, 'at the corner the curve is `corner` dB under it');
-/* Away from the corner it is the hard-topped line: within 0.1 dB once the press time
-   is half again longer or shorter than the corner's, within 0.03 dB at double or half. */
+/* Away from the corner it is the hard-topped line: within 0.12 dB once the press time
+   is half again longer or shorter than the corner's (0.1204 at exactly half again, which
+   the default `full`, 3 ticks, puts on a whole tick), within 0.03 dB at double or half. */
 for (let t = 0.25; t <= 400; t += 0.25) {
   const off = dB(velocityCal.targetGainForTicks(t)) - dB(hard(t));
   assert.equal(off <= 1e-12 && off >= -1.0001, true, t + ' ticks: never above the line or its ceiling, never more than the corner under');
   const ratio = Math.max(t / fullTicks(), fullTicks() / t);
-  if (ratio >= 1.5) assert.equal(off >= -0.1, true, t + ' ticks is on the hard-topped line (' + off.toFixed(3) + ' dB)');
+  if (ratio >= 1.5) assert.equal(off >= -0.1205, true, t + ' ticks is on the hard-topped line (' + off.toFixed(3) + ' dB)');
   if (ratio >= 2) assert.equal(off >= -0.03, true, t + ' ticks: ' + off.toFixed(4) + ' dB');
 }
-for (const t of [5, 13, 23, 48, 100]) {
+/* From 8 ticks down: 5 ticks is within the rounding of a 3-tick corner (5.96 dB). */
+for (const t of [8, 13, 23, 48, 100]) {
   near(dB(velocityCal.targetGainForTicks(t)) - dB(velocityCal.targetGainForTicks(2 * t)), 6.02, 0.02, 'doubling ' + t + ' ticks costs 6 dB');
 }
 near(dB(velocityCal.targetGainForTicks(1)), 0, 0.01, 'the fastest bin is full');
@@ -126,28 +128,31 @@ for (let t = 0; t <= 600; t++) {
   assert.equal(m <= prev && m >= 1 && m <= 127, true, 'a slower press is never louder (' + t / 2 + ' ticks)');
   prev = m;
 }
-ok('1 dB under the corner point, on the hard-topped line to 0.1 dB half again away from it; full at the top, no floor');
+ok('1 dB under the corner point, on the hard-topped line to 0.12 dB half again away from it; full at the top, no floor');
 
 // ── D: the default curve by input velocity, and Max\'s anchors on it ──
-/* The default `full` puts input velocity 80 on the house curve\'s quietest note
-   (velocity 1, −25.9 dB). The rounded corner moves nothing away from the corner. */
-near(dB(velocityCal.targetGainForTicks(128 - 123)), -6.4, 0.05, 'input velocity 123');
-near(dB(velocityCal.targetGainForTicks(128 - 105)), -19.6, 0.05, 'input velocity 105');
-near(dB(velocityCal.targetGainForTicks(128 - 80)), -26.0, 0.05, 'input velocity 80');
+/* The default `full`, 125.0, is 3 ticks: the line reaches the house curve\'s quietest
+   note (velocity 1, −25.9 dB) at 59 ticks, input velocity 69. The rounded corner moves
+   nothing away from the corner. */
+near(dB(velocityCal.targetGainForTicks(128 - 123)), -4.5, 0.05, 'input velocity 123');
+near(dB(velocityCal.targetGainForTicks(128 - 105)), -17.7, 0.05, 'input velocity 105');
+near(dB(velocityCal.targetGainForTicks(128 - 80)), -24.1, 0.05, 'input velocity 80');
 /* Max\'s f, p and ppp of 2026-11-22 (min lo 3) were device counts of 5, 23 and 48,
    which the 1…127 table of that day showed as input velocities 123, 105 and 80. They
    are 6, 24 and 49 ticks: input velocities 122, 104 and 79. */
-for (const [name, count, level] of [['f', 5, -8.0], ['p', 23, -20.0], ['ppp', 48, -26.2]]) {
+for (const [name, count, level] of [['f', 5, -6.0], ['p', 23, -18.1], ['ppp', 48, -24.3]]) {
   assert.equal(deviceRaw(count), 127 - count, name + ': a count of ' + count + ' is input velocity ' + (127 - count));
   near(dB(velocityCal.targetGainForTicks(velocityCal.ticksOf(deviceRaw(count)))), level, 0.05, name + ', a count of ' + count);
 }
-near(dB(velocityCal.targetGainForTicks(2)), -0.4, 0.05, 'two ticks, just above the corner');
-near(dB(velocityCal.targetGainForTicks(3)), -2.3, 0.05, 'three ticks, just below it (the hard corner: −1.9)');
-assert.equal(velocityCal.applyInputCurve(80), 1, 'ppp plays as the quietest note');
+near(dB(velocityCal.targetGainForTicks(2)), -0.1, 0.05, 'two ticks, above the corner');
+near(dB(velocityCal.targetGainForTicks(3)), -1.0, 0.05, 'three ticks, the corner itself (the hard corner: full)');
+near(dB(velocityCal.targetGainForTicks(4)), -2.7, 0.05, 'four ticks, below it (the hard corner: −2.5)');
+assert.equal(velocityCal.applyInputCurve(79), 7, 'ppp plays above the quietest note');
+assert.equal(velocityCal.applyInputCurve(69), 1, 'a 59-tick press plays as the quietest note');
 assert.equal(velocityCal.applyInputCurve(60), 1, 'and so does anything softer');
-assert.equal(velocityCal.applyInputCurve(86) > 1, true, 'the curve rises from there');
+assert.equal(velocityCal.applyInputCurve(70) > 1, true, 'the curve rises from there');
 assert.equal(velocityCal.applyInputCurve(127), 127);
-ok('defaults: −6.4 dB at input velocity 123, the quietest note at 80; Max\'s f, p and ppp at −8.0, −20.0 and −26.2 dB');
+ok('defaults: −4.5 dB at input velocity 123, the quietest note at 69; Max\'s f, p and ppp at −6.0, −18.1 and −24.3 dB');
 
 // ── E: the three scalars ──
 /* `corner`: 0 is the hard corner exactly; larger is rounder, and still only near it. */
@@ -156,16 +161,17 @@ for (let t = 0.5; t <= 200; t += 0.5) assert.equal(velocityCal.targetGainForTick
 velocityCal.setInputCurveCorner(3);
 near(dB(velocityCal.targetGainForTicks(fullTicks())), -3, 1e-9, 'corner 3: 3 dB under the corner point');
 near(velocityCal.targetGainForTicks(5), rounded(fullTicks() / 5, K()), 1e-12);
-assert.equal(dB(velocityCal.targetGainForTicks(23)) - dB(hard(23)) > -0.05, true, 'and p is still on the line');
+/* p, 23 ticks: 0.07 dB under the line with a 3 dB corner at 3 ticks. */
+assert.equal(dB(velocityCal.targetGainForTicks(23)) - dB(hard(23)) > -0.1, true, 'and p is still on the line, to 0.1 dB');
 velocityCal.resetInputCurve();
 assert.equal(velocityCal.inputCurveCorner, 1);
 /* `full` is where the piano line reaches full: the corner sits there. */
-const softBefore = velocityCal.targetGainForTicks(400);
+const softBefore = velocityCal.targetGainForTicks(400), defaultFullTicks = fullTicks();
 velocityCal.setInputCurveFull(120);
 near(dB(velocityCal.targetGainForTicks(8)), -1, 1e-9, 'full at 120: the corner is at 8 ticks');
 near(dB(velocityCal.targetGainForTicks(4)), 0, 0.03, 'presses well above it are full');
 near(dB(velocityCal.targetGainForTicks(16)), -6.02, 0.03, 'and well below it the line');
-near(dB(velocityCal.targetGainForTicks(400)) - dB(softBefore), 20 * Math.log10(8 / 2.4), 0.01, 'the soft end follows the line');
+near(dB(velocityCal.targetGainForTicks(400)) - dB(softBefore), 20 * Math.log10(8 / defaultFullTicks), 0.01, 'the soft end follows the line');
 velocityCal.resetInputCurve();
 velocityCal.setInputCurveGamma(1.5);
 for (const t of [1, 2, 3, 5, 10, 20, 40]) {

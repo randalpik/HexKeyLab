@@ -94,7 +94,7 @@ export interface VelocityCalState {
  *
  *  `corner` rounds the point where the line meets the ceiling, and only that
  *  point: it is how many dB under it the curve passes. The formula is the line
- *  where the line is well under 1 and 1 where it is well over (within 0.1 dB of
+ *  where the line is well under 1 and 1 where it is well over (within 0.12 dB of
  *  `min(1, line)` once the press time is half again longer or shorter than `F`,
  *  at the default 1 dB), so the ramp below and the ceiling above are not moved. This is what
  *  Max asked for on 2026-11-23: "round the corner, not reshape the whole curve.
@@ -143,15 +143,17 @@ export const DEFAULT_CAL: VelocityCalState = {
 };
 
 /* Lumatone target-gain curve default: the piano's gamma, the piano line
-   reaching full at input velocity 125.6 (2.4 ticks), which puts input velocity
-   80 (48 ticks) on the house curve's quietest note, and a corner 1 dB under
-   that meeting point. On Max's unit with `min lo` 3 (2026-11-22) his ppp, p and
-   f were device counts of about 48, 23 and 5: 49, 24 and 6 ticks, input
-   velocities 79, 104 (−20.0 dB here) and 122 (−8.0 dB). (Chosen on 2026-11-22
-   against the 1…127 table of that day, which showed those presses one velocity
-   higher.) The user tunes `full`, the corner and, if wanted, gamma in lumadiag. */
+   reaching full at input velocity 125.0 (3 ticks), and a corner 1 dB under
+   that meeting point. The line then reaches the house curve's quietest note at
+   59 ticks (input velocity 69). 125.0 is where Max settled on the SP-250 curve
+   instrument (2026-11-24); until then the default was 125.6 (2.4 ticks), the
+   value that put a 48-tick press on the quietest note. On his unit with
+   `min lo` 3 (2026-11-22) his ppp, p and f were device counts of about 48, 23
+   and 5: 49, 24 and 6 ticks, input velocities 79 (−24.3 dB here), 104
+   (−18.1 dB) and 122 (−6.0 dB). The user tunes `full`, the corner and, if
+   wanted, gamma in lumadiag. */
 export const DEFAULT_INPUT_CURVE: InputCurveState = {
-  full: 125.6,
+  full: 125.0,
   gamma: 1.0,
   corner: 1.0,
 };

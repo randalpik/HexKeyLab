@@ -31,18 +31,47 @@
  *      filter and gain, run sample by sample, and scored against the real capture
  *      (correlation, level, spectrum). The report is the evidence for the model;
  *      read it before trusting the output.
- *   5. The output keeps each note's top layer untouched (audio, `gain`,
- *      `gainLevel`), drops the other layers, and adds `manifest.timbre`: the
- *      fitted (passband gain, cutoff) of each layer, lowest first, then the top
- *      layer as (0 dB, --open-hz). The engine reads a note's level off this curve
- *      and sets one lowpass per voice (@hkl/engine `timbreCutoff`).
+ *   5. What the filter takes from each note is measured, to be put back, in two
+ *      parts that add up to the sample's `timbreMakeupDb` (dB at each cutoff of
+ *      a 1/6-octave list, `timbre.makeupHz`). The engine multiplies it into the
+ *      voice's gain (@hkl/engine `timbreMakeup`).
+ *      a. The LEVEL the lowpass takes. It removes the partials above its cutoff,
+ *         so a filtered note is lower in level by an amount that depends on the
+ *         note and the cutoff. Measured on what the engine plays of the note (its
+ *         first 400 ms from the engine's own onset, `findPerceptualOnset`, with
+ *         the engine's onset fade) through the engine's lowpass, as K-weighted
+ *         level. With this part alone a note has one K-weighted level at every
+ *         cutoff (`--match level`).
+ *      b. The LOUDNESS the lost brightness was worth (`--match sones`, the
+ *         default). At one level a duller note sounds quieter than a brighter
+ *         one, so a level match leaves the brightness adding to the dynamics: the
+ *         loudness as heard then moves further than the velocity curve asks. A
+ *         source re-gained by `hki-regain.mjs` already holds what it takes to
+ *         undo that, per note and per layer: `gain` (layers matched in
+ *         Bark-sones) over `gainLevel` (layers matched in K-weighted level). This
+ *         part is that ratio for each lower layer against the top layer's, placed
+ *         at the layer's fitted cutoff, read linearly in dB against log frequency
+ *         between layers, held under the lowest layer's cutoff, and 0 at the open
+ *         end. At each layer's cutoff the note then plays at the level the
+ *         layered instrument gave that layer with its layers matched in sones
+ *         (Layer loudness match at 1), and the velocity curve alone sets how
+ *         loud a note sounds: "layers carry timbre, the house curve carries all
+ *         loudness" (Max, 2026-09-12), carried over to a continuous filter.
+ *         A source with one gain per row has no such record and gets part a only.
+ *      The report gives part a in unweighted RMS beside it.
+ *   6. The output keeps each note's top layer's audio, drops the other layers,
+ *      and adds `manifest.timbre`: the fitted (passband gain, cutoff) of each
+ *      layer, lowest first, then the top layer as (0 dB, --open-hz), and the
+ *      list of cutoffs. The engine reads a note's level off this curve and sets
+ *      one lowpass per voice (@hkl/engine `timbreCutoff`). Each note has ONE
+ *      gain: the top layer's `gain` (with `--match level`, its `gainLevel`).
  *
  * The filter is fixed for the length of a note. The SP-250's own closes further
  * as a soft note decays; that is left out on purpose (Max, 2026-11-23).
  *
  * Usage:
  *   node apps/analyzer/cli/hki-timbre.mjs <in.hki> [--out <out.hki>] [--report <json>]
- *        [--key <instrumentKey>] [--name <name>] [--open-hz N]
+ *        [--key <instrumentKey>] [--name <name>] [--open-hz N] [--match sones|level]
  *
  * Without --out nothing is written but the report (dry run). An existing --out
  * file is not overwritten. Default key and name: the source's with `-curve` and
@@ -53,12 +82,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readHki, writeHki } from '@hkl/shared/hki.js';
-import { TIMBRE_LOWPASS_Q_DB } from '@hkl/engine/samples-engine.js';
+import { TIMBRE_LOWPASS_Q_DB, TIMBRE_OPEN_FRACTION, findPerceptualOnset, bakeOnsetFade } from '@hkl/engine/samples-engine.js';
+import { kWeightingCoeffs, applyBiquadInPlace } from '@hkl/analysis/k-weighting.js';
 
 /* ── args ── */
 const argv = process.argv.slice(2);
 if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
-  console.error('usage: hki-timbre.mjs <in.hki> [--out <out.hki>] [--report <json>] [--key <instrumentKey>] [--name <name>] [--open-hz N]');
+  console.error('usage: hki-timbre.mjs <in.hki> [--out <out.hki>] [--report <json>] [--key <instrumentKey>] [--name <name>] [--open-hz N] [--match sones|level]');
   process.exit(argv.length === 0 ? 1 : 0);
 }
 const opt = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : dflt; };
@@ -67,6 +97,8 @@ const inPath = argv[0];
 const outPath = opt('--out', null);
 const reportPath = opt('--report', null);
 const openHz = parseFloat(opt('--open-hz', '20000'));
+const match = opt('--match', 'sones');
+if (match !== 'sones' && match !== 'level') fail(`--match ${match}: expected sones or level`);
 if (outPath && fs.existsSync(outPath)) fail(`${outPath} exists — not overwritten`);
 
 const db = (x) => (x > 0 ? 10 * Math.log10(x) : -Infinity); // of a power
@@ -170,11 +202,15 @@ let sr = 0;
 const notes = [];
 for (const [name, rows] of byNote) {
   const layers = rows.filter((r) => typeof r.vel === 'number').sort((a, b) => a.vel - b.vel);
-  if (layers.length < 2) { notes.push({ name, freq: rows[0].freq, top: rows[0], lower: [] }); continue; }
-  const dec = layers.map((s) => {
+  const decode = (s) => {
     const w = decodeWav(bundle.audio[s.file]);
     if (sr && w.sr !== sr) fail(`${s.file}: sample rate ${w.sr} differs from ${sr}`);
     sr = w.sr;
+    return w;
+  };
+  if (layers.length < 2) { notes.push({ name, freq: rows[0].freq, top: rows[0], topX: decode(rows[0]).x, layers: [], lower: [] }); continue; }
+  const dec = layers.map((s) => {
+    const w = decode(s);
     let peak = 0; for (let i = 0; i < w.x.length; i++) { const a = Math.abs(w.x[i]); if (a > peak) peak = a; }
     let on = 0; while (on < w.x.length && Math.abs(w.x[on]) < 0.1 * peak) on++;
     return { s, x: w.x, on };
@@ -185,7 +221,7 @@ for (const [name, rows] of byNote) {
   const LAG = Math.round(Math.max(0.005, 1.5 / f0) * sr), s0 = Math.round(0.02 * sr) + LAG;
   const room = Math.min(...dec.map((d) => d.x.length - d.on));
   const N = Math.min(Math.round(0.45 * sr), room - s0 - 2 * LAG - 64);
-  const note = { name, freq: f0, top: top.s, topX: top.x, topOn: top.on, room, lower: [] };
+  const note = { name, freq: f0, top: top.s, topX: top.x, topOn: top.on, room, layers, lower: [] };
   if (N >= Math.round(0.05 * sr)) {
     const a0 = top.on + s0; let ea = 0; for (let i = 0; i < N; i++) ea += top.x[a0 + i] * top.x[a0 + i];
     for (const d of dec.slice(0, -1)) {
@@ -271,7 +307,72 @@ for (let i = 1; i < points.length; i++) {
     fail(`the fitted layers do not form a curve (${points.map((p) => `${p.gainDb} dB → ${p.cutoffHz} Hz`).join(', ')}): this instrument's layers are not one waveform through an opening lowpass`);
   }
 }
-const timbre = { type: 'lowpass12', points };
+
+/* ── the level the filter takes from each note, to be put back ──
+   Measured on what the engine plays: the note from the engine's own onset at the
+   gain the output carries, with the engine's onset fade, through the engine's
+   lowpass starting from rest. The level is K-weighted (BS.1770's two filters) over
+   the first 400 ms, the window and measure `hki-regain.mjs` matched layers in. */
+const MAKEUP_STEPS = 56, MAKEUP_TOP_HZ = 20000; // 1/6 octave, 31 Hz to 20 kHz
+const makeupHz = Array.from({ length: MAKEUP_STEPS + 1 }, (_, i) => Math.round(MAKEUP_TOP_HZ * Math.pow(2, (i - MAKEUP_STEPS) / 6) * 100) / 100);
+const hasBoth = (s) => typeof s.gainLevel === 'number' && s.gainLevel > 0 && typeof s.gain === 'number' && s.gain > 0;
+/* The note's one gain: the top layer's `gain`; its `gainLevel` when only the level is matched. */
+const rowGain = (s) => (match === 'level' && hasBoth(s) ? s.gainLevel : typeof s.gain === 'number' ? s.gain : 1);
+/* The loudness part of the add-back (step 5b): each lower layer's sones gain over its
+   level gain, against the top layer's, at that layer's fitted cutoff; 0 at the open end.
+   null when only the level is matched or the source holds one gain per row. */
+const sonesOverLevel = (s) => 20 * Math.log10(s.gain / s.gainLevel);
+function loudnessPoints(note) {
+  if (match !== 'sones' || !hasBoth(note.top)) return null;
+  const top = sonesOverLevel(note.top), pts = [];
+  for (const f of fits) {
+    const row = note.layers.find((r) => r.vel === f.vel);
+    if (row && hasBoth(row)) pts.push({ hz: Math.min(f.cutoffHz, openHz), db: sonesOverLevel(row) - top });
+  }
+  if (!pts.length) return null;
+  pts.push({ hz: openHz, db: 0 });
+  return pts;
+}
+function loudnessAt(pts, hz) {
+  if (!pts) return 0;
+  if (hz <= pts[0].hz) return pts[0].db;
+  for (let i = 1; i < pts.length; i++) {
+    if (hz <= pts[i].hz) return pts[i].hz > pts[i - 1].hz ? pts[i - 1].db + (pts[i].db - pts[i - 1].db) * Math.log(hz / pts[i - 1].hz) / Math.log(pts[i].hz / pts[i - 1].hz) : pts[i].db;
+  }
+  return pts[pts.length - 1].db;
+}
+const K = kWeightingCoeffs(sr);
+const powers = (seg) => {
+  let e = 0; for (let i = 0; i < seg.length; i++) e += seg[i] * seg[i];
+  const y = Float64Array.from(seg); applyBiquadInPlace(y, K.pre); applyBiquadInPlace(y, K.rlb);
+  let ek = 0; for (let i = 0; i < y.length; i++) ek += y[i] * y[i];
+  return { k: ek / seg.length, rms: e / seg.length };
+};
+const round2 = (v) => Math.round(v * 100) / 100;
+for (const note of notes) {
+  const x32 = Float32Array.from(note.topX);
+  const on = findPerceptualOnset(x32, sr, rowGain(note.top));
+  bakeOnsetFade({ numberOfChannels: 1, length: x32.length, sampleRate: sr, getChannelData: () => x32 }, on);
+  const n = Math.min(Math.round(0.4 * sr), x32.length - on);
+  if (n < Math.round(0.05 * sr)) fail(`${note.name}: under 50 ms of audio after its onset — no level to measure`);
+  const played = Float64Array.from(x32.subarray(on, on + n)), base = powers(played);
+  const lossAt = (hz) => { const p = powers(lowpassRun(played, 0, n, Math.min(hz, sr * TIMBRE_OPEN_FRACTION), sr, 1)); return { k: db(base.k / p.k), rms: db(base.rms / p.rms) }; };
+  const at = makeupHz.map(lossAt);
+  const loud = loudnessPoints(note);
+  note.matched = loud ? 'sones' : 'level';
+  note.makeupLevelDb = at.map((l) => round2(l.k));
+  note.makeupDb = at.map((l, i) => round2(l.k + loudnessAt(loud, makeupHz[i])));
+  note.makeupRmsDb = at.map((l) => round2(l.rms));
+  /* How far a straight line between two grid points is from the measurement midway. */
+  note.interpErrDb = 0;
+  for (let i = 0; i < MAKEUP_STEPS; i++) {
+    const mid = Math.sqrt(makeupHz[i] * makeupHz[i + 1]), err = (note.makeupLevelDb[i] + note.makeupLevelDb[i + 1]) / 2 - lossAt(mid).k;
+    if (Math.abs(err) > Math.abs(note.interpErrDb)) { note.interpErrDb = round2(err); note.interpErrHz = Math.round(mid); }
+  }
+  /* The same two figures at each fitted layer's own cutoff, for the report. */
+  note.atPoints = points.slice(0, -1).map((p) => { const l = lossAt(p.cutoffHz); return { cutoffHz: p.cutoffHz, makeupDb: round2(l.k + loudnessAt(loud, p.cutoffHz)), levelDb: round2(l.k), loudnessDb: round2(loudnessAt(loud, p.cutoffHz)), rmsDb: round2(l.rms) }; });
+}
+const timbre = { type: 'lowpass12', points, makeupHz };
 
 /* ── report ── */
 const f1 = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : '—');
@@ -284,16 +385,29 @@ for (const vel of vels) {
   console.error(`    layer ${String(vel).padStart(3)}: correlation ${f1(median(r.map((q) => q.correlation)), 3)} / ${f1(Math.min(...r.map((q) => q.correlation)), 3)}, level ${f1(median(r.map((q) => q.levelErrorDb)))} / ${f1(worst('levelErrorDb'))} dB, spectrum ${f1(median(r.filter((q) => q.spectrumErrorDb != null).map((q) => q.spectrumErrorDb)))} / ${f1(Math.max(...r.filter((q) => q.spectrumErrorDb != null).map((q) => q.spectrumErrorDb)))} dB`);
 }
 console.error(`  curve: ${points.map((p) => `${f1(p.gainDb)} dB → ${p.cutoffHz} Hz`).join(',  ')}`);
-if (reportPath) { fs.writeFileSync(reportPath, JSON.stringify({ source: path.basename(inPath), timbre, fits, rebuilt }, null, 1)); console.error(`  report → ${reportPath}`); }
+const sonesNotes = notes.filter((n) => n.matched === 'sones').length;
+console.error(`  put back at each layer's cutoff (median / most, and the note): in all; the level the lowpass takes, K-weighted over the first 400 ms; the loudness its brightness was worth (${match === 'level' ? 'not asked for: --match level' : sonesNotes + ' of ' + notes.length + ' notes hold both gains'}); and the level part, K-weighted minus unweighted RMS (median / widest):`);
+points.slice(0, -1).forEach((p, i) => {
+  const rows = notes.map((n) => ({ name: n.name, ...n.atPoints[i] })), most = rows.reduce((m, r) => (r.makeupDb > m.makeupDb ? r : m), rows[0]);
+  const diff = rows.map((r) => r.levelDb - r.rmsDb), widest = diff.reduce((m, v) => (Math.abs(v) > Math.abs(m) ? v : m), 0);
+  const part = (k) => `${f1(median(rows.map((r) => r[k])))} / ${f1(Math.max(...rows.map((r) => r[k])))}`;
+  console.error(`    ${String(p.cutoffHz).padStart(5)} Hz: ${f1(median(rows.map((r) => r.makeupDb)))} / ${f1(most.makeupDb)} dB (${most.name}); level ${part('levelDb')} dB; loudness ${part('loudnessDb')} dB; ${f1(median(diff), 2)} / ${f1(widest, 2)} dB`);
+});
+{
+  const w = notes.reduce((m, n) => (Math.abs(n.interpErrDb) > Math.abs(m.interpErrDb) ? n : m), notes[0]);
+  console.error(`  between two grid cutoffs a straight line is at most ${f1(Math.abs(w.interpErrDb), 2)} dB from the measurement (${w.name}, ${w.interpErrHz ?? '—'} Hz)`);
+}
+const makeup = notes.map((n) => ({ name: n.name, freq: n.freq, atPoints: n.atPoints, interpErrDb: n.interpErrDb, interpErrHz: n.interpErrHz ?? null, matched: n.matched, makeupDb: n.makeupDb, makeupLevelDb: n.makeupLevelDb, makeupRmsDb: n.makeupRmsDb }));
+if (reportPath) { fs.writeFileSync(reportPath, JSON.stringify({ source: path.basename(inPath), timbre, fits, rebuilt, makeup }, null, 1)); console.error(`  report → ${reportPath}`); }
 
 /* ── write ── */
 if (outPath) {
-  const samples = notes.sort((a, b) => manifest.samples.indexOf(a.top) - manifest.samples.indexOf(b.top)).map((n) => { const { vel: _layer, ...row } = n.top; return row; });
+  const samples = notes.sort((a, b) => manifest.samples.indexOf(a.top) - manifest.samples.indexOf(b.top)).map((n) => { const { vel: _layer, gainLevel: _matched, ...row } = n.top; return { ...row, gain: rowGain(n.top), timbreMakeupDb: n.makeupDb }; });
   const audio = Object.fromEntries(samples.map((s) => [s.file, bundle.audio[s.file]]));
   const out = {
     manifest: { ...manifest, instrumentKey: opt('--key', manifest.instrumentKey + '-curve'), name: opt('--name', manifest.name + ' (brightness curve)'), samples, timbre },
     audio,
-    provenance: { ...(bundle.provenance || {}), timbre: { source: path.basename(inPath), date: new Date().toISOString(), type: timbre.type, windowSec: [W0, W0 + 0.45], openHz, layers: fits } },
+    provenance: { ...(bundle.provenance || {}), timbre: { source: path.basename(inPath), date: new Date().toISOString(), type: timbre.type, windowSec: [W0, W0 + 0.45], openHz, layers: fits, makeup: { match, sonesNotes, level: 'K-weighted, 0.4 s from findPerceptualOnset', loudness: 'the source layers\' gain over gainLevel, against the top layer\'s' } } },
   };
   fs.writeFileSync(outPath, writeHki(out));
   console.error(`  wrote ${outPath} (${(fs.statSync(outPath).size / 1e6).toFixed(1)} MB, ${samples.length} samples)`);

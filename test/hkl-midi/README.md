@@ -117,12 +117,12 @@ floor or ceiling); then the law at every tick
 from 1 to 126, the musical velocity it becomes, and that velocity sounding at
 the curve's own gain when played back through the house curve (no stacking);
 that only the corner is rounded (1 dB under the corner point, never above the
-hard-topped line or more than the corner under it, within 0.1 dB of it once the
+hard-topped line or more than the corner under it, within 0.12 dB of it once the
 press time is half again longer or shorter than the corner's and 0.03 dB at
-double or half, 6 dB per doubling from 5 ticks down, full at the fastest bin,
+double or half, 6 dB per doubling from 8 ticks down, full at the fastest bin,
 no floor, a slower press never louder); the defaults by input velocity (123 at
-−6.4 dB, 105 at −19.6 dB, 80 on the quietest note) and Max's f, p and ppp of
-2026-11-22 as the counts they were (5, 23 and 48: −8.0, −20.0 and −26.2 dB); the
+−4.5 dB, 105 at −17.7 dB, 69 on the quietest note) and Max's f, p and ppp of
+2026-11-22 as the counts they were (5, 23 and 48: −6.0, −18.1 and −24.3 dB); the
 three scalars (`corner` 0 is the
 hard-topped line exactly and 3 dB a rounder corner that still leaves p on the
 line; `full` places the line and its corner; gamma is an exponent on the line

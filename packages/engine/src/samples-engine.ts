@@ -67,6 +67,10 @@ export interface SampleDef {
    *  log-linearly between gainLevel (layerBlend 0) and gain (layerBlend 1) —
    *  see setLayerBlend. Absent ⇒ `gain` is used as-is. */
   gainLevel?: number;
+  /** Instruments with a brightness curve: what the curve's lowpass takes from
+   *  this sample, in dB, at each cutoff of `timbre.makeupHz` — see
+   *  timbreMakeup. */
+  timbreMakeupDb?: number[];
   /** Loop-point times (sec) — legacy single-loop shape. */
   loopPts?: number[];
   /** Seam-switching loop segments [{a, b}, …] (sec). */
@@ -283,7 +287,11 @@ const loadedInstruments: Record<string, any> = {};
    through a lowpass set once, at note-on, from the level the note sounds at:
    the house curve's gain for its velocity, relative to full (no instrument
    volume, no per-sample gain). The level is still the voice's gain as for any
-   instrument; the curve adds only the cutoff. The filter does not move during
+   instrument: a lowpass takes level and loudness from a note, by an amount
+   that depends on the note and the cutoff, and the voice's gain puts back what
+   the bundle says it takes (timbreMakeup), so the curve changes the brightness
+   and the house curve alone sets how loud the note is. The filter does not move
+   during
    the note (Max, 2026-11-23: a filter that closes as a soft note decays is
    "unnecessary and unwanted", and a fixed one behaves predictably under later
    effects). docs/architecture/engine.md → Brightness curve. */
@@ -310,6 +318,30 @@ export function timbreCutoff(timbre: HkiTimbre, level: number): number {
   var a = p[i - 1], b = p[i];
   var fc = a.cutoffHz * Math.pow(b.cutoffHz / a.cutoffHz, (d - a.gainDb) / (b.gainDb - a.gainDb));
   return fc < TIMBRE_MIN_HZ ? TIMBRE_MIN_HZ : fc;
+}
+
+/** The gain that puts back what a brightness curve's lowpass takes from one
+ *  sample. `makeupHz` is the curve's list of cutoffs (ascending) and `makeupDb`
+ *  the sample's list beside it: the dB to put back at each of them, from the
+ *  tool that wrote the bundle (analyzer `hki-timbre.mjs`: the K-weighted level
+ *  the lowpass takes, plus the loudness that lost brightness was worth). Read linearly in dB against log frequency, and
+ *  held at the lists' ends. `cutoffHz` is the cutoff against the sample's own
+ *  spectrum: the voice's cutoff divided by its playback rate, since the sample
+ *  is repitched before it is filtered. 1 when there is no filter (`Infinity`) or
+ *  no list to read. Pure; exported for tests. */
+export function timbreMakeup(makeupHz: number[] | null | undefined, makeupDb: number[] | null | undefined, cutoffHz: number): number {
+  if (!makeupHz || !makeupDb || !isFinite(cutoffHz) || !(cutoffHz > 0)) return 1;
+  var n = makeupHz.length;
+  if (n === 0 || makeupDb.length !== n) return 1;
+  var d: number;
+  if (cutoffHz <= makeupHz[0]) d = makeupDb[0];
+  else if (cutoffHz >= makeupHz[n - 1]) d = makeupDb[n - 1];
+  else {
+    var lo = 0, hi = n - 1;
+    while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (makeupHz[mid] <= cutoffHz) lo = mid; else hi = mid; }
+    d = makeupDb[lo] + (makeupDb[hi] - makeupDb[lo]) * Math.log(cutoffHz / makeupHz[lo]) / Math.log(makeupHz[hi] / makeupHz[lo]);
+  }
+  return Math.pow(10, d / 20);
 }
 
 let layerBlend = 1.0;
@@ -544,7 +576,7 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
              integer grid; the attack fade-in (not a low threshold) handles the
              start step. */
           if(!instr.loop){var _g=(typeof s.gain==='number')?s.gain:1.0;var _d=buf.getChannelData(0);var _on=findPerceptualOnset(_d,buf.sampleRate,_g);lp.trimStart=_on/buf.sampleRate;bakeOnsetFade(buf,_on);}
-          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,gainLevel:(typeof s.gainLevel==='number'&&s.gainLevel>0)?s.gainLevel:null,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name,crossfadeSec:(typeof s.crossfadeSec==='number'&&s.crossfadeSec>0)?s.crossfadeSec:null};loaded++;
+          result[i]={buffer:buf,freq:s.freq,gain:(typeof s.gain==='number')?s.gain:1.0,gainLevel:(typeof s.gainLevel==='number'&&s.gainLevel>0)?s.gainLevel:null,timbreMakeupDb:Array.isArray(s.timbreMakeupDb)?s.timbreMakeupDb:null,vel:(typeof s.vel==='number')?s.vel:null,lp:lp,name:s.name,crossfadeSec:(typeof s.crossfadeSec==='number'&&s.crossfadeSec>0)?s.crossfadeSec:null};loaded++;
           if(onProgress)onProgress(loaded,total,s.name);
           if(loaded===total&&!aborted){
             buffers[key]=result.filter(function(x){
@@ -597,22 +629,27 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
     }
     return pick;
   }
-  /* Wire a voice's gain into the rest of its chain: through the instrument's
-     brightness-curve lowpass when it has a curve and this level is under the
-     curve's last point, straight through otherwise. Every source of the voice
-     sums into voiceGain, so one filter here covers them all. It is set once and
-     never automated; it is released with the voice's other nodes. */
-  function connectVoiceGain(voiceGain: AudioNode, damperGain: AudioNode, instr: any, level: number): void {
+  /* The cutoff of a voice's brightness-curve lowpass: the instrument's curve at
+     this level, capped for the sample rate. Infinity (no filter) when the
+     instrument has no curve or the level is at or above the curve's last point. */
+  function voiceCutoff(instr: any, level: number): number {
     var timbre: HkiTimbre | undefined = instr && instr.timbre;
-    if(timbre){
-      var fc=timbreCutoff(timbre,level);
-      if(isFinite(fc)){
-        var lowpass=ctx.createBiquadFilter();
-        lowpass.type='lowpass';lowpass.Q.value=TIMBRE_LOWPASS_Q_DB;
-        lowpass.frequency.value=Math.min(fc,ctx.sampleRate*TIMBRE_OPEN_FRACTION);
-        voiceGain.connect(lowpass);lowpass.connect(damperGain);
-        return;
-      }
+    if(!timbre)return Infinity;
+    var fc=timbreCutoff(timbre,level);
+    return isFinite(fc)?Math.min(fc,ctx.sampleRate*TIMBRE_OPEN_FRACTION):Infinity;
+  }
+  /* Wire a voice's gain into the rest of its chain: through a lowpass at
+     `cutoff` (voiceCutoff) when it is finite, straight through otherwise. Every
+     source of the voice sums into voiceGain, so one filter here covers them all.
+     It is set once and never automated; it is released with the voice's other
+     nodes. The level it takes is put back in the voice's gain (timbreMakeup). */
+  function connectVoiceGain(voiceGain: AudioNode, damperGain: AudioNode, cutoff: number): void {
+    if(isFinite(cutoff)){
+      var lowpass=ctx.createBiquadFilter();
+      lowpass.type='lowpass';lowpass.Q.value=TIMBRE_LOWPASS_Q_DB;
+      lowpass.frequency.value=cutoff;
+      voiceGain.connect(lowpass);lowpass.connect(damperGain);
+      return;
     }
     voiceGain.connect(damperGain);
   }
@@ -676,7 +713,11 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
     /* Per-sample RMS-normalization gain, baked in by the analyzer to bring
        the steady (loop) or attack-peak (decay) RMS to a uniform target across
        all instruments. Defaults to 1.0 if absent — see analyzer/backfill-gains.js. */
-    var vol=baseVol*rangeAttenuation(freq,instrumentKey)*blendedGain(nearest);
+    /* An instrument with a brightness curve: the cutoff of this voice's lowpass
+       (Infinity = none), and in the gain what that lowpass takes from this
+       sample, read at the cutoff against the sample's own spectrum (÷ rate). */
+    var cutoff=voiceCutoff(instr,velocityToGain(resolvedVel));
+    var vol=baseVol*rangeAttenuation(freq,instrumentKey)*blendedGain(nearest)*timbreMakeup(instr.timbre&&instr.timbre.makeupHz,nearest.timbreMakeupDb,cutoff/rate);
     /* pressureGain: modulated by polyphonic aftertouch. Initialized to 1.0 so
        the note plays at its velocity-driven volume until the first aftertouch
        message arrives (which may be never, or well after onset). Placed outside
@@ -689,7 +730,7 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
     var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
     /* voiceGain: persistent node for this voice — noteOff fades this to silence everything.
        An instrument with a brightness curve gets its lowpass between the two. */
-    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;connectVoiceGain(voiceGain,damperGain,instr,velocityToGain(resolvedVel));
+    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;connectVoiceGain(voiceGain,damperGain,cutoff);
     var segGain=ctx.createGain();
     /* Schedule the source slightly in the future, not at currentTime, and
        record sourceStartTime as the same future moment.
@@ -1543,7 +1584,11 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
        freq and nearest sample. The slide may have moved to a different sample,
        which can carry a different normalization gain. */
     var baseVol=vol;
-    vol=baseVol*rangeAttenuation(freq,instrumentKey)*blendedGain(nearest);
+    /* `baseVol` is the caller's velocity gain times the instrument's volume: the
+       level a brightness curve reads is the first of the two. What its lowpass
+       takes is put back as in sNoteOn. */
+    var cutoff=voiceCutoff(instr,baseVol/((instr&&instr.volume)||1.0));
+    vol=baseVol*rangeAttenuation(freq,instrumentKey)*blendedGain(nearest)*timbreMakeup(instr.timbre&&instr.timbre.makeupHz,nearest.timbreMakeupDb,cutoff/rate);
     /* See sNoteOn for the segments-vs-legacy dispatch — mirrored here. */
     var segsFaded=nearest.lp&&nearest.lp.segments;
     var pts=nearest.lp&&nearest.lp.loopPts;
@@ -1579,9 +1624,7 @@ export function blendedGain(sample: { gain?: number | null; gainLevel?: number |
     }
     var pressureGain=ctx.createGain();pressureGain.gain.value=1.0;pressureGain.connect(master);
     var damperGain=ctx.createGain();damperGain.gain.value=1.0;damperGain.connect(pressureGain);
-    /* `baseVol` is the caller's velocity gain times the instrument's volume: the
-       level a brightness curve reads is the first of the two. */
-    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;connectVoiceGain(voiceGain,damperGain,instr,baseVol/((instr&&instr.volume)||1.0));
+    var voiceGain=ctx.createGain();voiceGain.gain.value=1.0;connectVoiceGain(voiceGain,damperGain,cutoff);
     var segGain=ctx.createGain();
     /* Pre-schedule 50ms ahead so source.start isn't clamped under any
        plausible JS stall — see the longer comment in sNoteOn for the

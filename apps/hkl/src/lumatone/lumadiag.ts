@@ -1052,7 +1052,7 @@ function makeVelocityCalSection(): HTMLDivElement {
   /* Target-gain curve, in audio-gain space (the familiar floor/ceiling/gamma).
      Sliders work in integer hundredths so HTML range resolution is fine; setters
      convert back to fractional gain. The composite preview = this exact curve. */
-  /* `full` in tenths of an input velocity: on the default table 125.6 is 2.4 ticks. */
+  /* `full` in tenths of an input velocity: on the default table 125.0 is 3 ticks. */
   const fullUi = mkCurveSlider(
     'full at', 'Where the piano line reaches full loudness, as an input velocity (the number the Diagnostics overlay shows: 128 − ticks, after the key\'s scale). Faster presses are full too. Lower = full loudness comes sooner and everything is louder.',
     1000, 1270, 1,
@@ -1068,8 +1068,8 @@ function makeVelocityCalSection(): HTMLDivElement {
     (v: number) => (v / 100).toFixed(2),
   );
   const cornerUi = mkCurveSlider(
-    'corner', 'Rounds the corner where the line meets full loudness, and only the corner: how many dB under that point the curve passes. 0 = a hard corner.',
-    0, 30, 1,
+    'corner', 'Rounds the corner where the line meets full loudness: how many dB under that point the curve passes. 0 = a hard corner. Around 1 dB only the corner moves; several dB round a wide stretch of the line under it, so the loud end rises more gently.',
+    0, 99, 1,
     () => Math.round(velocityCal.inputCurveCorner * 10),
     (v: number) => velocityCal.setInputCurveCorner(v / 10),
     (v: number) => (v / 10).toFixed(1) + ' dB',

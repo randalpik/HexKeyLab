@@ -63,6 +63,15 @@ export interface HkiSampleEntry {
    *  ⇒ the engine default (0.030). Shorter values are emitted for material
    *  whose seams diverge over the full default window (vibrato voices etc.). */
   crossfadeSec?: number;
+  /** Instruments with a brightness curve (`manifest.timbre`) only, and required
+   *  there: what the curve's lowpass takes from this sample, in dB, at each
+   *  cutoff of `timbre.makeupHz` (same length, same order). The engine multiplies
+   *  it back into the voice's gain, so the velocity curve alone sets how loud
+   *  the note is, whatever its cutoff. Written by the analyzer's
+   *  `hki-timbre.mjs`: the K-weighted level the lowpass takes (first 400 ms from
+   *  the engine's onset), plus, by default, the loudness that lost brightness
+   *  was worth, taken from the source layers' sones-matched gains. */
+  timbreMakeupDb?: number[];
 }
 
 /** A brightness curve: one sample per note, darkened as it gets softer.
@@ -88,6 +97,12 @@ export interface HkiTimbre {
    *  stored, and the last point's cutoff is only where the curve heads just
    *  below it (so it should be at the top of the audio band). */
   points: Array<{ gainDb: number; cutoffHz: number }>;
+  /** The cutoffs (Hz, strictly ascending, at least two) at which every sample's
+   *  `timbreMakeupDb` gives what the lowpass takes from it. Between two of
+   *  them the engine reads linearly in dB against log frequency, and outside them
+   *  it holds the end value, so the list should span every cutoff the curve can
+   *  give. */
+  makeupHz: number[];
 }
 
 export interface HkiManifest {
@@ -158,7 +173,7 @@ function validateManifest(raw: unknown): HkiManifest {
   if (typeof raw.releaseTime !== 'number') throw new Error('manifest.releaseTime missing');
   if (typeof raw.volume !== 'number') throw new Error('manifest.volume missing');
   if (!Array.isArray(raw.samples) || raw.samples.length === 0) throw new Error('manifest.samples missing or empty');
-  if (raw.timbre !== undefined) validateTimbre(raw.timbre);
+  const makeupLength = raw.timbre !== undefined ? validateTimbre(raw.timbre) : 0;
   for (const s of raw.samples) {
     if (!isPlainObject(s)) throw new Error('sample entry is not an object');
     if (typeof s.name !== 'string') throw new Error('sample.name missing');
@@ -167,11 +182,18 @@ function validateManifest(raw: unknown): HkiManifest {
     if (s.vel !== undefined && (typeof s.vel !== 'number' || s.vel < 1 || s.vel > 127)) {
       throw new Error(`sample.vel out of range (1..127) for ${s.name}`);
     }
+    if (makeupLength) {
+      const m = s.timbreMakeupDb;
+      if (!Array.isArray(m) || m.length !== makeupLength || !m.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        throw new Error(`sample.timbreMakeupDb for ${s.name} needs one finite number per manifest.timbre.makeupHz entry (${makeupLength})`);
+      }
+    }
   }
   return upcastV1(raw as unknown as HkiManifest);
 }
 
-function validateTimbre(t: unknown): void {
+/** Throws on a malformed curve; returns the length of its `makeupHz`. */
+function validateTimbre(t: unknown): number {
   if (!isPlainObject(t)) throw new Error('manifest.timbre is not an object');
   if (t.type !== 'lowpass12') throw new Error(`manifest.timbre.type ${String(t.type)} is not supported (expected lowpass12)`);
   const pts = t.points;
@@ -186,6 +208,13 @@ function validateTimbre(t: unknown): void {
     if (prev && p.cutoffHz < prev.cutoffHz) throw new Error('manifest.timbre.points: cutoffHz must not descend');
     prev = p as { gainDb: number; cutoffHz: number };
   }
+  const hz = t.makeupHz;
+  if (!Array.isArray(hz) || hz.length < 2) throw new Error('manifest.timbre.makeupHz needs at least two cutoffs');
+  for (let i = 0; i < hz.length; i++) {
+    if (typeof hz[i] !== 'number' || !Number.isFinite(hz[i]) || !(hz[i] > 0)) throw new Error('manifest.timbre.makeupHz: each cutoff must be a finite number above 0');
+    if (i > 0 && !(hz[i] > hz[i - 1])) throw new Error('manifest.timbre.makeupHz must ascend');
+  }
+  return hz.length;
 }
 
 /** v1 → v2 upcast. A v1 bundle has no `vel` on any sample and reads identically

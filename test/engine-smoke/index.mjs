@@ -17,22 +17,26 @@ const REQUIRED = [
   'init', 'loadInstrument', 'sNoteOn', 'sNoteOff', 'sRampFreq',
   'sSetAftertouch', 'sSetVoiceDamperDepth', 'sSetVoicePan', 'isInstrumentLoaded',
   'inflightExpRampValue', 'pickLayer', 'findPerceptualOnset', 'bakeOnsetFade',
-  'setLayerBlend', 'getLayerBlend', 'blendedGain', 'timbreCutoff',
+  'setLayerBlend', 'getLayerBlend', 'blendedGain', 'timbreCutoff', 'timbreMakeup',
 ];
 const missing = REQUIRED.filter((k) => typeof engine[k] !== 'function');
 if (missing.length) throw new Error('@hkl/engine missing exports: ' + missing.join(', '));
 
 // Minimal Web Audio stub — just enough for init() to build its gain graph.
 const filters = []; // every BiquadFilterNode the engine creates
-const param = () => ({
-  value: 1, setValueAtTime() {}, linearRampToValueAtTime() {},
-  exponentialRampToValueAtTime() {}, cancelScheduledValues() {},
-  setTargetAtTime() {}, setValueCurveAtTime() {},
-});
+const gains = [];   // every GainNode, with the ramps and curves scheduled on its gain
+const param = () => {
+  const p = {
+    value: 1, ramps: [], curves: [], setValueAtTime() {}, linearRampToValueAtTime(v) { p.ramps.push(v); },
+    exponentialRampToValueAtTime() {}, cancelScheduledValues() {},
+    setTargetAtTime() {}, setValueCurveAtTime(c) { p.curves.push(c); },
+  };
+  return p;
+};
 const node = () => ({ gain: param(), connect() {}, disconnect() {} });
 const ctx = {
   currentTime: 0, sampleRate: 44100,
-  createGain: node,
+  createGain: () => { const g = node(); gains.push(g); return g; },
   createBufferSource: () => ({ ...node(), buffer: null, playbackRate: param(), loopStart: 0, loopEnd: 0, start() {}, stop() {} }),
   createStereoPanner: () => ({ ...node(), pan: param() }),
   createBiquadFilter: () => { const f = { ...node(), type: 'lowpass', frequency: param(), Q: param(), connected: 0, connect() { f.connected++; } }; filters.push(f); return f; },
@@ -49,7 +53,7 @@ const PAN_DEF = {
 };
 
 engine.init(ctx, node(), {
-  instrumentProvider: async (k) => (k === 'pantest' || k === 'timbretest' ? { 'a3.wav': new Uint8Array(8) } : null),
+  instrumentProvider: async (k) => (k === 'pantest' || k === 'timbretest' || k === 'makeuptest' || k === 'makeupplain' ? { 'a3.wav': new Uint8Array(8) } : null),
   velocityToGain: (v) => v / 127,
   onSeamEvent: () => {},
 });
@@ -286,6 +290,44 @@ function assertEq(actual, expected, msg) {
   assertEq(filters.length, 1, 'timbre: no filter for an instrument without a curve');
   engine.sHardStop('tv3');
   console.log('   brightness curve: lookup at / between / below / above its points, carried into the def, one lowpass per soft voice — all OK.');
+
+  // ── the level the lowpass takes from a note is put back ──
+  // A sample of an instrument with a curve carries, for each cutoff of the curve's grid
+  // (`timbre.makeupHz`), the dB its filter takes there (`timbreMakeupDb`); the voice's gain is
+  // multiplied by it, read at the cutoff divided by the playback rate (the sample is repitched
+  // before the filter).
+  const hz = [100, 1000, 10000], dbs = [12, 6, 0], lin = (d) => Math.pow(10, d / 20);
+  close(engine.timbreMakeup(hz, dbs, 100), lin(12), 'makeup at the first grid cutoff');
+  close(engine.timbreMakeup(hz, dbs, 1000), lin(6), 'makeup at a grid cutoff');
+  close(engine.timbreMakeup(hz, dbs, Math.sqrt(100 * 1000)), lin(9), 'midway between two cutoffs in log frequency: the mean in dB');
+  close(engine.timbreMakeup(hz, dbs, 30), lin(12), 'under the grid: its first value');
+  assertEq(engine.timbreMakeup(hz, dbs, 20000), 1, 'over the grid: its last value');
+  assertEq(engine.timbreMakeup(hz, dbs, Infinity), 1, 'no filter, nothing to put back');
+  assertEq(engine.timbreMakeup(hz, null, 1000), 1, 'a sample with no list plays as it is');
+  assertEq(engine.timbreMakeup(undefined, dbs, 1000), 1, 'a curve with no grid: as it is');
+  assertEq(engine.timbreMakeup(hz, [12, 6], 1000), 1, 'a list that does not match the grid: as it is');
+
+  const MK = { ...PAN_DEF, samples: [{ name: 'A3', file: 'a3.wav', freq: 220, gain: 0.5, timbreMakeupDb: dbs }] };
+  await engine.loadInstrument('makeuptest', { ...MK, name: 'MakeupTest', timbre: { ...curve, makeupHz: hz } });
+  await engine.loadInstrument('makeupplain', { ...MK, name: 'MakeupPlain' });
+  const struck = (fn) => { gains.length = 0; fn(); return gains.flatMap((g) => g.gain.ramps); };
+  const faded = (fn) => { gains.length = 0; fn(); return gains.flatMap((g) => g.gain.curves).map((c) => Math.max(...c)); };
+  const only = (a, want, msg) => { if (a.length !== 1) throw new Error(`timbre: ${msg} — ${a.length} gains scheduled, expected 1`); close(a[0], want, msg); };
+  const fc40 = engine.timbreCutoff(curve, 40 / 127), down = 220 * Math.pow(2, -1.5 / 12);
+  only(struck(() => engine.sNoteOn('mk1', 220, 40, 'makeuptest')), 40 / 127 * 0.5 * engine.timbreMakeup(hz, dbs, fc40), 'voice gain = house gain × sample gain × the add-back at its cutoff');
+  engine.sHardStop('mk1');
+  only(struck(() => engine.sNoteOn('mk2', down, 40, 'makeuptest')), 40 / 127 * 0.5 * engine.timbreMakeup(hz, dbs, fc40 * 220 / down), 'a repitched note reads the add-back at cutoff ÷ playback rate');
+  engine.sHardStop('mk2');
+  if (Math.abs(engine.timbreMakeup(hz, dbs, fc40 * 220 / down) / engine.timbreMakeup(hz, dbs, fc40) - 1) < 0.01) throw new Error('timbre: the repitch check cannot tell the two readings apart');
+  only(struck(() => engine.sNoteOn('mk3', 220, 127, 'makeuptest')), 0.5, 'at full level: no filter, and the gain it always had');
+  engine.sHardStop('mk3');
+  only(struck(() => engine.sNoteOn('mk4', 220, 40, 'makeupplain')), 40 / 127 * 0.5, 'an instrument without a curve ignores the list');
+  engine.sHardStop('mk4');
+  only(faded(() => engine.sNoteOnFaded('mk5', 220, 40 / 127, 0.1, 'makeuptest')), 40 / 127 * 0.5 * engine.timbreMakeup(hz, dbs, fc40), 'the faded note-on path: the same gain');
+  engine.sHardStop('mk5');
+  only(faded(() => engine.sNoteOnFaded('mk6', 220, 40 / 127, 0.1, 'makeupplain')), 40 / 127 * 0.5, 'the faded path without a curve');
+  engine.sHardStop('mk6');
+  console.log('   brightness curve add-back: lookup at / between / outside the grid, in the gain of both note-on paths, at cutoff ÷ rate, absent at full level and without a curve — all OK.');
 }
 
 console.log('OK — @hkl/engine imported + init() ran standalone (zero HKL app/state imports).');
