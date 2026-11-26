@@ -12040,3 +12040,39 @@ The loud end's remaining unevenness is the whole-tick press time, which HKL cann
 **Not verified**: on the Lumatone, by Max: the panel section and an override's effect by ear.
 
 **Where**: `apps/hkl/src/audio/velocityCal.ts` (`keyOverride`, `scaleOf`, `computedScaleOf`, `setKeyOverride`, `removeKeyOverride`), `apps/hkl/src/lumatone/keypick.ts` (new), `apps/hkl/src/lumatone/lumadiag.ts`, `apps/hkl/src/midi/handler.ts`, `apps/hkl/src/state/persistence.ts`; gates `test/hkl-midi/{key-scale,keycal-overlay}.mjs`; docs/architecture/hkl.md, engine.md, docs/lumatone-calibration.md, docs/guide/core.md, docs/lessons.md.
+
+## The Korg piano's stretch is taken out, on one smooth curve (2026-11-26, Max)
+
+**Context**: Max had noticed that some chord shapes do not lock, "a pure major chord in first inversion where the bass is several octaves down, for example". A check of the curve instrument's high samples on 2026-11-25 found the SP-250's pianos stretch-tuned, which Korg's manual states ("About stretched tuning", PIANO 1 and PIANO 2; no amount, no switch). The Orchestrator stores each capture's claimed 12-TET frequency as its `freq`, so HKL had been playing the Korg's stretch on top of every JI pitch.
+
+**Picked**: every sample's `freq` in the curve bundle is its nominal frequency moved onto one curve, in cents by key: none from C4 to F♯5, +0.4 per semitone above F♯5 (+12.0 at C8), −0.3 per semitone below C4 (−11.7 at A0). The engine repitches by target ÷ `freq`, so a key on the A0 sample now plays 11.7 cents higher and one on the C8 sample 12.0 cents lower. Nothing else in the bundle changes (audio, gains, brightness curve, makeup tables), and no engine code.
+
+**Accepted**: "This is accepted. It's a massive noticeable improvement, and rather insane that it took us this long to do it."
+
+**How the curve was arrived at**: from the 144 captures of the five-layer bundle. From D♯4 up, partial 1 weighted by its own energy from the strike; from C4 down, the fundamental that a fit of partials 2–16 to a stiff string gives. The lines are my fit to those readings with the middle register set to zero. Max could confirm the stretch and its general size by ear against a sine, not its cents, and said to proceed on my best guess of the curve.
+
+**Rejected**:
+- **Labeling each sample from its own reading.** The readings sit about ±2 cents from the curve in the treble and up to 5 in the bass. Max: "I don't want to start retuning my trusty instrument without concrete numbers, and for my purposes, 2 cents of scatter is not concrete." A bundle with the 13 samples below C4 on their own readings and the treble untouched was built on a misreading of his instruction and was not what he asked for.
+- **Leaving the stretch because it lines a note's inharmonic partials up with the notes above it** (my argument: on the readings, A1's 4th and 8th partials land on A3 and A4 within 0.2 cents as the Korg tunes them). Max: "when I hear a note, I hear the fundamental as the note and I expect other notes to tune to it."
+
+**What it gives up**: the Korg's own tuning of the piano, and with it whatever agreement its stretch made between one note's upper partials and the notes above. The correction is in blocks of three keys, since each sample serves three (steps of 0.9 cents in the bass, 1.2 in the treble). What a sample's pitch differs from the curve by stays in the instrument.
+
+**How it is built**: the accepted bundle was written by a scratch script from the stretched curve bundle (its `provenance.json` records the curve under `retune`). The same day the curve became a step of the tool: `apps/analyzer/cli/hki-timbre.mjs --stretch 60:-0.3,78:0.4`, off unless given, since the curve belongs to this instrument. Run on the five-layer source with it, the tool writes a manifest identical in every field to the accepted bundle, and the same audio. Without the flag it writes the claimed pitches, a stretched instrument. A capture with one layer per key: the next entry.
+
+**Not verified**: Firefox. The check of the written file was by reading it back (audio identical by sha256, manifest identical apart from `freq`; a note's makeup gain moves by at most 0.09 dB; no pitch within 33 cents of 12-TET changes which sample serves it).
+
+**Where**: `apps/analyzer/out/korg-sp-250-curve.hki` (key `korg-sp-250-curve`, name "Piano (Korg SP-250)"; gitignored), with the bundle it replaces kept beside it as `korg-sp-250-curve-20261124-stretched.hki`; `apps/analyzer/cli/hki-timbre.mjs` (`--stretch`), gate `test/hki-timbre/run.mjs` (section H); docs/lessons.md (the SP-250 list), docs/architecture/analyzer.md → Brightness curve (step 7), docs/architecture/orchestrator.md → Pitch / tuning, docs/local/local-only-tools.md.
+
+## A single-layer capture takes the brightness curve as given, and nothing from an older bundle (2026-11-26, Max)
+
+**Context**: with the layers gone from the instrument, Max plans to capture the SP-250 again on all 88 keys, one layer each at velocity 120 ("still have a smaller bundle size than before", and no key repitched from a neighbor). `hki-timbre.mjs` fitted its curve from a note's layers and read the loudness part of the add-back from their two gains, so it refused such a bundle.
+
+**Picked**: a second way into the tool for a bundle with one layer per note. `--curve` gives the curve's lower points (the SP-250's are the four fitted on 2026-11-24). The level the lowpass takes is measured from each note's audio as before. The loudness that brightness was worth is worked out from the same audio: the filtered note at the open note's K-weighted level, in the Bark-sones `hki-regain.mjs` uses, 10 dB per doubling. Each note keeps the gain it came with, which `hki-regain.mjs` sets across the keyboard. `--stretch` applies as before. The Orchestrator is not changed: it keeps its layers, and already captures one (Even bins at 1, the sample velocity set to 120, stride 1) and exports such a note as a plain single-layer sample.
+
+**Rejected**: a reference mode that read the curve and the loudness part from the five-layer bundle and interpolated them by key, with each note's level tied to the accepted instrument's (my proposal). Max: "I don't understand why we have to reference the existing bundle at all. Capturing every note at 120 would give us a single velocity anchor point, which is all we need to apply our curve to it, right?" He was right: the curve is four pairs of numbers, and the rest can be measured from the note.
+
+**What it gives up**: a loudness part that rests on recordings of the soft layers. It now rests on the lowpass model of them. On the 30 notes that have both, the two agree within 1.1 dB at the cutoffs from 863 Hz up and 0.3 dB on average over the whole add-back (analyzer.md → Brightness curve has the figures).
+
+**Not verified**: a real single-layer capture has not been through the Orchestrator's export or these tools; I read that path, I did not run it. Note-to-note balance will come from `hki-regain.mjs` on single layers, which evens each note by its one capture where the accepted instrument used the mean of its five layers: to be compared on the 30 shared keys once the capture exists. Firefox.
+
+**Where**: `apps/analyzer/cli/hki-timbre.mjs` (`--curve`), gate `test/hki-timbre/run.mjs` (section I); docs/architecture/analyzer.md → Brightness curve, engine.md → Brightness curve, docs/local/local-only-tools.md (the commands for the 88-key capture). `packages/shared/src/hki.ts` still describes `timbreMakeupDb`'s loudness part as taken from the source layers' gains; that comment is not updated (engine-bundled file, not in this scope).

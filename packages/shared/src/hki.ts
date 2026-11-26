@@ -70,7 +70,8 @@ export interface HkiSampleEntry {
    *  the note is, whatever its cutoff. Written by the analyzer's
    *  `hki-timbre.mjs`: the K-weighted level the lowpass takes (first 400 ms from
    *  the engine's onset), plus, by default, the loudness that lost brightness
-   *  was worth, taken from the source layers' sones-matched gains. */
+   *  was worth: taken from the source layers' sones-matched gains, or, for a
+   *  source with one layer per note, worked out from the note's own audio. */
   timbreMakeupDb?: number[];
 }
 

@@ -196,6 +196,15 @@ playback (engine freq-matching), landing the fundamental exactly on target; inha
 in the audio for timbre. (An earlier autocorrelation octave-guard was removed — it can't distinguish
 a weak-fundamental high note from an octave-up, and only ever produced false failures.)
 
+**Where the premise fails: an instrument that stretches its own tuning.** The claimed pitch is the
+key's 12-TET frequency, and a digital piano need not play it: the Korg SP-250 tunes its PIANO 1 and
+PIANO 2 flat in the low range and sharp in the high range (its manual, "About stretched tuning"),
+by about 12 cents at each end of the keyboard as read from the captures. A bundle built from such an
+instrument carries that stretch under every JI pitch until its `freq` values are moved. Nothing in
+the Orchestrator does that. The analyzer's `hki-timbre.mjs --stretch` does, on one smooth curve
+given on its command line (analyzer.md → Brightness curve, step 7; docs/decisions.md 2026-11-26;
+docs/lessons.md → the SP-250 list, which also says why a per-note reading was not used).
+
 ## `.hki` v2 + velocity layers
 
 The bundle is the same `.hki` format bumped to version 2 (`packages/shared/src/hki.ts`):

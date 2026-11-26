@@ -58,6 +58,14 @@
  *         loud a note sounds: "layers carry timbre, the house curve carries all
  *         loudness" (Max, 2026-09-12), carried over to a continuous filter.
  *         A source with one gain per row has no such record and gets part a only.
+ *         A bundle with ONE layer per note (`--curve`, below) has no lower
+ *         layers to read part b from, so it is worked out from the note's own
+ *         audio: the note through the lowpass, brought back to the open note's
+ *         K-weighted level (part a), is measured in the Bark-sones
+ *         `hki-regain.mjs` matches layers in, and part b is what it falls short
+ *         of the open note by, at that tool's rule of 10 dB per doubling of
+ *         sones. Under the curve's lowest cutoff it holds the value there, as
+ *         the layered way does.
  *      The report gives part a in unweighted RMS beside it.
  *   6. The output keeps each note's top layer's audio, drops the other layers,
  *      and adds `manifest.timbre`: the fitted (passband gain, cutoff) of each
@@ -66,12 +74,41 @@
  *      one lowpass per voice (@hkl/engine `timbreCutoff`). Each note has ONE
  *      gain: the top layer's `gain` (with `--match level`, its `gainLevel`).
  *
+ *   A bundle with one layer per note (an instrument captured at a single velocity)
+ *   has nothing to fit, and takes the curve as given: `--curve
+ *   <gainDb>:<cutoffHz>,...`, the lower points of the curve in ascending order
+ *   (the open end is added, as in step 6). Steps 1 to 4 are skipped, step 5a is
+ *   the same, step 5b is read from the audio (above), and each note keeps the
+ *   gain it came with. The SP-250's curve is
+ *   `--curve -24.94:431,-15.3:863,-9.1:1690,-3.8:5510` (step 3 on its five-layer
+ *   bundle, 2026-11-24). A layered bundle is refused with `--curve`: its curve
+ *   is fitted from its layers.
+ *
+ *   7. With `--stretch`, each sample's `freq` is moved from its claimed 12-TET
+ *      pitch onto the instrument's own tuning. The Orchestrator stores the pitch
+ *      of the key it pressed, and a digital piano need not play that: the
+ *      SP-250's pianos are tuned flat in the low range and sharp in the high
+ *      range (its manual, "About stretched tuning"). The engine repitches a
+ *      sample by target / `freq`, so a `freq` that says where the sample really
+ *      sounds takes the stretch out of everything played. The curve is two
+ *      straight lines in cents against the key number, with nothing between
+ *      their knees: `--stretch <lowKey>:<b>,<highKey>:<a>` is `b` cents for each
+ *      semitone under key `lowKey` and `a` cents for each semitone over key
+ *      `highKey` (MIDI numbers, 60 = C4). The SP-250's is `60:-0.3,78:0.4`
+ *      (docs/decisions.md 2026-11-26): 11.7 cents flat at A0, 12 sharp at C8.
+ *      Only the written `freq` changes: the fit and the level to put back are
+ *      measured against the claimed pitch either way. An input whose `freq` is
+ *      not a 12-TET pitch is refused (it is not a claimed pitch, or the curve is
+ *      already in it).
+ *
  * The filter is fixed for the length of a note. The SP-250's own closes further
  * as a soft note decays; that is left out on purpose (Max, 2026-11-23).
  *
  * Usage:
  *   node apps/analyzer/cli/hki-timbre.mjs <in.hki> [--out <out.hki>] [--report <json>]
  *        [--key <instrumentKey>] [--name <name>] [--open-hz N] [--match sones|level]
+ *        [--stretch <lowKey>:<cents per semitone below>,<highKey>:<cents per semitone above>]
+ *        [--curve <gainDb>:<cutoffHz>,...]
  *
  * Without --out nothing is written but the report (dry run). An existing --out
  * file is not overwritten. Default key and name: the source's with `-curve` and
@@ -84,11 +121,12 @@ import path from 'node:path';
 import { readHki, writeHki } from '@hkl/shared/hki.js';
 import { TIMBRE_LOWPASS_Q_DB, TIMBRE_OPEN_FRACTION, findPerceptualOnset, bakeOnsetFade } from '@hkl/engine/samples-engine.js';
 import { kWeightingCoeffs, applyBiquadInPlace } from '@hkl/analysis/k-weighting.js';
+import { sustainSones } from '@hkl/analysis/loudness.js';
 
 /* ── args ── */
 const argv = process.argv.slice(2);
 if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
-  console.error('usage: hki-timbre.mjs <in.hki> [--out <out.hki>] [--report <json>] [--key <instrumentKey>] [--name <name>] [--open-hz N] [--match sones|level]');
+  console.error('usage: hki-timbre.mjs <in.hki> [--out <out.hki>] [--report <json>] [--key <instrumentKey>] [--name <name>] [--open-hz N] [--match sones|level] [--stretch <lowKey>:<cents/semitone below>,<highKey>:<cents/semitone above>] [--curve <gainDb>:<cutoffHz>,...]');
   process.exit(argv.length === 0 ? 1 : 0);
 }
 const opt = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : dflt; };
@@ -99,6 +137,34 @@ const reportPath = opt('--report', null);
 const openHz = parseFloat(opt('--open-hz', '20000'));
 const match = opt('--match', 'sones');
 if (match !== 'sones' && match !== 'level') fail(`--match ${match}: expected sones or level`);
+/* --curve: the lower points of the curve, for a bundle with one layer per note. */
+const curveGiven = (() => {
+  const spec = opt('--curve', null);
+  if (spec === null) return null;
+  const pts = spec.split(',').map((pair) => {
+    const m = /^(-?\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(pair);
+    if (!m || !(+m[2] > 0)) fail(`--curve ${spec}: expected <gainDb>:<cutoffHz>,... in ascending order, e.g. -24.94:431,-15.3:863,-9.1:1690,-3.8:5510`);
+    return { gainDb: +m[1], cutoffHz: +m[2] };
+  });
+  if (pts.some((q) => !(q.gainDb < 0))) fail(`--curve ${spec}: every point given is below the open end, so its gain is under 0 dB`);
+  return pts;
+})();
+/* --stretch: the instrument's tuning against 12-TET, in cents by key number (step 7). */
+const stretch = (() => {
+  const spec = opt('--stretch', null);
+  if (spec === null) return null;
+  const m = /^(\d+):(-?\d+(?:\.\d+)?),(\d+):(-?\d+(?:\.\d+)?)$/.exec(spec);
+  if (!m) fail(`--stretch ${spec}: expected <lowKey>:<cents per semitone below>,<highKey>:<cents per semitone above>, e.g. 60:-0.3,78:0.4`);
+  const s = { lowKey: +m[1], centsPerSemitoneBelow: +m[2], highKey: +m[3], centsPerSemitoneAbove: +m[4] };
+  if (s.lowKey > s.highKey || s.highKey > 127) fail(`--stretch ${spec}: the keys are MIDI numbers, the low one first`);
+  return s;
+})();
+/* Where a sample of claimed pitch `freq` sounds on that curve, in cents from the claim. */
+function stretchCents(freq, name) {
+  const k = 69 + 12 * Math.log2(freq / 440), key = Math.round(k);
+  if (Math.abs(k - key) > 1e-4) fail(`${name}: freq ${freq} is not a 12-TET pitch, so it is not a claimed pitch (or a stretch is already in it): --stretch refused`);
+  return key < stretch.lowKey ? stretch.centsPerSemitoneBelow * (stretch.lowKey - key) : key > stretch.highKey ? stretch.centsPerSemitoneAbove * (key - stretch.highKey) : 0;
+}
 if (outPath && fs.existsSync(outPath)) fail(`${outPath} exists — not overwritten`);
 
 const db = (x) => (x > 0 ? 10 * Math.log10(x) : -Infinity); // of a power
@@ -194,9 +260,10 @@ for (const s of manifest.samples) {
   if (!byNote.has(s.name)) byNote.set(s.name, []);
   byNote.get(s.name).push(s);
 }
-if (![...byNote.values()].some((rows) => rows.length >= 2 && rows.every((r) => typeof r.vel === 'number'))) {
-  fail('no note has velocity layers — there is nothing to fit a curve to');
-}
+const layered = [...byNote.values()].some((rows) => rows.length >= 2 && rows.every((r) => typeof r.vel === 'number'));
+if (!curveGiven && !layered) fail('no note has velocity layers — there is nothing to fit a curve to (for a bundle with one layer per note, give the curve: --curve <gainDb>:<cutoffHz>,...)');
+if (curveGiven && [...byNote.values()].some((rows) => rows.length > 1)) fail('--curve is for a bundle with one layer per note; this one has notes with several, and its curve is fitted from them (leave --curve out)');
+if (stretch) for (const s of manifest.samples) stretchCents(s.freq, s.name);
 
 let sr = 0;
 const notes = [];
@@ -300,10 +367,11 @@ for (const note of notes) for (const l of note.lower) {
 }
 
 /* ── the curve ── */
-const points = fits.map((f) => ({ gainDb: f.gainDb, cutoffHz: Math.min(f.cutoffHz, openHz) }));
+const points = (curveGiven || fits).map((f) => ({ gainDb: f.gainDb, cutoffHz: Math.min(f.cutoffHz, openHz) }));
 points.push({ gainDb: 0, cutoffHz: openHz });
 for (let i = 1; i < points.length; i++) {
   if (!(points[i].gainDb > points[i - 1].gainDb) || points[i].cutoffHz < points[i - 1].cutoffHz) {
+    if (curveGiven) fail(`--curve: the points do not form a curve (${points.map((q) => `${q.gainDb} dB → ${q.cutoffHz} Hz`).join(', ')}): gain must ascend and cutoff must not fall`);
     fail(`the fitted layers do not form a curve (${points.map((p) => `${p.gainDb} dB → ${p.cutoffHz} Hz`).join(', ')}): this instrument's layers are not one waveform through an opening lowpass`);
   }
 }
@@ -349,6 +417,8 @@ const powers = (seg) => {
   return { k: ek / seg.length, rms: e / seg.length };
 };
 const round2 = (v) => Math.round(v * 100) / 100;
+/* One layer per note: the loudness part comes from the note's own audio (step 5b, second way). */
+const loudnessFromAudio = !!curveGiven && match === 'sones';
 for (const note of notes) {
   const x32 = Float32Array.from(note.topX);
   const on = findPerceptualOnset(x32, sr, rowGain(note.top));
@@ -356,12 +426,27 @@ for (const note of notes) {
   const n = Math.min(Math.round(0.4 * sr), x32.length - on);
   if (n < Math.round(0.05 * sr)) fail(`${note.name}: under 50 ms of audio after its onset — no level to measure`);
   const played = Float64Array.from(x32.subarray(on, on + n)), base = powers(played);
-  const lossAt = (hz) => { const p = powers(lowpassRun(played, 0, n, Math.min(hz, sr * TIMBRE_OPEN_FRACTION), sr, 1)); return { k: db(base.k / p.k), rms: db(base.rms / p.rms) }; };
-  const at = makeupHz.map(lossAt);
-  const loud = loudnessPoints(note);
-  note.matched = loud ? 'sones' : 'level';
+  const noteGain = rowGain(note.top), sonesOpen = loudnessFromAudio ? sustainSones(played, sr, 0, n, noteGain) : null;
+  const fromAudio = !!sonesOpen, heldHz = points[0].cutoffHz;
+  /* What the lowpass at `hz` takes (K-weighted and unweighted, dB) and, when asked for, what
+     that brightness was worth: the filtered note at the open note's K-weighted level, in sones. */
+  const lossAt = (hz, withLoudness) => {
+    const y = lowpassRun(played, 0, n, Math.min(hz, sr * TIMBRE_OPEN_FRACTION), sr, 1), p = powers(y);
+    const l = { k: db(base.k / p.k), rms: db(base.rms / p.rms), loud: 0 };
+    if (withLoudness && fromAudio) {
+      const back = Math.pow(10, l.k / 20); for (let i = 0; i < n; i++) y[i] *= back;
+      const so = sustainSones(y, sr, 0, n, noteGain);
+      if (so) l.loud = 10 * Math.log2(sonesOpen.sones / so.sones);
+    }
+    return l;
+  };
+  const held = fromAudio ? lossAt(heldHz, true).loud : 0;
+  const at = makeupHz.map((hz) => lossAt(hz, hz >= heldHz));
+  const loud = fromAudio ? null : loudnessPoints(note);
+  const loudDb = (hz, l) => (fromAudio ? (hz < heldHz ? held : l.loud) : loudnessAt(loud, hz));
+  note.matched = fromAudio || loud ? 'sones' : 'level';
   note.makeupLevelDb = at.map((l) => round2(l.k));
-  note.makeupDb = at.map((l, i) => round2(l.k + loudnessAt(loud, makeupHz[i])));
+  note.makeupDb = at.map((l, i) => round2(l.k + loudDb(makeupHz[i], l)));
   note.makeupRmsDb = at.map((l) => round2(l.rms));
   /* How far a straight line between two grid points is from the measurement midway. */
   note.interpErrDb = 0;
@@ -370,7 +455,7 @@ for (const note of notes) {
     if (Math.abs(err) > Math.abs(note.interpErrDb)) { note.interpErrDb = round2(err); note.interpErrHz = Math.round(mid); }
   }
   /* The same two figures at each fitted layer's own cutoff, for the report. */
-  note.atPoints = points.slice(0, -1).map((p) => { const l = lossAt(p.cutoffHz); return { cutoffHz: p.cutoffHz, makeupDb: round2(l.k + loudnessAt(loud, p.cutoffHz)), levelDb: round2(l.k), loudnessDb: round2(loudnessAt(loud, p.cutoffHz)), rmsDb: round2(l.rms) }; });
+  note.atPoints = points.slice(0, -1).map((p) => { const l = lossAt(p.cutoffHz, true); return { cutoffHz: p.cutoffHz, makeupDb: round2(l.k + loudDb(p.cutoffHz, l)), levelDb: round2(l.k), loudnessDb: round2(loudDb(p.cutoffHz, l)), rmsDb: round2(l.rms) }; });
 }
 const timbre = { type: 'lowpass12', points, makeupHz };
 
@@ -384,9 +469,14 @@ for (const vel of vels) {
   const worst = (k) => r.reduce((m, q) => (Math.abs(q[k]) > Math.abs(m) ? q[k] : m), 0);
   console.error(`    layer ${String(vel).padStart(3)}: correlation ${f1(median(r.map((q) => q.correlation)), 3)} / ${f1(Math.min(...r.map((q) => q.correlation)), 3)}, level ${f1(median(r.map((q) => q.levelErrorDb)))} / ${f1(worst('levelErrorDb'))} dB, spectrum ${f1(median(r.filter((q) => q.spectrumErrorDb != null).map((q) => q.spectrumErrorDb)))} / ${f1(Math.max(...r.filter((q) => q.spectrumErrorDb != null).map((q) => q.spectrumErrorDb)))} dB`);
 }
+if (curveGiven) console.error('  one layer per note: the curve is the one given (--curve), nothing is fitted or rebuilt, and each note keeps its gain');
 console.error(`  curve: ${points.map((p) => `${f1(p.gainDb)} dB → ${p.cutoffHz} Hz`).join(',  ')}`);
+if (stretch) {
+  const lo = notes[0], hi = notes[notes.length - 1];
+  console.error(`  stretch: ${stretch.centsPerSemitoneBelow} cents per semitone under key ${stretch.lowKey}, ${stretch.centsPerSemitoneAbove} over key ${stretch.highKey}; freq moves by ${f1(stretchCents(lo.freq, lo.name), 2)} cents at ${lo.name} and ${f1(stretchCents(hi.freq, hi.name), 2)} at ${hi.name}`);
+}
 const sonesNotes = notes.filter((n) => n.matched === 'sones').length;
-console.error(`  put back at each layer's cutoff (median / most, and the note): in all; the level the lowpass takes, K-weighted over the first 400 ms; the loudness its brightness was worth (${match === 'level' ? 'not asked for: --match level' : sonesNotes + ' of ' + notes.length + ' notes hold both gains'}); and the level part, K-weighted minus unweighted RMS (median / widest):`);
+console.error(`  put back at each layer's cutoff (median / most, and the note): in all; the level the lowpass takes, K-weighted over the first 400 ms; the loudness its brightness was worth (${match === 'level' ? 'not asked for: --match level' : (loudnessFromAudio ? 'worked out from the audio of ' + sonesNotes + ' of ' + notes.length + ' notes' : sonesNotes + ' of ' + notes.length + ' notes hold both gains')}); and the level part, K-weighted minus unweighted RMS (median / widest):`);
 points.slice(0, -1).forEach((p, i) => {
   const rows = notes.map((n) => ({ name: n.name, ...n.atPoints[i] })), most = rows.reduce((m, r) => (r.makeupDb > m.makeupDb ? r : m), rows[0]);
   const diff = rows.map((r) => r.levelDb - r.rmsDb), widest = diff.reduce((m, v) => (Math.abs(v) > Math.abs(m) ? v : m), 0);
@@ -402,12 +492,12 @@ if (reportPath) { fs.writeFileSync(reportPath, JSON.stringify({ source: path.bas
 
 /* ── write ── */
 if (outPath) {
-  const samples = notes.sort((a, b) => manifest.samples.indexOf(a.top) - manifest.samples.indexOf(b.top)).map((n) => { const { vel: _layer, gainLevel: _matched, ...row } = n.top; return { ...row, gain: rowGain(n.top), timbreMakeupDb: n.makeupDb }; });
+  const samples = notes.sort((a, b) => manifest.samples.indexOf(a.top) - manifest.samples.indexOf(b.top)).map((n) => { const { vel: _layer, gainLevel: _matched, ...row } = n.top; return { ...row, ...(stretch ? { freq: row.freq * Math.pow(2, stretchCents(row.freq, row.name) / 1200) } : {}), gain: rowGain(n.top), timbreMakeupDb: n.makeupDb }; });
   const audio = Object.fromEntries(samples.map((s) => [s.file, bundle.audio[s.file]]));
   const out = {
     manifest: { ...manifest, instrumentKey: opt('--key', manifest.instrumentKey + '-curve'), name: opt('--name', manifest.name + ' (brightness curve)'), samples, timbre },
     audio,
-    provenance: { ...(bundle.provenance || {}), timbre: { source: path.basename(inPath), date: new Date().toISOString(), type: timbre.type, windowSec: [W0, W0 + 0.45], openHz, layers: fits, makeup: { match, sonesNotes, level: 'K-weighted, 0.4 s from findPerceptualOnset', loudness: 'the source layers\' gain over gainLevel, against the top layer\'s' } } },
+    provenance: { ...(bundle.provenance || {}), timbre: { source: path.basename(inPath), date: new Date().toISOString(), type: timbre.type, windowSec: [W0, W0 + 0.45], openHz, ...(stretch ? { stretch } : {}), layers: fits, makeup: { match, sonesNotes, level: 'K-weighted, 0.4 s from findPerceptualOnset', loudness: loudnessFromAudio ? 'from each note\'s own audio: the filtered note at the open note\'s K-weighted level, in Bark-sones, 10 dB per doubling; held under the lowest cutoff of the curve' : 'the source layers\' gain over gainLevel, against the top layer\'s' }, ...(curveGiven ? { curve: 'given' } : {}) } },
   };
   fs.writeFileSync(outPath, writeHki(out));
   console.error(`  wrote ${outPath} (${(fs.statSync(outPath).size / 1e6).toFixed(1)} MB, ${samples.length} samples)`);

@@ -11,6 +11,8 @@
 // differ from layer to layer, and noise; runs the tool on it; and checks the curve it
 // recovers, the bundle it writes (one gain per note, and the level its filter takes from
 // each note, to be put back), the cases it refuses, and the field's validation.
+// It also runs the tool's two other ways in: --stretch (a sample's freq moved onto the
+// instrument's own tuning) and --curve (a bundle with one layer per note, the curve given).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -168,6 +170,35 @@ try {
   assert.equal(flatOut.provenance.timbre.makeup.sonesNotes, 0);
   ok('a source with one gain per row keeps the top layer\'s gain and gets the level part alone');
 
+  // ── H: --stretch moves each sample's freq onto the instrument's tuning, and nothing else ──
+  const stretchedPath = path.join(dir, 'stretched.hki');
+  const rsx = run(inPath, '--out', stretchedPath, '--stretch', '60:-0.3,78:0.4');
+  assert.equal(rsx.status, 0, '--stretch ran: ' + rsx.stderr);
+  assert.match(rsx.stderr, /stretch: -0\.3 cents per semitone under key 60, 0\.4 over key 78/);
+  const sx = readHki(new Uint8Array(fs.readFileSync(stretchedPath)));
+  const WANT = { A1: -8.1, A2: -4.5, A3: -0.9, A4: 0, A5: 1.2, A6: 6.0, A7: 10.8 }; // cents: 0.3 per semitone under C4, 0.4 over F#5
+  assert.deepEqual(sx.manifest.samples.map((s) => s.name).sort(), Object.keys(WANT).sort(), 'the gate\'s table covers every note');
+  for (const s of sx.manifest.samples) {
+    const plain = out.manifest.samples.find((q) => q.name === s.name);
+    near(1200 * Math.log2(s.freq / plain.freq), WANT[s.name], 1e-9, s.name + ': freq against its claimed pitch, in cents');
+    assert.deepEqual({ ...s, freq: plain.freq }, plain, s.name + ': nothing but freq differs from the run without --stretch');
+    assert.deepEqual(sx.audio[s.file], out.audio[plain.file], s.name + ': same audio');
+  }
+  assert.deepEqual(sx.manifest.timbre, out.manifest.timbre, 'the curve and its grid are the same with and without --stretch');
+  assert.deepEqual(sx.provenance.timbre.stretch, { lowKey: 60, centsPerSemitoneBelow: -0.3, highKey: 78, centsPerSemitoneAbove: 0.4 });
+  assert.equal('stretch' in out.provenance.timbre, false, 'no --stretch, no record of one');
+  const sharp = layeredBundle();
+  for (const q of sharp.manifest.samples) if (q.name === 'A3') q.freq *= Math.pow(2, 5 / 1200);
+  fs.writeFileSync(path.join(dir, 'sharp.hki'), writeHki(sharp));
+  const rsharp = run(path.join(dir, 'sharp.hki'), '--out', path.join(dir, 'x3.hki'), '--stretch', '60:-0.3,78:0.4');
+  assert.notEqual(rsharp.status, 0); assert.match(rsharp.stderr, /A3.*not a 12-TET pitch/);
+  for (const bad of ['60:-0.3', '78:0.4,60:-0.3', 'C4:-0.3,F#5:0.4']) {
+    const rb = run(inPath, '--out', path.join(dir, 'x3.hki'), '--stretch', bad);
+    assert.notEqual(rb.status, 0, '--stretch ' + bad + ' is refused'); assert.match(rb.stderr, /--stretch/);
+  }
+  assert.equal(fs.existsSync(path.join(dir, 'x3.hki')), false);
+  ok('--stretch 60:-0.3,78:0.4 puts every freq on the curve (−8.1 cents at A1 to +10.8 at A7) and changes nothing else; a freq that is not a 12-TET pitch and three malformed curves are refused, with nothing written');
+
   // ── D: names, and no overwriting ──
   const again = run(inPath, '--out', outPath);
   assert.notEqual(again.status, 0, 'an existing output is not overwritten');
@@ -189,6 +220,51 @@ try {
   assert.notEqual(rl.status, 0); assert.match(rl.stderr, /loop/);
   assert.equal(fs.existsSync(path.join(dir, 'x1.hki')) || fs.existsSync(path.join(dir, 'x2.hki')), false);
   ok('a single-layer bundle and a loop instrument are refused, with nothing written');
+
+  // ── I: one layer per note: the curve is given, and the loudness part is read from the note's own audio ──
+  const { sustainSones } = await import('../../packages/analysis/src/loudness.js');
+  const CURVE = [24, 48, 72, 96].map((vel) => TRUTH[vel].db + ':' + TRUTH[vel].fc).join(',');
+  const givenPath = path.join(dir, 'given.hki'), givenReport = path.join(dir, 'given.json');
+  const rg = run(path.join(dir, 'single.hki'), '--out', givenPath, '--report', givenReport, '--curve', CURVE);
+  assert.equal(rg.status, 0, '--curve on a single-layer bundle ran: ' + rg.stderr);
+  assert.match(rg.stderr, /one layer per note: the curve is the one given/);
+  const gv = readHki(new Uint8Array(fs.readFileSync(givenPath)));
+  assert.deepEqual(gv.manifest.timbre.points, [24, 48, 72, 96].map((vel) => ({ gainDb: TRUTH[vel].db, cutoffHz: TRUTH[vel].fc })).concat({ gainDb: 0, cutoffHz: 20000 }), 'the curve written is the curve given, with the open end added');
+  assert.equal(gv.manifest.samples.length, NOTES.length);
+  for (const s of gv.manifest.samples) {
+    const src = single.manifest.samples.find((q) => q.name === s.name);
+    assert.equal(s.gain, src.gain, s.name + ': the note keeps the gain it came with');
+    assert.equal('vel' in s || 'gainLevel' in s, false, s.name + ': a single-layer sample with one gain');
+    assert.deepEqual(gv.audio[s.file], single.audio[src.file], s.name + ': audio kept byte for byte');
+  }
+  /* The loudness part, worked out here from the written bundle alone: the filtered note at the open
+     note's K-weighted level, in sones, 10 dB per doubling, held under the curve's lowest cutoff. */
+  const heard = new Map();
+  const fromAudio = (bundle) => (name, f) => {
+    const key = name + '@' + f; if (heard.has(key)) return heard.get(key);
+    const s = bundle.manifest.samples.find((q) => q.name === name), x = unwav(bundle.audio[s.file]), on = findPerceptualOnset(x, SR, s.gain);
+    bakeOnsetFade({ numberOfChannels: 1, length: x.length, sampleRate: SR, getChannelData: () => x }, on);
+    const seg = x.subarray(on, on + Math.round(0.4 * SR)), y = Float64Array.from(lowpass(seg, Math.max(f, TRUTH[24].fc)));
+    const back = Math.pow(10, (kLevelDb(seg) - kLevelDb(y)) / 20); for (let i = 0; i < y.length; i++) y[i] *= back;
+    const v = 10 * Math.log2(sustainSones(seg, SR, 0, seg.length, s.gain).sones / sustainSones(y, SR, 0, y.length, s.gain).sones);
+    heard.set(key, v); return v;
+  };
+  const given = checkMakeup(gv, fromAudio(gv), 'one layer');
+  assert.equal(given.loud > 0.3, true, 'a low cutoff changes how loud the level-matched note is, so the loudness part is there to be checked (' + given.loud.toFixed(2) + ' dB)');
+  assert.deepEqual([gv.provenance.timbre.curve, gv.provenance.timbre.makeup.sonesNotes, gv.provenance.timbre.layers], ['given', NOTES.length, []]);
+  const gr = JSON.parse(fs.readFileSync(givenReport, 'utf8'));
+  assert.deepEqual([gr.fits, gr.rebuilt, gr.makeup.length], [[], [], NOTES.length], 'nothing fitted, nothing rebuilt, every note measured');
+  const givenLevel = path.join(dir, 'given-level.hki');
+  assert.equal(run(path.join(dir, 'single.hki'), '--out', givenLevel, '--curve', CURVE, '--match', 'level').status, 0);
+  checkMakeup(readHki(new Uint8Array(fs.readFileSync(givenLevel))), () => 0, 'one layer, level');
+  const rlay = run(inPath, '--out', path.join(dir, 'x4.hki'), '--curve', CURVE);
+  assert.notEqual(rlay.status, 0, 'a layered bundle is refused with --curve'); assert.match(rlay.stderr, /--curve/);
+  for (const bad of ['abc', '-10:0', '0:500', '-8:1600,-14:800', '-14:800,-8:700']) {
+    const rb = run(path.join(dir, 'single.hki'), '--out', path.join(dir, 'x4.hki'), '--curve', bad);
+    assert.notEqual(rb.status, 0, '--curve ' + bad + ' is refused'); assert.match(rb.stderr, /--curve/);
+  }
+  assert.equal(fs.existsSync(path.join(dir, 'x4.hki')), false);
+  ok('--curve takes a bundle with one layer per note: the curve given is the curve written, each note keeps its gain and audio, and the loudness part is the one worked out here from the note\'s own audio (within ' + given.worst.toFixed(3) + ' dB); --match level leaves the level part alone; a layered bundle and five malformed curves are refused');
 
   // ── F: the manifest field is validated on read and on write ──
   const curve = t;
