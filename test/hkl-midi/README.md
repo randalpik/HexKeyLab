@@ -99,9 +99,15 @@ saved device folder, when `tools/lumatone-cal/backups/` holds them (local
 files; skipped otherwise); and the read against a scripted device
 (`refreshKeyScales`: `19h`, `1Ah` and `3Ah` to every board, named by board
 group under either board map, a BUSY reply retried, and the table left alone by
-a refusal, by a calibration in progress and with no device). Needs `python3`;
-no dev server or MIDI device. **Run it before declaring any change to the
-scale, `keyscales.ts` or `keydata-compare.py --scales` done.**
+a refusal, by a calibration in progress and with no device). Then the
+overrides set by ear (`velocityCal.keyOverride`): one replaces its key's scale
+on the note path, outlasts a new table and a device read, is refused for
+anything that is not a key or not a scale, is saved, is loaded by a fresh copy
+of the module, and gives the key back its computed scale when removed; and the
+pick that names a key by pressing it (`lumatone/keypick.ts`: the next press,
+once, or none when canceled). Needs `python3`; no dev server or MIDI device.
+**Run it before declaring any change to the scale, the overrides,
+`keyscales.ts` or `keydata-compare.py --scales` done.**
 
 ## Lumatone velocity curve (hardware-free)
 
@@ -175,7 +181,14 @@ a reason; that the key scales are read after a calibration and after a board's
 `max` is changed, and the line under the curve follows; and that Reset all
 calibration and Reset all 5 boards send nothing when declined and, accepted,
 the factory resets (after the first, the setup with both velocity tables
-again).
+again). Last, the Overrides list under the key scales line, with presses sent
+through the real note-on handler: Add waits for a key and the next press lists
+it at its computed scale (a later press adds nothing, and a key already listed
+keeps its scale); the row shows the key's place on the keyboard, its scale and
+its computed scale; the slider runs from half to double the computed scale in
+equal ratio steps; a device read leaves the override and its slider where they
+were; Remove returns the key to its computed scale; a second click on Add, or
+hiding the panel, ends a waiting pick; and Copy answers on its button.
 
 ## Color sync ordering (hardware-free)
 

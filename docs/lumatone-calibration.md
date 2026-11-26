@@ -200,7 +200,7 @@ On the one unit measured (2026-11-11) the routine landed on MAX 36–101 (median
 
 Connect with Auto-sync on: HKL then sends the identity LUT and the interval table itself (step 4), so the raw velocities are press times. Enable the Diagnostics overlay (the **Diagnostics** checkbox on HKL's Playback tab, with Audio on) and play. Each strike is labeled `vN (Mt)`: its input velocity, which is the hardware velocity after the key's scale, and the press time in ticks the device reported.
 
-A key that still reads apart from its neighbors at the same touch, after its scale, is one the scale rule does not fit (step 6), or one whose learned value is off (step 5). HKL collected per-key statistics of live play until 2026-11-24 (a scatter and three outlier lists); nothing was derived from them, and the scales come from the calibration alone, so they were removed.
+A key that still reads apart from its neighbors at the same touch, after its scale, is one the scale rule does not fit (step 6: give it an override), or one whose learned value is off (step 5). HKL collected per-key statistics of live play until 2026-11-24 (a scatter and three outlier lists); nothing was derived from them, and the scales come from the calibration alone, so they were removed.
 
 ### 4 — Velocity shaping: one-tick tables on the device, the curve in HKL
 
@@ -302,7 +302,9 @@ python3 tools/lumatone-cal/keydata-compare.py [--swap-boards-34] --scales tools/
 
 Until 2026-11-24 that file had to be imported into HKL by hand after every calibration, restore or threshold change, and single keys could be captured by touch; both are gone (decisions.md).
 
-Two limits. A narrow key has few ticks, so after scaling its velocities come in steps of its scale, and its fastest press (one tick) tops out below full loudness; that is where its neighbors are at the same force (on the narrowest key of this unit, with `min lo` at 14, the force that read 1 tick read 5–6 on its neighbors). And the rule was established on few keys (2026-11-22); a key it does not fit has no separate correction in HKL, so the remedy is the key's own numbers (step 5).
+Two limits. A narrow key has few ticks, so after scaling its velocities come in steps of its scale, and its fastest press (one tick) tops out below full loudness; that is where its neighbors are at the same force (on the narrowest key of this unit, with `min lo` at 14, the force that read 1 tick read 5–6 on its neighbors). And the rule does not fit every key: it was established on three keys with `min lo` at 14, and with `min lo` at 3 some keys' press times do not follow their windows, in a way nothing in the stored calibration marks (lessons.md → "The window rule misses keys the calibration cannot identify").
+
+**Overrides, by ear.** For a key the rule leaves louder or softer than its neighbors, the Calibration panel has an **Overrides** list under the Key scales line. Click **Add** and press the key on the Lumatone: it is listed by its place on the keyboard (the (q, r) that `keydata-locate.py` takes), at its computed scale. Its slider sets the scale the key plays at, from half to double the computed one, and the next press uses it: higher makes the key softer, lower makes it louder. The row shows the scale in force and, dimmer, the computed one; **×** removes the override. An override replaces the key's computed scale and is kept until it is removed, through every reconnect, calibration and threshold change, so after a recalibration it is worth listening to the listed keys again: the scales around them have changed. **Copy** puts the list on the clipboard as JSON (each key, its scale and its computed scale); the collected overrides are the data for a better rule.
 
 ### Seeding a baseline
 

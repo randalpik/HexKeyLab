@@ -11,8 +11,9 @@
 // over each key's own. Checks the transform against a model of the firmware's binning,
 // the table's replacement and persistence, the arithmetic (against
 // tools/lumatone-cal/keydata-compare.py --scales, which works from saved files, and
-// against a saved device folder when one is on this machine), and the read itself
-// against a scripted device.
+// against a saved device folder when one is on this machine), the read itself
+// against a scripted device, and the overrides the player sets by ear for single keys
+// (velocityCal.keyOverride, with the pick that names a key by pressing it).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -268,10 +269,16 @@ ok('the tool\'s table and HKL\'s agree on all 280 keys, under either board map')
   })).scales;
 
   assert.equal(keyScaleStatus().state, 'none');
+  assert.equal(velocityCal.setKeyOverride('2,5', 1.25), true);
   assert.equal(refreshKeyScales(), true);
   assert.equal(keyScaleStatus().state, 'reading');
   await settle();
   assert.equal(keyScaleStatus().state, 'read');
+  /* An override is not part of the table a read replaces. */
+  assert.deepEqual({ ...velocityCal.keyOverride }, { '2,5': 1.25 }, 'a device read leaves an override alone');
+  assert.equal(velocityCal.scaleOf('2,5'), 1.25);
+  near(velocityCal.computedScaleOf('2,5'), expected()['2,5'], 0, 'and the computed scale under it is the read one');
+  velocityCal.removeKeyOverride('2,5');
   assert.deepEqual(dev.sent.map((m) => m[4] + ':' + m[5].toString(16)).sort().join(' '),
     [1, 2, 3, 4, 5].flatMap((b) => [b + ':19', b + ':1a', b + ':3a']).sort().join(' '), 'fifteen requests, three per board');
   assert.equal(dev.sent.every((m) => m.length === 11 && m.slice(6, 10).every((x) => x === 0)), true, 'all read-only requests');
@@ -315,5 +322,65 @@ ok('the tool\'s table and HKL\'s agree on all 280 keys, under either board map')
   velocityCal.setKeyScales({});
 }
 ok('refreshKeyScales: three reads per board; BUSY retried; a refusal or a calibration in progress leaves the table alone');
+
+// ── L: an override set by ear replaces one key's scale, and only a removal ends it ──
+{
+  velocityCal.setKeyScales({ '3,36': 0.8, '3,30': 1 });
+  assert.deepEqual({ ...velocityCal.keyOverride }, {}, 'no overrides to begin with');
+  assert.deepEqual([velocityCal.scaleOf('3,36'), velocityCal.scaleOf('2,2')], [0.8, 1], 'without one a key plays at its computed scale, or 1');
+  assert.equal(velocityCal.setKeyOverride('3,36', 1.25), true);
+  assert.deepEqual([velocityCal.scaleOf('3,36'), velocityCal.computedScaleOf('3,36')], [1.25, 0.8], 'the override is in force; the computed scale is still known');
+  near(velocityCal.keyTicks('3,36', firmwareRaw(20)), 25, 1e-12, '20 ticks × 1.25');
+  near(velocityCal.applyKeyScale('3,36', firmwareRaw(20)), 128 - 25, 1e-12, 'the input velocity follows');
+  assert.equal(velocityCal.lumatoneVelocity('3,36', firmwareRaw(20)), velocityCal.musicalForTicks(25), 'and so does the note');
+  near(velocityCal.keyTicks('3,30', firmwareRaw(20)), 20, 1e-12, 'another key is untouched');
+  /* A key the device read gave no scale can have one too. */
+  assert.equal(velocityCal.setKeyOverride('2,2', 0.5), true);
+  near(velocityCal.keyTicks('2,2', firmwareRaw(20)), 10, 1e-12, 'a key with no computed scale');
+  /* A new table from the device (what refreshKeyScales stores) leaves both alone. */
+  velocityCal.setKeyScales({ '3,36': 0.7 });
+  assert.deepEqual({ ...velocityCal.keyOverride }, { '3,36': 1.25, '2,2': 0.5 });
+  assert.deepEqual([velocityCal.scaleOf('3,36'), velocityCal.computedScaleOf('3,36')], [1.25, 0.7]);
+  /* Not a key, or not a scale: refused, and nothing changes. */
+  for (const [k, s] of [['6,0', 1], ['3,56', 1], ['3,36', KEY_SCALE_MIN / 2], ['3,36', KEY_SCALE_MAX * 2], ['3,36', NaN], ['3,36', '1']]) {
+    assert.equal(velocityCal.setKeyOverride(k, s), false, k + ' at ' + s + ' is refused');
+  }
+  assert.deepEqual({ ...velocityCal.keyOverride }, { '3,36': 1.25, '2,2': 0.5 });
+  /* Saved beside the computed table, and read back by a fresh copy of the module. */
+  assert.deepEqual(stored().keyOverride, { '3,36': 1.25, '2,2': 0.5 });
+  assert.deepEqual(stored().keyScale, { '3,36': 0.7 });
+  assert.equal(stored().version, 9);
+  const fresh = (await import('../../apps/hkl/src/audio/velocityCal.ts?reloaded')).velocityCal;
+  assert.notEqual(fresh, velocityCal, 'a second copy of the module');
+  assert.deepEqual({ ...fresh.keyOverride }, { '3,36': 1.25, '2,2': 0.5 }, 'overrides load with the page');
+  assert.equal(fresh.scaleOf('3,36'), 1.25);
+  /* Removing one returns the key to its computed scale. */
+  velocityCal.removeKeyOverride('3,36');
+  assert.equal(velocityCal.scaleOf('3,36'), 0.7);
+  assert.deepEqual(stored().keyOverride, { '2,2': 0.5 });
+  velocityCal.removeKeyOverride('2,2');
+  velocityCal.removeKeyOverride('2,2');
+  assert.deepEqual([{ ...velocityCal.keyOverride }, stored().keyOverride, velocityCal.scaleOf('2,2')], [{}, {}, 1]);
+  velocityCal.setKeyScales({});
+}
+ok('an override replaces a key\'s scale, outlasts a new table, is saved and loaded, and is removed cleanly');
+
+// ── M: naming a key by pressing it: the next press, once ──
+{
+  const { armKeyPick, cancelKeyPick, keyPickArmed, offerKeyPick } = await import('../../apps/hkl/src/lumatone/keypick.ts');
+  const got = [];
+  offerKeyPick('3,36');
+  assert.deepEqual([keyPickArmed(), got], [false, []], 'not armed: a press names nothing');
+  armKeyPick((k) => got.push(k));
+  assert.equal(keyPickArmed(), true);
+  offerKeyPick('3,36');
+  offerKeyPick('3,30');
+  assert.deepEqual([keyPickArmed(), got], [false, ['3,36']], 'the first press is taken and the pick is over');
+  armKeyPick((k) => got.push(k));
+  cancelKeyPick();
+  offerKeyPick('4,19');
+  assert.deepEqual([keyPickArmed(), got], [false, ['3,36']], 'a canceled pick takes nothing');
+}
+ok('key pick: armed, the next Lumatone press names its key once; canceled, none does');
 
 console.log('\nkey-scale: ' + checks + ' checks passed');

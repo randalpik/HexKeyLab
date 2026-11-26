@@ -12,7 +12,10 @@
 //   - Reset all calibration and Reset all 5 boards send nothing when declined,
 //     and when accepted the factory resets, after which the setup (the two
 //     velocity tables among it) goes out again;
-//   - the scroll bar has a strip of its own.
+//   - the scroll bar has a strip of its own;
+//   - the Overrides list: Add names a key by the next press (through the real
+//     note-on handler), its slider sets the key's scale from half to double the
+//     computed one, a device read leaves it alone, and Remove ends it.
 // The real controls are used; a fake MIDI output answers as the firmware does
 // (24h / 0Fh enter a mode, 52h leaves it, everything else is refused with STATE
 // meanwhile; 19h / 1Ah / 3Ah / 3Bh answer with a synthetic calibration).
@@ -203,6 +206,87 @@ const SCRIPT = `(async () => {
   check('1.4.0: nothing sent', dev.sent.length, before);
   check('1.4.0: still the two starts', state(), '1100');
   check('1.4.0: status says why', statusText().includes('1.5.0'), true);
+
+  /* Overrides: a key named by pressing it, its scale set on a slider. The press
+     goes through the real note-on handler. */
+  {
+    const { velocityCal } = await depUrl(diagUrl, '/src/audio/velocityCal.ts').then((u) => import(u));
+    const { refreshKeyScales } = await depUrl(diagUrl, '/src/lumatone/keyscales.ts').then((u) => import(u));
+    const handler = await depUrl('/src/ui/init.ts', '/src/effects/onRefChanged.ts')
+      .then((u) => depUrl(u, '/src/midi/handler.ts')).then((u) => import(u));
+    const press = (ch, note) => {
+      handler.handleMidiMessage({ data: new Uint8Array([0x90 + ch - 1, note, 100]) });
+      handler.handleMidiMessage({ data: new Uint8Array([0x80 + ch - 1, note, 0]) });
+    };
+    const title = [...panel.querySelectorAll('span')].find((s) => s.textContent === 'Overrides:');
+    const block = title?.parentElement?.parentElement;
+    const list = block?.lastElementChild;
+    const rows = () => [...(list?.children ?? [])].filter((r) => r.querySelector('input[type=range]'));
+    const addBtn = () => [...(block?.querySelectorAll('button') ?? [])].find((b) => b.title.startsWith('Add a key'));
+    const rowText = (r) => [...r.querySelectorAll('span')].map((s) => s.textContent).join(' | ');
+    const overrides = () => JSON.stringify(velocityCal.keyOverride);
+    const computed = velocityCal.computedScaleOf('3,36');
+
+    check('overrides: under the key scales line', block?.previousElementSibling?.textContent.startsWith('Key scales: '), true);
+    check('overrides: none to begin with', list?.textContent + ' ' + overrides(), 'none {}');
+    check('overrides: Add and Copy', [...block.querySelectorAll('button')].map((b) => b.textContent).join(','), 'Add,Copy');
+    check('overrides: the key has a computed scale other than 1', computed !== 1 && computed > 0, true);
+
+    press(3, 30);
+    check('not armed: a press adds nothing', overrides(), '{}');
+    addBtn().click();
+    check('Add: waiting for a key', addBtn().textContent, 'Press a key… (cancel)');
+    press(3, 36);
+    check('the pressed key is listed at its computed scale', overrides(), JSON.stringify({ '3,36': computed }));
+    check('its row: place on the keyboard, scale, computed scale',
+      rows().map(rowText).join(' / '), '(3, −1) | ' + computed.toFixed(2) + ' | ' + computed.toFixed(2));
+    check('the slider starts in the middle', rows()[0].querySelector('input').value, '0');
+    check('the pick is over', addBtn().textContent, 'Add');
+    press(3, 30);
+    check('the next press adds nothing', rows().length, 1);
+
+    const slide = (v) => { const s = rows()[0].querySelector('input'); s.value = String(v); s.dispatchEvent(new Event('input')); };
+    slide(50);
+    check('slider +50: the computed scale times the square root of 2', Math.abs(velocityCal.scaleOf('3,36') - computed * Math.SQRT2) < 1e-12, true);
+    check('the row shows it', rowText(rows()[0]), '(3, −1) | ' + (computed * Math.SQRT2).toFixed(2) + ' | ' + computed.toFixed(2));
+    slide(-100);
+    check('slider at its low end: half the computed scale', Math.abs(velocityCal.scaleOf('3,36') - computed / 2) < 1e-12, true);
+    slide(50);
+
+    /* A second key, listed in key order; a key already listed is not added twice. */
+    addBtn().click(); press(1, 5);
+    addBtn().click(); press(3, 36);
+    check('two rows, in key order', rows().map((r) => r.querySelector('span').textContent).join(' '), '(−15, 8) (3, −1)');
+    check('a listed key keeps its scale when picked again', Math.abs(velocityCal.scaleOf('3,36') - computed * Math.SQRT2) < 1e-12, true);
+
+    /* Reading the calibration again leaves the override and its row as they were. */
+    lumatone.firmware = [1, 5, 0];
+    refreshKeyScales();
+    await sleep(250);
+    check('after a device read: the override stands', Math.abs(velocityCal.scaleOf('3,36') - computed * Math.SQRT2) < 1e-12, true);
+    check('after a device read: the slider is where it was', rows()[1].querySelector('input').value, '50');
+
+    rows()[1].querySelector('button').click();
+    check('Remove: the row goes and the key is back at its computed scale',
+      rows().length + ' ' + velocityCal.scaleOf('3,36'), '1 ' + computed);
+    rows()[0].querySelector('button').click();
+    check('all removed: none', list.textContent + ' ' + overrides(), 'none {}');
+
+    addBtn().click(); addBtn().click();
+    press(3, 36);
+    check('Add twice cancels: a press adds nothing', addBtn().textContent + ' ' + overrides(), 'Add {}');
+    addBtn().click();
+    diag.setLumaDiagVisible(false);
+    press(3, 36);
+    check('hiding the panel ends a waiting pick', overrides(), '{}');
+    diag.setLumaDiagVisible(true);
+    check('and the button says Add again', addBtn().textContent, 'Add');
+
+    const copyBtn = [...block.querySelectorAll('button')].find((b) => b.textContent === 'Copy');
+    copyBtn.click();
+    await sleep(100);
+    check('Copy: answers on the button', ['Copied', 'In the console'].includes(copyBtn.textContent), true);
+  }
 
   midi.midiOut = null; midi.midiIn = null;
   return { results, pass: results.every((r) => r.ok) };

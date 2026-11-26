@@ -36,6 +36,7 @@ import { heartbeatInbound, setHeartbeatHoldingProbe, stopHeartbeat } from './hea
 import { sysex } from '../lumatone/sysex.js';
 import { watchPresetSwitch } from '../lumatone/sync.js';
 import { handleCalibrationPacket } from '../lumatone/calibration.js';
+import { offerKeyPick } from '../lumatone/keypick.js';
 import { handleAftertouch } from '../audio/engine.js';
 import { filterPA } from '../audio/aftertouch.js';
 import { velocityCal } from '../audio/velocityCal.js';
@@ -217,6 +218,9 @@ function routeChannelMessage(data: Uint8Array): void {
     if (fromGame === 'swallow') return;
     const key = heldKey('lumatone', physId) ?? fixedMidiToKey(ch, d1);
     if (!key) return;
+    /* The Calibration panel's Overrides list may be waiting for a key to be
+       named by pressing it (lumatone/keypick.ts). The press is still this note. */
+    offerKeyPick(physId);
     /* Lumatone → canonical musical velocity: the key's press time, scaled by its
        own number (hardware variance correction), through the Lumatone curve, at input time.
        keyVelocity now holds musical velocity (the house curve maps it to gain at

@@ -54,12 +54,15 @@ import {
   buildSetBoardSens,
   parseBoardThresholds,
 } from './protocol.js';
-import { velocityCal, DEFAULT_INPUT_CURVE } from '../audio/velocityCal.js';
+import { velocityCal, DEFAULT_INPUT_CURVE, KEY_SCALE_MIN, KEY_SCALE_MAX } from '../audio/velocityCal.js';
 import { lumatone } from '../state/lumatone.js';
 import { savePrefs } from '../state/persistence.js';
 import { resyncLumatoneDevice } from './sync.js';
 import { startKeyCal, endKeyCal, keyCalStatus, onKeyCalChange } from './keycal.js';
 import { refreshKeyScales, keyScaleStatus, onKeyScaleChange } from './keyscales.js';
+import { armKeyPick, cancelKeyPick, keyPickArmed } from './keypick.js';
+import { baseKeys } from '../layout/baseKeys.js';
+import type { LumatoneKeyId } from '../types.js';
 
 /* Per-board values, mirrored from the device. `null` = not yet fetched; the
    corresponding slider stays disabled until the read-back populates it. */
@@ -610,6 +613,175 @@ function refreshKeyScaleLine(): void {
   else el.textContent = kept ? 'the last table read (' + kept + ' keys)' : 'none yet';
 }
 
+/* ── Overrides ──
+   Scales set by ear (velocityCal.keyOverride): one row per key, listed in key
+   order. A row's slider holds the scale the key plays at, from half to double
+   the scale the calibration gives it, in equal ratio steps; the next press of
+   the key uses it. Add names a key by pressing it (keypick.ts) and lists it at
+   its computed scale, which changes nothing until the slider moves. Keys are
+   stored by physical key ("ch,note") and shown at their place on the keyboard
+   (layout/baseKeys.ts), which no ref, mapping or rotation moves. */
+const OVERRIDE_STEPS = 100;  /* slider steps per doubling of the scale */
+let overrideList: HTMLDivElement | null = null;
+let overrideAddBtn: HTMLButtonElement | null = null;
+
+const overrideKeyIndex = (key: LumatoneKeyId): number => {
+  const c = key.indexOf(',');
+  return (+key.slice(0, c) - 1) * 56 + +key.slice(c + 1);
+};
+const overrideKeys = (): LumatoneKeyId[] =>
+  Object.keys(velocityCal.keyOverride).sort((a, b) => overrideKeyIndex(a) - overrideKeyIndex(b));
+
+function overrideKeyLabel(key: LumatoneKeyId): string {
+  const [q, r] = baseKeys[overrideKeyIndex(key)];
+  const n = (v: number): string => (v < 0 ? '−' + -v : String(v));
+  return '(' + n(q) + ', ' + n(r) + ')';
+}
+
+const OVERRIDE_BTN_STYLE = {
+  fontSize: '11px', padding: '1px 6px',
+  background: 'rgba(255,255,255,0.08)', color: '#eee',
+  border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px',
+  cursor: 'pointer',
+};
+
+function syncOverrideAddBtn(): void {
+  if (!overrideAddBtn) return;
+  const armed = keyPickArmed();
+  overrideAddBtn.textContent = armed ? 'Press a key… (cancel)' : 'Add';
+  overrideAddBtn.style.background = armed ? 'rgba(120,180,255,0.3)' : OVERRIDE_BTN_STYLE.background;
+}
+
+function makeOverrideRow(key: LumatoneKeyId, flash: boolean): HTMLDivElement {
+  const computed = velocityCal.computedScaleOf(key);
+  const row = document.createElement('div');
+  Object.assign(row.style, {
+    display: 'grid', gridTemplateColumns: '62px 1fr 32px 32px 18px',
+    alignItems: 'center', gap: '6px', margin: '2px 0', transition: 'background 0.8s',
+  });
+  const lbl = document.createElement('span');
+  lbl.textContent = overrideKeyLabel(key);
+  lbl.title = 'Board ' + key.slice(0, key.indexOf(',')) + ', key ' + key.slice(key.indexOf(',') + 1);
+  Object.assign(lbl.style, { fontSize: '11px', fontFamily: 'monospace', color: 'rgba(255,255,255,0.85)' });
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = String(-OVERRIDE_STEPS); slider.max = String(OVERRIDE_STEPS); slider.step = '1';
+  slider.value = String(Math.round(OVERRIDE_STEPS * Math.log2(velocityCal.scaleOf(key) / computed)));
+  slider.title = 'This key’s press-time scale, from half to double its computed one. Higher = the key plays softer.';
+  Object.assign(slider.style, { width: '100%' });
+  const val = document.createElement('span');
+  val.textContent = velocityCal.scaleOf(key).toFixed(2);
+  Object.assign(val.style, { fontSize: '11px', fontFamily: 'monospace', textAlign: 'right', color: '#9cf' });
+  const comp = document.createElement('span');
+  comp.textContent = computed.toFixed(2);
+  comp.title = 'The scale computed from the Lumatone’s calibration';
+  Object.assign(comp.style, { fontSize: '11px', fontFamily: 'monospace', textAlign: 'right', color: 'rgba(255,255,255,0.45)' });
+  const remove = document.createElement('button');
+  remove.textContent = '×';
+  remove.title = 'Remove: the key plays at its computed scale again';
+  Object.assign(remove.style, OVERRIDE_BTN_STYLE, { padding: '0 4px' });
+  slider.addEventListener('input', () => {
+    const s = Math.min(KEY_SCALE_MAX, Math.max(KEY_SCALE_MIN, computed * Math.pow(2, parseFloat(slider.value) / OVERRIDE_STEPS)));
+    velocityCal.setKeyOverride(key, s);
+    val.textContent = s.toFixed(2);
+  });
+  remove.addEventListener('click', () => {
+    velocityCal.removeKeyOverride(key);
+    rebuildOverrideRows();
+  });
+  row.appendChild(lbl);
+  row.appendChild(slider);
+  row.appendChild(val);
+  row.appendChild(comp);
+  row.appendChild(remove);
+  if (flash) {
+    row.style.background = 'rgba(120,180,255,0.35)';
+    window.setTimeout(() => { row.style.background = 'transparent'; }, 50);
+  }
+  return row;
+}
+
+function rebuildOverrideRows(flashKey?: LumatoneKeyId): void {
+  const list = overrideList;
+  if (!list) return;
+  list.textContent = '';
+  const keys = overrideKeys();
+  if (!keys.length) {
+    const none = document.createElement('div');
+    none.textContent = 'none';
+    Object.assign(none.style, { fontSize: '11px', color: 'rgba(255,255,255,0.45)' });
+    list.appendChild(none);
+    return;
+  }
+  for (const key of keys) list.appendChild(makeOverrideRow(key, key === flashKey));
+}
+
+function copyOverrides(btn: HTMLButtonElement): void {
+  const json = JSON.stringify({
+    format: 'hkl-key-overrides',
+    version: 1,
+    swapBoards34: getBoards34Swapped(),
+    overrides: overrideKeys().map((key) => {
+      const [q, r] = baseKeys[overrideKeyIndex(key)];
+      return { key, q, r, scale: velocityCal.scaleOf(key), computed: velocityCal.computedScaleOf(key) };
+    }),
+  }, null, 2);
+  const done = (text: string): void => {
+    btn.textContent = text;
+    window.setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  };
+  const clip = navigator.clipboard;
+  if (clip && clip.writeText) {
+    clip.writeText(json).then(() => done('Copied'), () => { console.log(json); done('In the console'); });
+  } else {
+    console.log(json);
+    done('In the console');
+  }
+}
+
+function makeOverridesBlock(): HTMLDivElement {
+  const block = document.createElement('div');
+  Object.assign(block.style, { marginTop: '8px' });
+  const head = document.createElement('div');
+  Object.assign(head.style, { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' });
+  const title = document.createElement('span');
+  title.textContent = 'Overrides:';
+  title.title = 'A key that still sounds louder or softer than its neighbors at the same touch can be given its own scale '
+    + 'here, by ear. It replaces the key’s computed scale until it is removed; reading the calibration again does not change it.';
+  Object.assign(title.style, { fontSize: '11px', color: 'rgba(255,255,255,0.7)', flex: '1' });
+  const add = document.createElement('button');
+  add.title = 'Add a key to the list by pressing it on the Lumatone';
+  Object.assign(add.style, OVERRIDE_BTN_STYLE);
+  add.addEventListener('click', () => {
+    if (keyPickArmed()) cancelKeyPick();
+    else armKeyPick((key) => {
+      /* A key already listed keeps its scale; a new one starts at its computed scale. */
+      if (!(key in velocityCal.keyOverride)) velocityCal.setKeyOverride(key, velocityCal.computedScaleOf(key));
+      syncOverrideAddBtn();
+      rebuildOverrideRows(key);
+    });
+    syncOverrideAddBtn();
+  });
+  const copy = document.createElement('button');
+  copy.textContent = 'Copy';
+  copy.title = 'Copy the list (each key, its scale and its computed scale) to the clipboard as JSON';
+  Object.assign(copy.style, OVERRIDE_BTN_STYLE);
+  copy.addEventListener('click', () => copyOverrides(copy));
+  head.appendChild(title);
+  head.appendChild(add);
+  head.appendChild(copy);
+  block.appendChild(head);
+  const list = document.createElement('div');
+  block.appendChild(list);
+  overrideList = list;
+  overrideAddBtn = add;
+  syncOverrideAddBtn();
+  rebuildOverrideRows();
+  /* A completed read changes the computed scales the rows are centered on. */
+  onKeyScaleChange(() => { if (keyScaleStatus().state === 'read') rebuildOverrideRows(); });
+  return block;
+}
+
 /* ── Lumatone velocity curve ──
    The piano's law in the device's units, run up to full loudness, with the
    corner where they meet rounded (velocityCal.targetGainForTicks). `full` is
@@ -735,6 +907,7 @@ function makeVelocityCurveSection(): HTMLDivElement {
   velCalUi.keyScales = scaleVal;
   sec.appendChild(scaleRow);
   onKeyScaleChange(refreshKeyScaleLine);
+  sec.appendChild(makeOverridesBlock());
 
   drawCurvePreview();
   refreshKeyScaleLine();
@@ -767,7 +940,12 @@ export function setLumaDiagHotkeyCallback(fn: (() => void) | null): void {
 export function setLumaDiagVisible(visible: boolean): void {
   if (!panel) return;
   panel.style.display = visible ? 'block' : 'none';
-  if (!visible) return;
+  if (!visible) {
+    /* A pick left waiting would take a key pressed long after the panel closed. */
+    cancelKeyPick();
+    syncOverrideAddBtn();
+    return;
+  }
   getAllBoardValues();
   /* The scroll bar gets a strip of its own (`scrollbar-gutter`). A browser that
      draws its scroll bars over the content reserves nothing for them, so there

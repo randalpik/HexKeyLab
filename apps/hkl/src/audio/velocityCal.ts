@@ -35,7 +35,10 @@
 //
 // The scales are made from the calibration the device holds: the median timing
 // window over each key's own, read over SysEx (lumatone/keyscales.ts). What is
-// kept here, and saved, is the last table read.
+// kept here, and saved, is the last table read. A key the rule does not fit can
+// be given a scale by ear (the Calibration panel's Overrides list): that
+// override replaces the key's computed scale and is saved beside the table,
+// which no device read changes.
 
 import { savePrefs, loadPrefs, type VelocityCalPrefs } from '../state/persistence.js';
 import { HOUSE_VELOCITY_CURVE } from '@hkl/shared/velocity.js';
@@ -53,8 +56,13 @@ export interface VelocityCalState {
    *  (Device-specific compensation — e.g. the Lumatone's compressed range —
    *  lives in the per-device input curve below, NOT here.) */
   gamma: number;
-  /** Press-time multiplier per physical key. Absent entries default to 1.0. */
+  /** Press-time multiplier per physical key, computed from the device's
+   *  calibration (lumatone/keyscales.ts). Absent entries default to 1.0. */
   keyScale: Record<LumatoneKeyId, number>;
+  /** Press-time multipliers the player set by ear (Calibration → Overrides). A
+   *  key with an entry plays at it in place of its computed scale; a device
+   *  read never touches this table. */
+  keyOverride: Record<LumatoneKeyId, number>;
 }
 
 /** Lumatone TARGET-GAIN curve: the gain (0..1) a Lumatone press SHOULD sound at,
@@ -113,6 +121,7 @@ export interface InputCurveState {
 export const DEFAULT_CAL: VelocityCalState = {
   ...HOUSE_VELOCITY_CURVE,
   keyScale: {},
+  keyOverride: {},
 };
 
 /* Lumatone target-gain curve default: the piano's gamma, the piano line
@@ -150,6 +159,7 @@ const state: VelocityCalState = {
   ceiling: DEFAULT_CAL.ceiling,
   gamma: DEFAULT_CAL.gamma,
   keyScale: {},
+  keyOverride: {},
 };
 
 const inputCurve: InputCurveState = { ...DEFAULT_INPUT_CURVE };
@@ -184,6 +194,7 @@ function persist(): void {
     ceiling: state.ceiling,
     gamma: state.gamma,
     keyScale: { ...state.keyScale },
+    keyOverride: { ...state.keyOverride },
     inputCurve: { ...inputCurve },
   }});
 }
@@ -200,6 +211,13 @@ function loadFromPrefs(): void {
     for (const k of Object.keys(v.keyScale)) {
       const g = v.keyScale[k];
       if (KEY_ID.test(k) && validScale(g)) state.keyScale[k] = g;
+    }
+  }
+  if (v.keyOverride && typeof v.keyOverride === 'object') {
+    state.keyOverride = {};
+    for (const k of Object.keys(v.keyOverride)) {
+      const g = v.keyOverride[k];
+      if (KEY_ID.test(k) && validScale(g)) state.keyOverride[k] = g;
     }
   }
   if (v.inputCurve && typeof v.inputCurve === 'object') {
@@ -272,6 +290,38 @@ export const velocityCal = {
     const next: Record<LumatoneKeyId, number> = {};
     for (const [k, g] of Object.entries(scales)) if (KEY_ID.test(k) && validScale(g)) next[k] = g;
     state.keyScale = next;
+    persist();
+  },
+
+  /* ── Overrides ────────────────────────────────────────────────────────────
+     A scale the player set by ear for one key (Calibration → Overrides). It
+     replaces the key's computed scale, so each key has one number in force,
+     and it stays until it is removed: setKeyScales, which is every device
+     read, does not touch it. */
+  get keyOverride(): Readonly<Record<LumatoneKeyId, number>> { return state.keyOverride; },
+
+  /** The scale a key plays at: its override, or else its computed scale, or 1. */
+  scaleOf(key: LumatoneKeyId): number {
+    return state.keyOverride[key] ?? state.keyScale[key] ?? 1;
+  },
+
+  /** The scale the device's calibration gives a key (1 when it gives none),
+   *  whether or not an override is in force. */
+  computedScaleOf(key: LumatoneKeyId): number { return state.keyScale[key] ?? 1; },
+
+  /** Set a key's override. False, and nothing changes, when `key` is not a
+   *  physical key id or `scale` is outside KEY_SCALE_MIN…KEY_SCALE_MAX. */
+  setKeyOverride(key: LumatoneKeyId, scale: number): boolean {
+    if (!KEY_ID.test(key) || !validScale(scale)) return false;
+    state.keyOverride[key] = scale;
+    persist();
+    return true;
+  },
+
+  /** Remove a key's override: it plays at its computed scale again. */
+  removeKeyOverride(key: LumatoneKeyId): void {
+    if (!(key in state.keyOverride)) return;
+    delete state.keyOverride[key];
     persist();
   },
 
@@ -436,11 +486,12 @@ export const velocityCal = {
   },
 
   /* Stage 1: per-key press-time scale. A key's press time for a raw velocity:
-     the ticks the velocity stands for, times the key's scale (1 when it has
-     none). Null for a velocity below 1. */
+     the ticks the velocity stands for, times the scale the key plays at
+     (`scaleOf`: its override, else its computed scale, else 1). Null for a
+     velocity below 1. */
   keyTicks(key: LumatoneKeyId, raw: number): number | null {
     const ticks = this.ticksOf(raw);
-    return ticks === null ? null : ticks * (state.keyScale[key] ?? 1);
+    return ticks === null ? null : ticks * this.scaleOf(key);
   },
 
   /* The same, as a device velocity: the velocity that scaled press time reads as
@@ -449,8 +500,8 @@ export const velocityCal = {
      this is the key's position on the Calibration graph's x-axis. */
   applyKeyScale(key: LumatoneKeyId, raw: number): number {
     if (raw <= 0) return 0;
-    const g = state.keyScale[key];
-    if (g === undefined || g === 1) return raw;
+    const g = this.scaleOf(key);
+    if (g === 1) return raw;
     const ticks = this.ticksOf(raw);
     return ticks === null ? raw : this.velocityForTicks(ticks * g);
   },

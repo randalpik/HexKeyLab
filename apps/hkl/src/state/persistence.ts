@@ -69,12 +69,15 @@ export interface VelocityCalPrefs {
    *  press time is the device's count plus one; v9 = no `intervalCurve` (the
    *  table on the device is the constant 0…126) and no per-key statistics, and
    *  `keyScale` is the last table read from the device's calibration.
-   *  Older versions get a one-time migration in velocityCal.ts. */
+   *  Older versions get a one-time migration in velocityCal.ts.
+   *  `keyOverride` (the scales set by ear in Calibration → Overrides) was added
+   *  later without a new version: absent means none. */
   version?: number;
   floor: number;
   ceiling: number;
   gamma: number;
   keyScale: Record<string, number>;
+  keyOverride?: Record<string, number>;
   /** The Lumatone velocity curve (velocityCal.ts → InputCurveState), applied to
    *  Lumatone-source MIDI velocity at the midi/handler.ts entry point before
    *  storage, audio and recording. */
@@ -413,6 +416,12 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
       if (typeof val === 'number' && val > 0) keyScale[k] = val;
     }
   }
+  const keyOverride: Record<string, number> = {};
+  if (v.keyOverride && typeof v.keyOverride === 'object') {
+    for (const [k, val] of Object.entries(v.keyOverride as Record<string, unknown>)) {
+      if (typeof val === 'number' && val > 0) keyOverride[k] = val;
+    }
+  }
   /* `full` is absent from prefs saved before v7, whose curve had a floor and a
      ceiling instead; velocityCal's migration replaces such a curve. */
   let inputCurve: { full?: number; gamma: number; corner?: number } | undefined;
@@ -425,7 +434,7 @@ function loadVelocityCal(o: unknown): VelocityCalPrefs | undefined {
     }
   }
   const version = typeof v.version === 'number' ? v.version : undefined;
-  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, keyScale, inputCurve };
+  return { version, floor: v.floor, ceiling: v.ceiling, gamma: v.gamma, keyScale, keyOverride, inputCurve };
 }
 
 /* Merge a partial patch into the stored prefs and write back. Read-modify-write

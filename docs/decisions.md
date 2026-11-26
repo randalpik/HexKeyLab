@@ -12019,3 +12019,24 @@ The loud end's remaining unevenness is the whole-tick press time, which HKL cann
 **Not verified**: on the Lumatone, the panel itself and a read made directly after a real Confirm (the firmware predicts it equals a fresh save). In Firefox, where the scroll-bar strip depends on how it draws scroll bars. The read itself was checked against the device (five boards, 280 keys, equal to the save of 2026-11-22).
 
 **Where**: `apps/hkl/src/lumatone/{lumadiag,keyscales,protocol,sync,keycal}.ts`, `apps/hkl/src/audio/{velocityCal,engine,samples}.ts`, `apps/hkl/src/state/persistence.ts`, `apps/hkl/src/midi/handler.ts`, `apps/hkl/index.html`; gates `test/hkl-midi/{keycal-overlay,key-scale,velocity-tables,lumatone-curve,velocity-owners,preset-resync}.mjs`; docs/architecture/hkl.md, engine.md, analyzer.md, docs/lumatone-calibration.md, docs/guide/core.md, docs/lessons.md; `tools/lumatone-cal/keydata-compare.py` (its `--scales` text).
+
+## A key's press-time scale can be overridden by ear (2026-11-25, Max)
+
+**Context**: with the key scales made automatically from the device's calibration, (3, −1) still played too loud at every dynamic, and nothing in the stored calibration separates it from a neighbor the rule fits. A day of measurements (paired presses, a logged playing session) gave directions and no sizes Max would apply (lessons.md → "The window rule misses keys the calibration cannot identify"). Max: "The only reliable source of information on how keys behave relative to each other seems to be my ear. Therefore, I have no option left."
+
+**Picked**: an **Overrides** list in the Calibration panel, under the Key scales line.
+
+- **Add reads the next keypress** and lists that key at its computed scale; the press still plays. A key already listed is not added twice.
+- **A slider per key sets its scale in real time**, from half to double the computed one, in equal ratio steps. The row shows the scale in force and the computed one; × removes the override.
+- **An override replaces the key's scale** (it is not a factor on top of the computed one), so each key has one number in force: its override, else its computed scale, else 1.
+- **A device read never touches an override.** The computed table is replaced at every connect, calibration and threshold change; the overrides are kept apart from it and saved with it.
+- **Keys are stored by physical key and shown by their place on the keyboard** (the coordinates `keydata-locate.py` takes), which no ref, mapping or rotation moves.
+- **Copy** puts the list on the clipboard as JSON (each key, its scale and its computed scale). "Once I've collected enough of these, we can then take the data and attempt to come up with a better rule."
+
+**What it gives up**: the state of 2026-11-24 in which every key's scale came from the calibration alone. A number set by ear is back, as a scale on press time (one setting holds at every dynamic), not the gain on velocity that was removed. An override is judged against the scales around it, so after a recalibration it may no longer be right, and nothing flags that.
+
+**Not done**: a rule that needs no overrides; typing a key's coordinates in place of pressing it; a slider range wider than half to double.
+
+**Not verified**: on the Lumatone, by Max: the panel section and an override's effect by ear.
+
+**Where**: `apps/hkl/src/audio/velocityCal.ts` (`keyOverride`, `scaleOf`, `computedScaleOf`, `setKeyOverride`, `removeKeyOverride`), `apps/hkl/src/lumatone/keypick.ts` (new), `apps/hkl/src/lumatone/lumadiag.ts`, `apps/hkl/src/midi/handler.ts`, `apps/hkl/src/state/persistence.ts`; gates `test/hkl-midi/{key-scale,keycal-overlay}.mjs`; docs/architecture/hkl.md, engine.md, docs/lumatone-calibration.md, docs/guide/core.md, docs/lessons.md.
