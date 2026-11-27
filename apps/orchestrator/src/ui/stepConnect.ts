@@ -7,7 +7,7 @@ import { MidiOut } from '../device/midiOut.js';
 import { AudioInput, listAudioInputs } from '../device/audioIn.js';
 import { RealDevice, midiToFreq } from '../device/device.js';
 import { LoopbackDevice } from '../device/loopback.js';
-import { setDevice, getSession, setWhineProfile, setVelocityResponse } from '../state.js';
+import { setDevice, getSession, setWhineProfile, setVelocityResponse, activeWhineTones } from '../state.js';
 import { loadPersisted, patchPersisted } from '../persist.js';
 import { calibrateWhine } from '../capture/whineCal.js';
 import type { CaptureDevice } from '../device/types.js';
@@ -126,9 +126,11 @@ export async function renderConnect(host: HTMLElement, onConnected: () => void):
     setTimeout(() => { dev.noteOff(60); status.textContent = 'Connected: ' + getSession().deviceLabel + '. Test note played (~' + midiToFreq(60).toFixed(1) + ' Hz).'; }, 1000);
   }, text: 'Test note' });
 
-  // Whine calibration — record a few seconds of idle output, detect the device's
-  // fixed tonal artifact comb, and store it as the whine profile. Those tones are
-  // then notched out of every capture before NR (analysis/dewhine). Optional but
+  // Whine calibration — record a few seconds of idle output, detect the fixed
+  // tones in it, and store them as the whine profile. The ones above the highest
+  // note of the capture range are then notched out of every capture before NR;
+  // the ones among the notes (mains-hum harmonics) are left alone, since a notch
+  // there takes a note's partial with it (analysis/dewhine). Optional but
   // recommended for any device with an audible DAC/switching whine.
   const whineBtn = el('button', { type: 'button', disabled: true, onclick: async () => {
     const dev = getSession().device;
@@ -139,8 +141,11 @@ export async function renderConnect(host: HTMLElement, onConnected: () => void):
       const res = await calibrateWhine(dev, { seconds: 3 });
       setWhineProfile({ toneHz: res.toneHz });
       patchPersisted({ whineProfile: { toneHz: res.toneHz } });
+      const cut = activeWhineTones(), left = res.toneHz.length - cut.length;
       status.textContent = res.toneHz.length
-        ? `Whine profile: ${res.toneHz.length} tone(s) — ${res.toneHz.map(t => Math.round(t)).join(', ')} Hz. Notched from every capture.`
+        ? `Whine profile: ${res.toneHz.length} tone(s) — ${res.toneHz.map(t => Math.round(t)).join(', ')} Hz. `
+          + (cut.length ? `${cut.length} above the top note of the range, notched from every capture` : 'None above the top note of the range, so none is notched')
+          + (left ? `; ${left} among the notes, left alone.` : '.')
         : 'Whine profile: no fixed tones detected (clean device).';
     } catch (e) {
       status.textContent = 'Whine calibration failed: ' + (e as Error).message;

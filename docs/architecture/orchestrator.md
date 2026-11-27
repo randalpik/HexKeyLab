@@ -175,6 +175,15 @@ interpolated — the **whine calibration** in Connect), and `dewhineChannels` ap
 (whose energy there is broadband, not on those exact bins) and leaves no musical noise. Runs *first*,
 so the pre-roll used by the next stage's profile is already tone-free. No profile ⇒ no-op.
 
+**Only tones above the capture's highest note are notched** (`whineFloorHz`: half a semitone above
+it; `state.ts` `activeWhineTones` is the one place the profile is read for cleaning, in capture and
+in export). The idle recording also shows tones that are not the device's comb: mains-hum harmonics,
+odd multiples of 60 Hz found as high as 2820 Hz, and a 12 Hz notch is as wide among the notes as
+above them. At 660 Hz one took the fundamental out of an E5 take and a low partial out of three
+others (docs/lessons.md, 2026-11-26). The detector still reports every tone, the Connect step says
+how many are cut and how many are left alone, and a stored profile needs no recalibration. Tones
+under the floor stay in the take for the next stage.
+
 **2. Broadband NR (decision-directed Wiener).** Replaces the former plain spectral subtraction, whose
 per-bin magnitude subtraction flickered near-floor bins frame-to-frame and left musical-noise birdies
 that stacked across soft chords. The pre-roll silence gives a per-bin noise-power profile; each frame
@@ -228,6 +237,18 @@ brighter layer no longer reads as a perceived-loudness *tier* — while the hous
 bulk of the dynamics (we don't touch the "proven" playback system). It only ever softens, so it can't
 push a layer toward clipping; multi-layer notes only; no sweep data ⇒ scale 1.0 (flat, as before).
 
+## Raw takes
+
+`buildRawBundle` (`analysis/buildHki.ts`; **Download raw takes** in the Export step) writes every take
+still in the capture store exactly as recorded: all its channels, no de-whine, no noise reduction, no
+gain, no trim, no tail fade, and takes that failed a gate included. The cleaned export keeps only
+what its cleaning leaves, and the capture store lives in the page, so without this file a cleaning
+fault cannot be undone once the tab is closed (a notch took the fundamental out of an E5 take in the
+88-key SP-250 capture; docs/lessons.md, 2026-11-26). The file is a valid `.hki` with key `<key>-raw`,
+so the analyzer's tools read it as they read any bundle; it is not meant to be played. Its
+`provenance.raw` holds the whine profile (every tone found, and the ones the cleaned export notches),
+the hold time, and for each take its channel count, gate result and whether it was a retake.
+
 ## Bridge to HKL
 
 Own `BroadcastChannel('hkl-orchestrator-bridge')` mirroring the Analyzer: `orchestrator-hello`/
@@ -242,9 +263,13 @@ capture/discovery gotchas"):
 - **Pure logic, deterministic** — `test/orchestrator-smoke/bins-test.mjs` (node) asserts
   `detectBins` boundary positions on synthetic fingerprints. `dewhine-test.mjs` (node) asserts
   `detectCombTones` finds the comb (no spurious peaks), `dewhineChannels` notches it ≥20 dB while
-  preserving the note, and `wienerDenoiseChannels` pulls the broadband floor down without eating the
+  preserving the note, the floor keeps a 660 Hz tone from taking an E5's fundamental while the comb above it
+  is still cut, and `wienerDenoiseChannels` pulls the broadband floor down without eating the
   body. Both run via `node --import ./test/orchestrator-smoke/register-ts.mjs …` (a resolve hook that
-  rewrites the modules' `.js` specifiers to their `.ts` siblings for Node's type-stripping).
+  rewrites the modules' `.js` specifiers to their `.ts` siblings for Node's type-stripping, package
+  specifiers such as `@hkl/analysis/normalize.js` included). `raw-export-test.mjs` (node) asserts the
+  raw-takes bundle holds each take sample for sample with every channel and no gain or trim, records
+  the whine profile and gate results, and reads back as a valid `.hki`.
   `pickLayer` is in `test/engine-smoke`.
 - **Plumbing + browser-only logic** — `test/orchestrator-smoke/smoke.mjs` drives a headless
   Chromium and calls `window.__hklo.*` hooks: loopback capture returns audio, a sweep runs

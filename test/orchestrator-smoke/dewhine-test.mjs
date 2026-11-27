@@ -9,7 +9,7 @@
 // Node strips the TS types on import; register-ts.mjs rewrites the modules'
 // `./foo.js` specifiers to their `.ts` siblings.
 
-import { detectCombTones, dewhineChannels } from '../../apps/orchestrator/src/analysis/dewhine.ts';
+import { detectCombTones, dewhineChannels, whineFloorHz, whineTonesAbove } from '../../apps/orchestrator/src/analysis/dewhine.ts';
 import { wienerDenoiseChannels } from '../../apps/orchestrator/src/analysis/wiener.ts';
 
 const SR = 48000;
@@ -118,6 +118,41 @@ for (let i = 0; i < nTot; i++) {
   console.log(`  500Hz body: ${db(bodyBefore).toFixed(1)} -> ${db(bodyAfter).toFixed(1)} dB`);
   check(db(floorBefore) - db(floorAfter) >= 6, 'broadband tail floor pulled down ≥6 dB');
   check(Math.abs(db(bodyBefore) - db(bodyAfter)) < 2, 'note body preserved within 2 dB');
+}
+
+// --- 4. the floor: a tone among the notes is never notched. The whine calibration also picks
+//     up mains-hum harmonics (odd multiples of 60 Hz, found up to 2820 Hz), and a 12 Hz notch
+//     at 660 Hz sits on E5's fundamental (docs/lessons.md, 2026-11-26). Only tones above the
+//     capture's highest note are cut. ---
+{
+  const top = 440 * Math.pow(2, (108 - 69) / 12);                 // C8: the top of an 88-key capture
+  const floor = whineFloorHz(top);
+  check(Math.abs(1200 * Math.log2(floor / top) - 50) < 1e-6, 'the floor is half a semitone above the top note (' + floor.toFixed(1) + ' Hz for C8)');
+  const hum = [540, 660, 780, 1140, 1380, 1740, 2820];            // as two calibrations found them
+  const comb = [4423, 5897, 7373, 12000, 15623];                  // the device's own whine
+  const used = whineTonesAbove([...hum, ...comb], floor);
+  check(JSON.stringify(used) === JSON.stringify(comb), 'tones under the floor are dropped; the device comb above it is kept');
+  check(whineTonesAbove(null, floor).length === 0 && whineTonesAbove([floor], floor).length === 0, 'no profile gives no tones; a tone exactly at the floor is not cut');
+
+  // An E5 (659.26 Hz) recorded over hum whose 11th harmonic is 660 Hz, plus the 12 kHz whine.
+  const E5 = 659.2551, HUM = 660, HUM_A = 0.0005, n = SR, on = Math.round(0.2 * SR);
+  const take = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    let v = HUM_A * Math.sin(2 * Math.PI * HUM * t) + WHINE_A * Math.sin(2 * Math.PI * 12000 * t) + noise(NOISE_A);
+    if (i >= on) v += 0.5 * Math.exp(-(i - on) / (0.4 * SR)) * Math.sin(2 * Math.PI * E5 * (i - on) / SR);
+    take[i] = v;
+  }
+  const bodyStart = on + Math.round(0.1 * SR), bodyLen = Math.round(0.4 * SR);
+  const before = toneAmp(take, E5, bodyStart, bodyLen);
+  const [cut] = dewhineChannels([take], SR, [...hum, 12000]);      // the fault: every calibrated tone notched
+  const [kept] = dewhineChannels([take], SR, whineTonesAbove([...hum, 12000], floor));
+  const lostCut = db(before) - db(toneAmp(cut, E5, bodyStart, bodyLen)), lostKept = db(before) - db(toneAmp(kept, E5, bodyStart, bodyLen));
+  console.log(`  E5 fundamental: every tone notched takes ${lostCut.toFixed(1)} dB; with the floor ${lostKept.toFixed(2)} dB`);
+  check(lostCut >= 10, 'with every calibrated tone notched, the 660 Hz notch takes E5\'s fundamental (the fault, ≥10 dB)');
+  check(Math.abs(lostKept) < 0.1, 'with the floor applied, E5\'s fundamental is untouched (within 0.1 dB)');
+  const w0 = toneAmp(take, 12000, bodyStart, bodyLen), w1 = toneAmp(kept, 12000, bodyStart, bodyLen);
+  check(db(w0) - db(w1) >= 20, 'and the 12 kHz whine above the floor is still notched by ≥20 dB');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall dewhine/wiener checks passed');

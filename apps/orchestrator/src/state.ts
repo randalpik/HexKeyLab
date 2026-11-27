@@ -4,14 +4,17 @@
 // held here (it lives in capture/store.ts — too big for the observable state).
 
 import type { CaptureDevice } from './device/types.js';
+import { midiToFreq } from './device/device.js';
+import { whineFloorHz, whineTonesAbove } from './analysis/dewhine.js';
 
 /** One velocity layer the user will sample: a velocity range with a chosen
  *  representative sample velocity (the bin center the engine matches against). */
 export interface VelocityBin { lo: number; hi: number; sampleVel: number; }
 
-/** The device's tonal-whine profile: fixed narrowband artifact frequencies (Hz)
- *  detected from an idle recording, notched out of every capture before NR.
- *  Empty toneHz ⇒ no de-whine applied. */
+/** The device's tonal-whine profile: fixed narrowband frequencies (Hz) detected
+ *  from an idle recording. The ones above the capture's highest note are notched
+ *  out of every capture before NR (activeWhineTones); the rest are kept on the
+ *  profile and left alone. Empty toneHz ⇒ no de-whine applied. */
 export interface WhineProfile { toneHz: number[]; }
 
 /** The device's measured velocity→loudness response from the discovery sweep
@@ -100,6 +103,14 @@ export function setBins(bins: VelocityBin[]): void {
 export function setWhineProfile(profile: WhineProfile | null): void {
   session.whineProfile = profile;
   emit();
+}
+
+/** The whine tones to notch in this session's captures: the stored profile's
+ *  tones above the floor of the current note range (analysis/dewhine
+ *  whineFloorHz of the highest note). The one place the profile is read for
+ *  cleaning, in capture and in export alike. */
+export function activeWhineTones(): number[] {
+  return whineTonesAbove(session.whineProfile?.toneHz, whineFloorHz(midiToFreq(session.config.highMidi)));
 }
 
 export function setVelocityResponse(resp: VelocityResponse | null): void {

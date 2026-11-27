@@ -5,13 +5,17 @@
 // exist — so a test can `import ... from '../../apps/.../foo.ts'` and that module
 // can in turn `import { x } from './bar.js'`.
 //
+// A package specifier gets the same treatment when it fails: `@hkl/analysis/normalize.js`
+// maps to `src/normalize.js`, which exists only as `normalize.ts`. The `.ts` sibling is
+// returned by its real path, since Node will not strip types under `node_modules`.
+//
 //   node --import ./test/orchestrator-smoke/register-ts.mjs test/orchestrator-smoke/<test>.mjs
 
 import { register } from 'node:module';
 
 register('data:text/javascript,' + encodeURIComponent(`
-  import { existsSync } from 'node:fs';
-  import { fileURLToPath } from 'node:url';
+  import { existsSync, realpathSync } from 'node:fs';
+  import { fileURLToPath, pathToFileURL } from 'node:url';
   export async function resolve(spec, ctx, next) {
     if ((spec.startsWith('./') || spec.startsWith('../')) && spec.endsWith('.js')) {
       try {
@@ -24,6 +28,12 @@ register('data:text/javascript,' + encodeURIComponent(`
         }
       } catch { /* fall through to default resolution */ }
     }
-    return next(spec, ctx);
+    try {
+      return await next(spec, ctx);
+    } catch (e) {
+      const m = e && e.code === 'ERR_MODULE_NOT_FOUND' && /Cannot find module '([^']+)\\.js'/.exec(e.message);
+      if (m && existsSync(m[1] + '.ts')) return { url: pathToFileURL(realpathSync(m[1] + '.ts')).href, shortCircuit: true };
+      throw e;
+    }
   }
 `), import.meta.url);

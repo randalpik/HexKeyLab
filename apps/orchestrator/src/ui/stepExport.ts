@@ -1,10 +1,11 @@
 // Export step — analyze the passing captures into a v2 layered .hki, then offer
-// download + Send-to-HKL (over the orchestrator bridge).
+// download + Send-to-HKL (over the orchestrator bridge). A second download holds
+// the takes as recorded, so the cleaning can be redone after the tab is closed.
 
 import { el, clear } from './dom.js';
-import { getSession } from '../state.js';
+import { getSession, activeWhineTones } from '../state.js';
 import { listOutcomes } from '../capture/store.js';
-import { buildBundle, type BuildResult } from '../analysis/buildHki.js';
+import { buildBundle, buildRawBundle, type BuildResult } from '../analysis/buildHki.js';
 import { writeHki, bundleAudioSize } from '@hkl/shared/hki.js';
 import { downloadBytes } from './download.js';
 import { sendHkiToHkl, isHklConnected, onConnectionChange } from '../bridge.js';
@@ -32,7 +33,7 @@ export function renderExport(host: HTMLElement): void {
 
   const buildBtn = el('button', { type: 'button', onclick: () => {
     try {
-      built = buildBundle(passing, getSession().config, getSession().deviceLabel, getSession().whineProfile?.toneHz ?? [], getSession().velocityResponse);
+      built = buildBundle(passing, getSession().config, getSession().deviceLabel, activeWhineTones(), getSession().velocityResponse);
       bytes = writeHki(built.bundle);
       const mb = (bundleAudioSize(built.bundle) / 1e6).toFixed(1);
       const skipped = built.skippedLayers.length
@@ -66,6 +67,20 @@ export function renderExport(host: HTMLElement): void {
     }
   });
 
+  // The takes as recorded (analysis/buildHki buildRawBundle): every channel, nothing
+  // notched, denoised, gained, trimmed or faded, failed takes included.
+  const rawBtn = el('button', { type: 'button', text: 'Download raw takes', onclick: () => {
+    try {
+      const s = getSession();
+      const raw = buildRawBundle(outcomes, s.config, s.deviceLabel, { detectedHz: s.whineProfile?.toneHz ?? [], notchedHz: activeWhineTones() });
+      const packed = writeHki(raw.bundle);
+      downloadBytes(packed, raw.bundle.manifest.instrumentKey + '.hki');
+      status.textContent = `Raw takes: ${raw.takeCount} recording(s) as captured, ${(packed.length / 1e6).toFixed(1)} MB packed. Keep this file: it is the only copy once the tab closes.`;
+    } catch (e) {
+      status.textContent = 'Raw export failed: ' + (e as Error).message;
+    }
+  } });
+
   onConnectionChange(connected => {
     sendBtn.textContent = connected ? 'Send to HKL' : 'Send to HKL (no HKL)';
     if (connected && built) sendBtn.removeAttribute('disabled');
@@ -75,7 +90,7 @@ export function renderExport(host: HTMLElement): void {
   panel.append(
     el('div', { class: 'field-row' }, [buildBtn]),
     summary,
-    el('div', { class: 'field-row' }, [downloadBtn, sendBtn]),
+    el('div', { class: 'field-row' }, [downloadBtn, sendBtn, rawBtn]),
     el('div', { class: 'field-row' }, [status]),
   );
   host.append(panel);

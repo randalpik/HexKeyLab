@@ -12076,3 +12076,54 @@ The loud end's remaining unevenness is the whole-tick press time, which HKL cann
 **Not verified**: a real single-layer capture has not been through the Orchestrator's export or these tools; I read that path, I did not run it. Note-to-note balance will come from `hki-regain.mjs` on single layers, which evens each note by its one capture where the accepted instrument used the mean of its five layers: to be compared on the 30 shared keys once the capture exists. Firefox.
 
 **Where**: `apps/analyzer/cli/hki-timbre.mjs` (`--curve`), gate `test/hki-timbre/run.mjs` (section I); docs/architecture/analyzer.md → Brightness curve, engine.md → Brightness curve, docs/local/local-only-tools.md (the commands for the 88-key capture). `packages/shared/src/hki.ts` still describes `timbreMakeupDb`'s loudness part as taken from the source layers' gains; that comment is not updated (engine-bundled file, not in this scope).
+
+## De-whine cuts only above the capture's highest note (2026-11-26, Max)
+
+**Context**: two SP-250 captures came out with notches at odd multiples of 60 Hz (540 to 2820 Hz in July, 540 to 1740 Hz in November), taken up by the whine calibration beside the device's own comb. In the 88-key capture the one at 660 Hz sat 0.7 Hz from E5's fundamental and removed it (11 dB under its neighbors, gone in 0.08 s), the one at 780 Hz took 3 dB from G5's, and both cut a low partial of five more takes. The detector's floor, `minHz` 500, was meant to keep it off mains hum; hum's harmonics reach far above it.
+
+**Picked**: no tone at or under half a semitone above the highest note of the capture is notched (`whineFloorHz`, 4309 Hz for an 88-key range). The SP-250's comb starts near 4.4 kHz, above its top note, so the comb is still cut and no notch can reach a fundamental. The rule is applied where the profile is read for cleaning (`activeWhineTones` in `state.ts`, used by capture and export), not in the detector, so a profile stored before the change is harmless without recalibrating; the detector reports everything it finds and the Connect step says how many tones are cut and how many are left.
+
+**Rejected**: recognizing mains harmonics and skipping only those. The July calibration also held a family near multiples of 101 Hz (507, 608, 709, 810 Hz), on the fundamentals from B4 to G♯5, which that rule would have kept notching. Skipping a notch per take when it meets one of that take's partials: the partials of a high note are tens of hertz from their nominal places, so it would need each take's own spectrum.
+
+**What it gives up**: hum harmonics and any other steady tone under the floor stay in every take at their own level, and add up across a chord, where the notch took them out. How loud they are was not known when this was decided; the first raw-takes file (the left-channel pass of 2026-11-26) shows the hum lines from 540 to 1740 Hz at −128 to −132 dBFS in the takes' pre-rolls (read across 88 separate pre-rolls, so each may be up to about 20 dB higher), against note peaks of −20 to −12 dBFS. They never needed a notch. The broadband stage still lowers them between notes.
+
+**What it does not cover**: a notch above the floor can still take an upper partial of a high note (C♯6's fourth partial was 6 Hz from one at 4423 Hz).
+
+**Not verified**: on a capture; the browser-driven Orchestrator tests (`persist-test.mjs`, `smoke.mjs`), which need the dev server.
+
+**Where**: `apps/orchestrator/src/analysis/dewhine.ts` (`whineFloorHz`, `whineTonesAbove`), `state.ts` (`activeWhineTones`), `ui/stepCapture.ts`, `ui/stepExport.ts`, `ui/stepConnect.ts` (the status line); `test/orchestrator-smoke/dewhine-test.mjs` (section 4: with every calibrated tone notched a synthetic E5 loses 34 dB of its fundamental, with the floor none); docs/architecture/orchestrator.md → De-whine, docs/guide/orchestrator.md, docs/lessons.md.
+
+## The Orchestrator can save the takes as recorded (2026-11-26, Max)
+
+**Context**: the cleaned export was the only thing that left the page. When a de-whine notch turned out to have removed part of several takes, the recordings were gone and the fault could only be worked around.
+
+**Picked**: a second download in the Export step, **Download raw takes**: a `.hki` of its own (key `<key>-raw`) holding every take still in the capture store exactly as recorded, with all its channels and nothing notched, denoised, gained, trimmed or faded, takes that failed a gate included. Its provenance records the whine profile and each take's gate result. Max: "Keep the raw takes."
+
+**Rejected**: putting the raw audio inside the instrument bundle. It would double the size of the file HKL imports, and the bundle format (`@hkl/shared`, which the engine ships) has no place for it.
+
+**What it gives up**: nothing in the cleaned export, which is unchanged. The raw file is as large again, and saving it is a step the user has to remember.
+
+**Verified in use**: Max downloaded the raw takes of two capture passes with it the same evening, and those files carry the provenance described above. The browser-driven Orchestrator tests (`persist-test.mjs`, `smoke.mjs`) were not run: the dev server was down.
+
+**Where**: `apps/orchestrator/src/analysis/buildHki.ts` (`buildRawBundle`), `ui/stepExport.ts`; `test/orchestrator-smoke/raw-export-test.mjs`, and `register-ts.mjs` (the resolve hook now also follows a package specifier to a `.ts` file, which nothing in Node could do for `buildHki.ts` before); docs/architecture/orchestrator.md → Raw takes, docs/guide/orchestrator.md.
+
+## The Korg piano is a stereo instrument, built from two single-channel passes (2026-11-26, Max)
+
+**Context**: every capture so far was the SP-250's mono mix (one cable in L/MONO), which is left plus right at equal gain and cancels differently for each of the Korg's 22 recordings; that is most of what made neighboring recordings sound unlike each other in HKL (docs/lessons.md, the SP-250 list). The goal was first a mono instrument better than the accepted one; three repairs of the mono sum were tried and rejected by ear.
+
+**Picked**: a two-channel bundle. Left and right come from two passes at identical settings (cable in L/MONO with a dummy plug in R; then cable in R), side by side at the Korg's own timing between the channels, each pass notched with its own whine tones and cleaned by the Orchestrator's own code. 28 takes, so that every key plays from its own Korg recording. Each take is labeled at its nominal pitch moved by its measured offset (read on the stronger channel of its recording), which replaces the smooth stretch curve for this instrument (the entry "The Korg piano's stretch is taken out, on one smooth curve" above). Gains and brightness data come from an analysis matched to the energy of both channels, raised 3 dB because a mono sample plays from both speakers and each channel of a stereo one from one. One take is re-balanced: D♯5–F♯5 is moved 3.5 dB toward the left (left +3.1 dB, right −0.4 dB), the one recording that stood out by pan. Max, on the bundle before that move: "this sounds precisely like the Korg"; after it: accepted, "a stereo mix that, for 4 notes, surpasses the Korg itself in consistency". A mono listener gets left plus right, which is the Korg's own mix, as before.
+
+**Rejected** (each by ear):
+- *Mono, each partial from the stronger channel at the energy of both*: even across recordings, and a timbre "nothing like the original piano".
+- *Mono, the Korg's sum with a channel shifted in time*: fixes a canceled fundamental and nothing else; the one recording it was applied to stood out more.
+- *Stereo with left and right balanced on every take*, on whole-note energy (the pan came out random) or on the first 20 ms (close to centered, and it "ruins consistency on its own": the quieter channel's hammer comes up).
+- *Stereo with one take per recording and the outlier's take removed* (21 takes): the seam where two takes meet at opposite stretches is "far worse than the pan discrepancy was".
+- *The outlier moved 7 dB or all the way*: the hammer returns in the left ear.
+
+**What it gives up**: nothing for a mono listener. The file is 90 MB against 41. The instrument cannot be rebuilt from the repo: it was assembled by hand with local scripts, because the Orchestrator captures one pass and `hki-timbre.mjs` measures a two-channel sample on its downmix, which for this instrument is the canceling sum. Nothing in the engine, the bundle format, the Orchestrator or the analyzer tools was changed.
+
+**Not verified**: recording (`.hkr`, `.mid`), the overlay and HKL's master chain with a two-channel instrument (not read); the engine finds a note's onset on the first channel only, and the recordings panned right are up to 11 dB lower there; loudness against the previous instrument (the 3 dB is a reckoning, not a measurement through HKL); the treble offsets (above A4 the two channels and the mix disagree by 1 to 2 cents). Max: "worth some hours of playing before any further decisions about panning".
+
+**Open** (Max; neither is urgent): refining other takes' pan by small moves, now that a 3.5 dB move is known to improve a take's balance without disturbing its sound; and reducing the bundle to 22 takes by giving a sample an explicit frequency range, which the format and the engine's `findNearest` do not have (an engine change: it needs a stated scope and his approval). Putting two-pass capture into the Orchestrator is a design question first: this build needed three passes (left, right, and the mix to time them).
+
+**Where**: `apps/analyzer/out/korg-sp-250-curve.hki` (key `korg-sp-250-curve`, name "Piano (Korg SP-250)"; gitignored), with the mono instrument it replaces kept beside it as `korg-sp-250-curve-20261126-mono.hki`; docs/architecture/engine.md → `.hki` sample bundles (channels); docs/lessons.md.

@@ -14,6 +14,15 @@
 //
 // The notches run on the RAW capture, BEFORE broadband NR, where the comb is at
 // full strength (see analysis/buildHki cleanOf).
+//
+// Only tones above the capture's highest note are cut (whineFloorHz). A notch is
+// 12 Hz wide whatever it sits on, and the idle recording also shows tones that
+// are not the device's comb: mains-hum harmonics, odd multiples of 60 Hz found
+// as high as 2820 Hz, land among the notes' fundamentals and low partials. One at
+// 660 Hz took the fundamental out of an E5 take (docs/lessons.md, 2026-11-26).
+// The detector still reports every tone it finds; the floor is applied where the
+// profile is used (state.ts activeWhineTones), so a stored profile needs no
+// recalibration. What stays in a take below the floor is left to the broadband NR.
 
 import { fftInPlace } from '../discovery/fft.js';
 
@@ -153,6 +162,19 @@ function filtfilt(x: Float64Array, bq: Biquad): Float64Array {
   const back = biquad(fwd, bq);
   back.reverse();
   return back;
+}
+
+/** The frequency at or under which no whine tone is notched, for a capture whose
+ *  highest note is `topNoteHz`: half a semitone above it, so that no notch can
+ *  reach a fundamental. A device's own whine comb sits above its keyboard (the
+ *  SP-250's lowest member found is near 4.4 kHz, the top note 4186 Hz). */
+export function whineFloorHz(topNoteHz: number): number {
+  return topNoteHz * Math.pow(2, 0.5 / 12);
+}
+
+/** The tones of a whine profile that may be notched: those above `floorHz`. */
+export function whineTonesAbove(toneHz: number[] | null | undefined, floorHz: number): number[] {
+  return (toneHz ?? []).filter(f => f > floorHz);
 }
 
 /** Notch out each tone in `toneHz` from every channel, zero-phase. Tones at or

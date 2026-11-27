@@ -259,3 +259,77 @@ export function buildBundle(outcomes: JobOutcome[], config: CaptureConfig, devic
 
   return { bundle, noteCount: byNote.size, layerCount, skippedLayers };
 }
+
+export interface RawBuildResult {
+  bundle: HkiBundle;
+  takeCount: number;
+}
+
+/** The takes as recorded, as a bundle of their own: every take that is still in
+ *  the capture store, all its channels, with no de-whine, no noise reduction, no
+ *  gain, no trim and no fade, and takes that failed a gate included. The cleaned
+ *  export keeps only what its cleaning leaves, and the recordings are gone when
+ *  the tab closes; this is what lets the cleaning be redone or changed afterward
+ *  (a de-whine notch once took a note's fundamental with it: docs/lessons.md,
+ *  2026-11-26). It is a valid `.hki` (key `<key>-raw`), so every tool that reads
+ *  one reads it; it is not meant to be played. `whine` records the profile the
+ *  cleaned export would use: every tone the calibration found, and the ones
+ *  actually notched. */
+export function buildRawBundle(
+  outcomes: JobOutcome[],
+  config: CaptureConfig,
+  deviceLabel: string,
+  whine: { detectedHz: number[]; notchedHz: number[] } = { detectedHz: [], notchedHz: [] },
+): RawBuildResult {
+  const have = outcomes
+    .filter(o => getCapture(o.job.captureId))
+    .sort((a, b) => a.job.midi - b.job.midi || a.job.velocity - b.job.velocity);
+  if (have.length === 0) throw new Error('No recorded takes to export.');
+  const layersOf = new Map<number, number>();
+  for (const o of have) layersOf.set(o.job.midi, (layersOf.get(o.job.midi) ?? 0) + 1);
+
+  const samples: HkiSampleEntry[] = [];
+  const audio: Record<string, Uint8Array> = {};
+  const takes: Array<Record<string, unknown>> = [];
+  for (const o of have) {
+    const rec = getCapture(o.job.captureId)!;
+    const name = noteName(o.job.midi), vel = o.job.velocity;
+    const file = `samples/${name}_v${vel}.wav`;
+    const entry: HkiSampleEntry = { name, file, freq: o.job.freq };
+    if ((layersOf.get(o.job.midi) ?? 0) > 1) entry.vel = vel;
+    samples.push(entry);
+    audio[file] = encodeWavFloat32(rec.channels, rec.sampleRate);
+    takes.push({
+      name, velocity: vel, channels: rec.channels.length, sampleRate: rec.sampleRate,
+      pass: o.gate.pass, flags: o.gate.flags, retried: !!o.retried,
+      peakDb: o.gate.peakDb, noiseFloorDb: o.gate.noiseFloorDb,
+    });
+  }
+
+  const bundle: HkiBundle = {
+    manifest: {
+      version: 2,
+      instrumentKey: config.instrumentKey + '-raw',
+      name: (config.displayName || config.instrumentKey) + ' (raw takes)',
+      loop: false,
+      decays: true,
+      releaseTime: 0.15,
+      volume: 1.0,
+      samples,
+    },
+    audio,
+    provenance: {
+      source: 'orchestrator',
+      generator: 'hkl-orchestrator@1',
+      createdAt: new Date().toISOString(),
+      device: deviceLabel,
+      raw: {
+        what: 'the takes as recorded: every channel, no de-whine, no noise reduction, no gain, no trim, no fade; takes that failed a gate included',
+        holdMs: config.holdMs,
+        whine: { detectedHz: whine.detectedHz, notchedHz: whine.notchedHz },
+        takes,
+      },
+    },
+  };
+  return { bundle, takeCount: have.length };
+}

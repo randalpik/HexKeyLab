@@ -2,7 +2,7 @@
 // per-job status table (gate tier + flags). Failed jobs get a Re-capture button.
 
 import { el, clear } from './dom.js';
-import { getSession } from '../state.js';
+import { getSession, activeWhineTones } from '../state.js';
 import { enumerateJobs, type CaptureJob } from '../capture/plan.js';
 import { runCaptureLoop, captureOne, type JobOutcome } from '../capture/loop.js';
 import { gateTier, type GateResult } from '../capture/gates.js';
@@ -43,7 +43,7 @@ export function renderCapture(host: HTMLElement, onDone: () => void): void {
     const recapBtn = el('button', { type: 'button', style: 'padding:2px 8px;font-size:11px', onclick: async () => {
       const dev = getSession().device; if (!dev) return;
       recapBtn.setAttribute('disabled', '');
-      const o = await captureOne(dev, job, getSession().config.holdMs, getSession().whineProfile?.toneHz ?? []);
+      const o = await captureOne(dev, job, getSession().config.holdMs, activeWhineTones());
       outcomes.set(job.captureId, o);
       putOutcome(o);
       renderRow(job, o.gate);
@@ -74,7 +74,7 @@ export function renderCapture(host: HTMLElement, onDone: () => void): void {
     try {
       await runCaptureLoop(dev, jobs, {
         holdMs: getSession().config.holdMs,
-        whineToneHz: getSession().whineProfile?.toneHz ?? [],
+        whineToneHz: activeWhineTones(),
         signal: aborter.signal,
         onProgress: (done, total, outcome) => {
           outcomes.set(outcome.job.captureId, outcome);
